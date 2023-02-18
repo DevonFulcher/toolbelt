@@ -18,21 +18,30 @@ func Equal[T comparable](a, b []T) bool {
 	return true
 }
 
-func main() {
-	og := os.Args[1:]
+func GetCmds(og []string) [][]string {
 	if Equal(og[:2], []string{"git", "save"}) {
-		cmds := [][]string{
+		return [][]string{
 			{"git", "add", "-A"},
 			{"git", "commit", "-m", og[2]},
 			{"git", "push"},
 		}
-		for _, cmd := range cmds {
-			fmt.Println(cmd)
-			toRun := exec.Command(cmd[0], cmd[1:]...)
-			toRun.Stdout = os.Stdout
-			if err := toRun.Run(); err != nil {
-				fmt.Println("could not run command: ", err)
-			}
+	}
+	return [][]string{}
+}
+
+func RunCmds(cmds [][]string) {
+	for _, cmd := range cmds {
+		fmt.Println(cmd)
+		toRun := exec.Command(cmd[0], cmd[1:]...)
+		toRun.Stdout = os.Stdout
+		if err := toRun.Run(); err != nil {
+			fmt.Println("could not run command: ", err)
 		}
 	}
+}
+
+func main() {
+	og := os.Args[1:]
+	cmds := GetCmds(og)
+	RunCmds(cmds)
 }
