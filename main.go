@@ -29,7 +29,7 @@ func MatchCmd(og []string) error {
 	if PrefixEqual(og, []string{"git", "save"}) {
 		cmds := [][]string{
 			{"git", "add", "-A"},
-			{"semantic-git-commit"},
+			{"git", "commit", "-m", og[2]},
 			{"git", "push"},
 		}
 		return RunCmds(cmds)
