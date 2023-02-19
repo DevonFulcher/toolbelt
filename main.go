@@ -39,18 +39,28 @@ func MatchCmd(og []string) error {
 		}
 		PrintCmds(cmds)
 		return nil
+	} else if PrefixEqual(og, []string{"git", "log"}) {
+		return RunCmd([]string{"git", "log", "--graph", "--all", "--pretty='format:%C(auto)%h %C(cyan)%ar %C(auto)%d %C(magenta)%an %C(auto)%s'"})
 	}
 	return fmt.Errorf("invalid command: %v", og)
 }
 
 func RunCmds(cmds [][]string) error {
 	for _, cmd := range cmds {
-		fmt.Println(cmd)
-		toRun := exec.Command(cmd[0], cmd[1:]...)
-		toRun.Stdout = os.Stdout
-		if err := toRun.Run(); err != nil {
-			return fmt.Errorf("could not run command: %v with error: %v", cmd, err)
+		err := RunCmd(cmd)
+		if err != nil {
+			return err
 		}
+	}
+	return nil
+}
+
+func RunCmd(cmd []string) error {
+	fmt.Println(cmd)
+	toRun := exec.Command(cmd[0], cmd[1:]...)
+	toRun.Stdout = os.Stdout
+	if err := toRun.Run(); err != nil {
+		return fmt.Errorf("could not run command: %v with error: %v", cmd, err)
 	}
 	return nil
 }
