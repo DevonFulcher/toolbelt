@@ -29,7 +29,7 @@ func MatchCmd(og []string) error {
 	if PrefixEqual(og, []string{"git", "save"}) {
 		cmds := [][]string{
 			{"git", "add", "-A"},
-			{"git", "commit", "-m", og[2]},
+			{"semantic-git-commit"},
 			{"git", "push"},
 		}
 		return RunCmds(cmds)
@@ -41,6 +41,11 @@ func MatchCmd(og []string) error {
 		return nil
 	} else if PrefixEqual(og, []string{"git", "log"}) {
 		return RunCmd([]string{"git", "log", "--graph", "--all", "--pretty='format:%C(auto)%h %C(cyan)%ar %C(auto)%d %C(magenta)%an %C(auto)%s'"})
+	} else if PrefixEqual(og, []string{"kill", "process", "on", "port"}) {
+		// TODO: test this
+		return RunCmd([]string{"kill", fmt.Sprintf("$(lsof -ti tcp:%v)", og[4])})
+	} else if PrefixEqual(og, []string{"good", "morning"}) {
+		return RunCmd([]string{"git", "standup", "-w", "MON-FRI"})
 	}
 	return fmt.Errorf("invalid command: %v", og)
 }
@@ -59,6 +64,7 @@ func RunCmd(cmd []string) error {
 	fmt.Println(cmd)
 	toRun := exec.Command(cmd[0], cmd[1:]...)
 	toRun.Stdout = os.Stdout
+	toRun.Stdin = os.Stdin
 	if err := toRun.Run(); err != nil {
 		return fmt.Errorf("could not run command: %v with error: %v", cmd, err)
 	}
