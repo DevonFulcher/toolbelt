@@ -40,10 +40,15 @@ func NewCmds(cmds ...string) []Cmd {
 }
 
 func (c *Cmd) RunCmd() error {
-	fmt.Println(c.cmd)
+	if c.dir != nil {
+		fmt.Printf("dir: %v cmd: %v\n", c.dir, c.cmd)
+	} else {
+		fmt.Println(c.cmd)
+	}
 	toRun := exec.Command(c.cmd[0], c.cmd[1:]...)
 	toRun.Stdout = os.Stdout
 	toRun.Stdin = os.Stdin
+	toRun.Stderr = os.Stderr
 	if c.dir != nil {
 		toRun.Dir = *c.dir
 	}
