@@ -8,6 +8,8 @@ import (
 	"golang.org/x/exp/constraints"
 )
 
+const DEFAULT_BRANCH = "main"
+
 func Min[T constraints.Ordered](a, b T) T {
 	if a < b {
 		return a
@@ -46,6 +48,16 @@ func MatchCmd(og []string) error {
 		return RunCmd([]string{"kill", fmt.Sprintf("$(lsof -ti tcp:%v)", og[4])})
 	} else if PrefixEqual(og, []string{"good", "morning"}) {
 		return RunCmd([]string{"git", "standup", "-w", "MON-FRI"})
+	} else if PrefixEqual(og, []string{"git", "sync"}) {
+		cmds := [][]string{
+			{"git", "add", "-A"},
+			{"git", "stash"},
+			{"git", "checkout", DEFAULT_BRANCH},
+			{"git", "pull"},
+			{"git", "checkout", "-"},
+			{"git", "merge", DEFAULT_BRANCH},
+		}
+		return RunCmds(cmds)
 	}
 	return fmt.Errorf("invalid command: %v", og)
 }
