@@ -4,11 +4,16 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 
 	"golang.org/x/exp/constraints"
 )
 
 const DEFAULT_BRANCH = "main"
+const REPOS_PATH = "~/git"
+const REPO_NAME = "toolbelt"
+const EXECUTABLE_NAME = "toolbelt"
+const CLI_PATH = "~/cli"
 
 func Min[T constraints.Ordered](a, b T) T {
 	if a < b {
@@ -56,6 +61,14 @@ func MatchCmd(og []string) error {
 			{"git", "pull"},
 			{"git", "checkout", "-"},
 			{"git", "merge", DEFAULT_BRANCH},
+		}
+		return RunCmds(cmds)
+	} else if PrefixEqual(og, []string{"update"}) {
+		cmds := [][]string{
+			{"cd", path.Join(REPOS_PATH, REPO_NAME)},
+			{"git", "pull"},
+			{"go", "build"},
+			{"cp", EXECUTABLE_NAME, CLI_PATH},
 		}
 		return RunCmds(cmds)
 	}
