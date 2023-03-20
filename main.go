@@ -3,8 +3,8 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path"
+	"toolbelt/cmd"
 
 	"golang.org/x/exp/constraints"
 )
@@ -34,10 +34,10 @@ func PrefixEqual[T comparable](a, b []T) bool {
 
 func MatchCmd(og []string) error {
 	if PrefixEqual(og, []string{"git", "save"}) {
-		cmds := [][]string{
-			{"git", "add", "-A"},
-			{"git", "commit", "-m", og[2]},
-			{"git", "push"},
+		cmds := []cmd.Cmd{
+			cmd.New("git add -A"),
+			cmd.New("git commit -m %v", og[2]),
+			cmd.New("git push"),
 		}
 		return RunCmds(cmds)
 	} else if PrefixEqual(og, []string{"curated"}) {
@@ -47,51 +47,44 @@ func MatchCmd(og []string) error {
 		PrintCmds(cmds)
 		return nil
 	} else if PrefixEqual(og, []string{"git", "log"}) {
-		return RunCmd([]string{"git", "log", "--graph", "--all", "--pretty='format:%C(auto)%h %C(cyan)%ar %C(auto)%d %C(magenta)%an %C(auto)%s'"})
+		arr := []string{"git", "log", "--graph", "--all", "--pretty='format:%C(auto)%h %C(cyan)%ar %C(auto)%d %C(magenta)%an %C(auto)%s'"}
+		c := cmd.NewCmdFromArray(arr)
+		return c.RunCmd()
 	} else if PrefixEqual(og, []string{"kill", "process", "on", "port"}) {
 		// TODO: test this
-		return RunCmd([]string{"kill", fmt.Sprintf("$(lsof -ti tcp:%v)", og[4])})
+		c := cmd.New("kill %v %v", fmt.Sprintf("$(lsof -ti tcp:%v)", og[4]))
+		return c.RunCmd()
 	} else if PrefixEqual(og, []string{"good", "morning"}) {
-		return RunCmd([]string{"git", "standup", "-w", "MON-FRI"})
+		c := cmd.New("git standup -w MON-FRI")
+		return c.RunCmd()
 	} else if PrefixEqual(og, []string{"git", "sync"}) {
-		cmds := [][]string{
-			{"git", "add", "-A"},
-			{"git", "stash"},
-			{"git", "checkout", DEFAULT_BRANCH},
-			{"git", "pull"},
-			{"git", "checkout", "-"},
-			{"git", "merge", DEFAULT_BRANCH},
+		cmds := []cmd.Cmd{
+			cmd.New("git add -A"),
+			cmd.New("git stash"),
+			cmd.New("git checkout %v", DEFAULT_BRANCH),
+			cmd.New("git pull"),
+			cmd.New("git checkout -"),
+			cmd.New("git merge %v", DEFAULT_BRANCH),
 		}
 		return RunCmds(cmds)
 	} else if PrefixEqual(og, []string{"update"}) {
-		cmds := [][]string{
-			{"cd", path.Join(REPOS_PATH, REPO_NAME)},
-			{"git", "pull"},
-			{"go", "build"},
-			{"cp", EXECUTABLE_NAME, CLI_PATH},
+		cmds := []cmd.Cmd{
+			cmd.New("cd %v", path.Join(REPOS_PATH, REPO_NAME)),
+			cmd.New("git pull"),
+			cmd.New("go build"),
+			cmd.New("cp %v %v", EXECUTABLE_NAME, CLI_PATH),
 		}
 		return RunCmds(cmds)
 	}
 	return fmt.Errorf("invalid command: %v", og)
 }
 
-func RunCmds(cmds [][]string) error {
+func RunCmds(cmds []cmd.Cmd) error {
 	for _, cmd := range cmds {
-		err := RunCmd(cmd)
+		err := cmd.RunCmd()
 		if err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-func RunCmd(cmd []string) error {
-	fmt.Println(cmd)
-	toRun := exec.Command(cmd[0], cmd[1:]...)
-	toRun.Stdout = os.Stdout
-	toRun.Stdin = os.Stdin
-	if err := toRun.Run(); err != nil {
-		return fmt.Errorf("could not run command: %v with error: %v", cmd, err)
 	}
 	return nil
 }
