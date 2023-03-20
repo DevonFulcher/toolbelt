@@ -48,7 +48,7 @@ func MatchCmd(og []string) error {
 		return nil
 	} else if PrefixEqual(og, []string{"git", "log"}) {
 		arr := []string{"git", "log", "--graph", "--all", "--pretty='format:%C(auto)%h %C(cyan)%ar %C(auto)%d %C(magenta)%an %C(auto)%s'"}
-		c := cmd.NewCmdFromArray(arr)
+		c := cmd.NewFromArray(arr)
 		return c.RunCmd()
 	} else if PrefixEqual(og, []string{"kill", "process", "on", "port"}) {
 		// TODO: test this
@@ -68,11 +68,11 @@ func MatchCmd(og []string) error {
 		}
 		return RunCmds(cmds)
 	} else if PrefixEqual(og, []string{"update"}) {
+		dir := path.Join(REPOS_PATH, REPO_NAME)
 		cmds := []cmd.Cmd{
-			cmd.New("cd %v", path.Join(REPOS_PATH, REPO_NAME)),
-			cmd.New("git pull"),
-			cmd.New("go build"),
-			cmd.New("cp %v %v", EXECUTABLE_NAME, CLI_PATH),
+			cmd.NewWithDir(dir, "git pull"),
+			cmd.NewWithDir(dir, "go build"),
+			cmd.NewWithDir(dir, "cp %v %v", EXECUTABLE_NAME, CLI_PATH),
 		}
 		return RunCmds(cmds)
 	}

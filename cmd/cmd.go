@@ -12,16 +12,21 @@ type Cmd struct {
 	cmd []string
 }
 
-func New(fmt string, vars ...string) Cmd {
-	for _, curr := range vars {
-		fmt = strings.Replace(fmt, "%v", curr, 1)
-	}
-	cmdSplit := strings.Split(fmt, " ")
-	return Cmd{nil, cmdSplit}
+func New(cmd string, vars ...any) Cmd {
+	return Cmd{nil, createCmdArrary(cmd, vars)}
 }
 
-func NewCmdFromArray(cmd []string) Cmd {
+func NewWithDir(dir, cmd string, vars ...any) Cmd {
+	return Cmd{&dir, createCmdArrary(cmd, vars)}
+}
+
+func NewFromArray(cmd []string) Cmd {
 	return Cmd{nil, cmd}
+}
+
+func createCmdArrary(cmd string, vars ...any) []string {
+	cmd = fmt.Sprintf(cmd, vars...)
+	return strings.Split(cmd, " ")
 }
 
 func NewCmds(cmds ...string) []Cmd {
