@@ -12,11 +12,11 @@ type Cmd struct {
 	cmd []string
 }
 
-func New(cmd string, vars ...any) Cmd {
+func New(cmd string, vars ...string) Cmd {
 	return Cmd{nil, createCmdArrary(cmd, vars)}
 }
 
-func NewWithDir(dir, cmd string, vars ...any) Cmd {
+func NewWithDir(dir, cmd string, vars ...string) Cmd {
 	return Cmd{&dir, createCmdArrary(cmd, vars)}
 }
 
@@ -24,8 +24,10 @@ func NewFromArray(cmd []string) Cmd {
 	return Cmd{nil, cmd}
 }
 
-func createCmdArrary(cmd string, vars ...any) []string {
-	cmd = fmt.Sprintf(cmd, vars...)
+func createCmdArrary(cmd string, vars []string) []string {
+	for _, curr := range vars {
+		cmd = strings.Replace(cmd, "%v", curr, 1)
+	}
 	return strings.Split(cmd, " ")
 }
 
@@ -38,7 +40,7 @@ func NewCmds(cmds ...string) []Cmd {
 }
 
 func (c *Cmd) RunCmd() error {
-	fmt.Println(c)
+	fmt.Println(c.cmd)
 	toRun := exec.Command(c.cmd[0], c.cmd[1:]...)
 	toRun.Stdout = os.Stdout
 	toRun.Stdin = os.Stdin
@@ -46,7 +48,7 @@ func (c *Cmd) RunCmd() error {
 		toRun.Dir = *c.dir
 	}
 	if err := toRun.Run(); err != nil {
-		return fmt.Errorf("could not run command: %v with error: %v", c, err)
+		return fmt.Errorf("could not run command: %v with error: %v", c.cmd, err)
 	}
 	return nil
 }

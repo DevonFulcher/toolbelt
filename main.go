@@ -9,11 +9,13 @@ import (
 	"golang.org/x/exp/constraints"
 )
 
+const HOME = "/Users/devonfulcher"
 const DEFAULT_BRANCH = "main"
-const REPOS_PATH = "~/git"
 const REPO_NAME = "toolbelt"
 const EXECUTABLE_NAME = "toolbelt"
-const CLI_PATH = "~/cli"
+
+var REPOS_PATH = path.Join(HOME, "git")
+var CLI_PATH = path.Join(HOME, "cli")
 
 func Min[T constraints.Ordered](a, b T) T {
 	if a < b {
