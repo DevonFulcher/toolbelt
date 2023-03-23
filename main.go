@@ -57,8 +57,13 @@ func MatchCmd(og []string) error {
 		c := cmd.New("kill %v %v", fmt.Sprintf("$(lsof -ti tcp:%v)", og[4]))
 		return c.RunCmd()
 	} else if PrefixEqual(og, []string{"good", "morning"}) {
-		c := cmd.New("git standup -w MON-FRI")
-		return c.RunCmd()
+		// TODO: dbt specific code
+		cmds := []cmd.Cmd{
+			cmd.New("fsh login"),
+			cmd.New("fsh dev pull"),
+			cmd.New("git standup -w MON-FRI"),
+		}
+		return RunCmds(cmds)
 	} else if PrefixEqual(og, []string{"git", "sync"}) {
 		cmds := []cmd.Cmd{
 			cmd.New("git add -A"),
@@ -67,6 +72,7 @@ func MatchCmd(og []string) error {
 			cmd.New("git pull"),
 			cmd.New("git checkout -"),
 			cmd.New("git merge %v", DEFAULT_BRANCH),
+			cmd.New("git stash pop"),
 		}
 		return RunCmds(cmds)
 	} else if PrefixEqual(og, []string{"update"}) {
