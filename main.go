@@ -38,7 +38,7 @@ func MatchCmd(og []string) error {
 	if PrefixEqual(og, []string{"git", "save"}) {
 		cmds := []cmd.Cmd{
 			cmd.New("git add -A"),
-			cmd.New("git commit -m \"%v\"", og[2]),
+			cmd.NewFromArray([]string{"git", "commit", "-m", og[2]}),
 			cmd.New("git push"),
 		}
 		return RunCmds(cmds)
