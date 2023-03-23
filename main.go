@@ -13,6 +13,7 @@ const HOME = "/Users/devonfulcher"
 const DEFAULT_BRANCH = "main"
 const REPO_NAME = "toolbelt"
 const EXECUTABLE_NAME = "toolbelt"
+const SLG_DIR = "semantic-layer-gateway"
 
 var REPOS_PATH = path.Join(HOME, "git")
 var CLI_PATH = path.Join(HOME, "cli")
@@ -58,10 +59,11 @@ func MatchCmd(og []string) error {
 		return c.RunCmd()
 	} else if PrefixEqual(og, []string{"good", "morning"}) {
 		// TODO: dbt specific code
+		slg_dir := path.Join(REPOS_PATH, SLG_DIR)
 		cmds := []cmd.Cmd{
 			cmd.New("fsh login"),
 			cmd.New("fsh dev pull"),
-			cmd.New("git standup -w MON-FRI"),
+			cmd.NewWithDir(slg_dir, "git standup -w MON-FRI"),
 		}
 		return RunCmds(cmds)
 	} else if PrefixEqual(og, []string{"git", "sync"}) {
