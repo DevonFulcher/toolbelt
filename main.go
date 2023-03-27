@@ -39,11 +39,16 @@ func PrefixEqual[T comparable](a, b []T) bool {
 
 func MatchCmd(og []string) error {
 	if PrefixEqual(og, []string{"git", "save"}) {
-		cmds := []cmd.Cmd{
+		cmds := []cmd.Cmd{}
+		path, _ := os.Getwd()
+		if strings.Contains(path, SLG_REPO) {
+			cmds = append(cmds, cmd.New("gradle ktlintFormat"))
+		}
+		cmds = append(cmds, []cmd.Cmd{
 			cmd.New("git add -A"),
 			cmd.NewFromArray([]string{"git", "commit", "-m", og[2]}),
 			cmd.New("git push"),
-		}
+		}...)
 		return RunCmds(cmds)
 	} else if PrefixEqual(og, []string{"curated"}) {
 		cmds := [][]string{
@@ -69,12 +74,7 @@ func MatchCmd(og []string) error {
 		return RunCmds(cmds)
 	} else if PrefixEqual(og, []string{"git", "sync"}) {
 		// TODO: dbt specific code
-		cmds := []cmd.Cmd{}
-		path, _ := os.Getwd()
-		if strings.Contains(path, SLG_REPO) {
-			cmds = append(cmds, cmd.New("gradle ktlintFormat"))
-		}
-		cmds = append(cmds, []cmd.Cmd{
+		cmds := []cmd.Cmd{
 			cmd.New("git add -A"),
 			cmd.New("git stash"),
 			cmd.New("git checkout %v", DEFAULT_BRANCH),
@@ -82,7 +82,7 @@ func MatchCmd(og []string) error {
 			cmd.New("git checkout -"),
 			cmd.New("git merge %v", DEFAULT_BRANCH),
 			cmd.New("git stash pop"),
-		}...)
+		}
 		return RunCmds(cmds)
 	} else if PrefixEqual(og, []string{"update"}) {
 		dir := path.Join(REPOS_PATH, REPO_NAME)
