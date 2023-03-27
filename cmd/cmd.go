@@ -41,7 +41,7 @@ func NewCmds(cmds ...string) []Cmd {
 
 func (c *Cmd) RunCmd() error {
 	if c.dir != nil {
-		fmt.Printf("dir: %v cmd: %v\n", c.dir, c.cmd)
+		fmt.Printf("dir: %v cmd: %v\n", *c.dir, c.cmd)
 	} else {
 		fmt.Println(c.cmd)
 	}
