@@ -15,10 +15,12 @@ const DEFAULT_BRANCH = "main"
 const REPO_NAME = "toolbelt"
 const EXECUTABLE_NAME = "toolbelt"
 const SLG_REPO = "semantic-layer-gateway"
+const RUNTIME_GATEWAY_REPO = "runtime-gateway"
 
 var REPOS_PATH = path.Join(HOME, "git")
 var CLI_PATH = path.Join(HOME, "cli")
 var SLG_PATH = path.Join(REPOS_PATH, SLG_REPO)
+var RUNTIME_GATEWAY_PATH = path.Join(REPOS_PATH, RUNTIME_GATEWAY_REPO)
 
 func Min[T constraints.Ordered](a, b T) T {
 	if a < b {
@@ -69,11 +71,10 @@ func MatchCmd(og []string) error {
 		cmds := []cmd.Cmd{
 			cmd.New("fsh login"),
 			cmd.New("fsh dev pull"),
-			cmd.NewWithDir(SLG_PATH, "git standup -w MON-FRI"),
+			cmd.NewWithDir(RUNTIME_GATEWAY_REPO, "devspace dev"),
 		}
 		return RunCmds(cmds)
 	} else if PrefixEqual(og, []string{"git", "sync"}) {
-		// TODO: dbt specific code
 		cmds := []cmd.Cmd{
 			cmd.New("git add -A"),
 			cmd.New("git stash"),
