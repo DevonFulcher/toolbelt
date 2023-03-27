@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"strings"
 	"toolbelt/cmd"
 
 	"golang.org/x/exp/constraints"
@@ -13,10 +14,11 @@ const HOME = "/Users/devonfulcher"
 const DEFAULT_BRANCH = "main"
 const REPO_NAME = "toolbelt"
 const EXECUTABLE_NAME = "toolbelt"
-const SLG_DIR = "semantic-layer-gateway"
+const SLG_REPO = "semantic-layer-gateway"
 
 var REPOS_PATH = path.Join(HOME, "git")
 var CLI_PATH = path.Join(HOME, "cli")
+var SLG_PATH = path.Join(REPOS_PATH, SLG_REPO)
 
 func Min[T constraints.Ordered](a, b T) T {
 	if a < b {
@@ -59,15 +61,20 @@ func MatchCmd(og []string) error {
 		return c.RunCmd()
 	} else if PrefixEqual(og, []string{"good", "morning"}) {
 		// TODO: dbt specific code
-		slg_dir := path.Join(REPOS_PATH, SLG_DIR)
 		cmds := []cmd.Cmd{
 			cmd.New("fsh login"),
 			cmd.New("fsh dev pull"),
-			cmd.NewWithDir(slg_dir, "git standup -w MON-FRI"),
+			cmd.NewWithDir(SLG_PATH, "git standup -w MON-FRI"),
 		}
 		return RunCmds(cmds)
 	} else if PrefixEqual(og, []string{"git", "sync"}) {
-		cmds := []cmd.Cmd{
+		// TODO: dbt specific code
+		cmds := []cmd.Cmd{}
+		path, _ := os.Getwd()
+		if strings.Contains(path, SLG_REPO) {
+			cmds = append(cmds, cmd.New("gradle ktlintFormat"))
+		}
+		cmds = append(cmds, []cmd.Cmd{
 			cmd.New("git add -A"),
 			cmd.New("git stash"),
 			cmd.New("git checkout %v", DEFAULT_BRANCH),
@@ -75,7 +82,7 @@ func MatchCmd(og []string) error {
 			cmd.New("git checkout -"),
 			cmd.New("git merge %v", DEFAULT_BRANCH),
 			cmd.New("git stash pop"),
-		}
+		}...)
 		return RunCmds(cmds)
 	} else if PrefixEqual(og, []string{"update"}) {
 		dir := path.Join(REPOS_PATH, REPO_NAME)
