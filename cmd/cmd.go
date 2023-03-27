@@ -43,7 +43,7 @@ func (c *Cmd) RunCmd() error {
 	if c.dir != nil {
 		fmt.Printf("dir: %v cmd: %v\n", *c.dir, c.cmd)
 	} else {
-		fmt.Println(c.cmd)
+		fmt.Printf("cmd %v\n", c.cmd)
 	}
 	toRun := exec.Command(c.cmd[0], c.cmd[1:]...)
 	toRun.Stdout = os.Stdout
