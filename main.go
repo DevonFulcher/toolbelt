@@ -71,7 +71,7 @@ func MatchCmd(og []string) error {
 		cmds := []cmd.Cmd{
 			cmd.New("fsh login"),
 			cmd.New("fsh dev pull"),
-			cmd.NewWithDir(RUNTIME_GATEWAY_REPO, "devspace dev"),
+			cmd.NewWithDir(RUNTIME_GATEWAY_PATH, "devspace dev"),
 		}
 		return RunCmds(cmds)
 	} else if PrefixEqual(og, []string{"git", "sync"}) {
