@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path"
-	"strings"
 	"toolbelt/cmd"
 
 	"golang.org/x/exp/constraints"
@@ -41,17 +40,8 @@ func PrefixEqual[T comparable](a, b []T) bool {
 
 func MatchCmd(og []string) error {
 	if PrefixEqual(og, []string{"git", "save"}) {
-		cmds := []cmd.Cmd{}
-		path, _ := os.Getwd()
-		if strings.Contains(path, SLG_REPO) {
-			cmds = append(cmds, cmd.New("gradle ktlintFormat"))
-		}
-		cmds = append(cmds, []cmd.Cmd{
-			cmd.New("git add -A"),
-			cmd.NewFromArray([]string{"git", "commit", "-m", og[2]}),
-			cmd.New("git push"),
-		}...)
-		return RunCmds(cmds)
+		fmt.Println("temp")
+		return nil
 	} else if PrefixEqual(og, []string{"curated"}) {
 		cmds := [][]string{
 			{"sudo !!", "run the last command as sudo"},
@@ -68,14 +58,14 @@ func MatchCmd(og []string) error {
 		return c.RunCmd()
 	} else if PrefixEqual(og, []string{"good", "morning"}) {
 		// TODO: dbt specific code
-		cmds := []cmd.Cmd{
+		cmds := []cmd.Internal{
 			cmd.New("fsh login"),
 			cmd.New("fsh dev pull"),
 			cmd.NewWithDir(RUNTIME_GATEWAY_PATH, "devspace dev"),
 		}
 		return RunCmds(cmds)
 	} else if PrefixEqual(og, []string{"git", "sync"}) {
-		cmds := []cmd.Cmd{
+		cmds := []cmd.Internal{
 			cmd.New("git add -A"),
 			cmd.New("git stash"),
 			cmd.New("git checkout %v", DEFAULT_BRANCH),
@@ -87,7 +77,7 @@ func MatchCmd(og []string) error {
 		return RunCmds(cmds)
 	} else if PrefixEqual(og, []string{"update"}) {
 		dir := path.Join(REPOS_PATH, REPO_NAME)
-		cmds := []cmd.Cmd{
+		cmds := []cmd.Internal{
 			cmd.NewWithDir(dir, "git pull"),
 			cmd.NewWithDir(dir, "go build"),
 			cmd.NewWithDir(dir, "cp %v %v", EXECUTABLE_NAME, CLI_PATH),
@@ -97,7 +87,8 @@ func MatchCmd(og []string) error {
 	return fmt.Errorf("invalid command: %v", og)
 }
 
-func RunCmds(cmds []cmd.Cmd) error {
+// TODO: remove
+func RunCmds(cmds []cmd.Internal) error {
 	for _, cmd := range cmds {
 		err := cmd.RunCmd()
 		if err != nil {
@@ -117,8 +108,9 @@ func PrintCmds(cmds [][]string) {
 }
 
 func main() {
-	og := os.Args[1:]
-	err := MatchCmd(og)
+	input := os.Args[1:] // ignore the "toolbelt" prefix
+	cmd.Run(input)
+	err := MatchCmd(input)
 	if err != nil {
 		fmt.Println(err.Error())
 		os.Exit(1)

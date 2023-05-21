@@ -7,21 +7,21 @@ import (
 	"strings"
 )
 
-type Cmd struct {
+type Internal struct {
 	dir *string
 	cmd []string
 }
 
-func New(cmd string, vars ...string) Cmd {
-	return Cmd{nil, createCmdArrary(cmd, vars)}
+func New(cmd string, vars ...string) Internal {
+	return Internal{nil, createCmdArrary(cmd, vars)}
 }
 
-func NewWithDir(dir, cmd string, vars ...string) Cmd {
-	return Cmd{&dir, createCmdArrary(cmd, vars)}
+func NewWithDir(dir, cmd string, vars ...string) Internal {
+	return Internal{&dir, createCmdArrary(cmd, vars)}
 }
 
-func NewFromArray(cmd []string) Cmd {
-	return Cmd{nil, cmd}
+func NewFromArray(cmd []string) Internal {
+	return Internal{nil, cmd}
 }
 
 func createCmdArrary(cmd string, vars []string) []string {
@@ -31,15 +31,15 @@ func createCmdArrary(cmd string, vars []string) []string {
 	return strings.Split(cmd, " ")
 }
 
-func NewCmds(cmds ...string) []Cmd {
-	result := []Cmd{}
+func NewCmds(cmds ...string) []Internal {
+	result := []Internal{}
 	for _, cmd := range cmds {
 		result = append(result, New(cmd))
 	}
 	return result
 }
 
-func (c *Cmd) RunCmd() error {
+func (c *Internal) RunCmd() error {
 	if c.dir != nil {
 		fmt.Printf("dir: %v cmd: %v\n", *c.dir, c.cmd)
 	} else {
@@ -54,6 +54,16 @@ func (c *Cmd) RunCmd() error {
 	}
 	if err := toRun.Run(); err != nil {
 		return fmt.Errorf("could not run command: %v with error: %v", c.cmd, err)
+	}
+	return nil
+}
+
+func RunCmds(cmds []Internal) error {
+	for _, cmd := range cmds {
+		err := cmd.RunCmd()
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
