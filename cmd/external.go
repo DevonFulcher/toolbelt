@@ -65,15 +65,15 @@ func Run(input []string) error {
 	i := 0
 	for _, val := range input {
 		cmd, err = findCmd(val, curr)
+		i += 1
 		if err != nil {
 			return err
 		}
 		if cmd != nil && len(cmd.children) > 0 {
-			i += 1
 			curr = cmd.children
 		} else {
 			break
 		}
 	}
-	return cmd.run(input[i : len(input)-1])
+	return cmd.run(input[i:])
 }
