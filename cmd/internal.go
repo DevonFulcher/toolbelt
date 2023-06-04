@@ -67,3 +67,12 @@ func RunCmds(cmds []Internal) error {
 	}
 	return nil
 }
+
+func PrintCmds(cmds [][]string) {
+	for _, cmd := range cmds {
+		fmt.Println()
+		fmt.Println(cmd[0])
+		fmt.Printf("- %v", cmd[1])
+		fmt.Println()
+	}
+}

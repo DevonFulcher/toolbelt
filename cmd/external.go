@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"strings"
 	"toolbelt/config"
 )
@@ -37,6 +38,66 @@ var CmdTree = []External{
 					return RunCmds(cmds)
 				},
 			},
+			{
+				name:        "log",
+				description: "pretty log git branches",
+				run: func(params []string) error {
+					arr := []string{"git", "log", "--graph", "--all", "--pretty='format:%C(auto)%h %C(cyan)%ar %C(auto)%d %C(magenta)%an %C(auto)%s'"}
+					c := NewFromArray(arr)
+					return c.RunCmd()
+				},
+			},
+			{
+				name:        "sync",
+				description: "sync changes from main into branch",
+				run: func(params []string) error {
+					cmds := []Internal{
+						New("git add -A"),
+						New("git stash"),
+						New("git checkout %v", config.DEFAULT_BRANCH),
+						New("git pull"),
+						New("git checkout -"),
+						New("git merge %v", config.DEFAULT_BRANCH),
+						New("git stash pop"),
+					}
+					return RunCmds(cmds)
+				},
+			},
+		},
+	},
+	{
+		name:        "curated",
+		description: "curated list of commands",
+		run: func(param []string) error {
+			cmds := [][]string{
+				{"sudo !!", "run the last command as sudo"},
+			}
+			PrintCmds(cmds)
+			return nil
+		},
+	},
+	{
+		name:        "morning",
+		description: "morning script",
+		run: func(params []string) error {
+			cmds := []Internal{
+				New("fsh login"),
+				New("fsh dev pull"),
+			}
+			return RunCmds(cmds)
+		},
+	},
+	{
+		name:        "update",
+		description: "update toolbelt",
+		run: func(params []string) error {
+			dir := path.Join(config.REPOS_PATH, config.REPO_NAME)
+			cmds := []Internal{
+				NewWithDir(dir, "git pull"),
+				NewWithDir(dir, "go build"),
+				NewWithDir(dir, "cp %v %v", config.EXECUTABLE_NAME, config.CLI_PATH),
+			}
+			return RunCmds(cmds)
 		},
 	},
 }
@@ -69,11 +130,10 @@ func Run(input []string) error {
 		if err != nil {
 			return err
 		}
-		if cmd != nil && len(cmd.children) > 0 {
-			curr = cmd.children
-		} else {
+		if cmd == nil || cmd.children == nil || len(cmd.children) == 0 {
 			break
 		}
+		curr = cmd.children
 	}
 	return cmd.run(input[i:])
 }
