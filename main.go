@@ -40,7 +40,7 @@ func PrefixEqual[T comparable](a, b []T) bool {
 
 func MatchCmd(og []string) error {
 	if PrefixEqual(og, []string{"git", "save"}) {
-		fmt.Println("temp")
+		fmt.Println("asdf")
 		return nil
 	} else if PrefixEqual(og, []string{"curated"}) {
 		cmds := [][]string{
@@ -109,8 +109,12 @@ func PrintCmds(cmds [][]string) {
 
 func main() {
 	input := os.Args[1:] // ignore the "toolbelt" prefix
-	cmd.Run(input)
-	err := MatchCmd(input)
+	err := cmd.Run(input)
+	if err != nil {
+		fmt.Println(err.Error())
+		os.Exit(1)
+	}
+	err = MatchCmd(input)
 	if err != nil {
 		fmt.Println(err.Error())
 		os.Exit(1)

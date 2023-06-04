@@ -41,8 +41,8 @@ var CmdTree = []External{
 	},
 }
 
-func findCmd(input string, cmd []External) (*External, error) {
-	for _, cmd := range cmd {
+func findCmd(input string, cmds []External) (*External, error) {
+	for _, cmd := range cmds {
 		if input == cmd.name {
 			return &cmd, nil
 		}
@@ -58,16 +58,24 @@ func findRoot(input []string) (*External, error) {
 	return findCmd(first, CmdTree)
 }
 
-func Run(input []string) {
-	// TODO: handle errors
-	curr, _ := findRoot(input)
+func Run(input []string) error {
+	curr := CmdTree
+	var cmd *External
+	var err error
+	var currVal string
+	fmt.Println(input)
 	for _, val := range input {
-		if val == curr.name {
-			if curr != nil && len(curr.children) > 0 {
-				curr, _ = findCmd(val, curr.children)
-			} else {
-				_ = curr.run(val)
-			}
+		currVal = val
+		cmd, err = findCmd(val, curr)
+		fmt.Println(val)
+		if err != nil {
+			return err
+		}
+		if cmd != nil && len(cmd.children) > 0 {
+			curr = cmd.children
+		} else {
+			break
 		}
 	}
+	return cmd.run(currVal)
 }
