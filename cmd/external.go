@@ -12,7 +12,7 @@ type External struct {
 	name        string
 	description string
 	children    []External
-	run         func(params string) error
+	run         func(params []string) error
 }
 
 var CmdTree = []External{
@@ -23,7 +23,7 @@ var CmdTree = []External{
 			{
 				name:        "save",
 				description: "save progress and push it to remote",
-				run: func(param string) error {
+				run: func(param []string) error {
 					cmds := []Internal{}
 					path, _ := os.Getwd()
 					if strings.Contains(path, config.SLG_REPO) {
@@ -31,7 +31,7 @@ var CmdTree = []External{
 					}
 					cmds = append(cmds, []Internal{
 						New("git add -A"),
-						NewFromArray([]string{"git", "commit", "-m", param}),
+						NewFromArray([]string{"git", "commit", "-m", param[0]}),
 						New("git push"),
 					}...)
 					return RunCmds(cmds)
@@ -62,12 +62,9 @@ func Run(input []string) error {
 	curr := CmdTree
 	var cmd *External
 	var err error
-	var currVal string
-	fmt.Println(input)
+	i := 0
 	for _, val := range input {
-		currVal = val
 		cmd, err = findCmd(val, curr)
-		fmt.Println(val)
 		if err != nil {
 			return err
 		}
@@ -77,5 +74,5 @@ func Run(input []string) error {
 			break
 		}
 	}
-	return cmd.run(currVal)
+	return cmd.run(input[i : len(input)-1])
 }
