@@ -69,6 +69,7 @@ func Run(input []string) error {
 			return err
 		}
 		if cmd != nil && len(cmd.children) > 0 {
+			i += 1
 			curr = cmd.children
 		} else {
 			break
