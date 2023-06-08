@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -109,14 +108,6 @@ func findCmd(input string, cmds []External) (*External, error) {
 		}
 	}
 	return nil, fmt.Errorf("Invalid input. %v is not valid", input)
-}
-
-func findRoot(input []string) (*External, error) {
-	if len(input) < 1 {
-		return nil, errors.New("No input values")
-	}
-	first := input[0]
-	return findCmd(first, CmdTree)
 }
 
 func Run(input []string) error {
