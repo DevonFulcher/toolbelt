@@ -68,6 +68,22 @@ func RunCmds(cmds []Internal) error {
 	return nil
 }
 
+func RunCmdsConcurrent(cmds []Internal) error {
+	errs := []string{}
+	for _, cmd := range cmds {
+		go func(c Internal) {
+			err := c.RunCmd()
+			if err != nil {
+				errs = append(errs, err.Error())
+			}
+		}(cmd)
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("errors: %v", strings.Join(errs, ","))
+	}
+	return nil
+}
+
 func PrintCmds(cmds [][]string) {
 	for _, cmd := range cmds {
 		fmt.Println()

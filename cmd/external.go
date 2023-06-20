@@ -73,6 +73,21 @@ var CmdTree = []External{
 					return RunCmds(cmds)
 				},
 			},
+			{
+				name:        "pull",
+				description: "pull all repos in the repos folder",
+				run: func(params []string) error {
+					dirs, err := os.ReadDir(config.REPOS_PATH)
+					if err != nil {
+						return err
+					}
+					cmds := []Internal{}
+					for _, dir := range dirs {
+						cmds = append(cmds, NewWithDir(dir.Name(), "git pull"))
+					}
+					return RunCmdsConcurrent(cmds)
+				},
+			},
 		},
 	},
 	{
