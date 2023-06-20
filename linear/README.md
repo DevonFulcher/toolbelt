@@ -1,0 +1,2 @@
+- https://studio.apollographql.com/public/Linear-API/variant/current/explorer
+- add authorization header

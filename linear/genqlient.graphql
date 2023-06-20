@@ -1,0 +1,22 @@
+query MyIssues($userId: String!, $filter: IssueFilter) {
+  user(id: $userId) {
+    assignedIssues(filter: $filter) {
+      nodes {
+        title
+        branchName
+        state {
+          type
+        }
+      }
+    }
+  }
+}
+
+query Users {
+  users {
+    nodes {
+      displayName
+      id
+    }
+  }
+}
