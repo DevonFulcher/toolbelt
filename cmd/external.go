@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"path"
 	"strings"
@@ -13,6 +14,16 @@ type External struct {
 	description string
 	children    []External
 	run         func(params []string) error
+}
+
+type authedTransport struct {
+	key     string
+	wrapped http.RoundTripper
+}
+
+func (t *authedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req.Header.Set("Authorization", "bearer "+t.key)
+	return t.wrapped.RoundTrip(req)
 }
 
 var CmdTree = []External{
@@ -110,7 +121,18 @@ func findCmd(input string, cmds []External) (*External, error) {
 	return nil, fmt.Errorf("Invalid input. %v is not valid", input)
 }
 
+func printDescription(cmds []External) {
+	for _, cmd := range cmds {
+		line := fmt.Sprintf("%v: %v", cmd.name, cmd.description)
+		fmt.Println(line)
+	}
+}
+
 func Run(input []string) error {
+	if len(input) == 0 {
+		printDescription(CmdTree)
+		return nil
+	}
 	curr := CmdTree
 	var cmd *External
 	var err error
@@ -125,6 +147,10 @@ func Run(input []string) error {
 			break
 		}
 		curr = cmd.children
+	}
+	if cmd.run == nil {
+		printDescription(cmd.children)
+		return nil
 	}
 	return cmd.run(input[i:])
 }
