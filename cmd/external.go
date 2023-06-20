@@ -77,15 +77,7 @@ var CmdTree = []External{
 				name:        "pull",
 				description: "pull all repos in the repos folder",
 				run: func(params []string) error {
-					dirs, err := os.ReadDir(config.REPOS_PATH)
-					if err != nil {
-						return err
-					}
-					cmds := []Internal{}
-					for _, dir := range dirs {
-						cmds = append(cmds, NewWithDir(dir.Name(), "git pull"))
-					}
-					return RunCmdsConcurrent(cmds)
+					return pullRepos()
 				},
 			},
 		},
@@ -105,11 +97,12 @@ var CmdTree = []External{
 		name:        "morning",
 		description: "morning script",
 		run: func(params []string) error {
-			cmds := []Internal{
-				New("fsh login"),
-				New("fsh dev pull"),
+			c := New("fsh login")
+			err := c.RunCmd()
+			if err != nil {
+				return err
 			}
-			return RunCmds(cmds)
+			return pullRepos()
 		},
 	},
 	{
@@ -125,6 +118,18 @@ var CmdTree = []External{
 			return RunCmds(cmds)
 		},
 	},
+}
+
+func pullRepos() error {
+	dirs, err := os.ReadDir(config.REPOS_PATH)
+	if err != nil {
+		return err
+	}
+	cmds := []Internal{}
+	for _, dir := range dirs {
+		cmds = append(cmds, NewWithDir(dir.Name(), "git pull"))
+	}
+	return RunCmdsConcurrent(cmds)
 }
 
 func findCmd(input string, cmds []External) (*External, error) {
