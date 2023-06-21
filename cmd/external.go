@@ -118,6 +118,23 @@ var CmdTree = []External{
 			return RunCmds(cmds)
 		},
 	},
+	{
+		name:        "devspace",
+		description: "utilities for devspace",
+		children: []External{
+			{
+				name:        "reset",
+				description: "reset devspace",
+				run: func(params []string) error {
+					cmds := []Internal{
+						New("fsh dev destroy dev-devonfulcher"),
+						New("devspace use namespace dev-devonfulcher"),
+					}
+					return RunCmds(cmds)
+				},
+			},
+		},
+	},
 }
 
 func pullRepos() error {
