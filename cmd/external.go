@@ -34,7 +34,7 @@ var CmdTree = []External{
 			{
 				name:        "save",
 				description: "save progress and push it to remote",
-				run: func(param []string) error {
+				run: func(params []string) error {
 					cmds := []Internal{}
 					path, _ := os.Getwd()
 					if strings.Contains(path, config.SLG_REPO) {
@@ -42,7 +42,7 @@ var CmdTree = []External{
 					}
 					cmds = append(cmds, []Internal{
 						New("git add -A"),
-						NewFromArray([]string{"git", "commit", "-m", param[0]}),
+						NewFromArray([]string{"git", "commit", "-m", params[0]}),
 						New("git push"),
 					}...)
 					return RunCmds(cmds)
@@ -85,7 +85,7 @@ var CmdTree = []External{
 	{
 		name:        "curated",
 		description: "curated list of commands",
-		run: func(param []string) error {
+		run: func(params []string) error {
 			cmds := [][]string{
 				{"sudo !!", "run the last command as sudo"},
 			}
@@ -116,6 +116,14 @@ var CmdTree = []External{
 				NewWithDir(dir, "cp %v %v", config.EXECUTABLE_NAME, config.CLI_PATH),
 			}
 			return RunCmds(cmds)
+		},
+	},
+	{
+		name:        "kill",
+		description: "kill a process for a given port",
+		run: func(params []string) error {
+			c := New("kill $(lsof -t -i:%v)", params[0])
+			return c.RunCmd()
 		},
 	},
 }
