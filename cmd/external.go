@@ -209,6 +209,10 @@ func copyFile(src string, dest string) error {
 	if err != nil {
 		return err
 	}
+	err = os.Remove(dest)
+	if err != nil {
+		return err
+	}
 	err = os.WriteFile(dest, bytes, 0777)
 	if err != nil {
 		return err
