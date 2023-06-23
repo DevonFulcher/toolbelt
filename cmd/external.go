@@ -35,17 +35,7 @@ var CmdTree = []External{
 				name:        "save",
 				description: "save progress and push it to remote",
 				run: func(params []string) error {
-					cmds := []Internal{}
-					path, _ := os.Getwd()
-					if strings.Contains(path, config.SLG_REPO) {
-						cmds = append(cmds, New("gradle ktlintFormat"))
-					}
-					cmds = append(cmds, []Internal{
-						New("git add -A"),
-						NewFromArray([]string{"git", "commit", "-m", params[0]}),
-						New("git push"),
-					}...)
-					return RunCmds(cmds)
+					return gitSave(params[0])
 				},
 			},
 			{
@@ -143,6 +133,87 @@ var CmdTree = []External{
 			},
 		},
 	},
+	{
+		name:        "dot",
+		description: "utilities for dotfiles",
+		children: []External{
+			{
+				name:        "pull",
+				description: "pull in dotfile changes",
+				run: func(params []string) error {
+					err := cloneIfNotExist(config.REPOS_PATH, config.GITHUB_USERNAME, config.DOTFILES_REPO)
+					if err != nil {
+						return err
+					}
+
+					dotfiles := path.Join(config.REPOS_PATH, config.DOTFILES_REPO)
+					c := NewWithDir(dotfiles, "git pull")
+					err = c.RunCmd()
+					if err != nil {
+						return err
+					}
+
+					return copyFile(config.VSCODE_DOTFILES_SETTINGS, config.VSCODE_USER_SETTINGS)
+				},
+			},
+			{
+				name:        "push",
+				description: "push dotfile changes",
+				run: func(params []string) error {
+					err := cloneIfNotExist(config.REPOS_PATH, config.GITHUB_USERNAME, config.DOTFILES_REPO)
+					if err != nil {
+						return err
+					}
+
+					err = copyFile(config.VSCODE_USER_SETTINGS, config.VSCODE_DOTFILES_SETTINGS)
+					if err != nil {
+						return err
+					}
+
+					return gitSave("dot files push")
+				},
+			},
+		},
+	},
+}
+
+func gitSave(message string) error {
+	cmds := []Internal{}
+	path, _ := os.Getwd()
+	if strings.Contains(path, config.SLG_REPO) {
+		cmds = append(cmds, New("gradle ktlintFormat"))
+	}
+	cmds = append(cmds, []Internal{
+		New("git add -A"),
+		NewFromArray([]string{"git", "commit", "-m", message}),
+		New("git push"),
+	}...)
+	return RunCmds(cmds)
+}
+
+func cloneIfNotExist(parentDirPath string, org string, repo string) error {
+	repoCloneArg := fmt.Sprintf("git@github.com:%v/%v.git", org, repo)
+	repoPath := path.Join(parentDirPath, repo)
+	if _, err := os.Stat(repoPath); os.IsNotExist(err) {
+		c := NewWithDir(parentDirPath, "git clone %v", repoCloneArg)
+		err := c.RunCmd()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func copyFile(src string, dest string) error {
+	bytes, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	err = os.WriteFile(dest, bytes, 0777)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func pullRepos() error {
