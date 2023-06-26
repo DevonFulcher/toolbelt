@@ -24,6 +24,10 @@ func NewFromArray(cmd []string) Internal {
 	return Internal{nil, cmd}
 }
 
+func NewFromArrayWithDir(dir string, cmd []string) Internal {
+	return Internal{&dir, cmd}
+}
+
 func createCmdArrary(cmd string, vars []string) []string {
 	for _, curr := range vars {
 		cmd = strings.Replace(cmd, "%v", curr, 1)

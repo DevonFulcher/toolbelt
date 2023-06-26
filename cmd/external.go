@@ -35,7 +35,7 @@ var CmdTree = []External{
 				name:        "save",
 				description: "save progress and push it to remote",
 				run: func(params []string) error {
-					return gitSave(params[0])
+					return gitSave(".", params[0])
 				},
 			},
 			{
@@ -170,23 +170,23 @@ var CmdTree = []External{
 						return err
 					}
 
-					return gitSave("dot files push")
+					return gitSave(config.DOTFILES_PATH, "dot files push")
 				},
 			},
 		},
 	},
 }
 
-func gitSave(message string) error {
+func gitSave(dir string, message string) error {
 	cmds := []Internal{}
 	path, _ := os.Getwd()
 	if strings.Contains(path, config.SLG_REPO) {
 		cmds = append(cmds, New("gradle ktlintFormat"))
 	}
 	cmds = append(cmds, []Internal{
-		New("git add -A"),
-		NewFromArray([]string{"git", "commit", "-m", message}),
-		New("git push"),
+		NewWithDir(dir, "git add -A"),
+		NewFromArrayWithDir(dir, []string{"git", "commit", "-m", message}),
+		NewWithDir(dir, "git push"),
 	}...)
 	return RunCmds(cmds)
 }
