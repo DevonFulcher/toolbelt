@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -220,24 +221,26 @@ func pullExtensions() error {
 	}
 	remote := strings.Split(string(bytes), "\n")
 
-	for _, ext := range remote {
+	installationErrs := []string{}
+	toInstall := subtract(remote, prior)
+	for _, ext := range toInstall {
 		c = New("code --install-extension %v", ext)
 		_, err = c.RunCmd()
 		if err != nil {
-			return err
+			installationErrs = append(installationErrs, err.Error())
 		}
 	}
 
 	toUninstall := subtract(prior, remote)
 	for _, ext := range toUninstall {
 		c = New("code --uninstall-extension %v", ext)
-		_, err = c.RunCmd()
+		c.RunCmd()
 		if err != nil {
-			return err
+			installationErrs = append(installationErrs, err.Error())
 		}
 	}
 
-	return nil
+	return errors.New(strings.Join(installationErrs, "\n"))
 }
 
 func gitSave(dir string, message string) error {
