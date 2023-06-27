@@ -29,19 +29,6 @@ var CmdTree = []External{
 				},
 			},
 			{
-				name:        "log",
-				description: "pretty log git branches",
-				run: func(params []string) error {
-					arr := []string{"git", "log", "--graph", "--all", "--pretty='format:%C(auto)%h %C(cyan)%ar %C(auto)%d %C(magenta)%an %C(auto)%s'"}
-					c := NewFromArray(arr)
-					_, err := c.RunCmd()
-					if err != nil {
-						return err
-					}
-					return nil
-				},
-			},
-			{
 				name:        "sync",
 				description: "sync changes from main into branch",
 				run: func(params []string) error {
