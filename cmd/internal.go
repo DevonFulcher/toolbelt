@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -43,49 +44,54 @@ func NewCmds(cmds ...string) []Internal {
 	return result
 }
 
-func (c *Internal) RunCmd() error {
+func (c *Internal) RunCmd() (string, error) {
 	if c.dir != nil {
 		fmt.Printf("dir: %v cmd: %v\n", *c.dir, c.cmd)
 	} else {
 		fmt.Printf("cmd %v\n", c.cmd)
 	}
 	toRun := exec.Command(c.cmd[0], c.cmd[1:]...)
-	toRun.Stdout = os.Stdout
+	var stdout bytes.Buffer
+	toRun.Stdout = &stdout
 	toRun.Stdin = os.Stdin
 	toRun.Stderr = os.Stderr
 	if c.dir != nil {
 		toRun.Dir = *c.dir
 	}
 	if err := toRun.Run(); err != nil {
-		return fmt.Errorf("could not run command: %v with error: %v", c.cmd, err)
+		return "", fmt.Errorf("could not run command: %v with error: %v", c.cmd, err)
 	}
-	return nil
+	return stdout.String(), nil
 }
 
-func RunCmds(cmds []Internal) error {
+func RunCmds(cmds []Internal) ([]string, error) {
+	outs := []string{}
 	for _, cmd := range cmds {
-		err := cmd.RunCmd()
+		out, err := cmd.RunCmd()
 		if err != nil {
-			return err
+			return nil, err
 		}
+		outs = append(outs, out)
 	}
-	return nil
+	return outs, nil
 }
 
-func RunCmdsConcurrent(cmds []Internal) error {
+func RunCmdsConcurrent(cmds []Internal) ([]string, error) {
 	errs := []string{}
+	outs := []string{}
 	for _, cmd := range cmds {
 		go func(c Internal) {
-			err := c.RunCmd()
+			out, err := c.RunCmd()
 			if err != nil {
 				errs = append(errs, err.Error())
 			}
+			outs = append(outs, out)
 		}(cmd)
 	}
 	if len(errs) > 0 {
-		return fmt.Errorf("errors: %v", strings.Join(errs, ","))
+		return nil, fmt.Errorf("errors: %v", strings.Join(errs, ","))
 	}
-	return nil
+	return outs, nil
 }
 
 func PrintCmds(cmds [][]string) {

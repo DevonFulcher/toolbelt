@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"net/http"
 	"os"
 	"path"
 	"strings"
@@ -14,16 +13,6 @@ type External struct {
 	description string
 	children    []External
 	run         func(params []string) error
-}
-
-type authedTransport struct {
-	key     string
-	wrapped http.RoundTripper
-}
-
-func (t *authedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	req.Header.Set("Authorization", "bearer "+t.key)
-	return t.wrapped.RoundTrip(req)
 }
 
 var CmdTree = []External{
@@ -44,7 +33,11 @@ var CmdTree = []External{
 				run: func(params []string) error {
 					arr := []string{"git", "log", "--graph", "--all", "--pretty='format:%C(auto)%h %C(cyan)%ar %C(auto)%d %C(magenta)%an %C(auto)%s'"}
 					c := NewFromArray(arr)
-					return c.RunCmd()
+					_, err := c.RunCmd()
+					if err != nil {
+						return err
+					}
+					return nil
 				},
 			},
 			{
@@ -60,7 +53,11 @@ var CmdTree = []External{
 						New("git merge %v", config.DEFAULT_BRANCH),
 						New("git stash pop"),
 					}
-					return RunCmds(cmds)
+					_, err := RunCmds(cmds)
+					if err != nil {
+						return err
+					}
+					return nil
 				},
 			},
 			{
@@ -88,7 +85,7 @@ var CmdTree = []External{
 		description: "morning script",
 		run: func(params []string) error {
 			c := New("fsh login")
-			err := c.RunCmd()
+			_, err := c.RunCmd()
 			if err != nil {
 				return err
 			}
@@ -105,7 +102,11 @@ var CmdTree = []External{
 				NewWithDir(dir, "go build"),
 				NewWithDir(dir, "cp %v %v", config.EXECUTABLE_NAME, config.CLI_PATH),
 			}
-			return RunCmds(cmds)
+			_, err := RunCmds(cmds)
+			if err != nil {
+				return err
+			}
+			return nil
 		},
 	},
 	{
@@ -113,7 +114,11 @@ var CmdTree = []External{
 		description: "kill a process for a given port",
 		run: func(params []string) error {
 			c := New("kill $(lsof -t -i:%v)", params[0])
-			return c.RunCmd()
+			_, err := c.RunCmd()
+			if err != nil {
+				return err
+			}
+			return nil
 		},
 	},
 	{
@@ -128,7 +133,11 @@ var CmdTree = []External{
 						New("fsh dev destroy dev-devonfulcher"),
 						New("devspace use namespace dev-devonfulcher"),
 					}
-					return RunCmds(cmds)
+					_, err := RunCmds(cmds)
+					if err != nil {
+						return err
+					}
+					return nil
 				},
 			},
 		},
@@ -148,12 +157,17 @@ var CmdTree = []External{
 
 					dotfiles := path.Join(config.REPOS_PATH, config.DOTFILES_REPO)
 					c := NewWithDir(dotfiles, "git pull")
-					err = c.RunCmd()
+					_, err = c.RunCmd()
 					if err != nil {
 						return err
 					}
 
-					return copyFile(config.VSCODE_DOTFILES_SETTINGS, config.VSCODE_USER_SETTINGS)
+					err = copyFile(config.VSCODE_DOTFILES_SETTINGS, config.VSCODE_USER_SETTINGS)
+					if err != nil {
+						return err
+					}
+
+					return pullExtensions()
 				},
 			},
 			{
@@ -177,6 +191,55 @@ var CmdTree = []External{
 	},
 }
 
+func subtract[T comparable](left []T, right []T) []T {
+	result := []T{}
+	rightMap := make(map[T]bool)
+	for _, item := range right {
+		rightMap[item] = true
+	}
+
+	for _, item := range left {
+		if !rightMap[item] {
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
+func pullExtensions() error {
+	c := New("code --list-extensions")
+	out, err := c.RunCmd()
+	if err != nil {
+		return err
+	}
+	prior := strings.Split(out, "\n")
+
+	bytes, err := os.ReadFile(config.VSCODE_DOTFILES_EXTENSIONS)
+	if err != nil {
+		return err
+	}
+	remote := strings.Split(string(bytes), "\n")
+
+	for _, ext := range remote {
+		c = New("code --install-extension %v", ext)
+		_, err = c.RunCmd()
+		if err != nil {
+			return err
+		}
+	}
+
+	toUninstall := subtract(prior, remote)
+	for _, ext := range toUninstall {
+		c = New("code --uninstall-extension %v", ext)
+		_, err = c.RunCmd()
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func gitSave(dir string, message string) error {
 	cmds := []Internal{}
 	path, _ := os.Getwd()
@@ -188,7 +251,11 @@ func gitSave(dir string, message string) error {
 		NewFromArrayWithDir(dir, []string{"git", "commit", "-m", message}),
 		NewWithDir(dir, "git push"),
 	}...)
-	return RunCmds(cmds)
+	_, err := RunCmds(cmds)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func cloneIfNotExist(parentDirPath string, org string, repo string) error {
@@ -196,7 +263,7 @@ func cloneIfNotExist(parentDirPath string, org string, repo string) error {
 	repoPath := path.Join(parentDirPath, repo)
 	if _, err := os.Stat(repoPath); os.IsNotExist(err) {
 		c := NewWithDir(parentDirPath, "git clone %v", repoCloneArg)
-		err := c.RunCmd()
+		_, err := c.RunCmd()
 		if err != nil {
 			return err
 		}
@@ -229,7 +296,11 @@ func pullRepos() error {
 	for _, dir := range dirs {
 		cmds = append(cmds, NewWithDir(dir.Name(), "git pull"))
 	}
-	return RunCmdsConcurrent(cmds)
+	_, err = RunCmdsConcurrent(cmds)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func findCmd(input string, cmds []External) (*External, error) {
@@ -238,7 +309,7 @@ func findCmd(input string, cmds []External) (*External, error) {
 			return &cmd, nil
 		}
 	}
-	return nil, fmt.Errorf("Invalid input. %v is not valid", input)
+	return nil, fmt.Errorf("invalid input. %v is not valid", input)
 }
 
 func printDescription(cmds []External) {

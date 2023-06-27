@@ -20,3 +20,5 @@ var DOTFILES_PATH = path.Join(REPOS_PATH, DOTFILES_REPO)
 // https://code.visualstudio.com/docs/getstarted/settings#_settings-file-locations
 var VSCODE_DOTFILES_SETTINGS = path.Join(DOTFILES_PATH, "shared/vscode/settings.json")
 var VSCODE_USER_SETTINGS = path.Join(HOME, "Library/Application Support/Code/User/settings.json")
+
+var VSCODE_DOTFILES_EXTENSIONS = path.Join(DOTFILES_PATH, "shared/vscode/extensions.txt")
