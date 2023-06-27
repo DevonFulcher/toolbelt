@@ -61,7 +61,9 @@ func (c *Internal) RunCmd() (string, error) {
 	if err := toRun.Run(); err != nil {
 		return "", fmt.Errorf("could not run command: %v with error: %v", c.cmd, err)
 	}
-	return stdout.String(), nil
+	out := stdout.String()
+	fmt.Println(out)
+	return out, nil
 }
 
 func RunCmds(cmds []Internal) ([]string, error) {
