@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 )
 
 type Internal struct {
@@ -52,18 +53,21 @@ func (c *Internal) RunCmd() (string, error) {
 	}
 	toRun := exec.Command(c.cmd[0], c.cmd[1:]...)
 	var stdout bytes.Buffer
+	var stderr bytes.Buffer
 	toRun.Stdout = &stdout
 	toRun.Stdin = os.Stdin
-	toRun.Stderr = os.Stderr
+	toRun.Stderr = &stderr
 	if c.dir != nil {
 		toRun.Dir = *c.dir
 	}
 	if err := toRun.Run(); err != nil {
-		return "", fmt.Errorf("could not run command: %v with error: %v", c.cmd, err)
+		return "", fmt.Errorf("could not run command: %v\n in dir %v\n with error message: %v\n and stderr: %v", c.cmd, *c.dir, err, toRun.Stderr)
 	}
-	out := stdout.String()
-	fmt.Println(out)
-	return out, nil
+	printOut := stdout.String()
+	if printOut != "" {
+		fmt.Println(printOut)
+	}
+	return printOut, nil
 }
 
 func RunCmds(cmds []Internal) ([]string, error) {
@@ -81,8 +85,11 @@ func RunCmds(cmds []Internal) ([]string, error) {
 func RunCmdsConcurrent(cmds []Internal) ([]string, error) {
 	errs := []string{}
 	outs := []string{}
+	var wg sync.WaitGroup
 	for _, cmd := range cmds {
+		wg.Add(1)
 		go func(c Internal) {
+			defer wg.Done()
 			out, err := c.RunCmd()
 			if err != nil {
 				errs = append(errs, err.Error())
@@ -90,8 +97,9 @@ func RunCmdsConcurrent(cmds []Internal) ([]string, error) {
 			outs = append(outs, out)
 		}(cmd)
 	}
+	wg.Wait()
 	if len(errs) > 0 {
-		return nil, fmt.Errorf("errors: %v", strings.Join(errs, ","))
+		return nil, fmt.Errorf("errors: %v", strings.Join(errs, "\n"))
 	}
 	return outs, nil
 }
