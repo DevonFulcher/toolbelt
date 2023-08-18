@@ -82,26 +82,27 @@ func RunCmds(cmds []Internal) ([]string, error) {
 	return outs, nil
 }
 
-func RunCmdsConcurrent(cmds []Internal) ([]string, error) {
+func RunCmdsConcurrent(cmds []Internal) error {
 	errs := []string{}
-	outs := []string{}
+	errCmds := []string{}
 	var wg sync.WaitGroup
 	for _, cmd := range cmds {
 		wg.Add(1)
 		go func(c Internal) {
 			defer wg.Done()
-			out, err := c.RunCmd()
+			_, err := c.RunCmd()
 			if err != nil {
 				errs = append(errs, err.Error())
+				cmdString := strings.Join(c.cmd, " ")
+				errCmds = append(errCmds, fmt.Sprintf("cmd: %v dir: %v", cmdString, c.dir))
 			}
-			outs = append(outs, out)
 		}(cmd)
 	}
 	wg.Wait()
 	if len(errs) > 0 {
-		return nil, fmt.Errorf("errors: %v", strings.Join(errs, "\n"))
+		return fmt.Errorf("errors: %v\nerror commands: %v", strings.Join(errs, "\n"), strings.Join(errCmds, "\n"))
 	}
-	return outs, nil
+	return nil
 }
 
 func PrintCmds(cmds [][]string) {

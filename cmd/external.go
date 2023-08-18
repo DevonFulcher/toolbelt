@@ -287,7 +287,7 @@ func pullRepos() error {
 		repoPath := path.Join(config.REPOS_PATH, dir.Name())
 		cmds = append(cmds, NewWithDir(repoPath, "git pull"))
 	}
-	_, err = RunCmdsConcurrent(cmds)
+	err = RunCmdsConcurrent(cmds)
 	if err != nil {
 		return err
 	}
