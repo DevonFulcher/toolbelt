@@ -10,6 +10,7 @@ const SLG_REPO = "semantic-layer-gateway"
 const RUNTIME_GATEWAY_REPO = "runtime-gateway"
 const DOTFILES_REPO = "dotfiles"
 const GITHUB_USERNAME = "DevonFulcher"
+const DEVSPACE_NAMESPACE = "dev-devonfulcher"
 
 var REPOS_PATH = path.Join(HOME, "git")
 var CLI_PATH = path.Join(HOME, "cli")

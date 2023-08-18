@@ -138,8 +138,8 @@ var CmdTree = []External{
 				description: "reset devspace",
 				run: func(params []string) error {
 					cmds := []Internal{
-						New("fsh dev destroy dev-devonfulcher"),
-						New("devspace use namespace dev-devonfulcher"),
+						New("fsh dev destroy %v", config.DEVSPACE_NAMESPACE),
+						New("devspace use namespace %v", config.DEVSPACE_NAMESPACE),
 					}
 					_, err := RunCmds(cmds)
 					if err != nil {
