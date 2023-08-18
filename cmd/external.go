@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"toolbelt/config"
 )
@@ -32,18 +33,37 @@ var CmdTree = []External{
 				name:        "sync",
 				description: "sync changes from main into branch",
 				run: func(params []string) error {
+					cmd := New("git add -A")
+					_, err := cmd.RunCmd()
+					if err != nil {
+						return err
+					}
+					cmd = New("git diff --cached --numstat | wc -l")
+					stdout, err := cmd.RunCmd()
+					if err != nil {
+						return err
+					}
+					numStashedFiles, err := strconv.Atoi(stdout)
+					if err != nil {
+						return err
+					}
 					cmds := []Internal{
-						New("git add -A"),
 						New("git stash"),
 						New("git checkout %v", config.DEFAULT_BRANCH),
 						New("git pull"),
 						New("git checkout -"),
 						New("git merge %v", config.DEFAULT_BRANCH),
-						New("git stash pop"),
 					}
-					_, err := RunCmds(cmds)
+					_, err = RunCmds(cmds)
 					if err != nil {
 						return err
+					}
+					if numStashedFiles > 0 {
+						cmd = New("git stash pop")
+						_, err = cmd.RunCmd()
+						if err != nil {
+							return err
+						}
 					}
 					return nil
 				},
