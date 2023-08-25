@@ -53,16 +53,20 @@ func (c *Internal) RunCmd() (string, error) {
 	}
 	toRun := exec.Command(c.cmd[0], c.cmd[1:]...)
 	var stdout bytes.Buffer
-	var stderr bytes.Buffer
+	//var stderr bytes.Buffer
 	toRun.Stdout = &stdout
 	toRun.Stdin = os.Stdin
-	toRun.Stderr = &stderr
+	toRun.Stderr = os.Stderr
 	if c.dir != nil {
 		toRun.Dir = *c.dir
 	}
+	fmt.Printf("here %v\n", toRun.Stdout)
+	fmt.Printf("here %v\n", toRun.Stdin)
+	fmt.Printf("here %v\n", toRun.Stderr)
 	if err := toRun.Run(); err != nil {
 		return "", fmt.Errorf("could not run command: %v\n in dir %v\n with error message: %v\n and stderr: %v", c.cmd, *c.dir, err, toRun.Stderr)
 	}
+	fmt.Println("there")
 	printOut := stdout.String()
 	if printOut != "" {
 		fmt.Println(printOut)

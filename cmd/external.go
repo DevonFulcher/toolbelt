@@ -137,15 +137,27 @@ var CmdTree = []External{
 				name:        "reset",
 				description: "reset devspace",
 				run: func(params []string) error {
-					cmds := []Internal{
-						New("fsh dev destroy %v", config.DEVSPACE_NAMESPACE),
-						New("devspace use namespace %v", config.DEVSPACE_NAMESPACE),
-					}
-					_, err := RunCmds(cmds)
+					//strCmd := fmt.Sprintf("kubectl get namespace -o custom-columns=NAME:metadata.name | grep %v", config.DEVSPACE_NAMESPACE)
+					strCmd := "kubectl get namespace -o custom-columns=NAME:metadata.name"
+					c := New(strCmd)
+					namespaces, err := c.RunCmd()
 					if err != nil {
 						return err
 					}
-					return nil
+					for _, namespace := range strings.Split(namespaces, "\n") {
+						if !strings.Contains(namespace, config.DEVSPACE_NAMESPACE) {
+							return fmt.Errorf("namespace doesn't contain %v", config.DEVSPACE_NAMESPACE)
+						}
+						fmt.Println("would delete %v", namespace)
+						//c = New("fsh dev destroy %v", namespace)
+						_, err = c.RunCmd()
+						if err != nil {
+							return err
+						}
+					}
+					c = New("devspace use namespace %v", config.DEVSPACE_NAMESPACE)
+					_, err = c.RunCmd()
+					return err
 				},
 			},
 		},
