@@ -3,12 +3,15 @@ package main
 import (
 	"fmt"
 	"os"
-	"toolbelt/cmd"
+	"toolbelt/external"
+	"toolbelt/hooks"
 )
 
 func main() {
 	input := os.Args[1:] // ignore the "toolbelt" prefix
-	err := cmd.Run(input)
+	h := hooks.NewCurrent()
+	cmdRunner := external.NewCmdRunner(h)
+	err := cmdRunner.Run(input)
 	if err != nil {
 		fmt.Println(err.Error())
 		os.Exit(1)
