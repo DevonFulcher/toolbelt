@@ -137,11 +137,15 @@ var CmdTree = []External{
 				name:        "reset",
 				description: "reset devspace",
 				run: func(params []string) error {
+					err := os.Remove("~/.devspace")
+					if err != nil {
+						return err
+					}
 					cmds := []Internal{
 						New("fsh dev destroy %v", config.DEVSPACE_NAMESPACE),
 						New("devspace use namespace %v", config.DEVSPACE_NAMESPACE),
 					}
-					_, err := RunCmds(cmds)
+					_, err = RunCmds(cmds)
 					if err != nil {
 						return err
 					}
