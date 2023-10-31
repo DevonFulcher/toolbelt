@@ -252,10 +252,6 @@ func pullExtensions() error {
 
 func gitSave(dir string, message string) error {
 	cmds := []Internal{}
-	path, _ := os.Getwd()
-	if strings.Contains(path, config.SLG_REPO) {
-		cmds = append(cmds, New("gradle ktlintFormat"))
-	}
 	cmds = append(cmds, []Internal{
 		NewWithDir(dir, "git add -A"),
 		NewFromArrayWithDir(dir, []string{"git", "commit", "-m", message}),
