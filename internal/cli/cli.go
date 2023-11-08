@@ -51,8 +51,10 @@ var CmdTree = []Command{
 				description: "create or open a PR",
 				run: func(params []string) error {
 					reviewers := strings.Join(repo.Current().Reviewers(), ",")
-					shell.New("gh pr view --web || gh pr create --reviewer %v --web", reviewers)
-					return nil
+					c := shell.New("gh pr view --web || gh pr create --reviewer %v --web", reviewers)
+					out, err := c.RunCmd()
+					fmt.Println(out)
+					return err
 				},
 			},
 		},
