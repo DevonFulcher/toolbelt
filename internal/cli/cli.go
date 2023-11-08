@@ -2,28 +2,27 @@ package cli
 
 import (
 	"fmt"
-	"os"
-	"path"
-	"strconv"
 	"toolbelt/internal/config"
-	"toolbelt/pkg/fs"
+	"toolbelt/pkg/devspace"
+	"toolbelt/pkg/dotfile"
 	"toolbelt/pkg/git"
+	"toolbelt/pkg/morning"
 	"toolbelt/pkg/shell"
-	"toolbelt/pkg/vscode"
+	"toolbelt/pkg/update"
 )
 
-type External struct {
+type Command struct {
 	name        string
 	description string
-	children    []External
+	children    []Command
 	run         func(params []string) error
 }
 
-var CmdTree = []External{
+var CmdTree = []Command{
 	{
 		name:        "git",
 		description: "git utilities",
-		children: []External{
+		children: []Command{
 			{
 				name:        "save",
 				description: "save progress and push it to remote",
@@ -35,39 +34,7 @@ var CmdTree = []External{
 				name:        "sync",
 				description: "sync changes from main into branch",
 				run: func(params []string) error {
-					cmd := shell.New("git add -A")
-					_, err := cmd.RunCmd()
-					if err != nil {
-						return err
-					}
-					cmd = shell.New("git diff --cached --numstat | wc -l")
-					stdout, err := cmd.RunCmd()
-					if err != nil {
-						return err
-					}
-					numStashedFiles, err := strconv.Atoi(stdout)
-					if err != nil {
-						return err
-					}
-					cmds := []shell.Internal{
-						shell.New("git stash"),
-						shell.New("git checkout %v", config.DEFAULT_BRANCH),
-						shell.New("git pull"),
-						shell.New("git checkout -"),
-						shell.New("git merge %v", config.DEFAULT_BRANCH),
-					}
-					_, err = shell.RunCmds(cmds)
-					if err != nil {
-						return err
-					}
-					if numStashedFiles > 0 {
-						cmd = shell.New("git stash pop")
-						_, err = cmd.RunCmd()
-						if err != nil {
-							return err
-						}
-					}
-					return nil
+					return git.Sync()
 				},
 			},
 			{
@@ -94,29 +61,14 @@ var CmdTree = []External{
 		name:        "morning",
 		description: "morning script",
 		run: func(params []string) error {
-			c := shell.New("aws sso login")
-			_, err := c.RunCmd()
-			if err != nil {
-				return err
-			}
-			return git.PullRepos()
+			return morning.Run()
 		},
 	},
 	{
 		name:        "update",
 		description: "update toolbelt",
 		run: func(params []string) error {
-			dir := path.Join(config.REPOS_PATH, config.REPO_NAME)
-			cmds := []shell.Internal{
-				shell.NewWithDir(dir, "git pull"),
-				shell.NewWithDir(dir, "go build"),
-				shell.NewWithDir(dir, "cp %v %v", config.EXECUTABLE_NAME, config.CLI_PATH),
-			}
-			_, err := shell.RunCmds(cmds)
-			if err != nil {
-				return err
-			}
-			return nil
+			return update.Run()
 		},
 	},
 	{
@@ -134,24 +86,12 @@ var CmdTree = []External{
 	{
 		name:        "devspace",
 		description: "utilities for devspace",
-		children: []External{
+		children: []Command{
 			{
 				name:        "reset",
 				description: "reset devspace",
 				run: func(params []string) error {
-					err := os.Remove("~/.devspace")
-					if err != nil {
-						return err
-					}
-					cmds := []shell.Internal{
-						shell.New("fsh dev destroy %v", config.DEVSPACE_NAMESPACE),
-						shell.New("devspace use namespace %v", config.DEVSPACE_NAMESPACE),
-					}
-					_, err = shell.RunCmds(cmds)
-					if err != nil {
-						return err
-					}
-					return nil
+					return devspace.Reset()
 				},
 			},
 		},
@@ -159,46 +99,19 @@ var CmdTree = []External{
 	{
 		name:        "dot",
 		description: "utilities for dotfiles",
-		children: []External{
+		children: []Command{
 			{
 				name:        "pull",
 				description: "pull in dotfile changes",
 				run: func(params []string) error {
-					err := git.CloneIfNotExist(config.REPOS_PATH, config.GITHUB_USERNAME, config.DOTFILES_REPO)
-					if err != nil {
-						return err
-					}
-
-					dotfiles := path.Join(config.REPOS_PATH, config.DOTFILES_REPO)
-					c := shell.NewWithDir(dotfiles, "git pull")
-					_, err = c.RunCmd()
-					if err != nil {
-						return err
-					}
-
-					err = fs.CopyFile(config.VSCODE_DOTFILES_SETTINGS, config.VSCODE_USER_SETTINGS)
-					if err != nil {
-						return err
-					}
-
-					return vscode.PullExtensions()
+					return dotfile.Pull()
 				},
 			},
 			{
 				name:        "push",
 				description: "push dotfile changes",
 				run: func(params []string) error {
-					err := git.CloneIfNotExist(config.REPOS_PATH, config.GITHUB_USERNAME, config.DOTFILES_REPO)
-					if err != nil {
-						return err
-					}
-
-					err = fs.CopyFile(config.VSCODE_USER_SETTINGS, config.VSCODE_DOTFILES_SETTINGS)
-					if err != nil {
-						return err
-					}
-
-					return git.GitSave(config.DOTFILES_PATH, "dot files push")
+					return dotfile.Push()
 				},
 			},
 			{
@@ -213,7 +126,7 @@ var CmdTree = []External{
 	},
 }
 
-func findCmd(input string, cmds []External) (*External, error) {
+func findCmd(input string, cmds []Command) (*Command, error) {
 	for _, cmd := range cmds {
 		if input == cmd.name {
 			return &cmd, nil
@@ -222,7 +135,7 @@ func findCmd(input string, cmds []External) (*External, error) {
 	return nil, fmt.Errorf("invalid input. %v is not valid", input)
 }
 
-func printDescription(cmds []External) {
+func printDescription(cmds []Command) {
 	for _, cmd := range cmds {
 		line := fmt.Sprintf("%v: %v", cmd.name, cmd.description)
 		fmt.Println(line)
@@ -235,7 +148,7 @@ func Run(input []string) error {
 		return nil
 	}
 	curr := CmdTree
-	var cmd *External
+	var cmd *Command
 	var err error
 	i := 0
 	for _, val := range input {
