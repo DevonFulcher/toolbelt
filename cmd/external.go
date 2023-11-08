@@ -199,6 +199,14 @@ var CmdTree = []External{
 					return gitSave(config.DOTFILES_PATH, "dot files push")
 				},
 			},
+			{
+				name:        "list",
+				description: "list dot files",
+				run: func(params []string) error {
+					fmt.Printf("vscode: %v", config.VSCODE_USER_SETTINGS)
+					return nil
+				},
+			},
 		},
 	},
 }
