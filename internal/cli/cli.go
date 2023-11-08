@@ -2,11 +2,13 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 	"toolbelt/internal/config"
 	"toolbelt/pkg/devspace"
 	"toolbelt/pkg/dotfile"
 	"toolbelt/pkg/git"
 	"toolbelt/pkg/morning"
+	"toolbelt/pkg/repo"
 	"toolbelt/pkg/shell"
 	"toolbelt/pkg/update"
 )
@@ -42,6 +44,15 @@ var CmdTree = []Command{
 				description: "pull all repos in the repos folder",
 				run: func(params []string) error {
 					return git.PullRepos()
+				},
+			},
+			{
+				name:        "pr",
+				description: "create or open a PR",
+				run: func(params []string) error {
+					reviewers := strings.Join(repo.Current().Reviewers(), ",")
+					shell.New("gh pr view --web || gh pr create --reviewer %v --web", reviewers)
+					return nil
 				},
 			},
 		},
