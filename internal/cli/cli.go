@@ -3,12 +3,12 @@ package cli
 import (
 	"fmt"
 	"toolbelt/internal/config"
+	"toolbelt/internal/update"
 	"toolbelt/pkg/devspace"
 	"toolbelt/pkg/dotfile"
 	"toolbelt/pkg/git"
 	"toolbelt/pkg/morning"
 	"toolbelt/pkg/shell"
-	"toolbelt/pkg/update"
 )
 
 type Command struct {
@@ -23,13 +23,6 @@ var CmdTree = []Command{
 		name:        "git",
 		description: "git utilities",
 		children: []Command{
-			{
-				name:        "save",
-				description: "save progress and push it to remote",
-				run: func(params []string) error {
-					return git.GitSave(".", params[0])
-				},
-			},
 			{
 				name:        "sync",
 				description: "sync changes from main into branch",
