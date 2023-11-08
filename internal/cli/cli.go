@@ -1,13 +1,15 @@
-package cmd
+package cli
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path"
 	"strconv"
-	"strings"
-	"toolbelt/config"
+	"toolbelt/internal/config"
+	"toolbelt/pkg/fs"
+	"toolbelt/pkg/git"
+	"toolbelt/pkg/shell"
+	"toolbelt/pkg/vscode"
 )
 
 type External struct {
@@ -26,19 +28,19 @@ var CmdTree = []External{
 				name:        "save",
 				description: "save progress and push it to remote",
 				run: func(params []string) error {
-					return gitSave(".", params[0])
+					return git.GitSave(".", params[0])
 				},
 			},
 			{
 				name:        "sync",
 				description: "sync changes from main into branch",
 				run: func(params []string) error {
-					cmd := New("git add -A")
+					cmd := shell.New("git add -A")
 					_, err := cmd.RunCmd()
 					if err != nil {
 						return err
 					}
-					cmd = New("git diff --cached --numstat | wc -l")
+					cmd = shell.New("git diff --cached --numstat | wc -l")
 					stdout, err := cmd.RunCmd()
 					if err != nil {
 						return err
@@ -47,19 +49,19 @@ var CmdTree = []External{
 					if err != nil {
 						return err
 					}
-					cmds := []Internal{
-						New("git stash"),
-						New("git checkout %v", config.DEFAULT_BRANCH),
-						New("git pull"),
-						New("git checkout -"),
-						New("git merge %v", config.DEFAULT_BRANCH),
+					cmds := []shell.Internal{
+						shell.New("git stash"),
+						shell.New("git checkout %v", config.DEFAULT_BRANCH),
+						shell.New("git pull"),
+						shell.New("git checkout -"),
+						shell.New("git merge %v", config.DEFAULT_BRANCH),
 					}
-					_, err = RunCmds(cmds)
+					_, err = shell.RunCmds(cmds)
 					if err != nil {
 						return err
 					}
 					if numStashedFiles > 0 {
-						cmd = New("git stash pop")
+						cmd = shell.New("git stash pop")
 						_, err = cmd.RunCmd()
 						if err != nil {
 							return err
@@ -72,7 +74,7 @@ var CmdTree = []External{
 				name:        "pull",
 				description: "pull all repos in the repos folder",
 				run: func(params []string) error {
-					return pullRepos()
+					return git.PullRepos()
 				},
 			},
 		},
@@ -84,7 +86,7 @@ var CmdTree = []External{
 			cmds := [][]string{
 				{"sudo !!", "run the last command as sudo"},
 			}
-			PrintCmds(cmds)
+			shell.PrintCmds(cmds)
 			return nil
 		},
 	},
@@ -92,12 +94,12 @@ var CmdTree = []External{
 		name:        "morning",
 		description: "morning script",
 		run: func(params []string) error {
-			c := New("aws sso login")
+			c := shell.New("aws sso login")
 			_, err := c.RunCmd()
 			if err != nil {
 				return err
 			}
-			return pullRepos()
+			return git.PullRepos()
 		},
 	},
 	{
@@ -105,12 +107,12 @@ var CmdTree = []External{
 		description: "update toolbelt",
 		run: func(params []string) error {
 			dir := path.Join(config.REPOS_PATH, config.REPO_NAME)
-			cmds := []Internal{
-				NewWithDir(dir, "git pull"),
-				NewWithDir(dir, "go build"),
-				NewWithDir(dir, "cp %v %v", config.EXECUTABLE_NAME, config.CLI_PATH),
+			cmds := []shell.Internal{
+				shell.NewWithDir(dir, "git pull"),
+				shell.NewWithDir(dir, "go build"),
+				shell.NewWithDir(dir, "cp %v %v", config.EXECUTABLE_NAME, config.CLI_PATH),
 			}
-			_, err := RunCmds(cmds)
+			_, err := shell.RunCmds(cmds)
 			if err != nil {
 				return err
 			}
@@ -121,7 +123,7 @@ var CmdTree = []External{
 		name:        "kill",
 		description: "kill a process for a given port",
 		run: func(params []string) error {
-			c := New("kill $(lsof -t -i:%v)", params[0])
+			c := shell.New("kill $(lsof -t -i:%v)", params[0])
 			_, err := c.RunCmd()
 			if err != nil {
 				return err
@@ -141,11 +143,11 @@ var CmdTree = []External{
 					if err != nil {
 						return err
 					}
-					cmds := []Internal{
-						New("fsh dev destroy %v", config.DEVSPACE_NAMESPACE),
-						New("devspace use namespace %v", config.DEVSPACE_NAMESPACE),
+					cmds := []shell.Internal{
+						shell.New("fsh dev destroy %v", config.DEVSPACE_NAMESPACE),
+						shell.New("devspace use namespace %v", config.DEVSPACE_NAMESPACE),
 					}
-					_, err = RunCmds(cmds)
+					_, err = shell.RunCmds(cmds)
 					if err != nil {
 						return err
 					}
@@ -162,41 +164,41 @@ var CmdTree = []External{
 				name:        "pull",
 				description: "pull in dotfile changes",
 				run: func(params []string) error {
-					err := cloneIfNotExist(config.REPOS_PATH, config.GITHUB_USERNAME, config.DOTFILES_REPO)
+					err := git.CloneIfNotExist(config.REPOS_PATH, config.GITHUB_USERNAME, config.DOTFILES_REPO)
 					if err != nil {
 						return err
 					}
 
 					dotfiles := path.Join(config.REPOS_PATH, config.DOTFILES_REPO)
-					c := NewWithDir(dotfiles, "git pull")
+					c := shell.NewWithDir(dotfiles, "git pull")
 					_, err = c.RunCmd()
 					if err != nil {
 						return err
 					}
 
-					err = copyFile(config.VSCODE_DOTFILES_SETTINGS, config.VSCODE_USER_SETTINGS)
+					err = fs.CopyFile(config.VSCODE_DOTFILES_SETTINGS, config.VSCODE_USER_SETTINGS)
 					if err != nil {
 						return err
 					}
 
-					return pullExtensions()
+					return vscode.PullExtensions()
 				},
 			},
 			{
 				name:        "push",
 				description: "push dotfile changes",
 				run: func(params []string) error {
-					err := cloneIfNotExist(config.REPOS_PATH, config.GITHUB_USERNAME, config.DOTFILES_REPO)
+					err := git.CloneIfNotExist(config.REPOS_PATH, config.GITHUB_USERNAME, config.DOTFILES_REPO)
 					if err != nil {
 						return err
 					}
 
-					err = copyFile(config.VSCODE_USER_SETTINGS, config.VSCODE_DOTFILES_SETTINGS)
+					err = fs.CopyFile(config.VSCODE_USER_SETTINGS, config.VSCODE_DOTFILES_SETTINGS)
 					if err != nil {
 						return err
 					}
 
-					return gitSave(config.DOTFILES_PATH, "dot files push")
+					return git.GitSave(config.DOTFILES_PATH, "dot files push")
 				},
 			},
 			{
@@ -209,117 +211,6 @@ var CmdTree = []External{
 			},
 		},
 	},
-}
-
-func subtract[T comparable](left []T, right []T) []T {
-	result := []T{}
-	rightMap := make(map[T]bool)
-	for _, item := range right {
-		rightMap[item] = true
-	}
-
-	for _, item := range left {
-		if !rightMap[item] {
-			result = append(result, item)
-		}
-	}
-	return result
-}
-
-func pullExtensions() error {
-	c := New("code --list-extensions")
-	out, err := c.RunCmd()
-	if err != nil {
-		return err
-	}
-	prior := strings.Split(out, "\n")
-
-	bytes, err := os.ReadFile(config.VSCODE_DOTFILES_EXTENSIONS)
-	if err != nil {
-		return err
-	}
-	remote := strings.Split(string(bytes), "\n")
-
-	installationErrs := []string{}
-	toInstall := subtract(remote, prior)
-	for _, ext := range toInstall {
-		c = New("code --install-extension %v", ext)
-		_, err = c.RunCmd()
-		if err != nil {
-			installationErrs = append(installationErrs, err.Error())
-		}
-	}
-
-	toUninstall := subtract(prior, remote)
-	for _, ext := range toUninstall {
-		c = New("code --uninstall-extension %v", ext)
-		c.RunCmd()
-		if err != nil {
-			installationErrs = append(installationErrs, err.Error())
-		}
-	}
-
-	return errors.New(strings.Join(installationErrs, "\n"))
-}
-
-func gitSave(dir string, message string) error {
-	cmds := []Internal{}
-	cmds = append(cmds, []Internal{
-		NewWithDir(dir, "git add -A"),
-		NewFromArrayWithDir(dir, []string{"git", "commit", "-m", message}),
-		NewWithDir(dir, "git push"),
-	}...)
-	_, err := RunCmds(cmds)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func cloneIfNotExist(parentDirPath string, org string, repo string) error {
-	repoCloneArg := fmt.Sprintf("git@github.com:%v/%v.git", org, repo)
-	repoPath := path.Join(parentDirPath, repo)
-	if _, err := os.Stat(repoPath); os.IsNotExist(err) {
-		c := NewWithDir(parentDirPath, "git clone %v", repoCloneArg)
-		_, err := c.RunCmd()
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func copyFile(src string, dest string) error {
-	bytes, err := os.ReadFile(src)
-	if err != nil {
-		return err
-	}
-	err = os.Remove(dest)
-	if err != nil {
-		return err
-	}
-	err = os.WriteFile(dest, bytes, 0777)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func pullRepos() error {
-	dirs, err := os.ReadDir(config.REPOS_PATH)
-	if err != nil {
-		return err
-	}
-	cmds := []Internal{}
-	for _, dir := range dirs {
-		repoPath := path.Join(config.REPOS_PATH, dir.Name())
-		cmds = append(cmds, NewWithDir(repoPath, "git pull"))
-	}
-	err = RunCmdsConcurrent(cmds)
-	if err != nil {
-		return err
-	}
-	return nil
 }
 
 func findCmd(input string, cmds []External) (*External, error) {

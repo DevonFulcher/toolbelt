@@ -1,4 +1,4 @@
-package cmd
+package shell
 
 import (
 	"bytes"
