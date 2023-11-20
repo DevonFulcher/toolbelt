@@ -9,25 +9,25 @@ import (
 	"sync"
 )
 
-type Internal struct {
+type Cmd struct {
 	dir *string
 	cmd []string
 }
 
-func New(cmd string, vars ...string) Internal {
-	return Internal{nil, createCmdArrary(cmd, vars)}
+func New(cmd string, vars ...string) Cmd {
+	return Cmd{nil, createCmdArrary(cmd, vars)}
 }
 
-func NewWithDir(dir, cmd string, vars ...string) Internal {
-	return Internal{&dir, createCmdArrary(cmd, vars)}
+func NewWithDir(dir, cmd string, vars ...string) Cmd {
+	return Cmd{&dir, createCmdArrary(cmd, vars)}
 }
 
-func NewFromArray(cmd []string) Internal {
-	return Internal{nil, cmd}
+func NewFromArray(cmd []string) Cmd {
+	return Cmd{nil, cmd}
 }
 
-func NewFromArrayWithDir(dir string, cmd []string) Internal {
-	return Internal{&dir, cmd}
+func NewFromArrayWithDir(dir string, cmd []string) Cmd {
+	return Cmd{&dir, cmd}
 }
 
 func createCmdArrary(cmd string, vars []string) []string {
@@ -37,15 +37,15 @@ func createCmdArrary(cmd string, vars []string) []string {
 	return strings.Split(cmd, " ")
 }
 
-func NewCmds(cmds ...string) []Internal {
-	result := []Internal{}
+func NewCmds(cmds ...string) []Cmd {
+	result := []Cmd{}
 	for _, cmd := range cmds {
 		result = append(result, New(cmd))
 	}
 	return result
 }
 
-func (c *Internal) RunCmd() (string, error) {
+func (c *Cmd) RunCmd() (string, error) {
 	if c.dir != nil {
 		fmt.Printf("dir: %v cmd: %v\n", *c.dir, c.cmd)
 	} else {
@@ -70,7 +70,7 @@ func (c *Internal) RunCmd() (string, error) {
 	return printOut, nil
 }
 
-func RunCmds(cmds []Internal) ([]string, error) {
+func RunCmds(cmds []Cmd) ([]string, error) {
 	outs := []string{}
 	for _, cmd := range cmds {
 		out, err := cmd.RunCmd()
@@ -82,13 +82,13 @@ func RunCmds(cmds []Internal) ([]string, error) {
 	return outs, nil
 }
 
-func RunCmdsConcurrent(cmds []Internal) error {
+func RunCmdsConcurrent(cmds []Cmd) error {
 	errs := []string{}
 	errCmds := []string{}
 	var wg sync.WaitGroup
 	for _, cmd := range cmds {
 		wg.Add(1)
-		go func(c Internal) {
+		go func(c Cmd) {
 			defer wg.Done()
 			_, err := c.RunCmd()
 			if err != nil {

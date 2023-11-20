@@ -10,8 +10,8 @@ import (
 )
 
 func GitSave(dir string, message string) error {
-	cmds := []shell.Internal{}
-	cmds = append(cmds, []shell.Internal{
+	cmds := []shell.Cmd{}
+	cmds = append(cmds, []shell.Cmd{
 		shell.NewWithDir(dir, "git add -A"),
 		shell.NewFromArrayWithDir(dir, []string{"git", "commit", "-m", message}),
 		shell.NewWithDir(dir, "git push"),
@@ -28,7 +28,7 @@ func PullRepos() error {
 	if err != nil {
 		return err
 	}
-	cmds := []shell.Internal{}
+	cmds := []shell.Cmd{}
 	for _, dir := range dirs {
 		repoPath := path.Join(config.REPOS_PATH, dir.Name())
 		cmds = append(cmds, shell.NewWithDir(repoPath, "git pull"))
@@ -68,7 +68,7 @@ func Sync() error {
 	if err != nil {
 		return err
 	}
-	cmds := []shell.Internal{
+	cmds := []shell.Cmd{
 		shell.New("git stash"),
 		shell.New("git checkout %v", config.DEFAULT_BRANCH),
 		shell.New("git pull"),

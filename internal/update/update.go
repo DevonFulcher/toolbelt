@@ -8,7 +8,7 @@ import (
 
 func Run() error {
 	dir := path.Join(config.REPOS_PATH, config.REPO_NAME)
-	cmds := []shell.Internal{
+	cmds := []shell.Cmd{
 		shell.NewWithDir(dir, "git pull"),
 		shell.NewWithDir(dir, "go build"),
 		shell.NewWithDir(dir, "cp %v %v", config.EXECUTABLE_NAME, config.CLI_PATH),

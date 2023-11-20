@@ -100,7 +100,7 @@ var CmdTree = []Command{
 				name:        "list",
 				description: "list dot files",
 				run: func(params []string) error {
-					fmt.Printf("vscode: %v", config.VSCODE_USER_SETTINGS)
+					fmt.Printf("vscode: %v\n", config.VSCODE_USER_SETTINGS)
 					return nil
 				},
 			},
