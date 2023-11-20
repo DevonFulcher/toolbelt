@@ -40,17 +40,6 @@ var CmdTree = []Command{
 		},
 	},
 	{
-		name:        "curated",
-		description: "curated list of commands",
-		run: func(params []string) error {
-			cmds := [][]string{
-				{"sudo !!", "run the last command as sudo"},
-			}
-			shell.PrintCmds(cmds)
-			return nil
-		},
-	},
-	{
 		name:        "morning",
 		description: "morning script",
 		run: func(params []string) error {
