@@ -7,8 +7,8 @@ import (
 	"toolbelt/pkg/devspace"
 	"toolbelt/pkg/dotfile"
 	"toolbelt/pkg/git"
+	"toolbelt/pkg/kill"
 	"toolbelt/pkg/morning"
-	"toolbelt/pkg/shell"
 )
 
 type Command struct {
@@ -57,12 +57,7 @@ var CmdTree = []Command{
 		name:        "kill",
 		description: "kill a process for a given port",
 		run: func(params []string) error {
-			c := shell.New("kill $(lsof -t -i:%v)", params[0])
-			_, err := c.RunCmd()
-			if err != nil {
-				return err
-			}
-			return nil
+			return kill.Port(params)
 		},
 	},
 	{
