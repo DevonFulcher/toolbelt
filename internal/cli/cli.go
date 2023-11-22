@@ -9,6 +9,7 @@ import (
 	"toolbelt/pkg/git"
 	"toolbelt/pkg/kill"
 	"toolbelt/pkg/morning"
+	"toolbelt/pkg/repo"
 )
 
 type Command struct {
@@ -97,6 +98,40 @@ var CmdTree = []Command{
 				run: func(params []string) error {
 					fmt.Printf("vscode: %v\n", config.VSCODE_USER_SETTINGS)
 					return nil
+				},
+			},
+		},
+	},
+	{
+		name:        "dev",
+		description: "generic development utilities",
+		children: []Command{
+			{
+				name:        "test",
+				description: "run the tests",
+				run: func(params []string) error {
+					return repo.Current().Test()
+				},
+			},
+			{
+				name:        "run",
+				description: "run the app locally",
+				run: func(params []string) error {
+					return repo.Current().Run()
+				},
+			},
+			{
+				name:        "lint",
+				description: "run the lint checks",
+				run: func(params []string) error {
+					return repo.Current().Lint()
+				},
+			},
+			{
+				name:        "format",
+				description: "format the repo",
+				run: func(params []string) error {
+					return repo.Current().Format()
 				},
 			},
 		},

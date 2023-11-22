@@ -8,6 +8,10 @@ import (
 
 type Repo interface {
 	Reviewers() []string
+	Test() error
+	Run() error
+	Lint() error
+	Format() error
 }
 
 func Current() Repo {
