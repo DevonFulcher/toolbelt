@@ -8,6 +8,20 @@ import (
 	"toolbelt/pkg/shell"
 )
 
+func GitSave(dir string, message string) error {
+	cmds := []shell.Cmd{}
+	cmds = append(cmds, []shell.Cmd{
+		shell.NewWithDir(dir, "git add -A"),
+		shell.NewFromArrayWithDir(dir, []string{"git", "commit", "-m", message}),
+		shell.NewWithDir(dir, "git push"),
+	}...)
+	_, err := shell.RunCmds(cmds)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func PullRepos() error {
 	dirs, err := os.ReadDir(config.REPOS_PATH)
 	if err != nil {
