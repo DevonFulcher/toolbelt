@@ -25,13 +25,6 @@ var CmdTree = []Command{
 		description: "git utilities",
 		children: []Command{
 			{
-				name:        "sync",
-				description: "sync changes from main into branch",
-				run: func(params []string) error {
-					return git.Sync()
-				},
-			},
-			{
 				name:        "pull",
 				description: "pull all repos in the repos folder",
 				run: func(params []string) error {
