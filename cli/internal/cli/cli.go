@@ -6,9 +6,7 @@ import (
 	"toolbelt/internal/update"
 	"toolbelt/pkg/devspace"
 	"toolbelt/pkg/dotfile"
-	"toolbelt/pkg/git"
 	"toolbelt/pkg/kill"
-	"toolbelt/pkg/morning"
 	"toolbelt/pkg/repo"
 )
 
@@ -20,26 +18,6 @@ type Command struct {
 }
 
 var CmdTree = []Command{
-	{
-		name:        "git",
-		description: "git utilities",
-		children: []Command{
-			{
-				name:        "pull",
-				description: "pull all repos in the repos folder",
-				run: func(params []string) error {
-					return git.PullRepos()
-				},
-			},
-		},
-	},
-	{
-		name:        "morning",
-		description: "morning script",
-		run: func(params []string) error {
-			return morning.Run()
-		},
-	},
 	{
 		name:        "update",
 		description: "update toolbelt",

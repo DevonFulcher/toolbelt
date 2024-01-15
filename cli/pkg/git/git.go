@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path"
-	"toolbelt/internal/config"
 	"toolbelt/pkg/shell"
 )
 
@@ -16,23 +15,6 @@ func GitSave(dir string, message string) error {
 		shell.NewWithDir(dir, "git push"),
 	}...)
 	_, err := shell.RunCmds(cmds)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func PullRepos() error {
-	dirs, err := os.ReadDir(config.REPOS_PATH)
-	if err != nil {
-		return err
-	}
-	cmds := []shell.Cmd{}
-	for _, dir := range dirs {
-		repoPath := path.Join(config.REPOS_PATH, dir.Name())
-		cmds = append(cmds, shell.NewWithDir(repoPath, "git pull"))
-	}
-	err = shell.RunCmdsConcurrent(cmds)
 	if err != nil {
 		return err
 	}
