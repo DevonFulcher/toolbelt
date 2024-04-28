@@ -25,13 +25,18 @@ def load_zsh_history(path):
     with open(path, "r", errors="ignore") as file:
         errors = 0
         for line in file:
-            parts = line.split(";", 1)  # Split each line at the first semicolon
-            if len(parts) == 2:
-                timestamps.append(parse_timestamp(parts[0]))
-                full_command = parts[1].strip()
-                full_commands.append(full_command)
+            line = line.strip()
+            if line.startswith(":"):
+                parts = line.split(";", 1)  # Split each line at the first semicolon
+                if len(parts) == 2:
+                    timestamps.append(parse_timestamp(parts[0]))
+                    full_command = parts[1].strip()
+                    full_commands.append(full_command)
+                else:
+                    errors += 1
             else:
-                errors += 1
+                full_commands.append(line)
+                timestamps.append(None)
         print(f"Read file with {errors} error rows")
 
     max_num_sub_commands = 0
@@ -51,14 +56,14 @@ def load_zsh_history(path):
         {"Timestamp": timestamps, "full_command": full_commands} | sub_commands
     )
     df["Timestamp"] = pd.to_datetime(df["Timestamp"], unit="s")
-    df.dropna(subset=["Timestamp"], inplace=True)
-    df.set_index("Timestamp", inplace=True)
     return df
 
 
 history_path = os.path.expanduser("~/.zsh_history")
-df = load_zsh_history(history_path)
-print(f"Number of rows: {len(df)}")
+commands_df = load_zsh_history(history_path)
+commands_timestamp_df = commands_df.dropna(subset=["Timestamp"])
+commands_timestamp_df.set_index("Timestamp", inplace=True)
+print(f"Number of rows: {len(commands_df)}")
 
 output_path = Path(f"./data_viz/{str(datetime.now()).replace(' ', '_')}")
 output_path.mkdir(parents=True, exist_ok=True)
@@ -66,7 +71,7 @@ output_path.mkdir(parents=True, exist_ok=True)
 
 # Visualization 1: Commands over Time
 # Resample to count commands per day (or another time period)
-commands_per_day = df["full_command"].resample("D").count()
+commands_per_day = commands_timestamp_df["full_command"].resample("D").count()
 
 plt.figure(figsize=(12, 6))
 sns.lineplot(data=commands_per_day)
@@ -77,7 +82,7 @@ plt.savefig(os.path.join(output_path, "commands_run.png"))
 
 # Visualization 2: Most Frequent Commands
 # Count the frequency of each command
-command_counts = df["full_command"].value_counts().head(10)  # Top 10 commands
+command_counts = commands_df["full_command"].value_counts().head(10)  # Top 10 commands
 
 plt.figure(figsize=(12, 6))
 sns.barplot(x=command_counts.values, y=command_counts.index)
@@ -88,7 +93,7 @@ plt.savefig(os.path.join(output_path, "command_frequency.png"))
 
 # Visualization 3: Most Frequent Top-level Commands
 # Count the frequency of each command
-command_counts = df["command_0"].value_counts().head(10)  # Top 10 commands
+command_counts = commands_df["command_0"].value_counts().head(10)  # Top 10 commands
 
 plt.figure(figsize=(12, 6))
 sns.barplot(x=command_counts.values, y=command_counts.index)
@@ -100,7 +105,7 @@ plt.savefig(os.path.join(output_path, "top_level_command_frequency.png"))
 # Visualization 4: Most Frequent Git Commands
 # Count the frequency of each command
 command_counts = (
-    df[df["command_0"] == "git"]["command_1"].value_counts().head(10)
+    commands_df[commands_df["command_0"] == "git"]["command_1"].value_counts().head(10)
 )  # Top 10 commands
 
 plt.figure(figsize=(12, 6))
