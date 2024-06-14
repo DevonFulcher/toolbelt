@@ -37,6 +37,52 @@ func getTimeRangeUnixTimestamps(timeRange string) (int64, int64) {
 	return start, now.UnixMilli()
 }
 
+func getQueryUrlParam(query []string) string {
+	encodedQuery := url.QueryEscape(strings.TrimRight(strings.Join(query, " "), " "))
+	var queryUrlParam = ""
+	if encodedQuery != "" {
+		queryUrlParam = fmt.Sprintf("query=%v&", encodedQuery)
+	}
+	return queryUrlParam
+}
+
+func getStatuses(pages []string) ([]string, []string, error) {
+	var (
+		logStatus   []string
+		traceStatus []string
+	)
+	fields := []huh.Field{}
+	if comparable.Includes(pages, "logs") {
+		field := huh.NewMultiSelect[string]().
+			Title("Log Status").
+			Options(
+				huh.NewOption("Info", "info"),
+				huh.NewOption("Warn", "warn"),
+				huh.NewOption("Error", "error"),
+			).
+			Value(&logStatus)
+		fields = append(fields, field)
+	}
+	if comparable.Includes(pages, "traces") {
+		field := huh.NewMultiSelect[string]().
+			Title("Trace Status").
+			Options(
+				huh.NewOption("Ok", "ok"),
+				huh.NewOption("Error", "error"),
+			).
+			Value(&traceStatus)
+		fields = append(fields, field)
+	}
+	form := huh.NewForm(
+		huh.NewGroup(fields...),
+	)
+	err := form.Run()
+	if err != nil {
+		return nil, nil, err
+	}
+	return logStatus, traceStatus, nil
+}
+
 func Form() error {
 	var (
 		envId           string
@@ -47,6 +93,7 @@ func Form() error {
 		timeRange       string
 		pages           []string
 	)
+
 	form := huh.NewForm(
 		huh.NewGroup(
 			huh.NewInput().Title("Environment Id").Value(&envId),
@@ -103,10 +150,15 @@ func Form() error {
 		return err
 	}
 
+	logStatus, traceStatus, err := getStatuses(pages)
+	if err != nil {
+		return err
+	}
+
 	query := []string{}
 	if len(services) > 0 {
 		expression := strings.Join(services, " OR ")
-		query = append(query, fmt.Sprintf("service:(%v) ", expression))
+		query = append(query, fmt.Sprintf("service:(%v)", expression))
 	}
 	structuredLogQueries := []string{}
 	for _, service := range services {
@@ -127,12 +179,14 @@ func Form() error {
 	if errorMessage != "" {
 		query = append(query, errorMessage+" ")
 	}
-	encodedQuery := url.QueryEscape(strings.TrimRight(strings.Join(query, " "), " "))
-	var queryUrlParam = ""
-	if encodedQuery != "" {
-		queryUrlParam = fmt.Sprintf("query=%v&", encodedQuery)
-	}
 	if comparable.Includes(pages, "logs") {
+		logsQuery := make([]string, len(query))
+		copy(logsQuery, query)
+		if len(logStatus) > 0 {
+			expression := strings.Join(logStatus, " OR ")
+			logsQuery = append(logsQuery, fmt.Sprintf("status:(%v)", expression))
+		}
+		queryUrlParam := getQueryUrlParam(logsQuery)
 		timeRangeUrlParam := ""
 		liveTail := ""
 		if timeRange == "live" {
@@ -145,6 +199,11 @@ func Form() error {
 		browser.Open(logsUrl)
 	}
 	if comparable.Includes(pages, "traces") {
+		if len(traceStatus) > 0 {
+			expression := strings.Join(traceStatus, " OR ")
+			query = append(query, fmt.Sprintf("status:(%v)", expression))
+		}
+		queryUrlParam := getQueryUrlParam(query)
 		timeRangeUrlParam := ""
 		historicalData := true
 		if timeRange == "live" {
