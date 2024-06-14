@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"toolbelt/internal/config"
 	"toolbelt/internal/update"
+	"toolbelt/pkg/datadog"
 	"toolbelt/pkg/devspace"
 	"toolbelt/pkg/dotfile"
 	"toolbelt/pkg/kill"
@@ -105,6 +106,13 @@ var CmdTree = []Command{
 					return repo.Current().Format()
 				},
 			},
+		},
+	},
+	{
+		name:        "datadog",
+		description: "tools for the observability platform DataDog",
+		run: func(params []string) error {
+			return datadog.Form()
 		},
 	},
 }
