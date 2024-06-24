@@ -2,11 +2,9 @@ package cli
 
 import (
 	"fmt"
-	"toolbelt/internal/config"
 	"toolbelt/internal/update"
 	"toolbelt/pkg/datadog"
 	"toolbelt/pkg/devspace"
-	"toolbelt/pkg/dotfile"
 	"toolbelt/pkg/kill"
 	"toolbelt/pkg/repo"
 )
@@ -42,34 +40,6 @@ var CmdTree = []Command{
 				description: "reset devspace",
 				run: func(params []string) error {
 					return devspace.Reset()
-				},
-			},
-		},
-	},
-	{
-		name:        "dot",
-		description: "utilities for dotfiles",
-		children: []Command{
-			{
-				name:        "pull",
-				description: "pull in dotfile changes",
-				run: func(params []string) error {
-					return dotfile.Pull()
-				},
-			},
-			{
-				name:        "push",
-				description: "push dotfile changes",
-				run: func(params []string) error {
-					return dotfile.Push()
-				},
-			},
-			{
-				name:        "list",
-				description: "list dot files",
-				run: func(params []string) error {
-					fmt.Printf("vscode: %v\n", config.VSCODE_USER_SETTINGS)
-					return nil
 				},
 			},
 		},
