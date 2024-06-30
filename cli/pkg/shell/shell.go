@@ -20,14 +20,6 @@ func NewWithDir(dir, cmd string, vars ...string) Cmd {
 	return Cmd{&dir, createCmdArray(cmd, vars)}
 }
 
-func NewFromArray(cmd []string) Cmd {
-	return Cmd{nil, cmd}
-}
-
-func NewFromArrayWithDir(dir string, cmd []string) Cmd {
-	return Cmd{&dir, cmd}
-}
-
 func createCmdArray(cmd string, vars []string) []string {
 	for _, curr := range vars {
 		cmd = strings.Replace(cmd, "%v", curr, 1)
@@ -90,10 +82,10 @@ func (c *Cmd) RunCmd() (string, error) {
 	return printOut, nil
 }
 
-func RunCmdsFromStr(cmds ...string) ([]string, error) {
+func RunCmdsFromStr(dir string, cmds ...string) ([]string, error) {
 	result := []Cmd{}
 	for _, cmd := range cmds {
-		result = append(result, New(cmd))
+		result = append(result, NewWithDir(dir, cmd))
 	}
 	return RunCmds(result)
 }
