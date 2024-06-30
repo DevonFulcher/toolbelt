@@ -36,7 +36,8 @@ func CloneIfNotExist(parentDirPath string, org string, repo string) error {
 
 func Save(params []string) error {
 	_, err := shell.RunCmdsFromStr(
-		"git add -A", fmt.Sprintf("git commit -m \"%v\"", "testing again"), "git push",
+		//"git add -A", fmt.Sprintf("git commit -m \"%s\"", "testing again again"), "git push",
+		"git add -A", "git commit -m \"test\"", "git push",
 	)
 	return err
 }

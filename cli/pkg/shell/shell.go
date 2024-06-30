@@ -3,10 +3,8 @@ package shell
 import (
 	"bytes"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
-	"sync"
 )
 
 type Cmd struct {
@@ -52,16 +50,15 @@ func (c *Cmd) RunCmd() (string, error) {
 		fmt.Printf("cmd: %v\n", c.cmd)
 	}
 	toRun := exec.Command(c.cmd[0], c.cmd[1:]...)
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
+	var stdout, stderr bytes.Buffer
 	toRun.Stdout = &stdout
-	toRun.Stdin = os.Stdin
 	toRun.Stderr = &stderr
+	// toRun.Stdin = os.Stdin
 	if c.dir != nil {
 		toRun.Dir = *c.dir
 	}
 	if err := toRun.Run(); err != nil {
-		return "", fmt.Errorf("could not run command: %v\n in dir %v\n with error message: %v\n and stderr: %v", c.cmd, *c.dir, err, toRun.Stderr)
+		return "", fmt.Errorf("could not run command: %v\n in dir %v\n with error message: %v\n and stderr: %v", c.cmd, *c.dir, err, stderr.String())
 	}
 	printOut := stdout.String()
 	if printOut != "" {
@@ -78,7 +75,6 @@ func RunCmdsFromStr(cmds ...string) ([]string, error) {
 	return RunCmds(result)
 }
 
-// TODO replace with the str method?
 func RunCmds(cmds []Cmd) ([]string, error) {
 	outs := []string{}
 	for _, cmd := range cmds {
@@ -89,29 +85,6 @@ func RunCmds(cmds []Cmd) ([]string, error) {
 		outs = append(outs, out)
 	}
 	return outs, nil
-}
-
-func RunCmdsConcurrent(cmds []Cmd) error {
-	errs := []string{}
-	errCmds := []string{}
-	var wg sync.WaitGroup
-	for _, cmd := range cmds {
-		wg.Add(1)
-		go func(c Cmd) {
-			defer wg.Done()
-			_, err := c.RunCmd()
-			if err != nil {
-				errs = append(errs, err.Error())
-				cmdString := strings.Join(c.cmd, " ")
-				errCmds = append(errCmds, fmt.Sprintf("cmd: %v dir: %v", cmdString, c.dir))
-			}
-		}(cmd)
-	}
-	wg.Wait()
-	if len(errs) > 0 {
-		return fmt.Errorf("errors: %v\nerror commands: %v", strings.Join(errs, "\n"), strings.Join(errCmds, "\n"))
-	}
-	return nil
 }
 
 func PrintCmds(cmds [][]string) {
