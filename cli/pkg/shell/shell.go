@@ -63,9 +63,9 @@ func parseCommand(cmd string) []string {
 
 func (c *Cmd) RunCmd() (string, error) {
 	if c.dir != nil {
-		fmt.Printf("dir: %v cmd: %v\n", *c.dir, c.cmd)
+		fmt.Printf("dir: %v cmd: %s\n", *c.dir, strings.Join(c.cmd, " "))
 	} else {
-		fmt.Printf("cmd: %v\n", c.cmd)
+		fmt.Printf("cmd: %s\n", strings.Join(c.cmd, " "))
 	}
 	toRun := exec.Command(c.cmd[0], c.cmd[1:]...)
 	var stdout, stderr bytes.Buffer
