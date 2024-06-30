@@ -35,10 +35,10 @@ func CloneIfNotExist(parentDirPath string, org string, repo string) error {
 }
 
 func Save(params []string) error {
-	commitCmd := fmt.Sprintf("git commit -m %q", "testing again again")
-	fmt.Println(commitCmd)
 	_, err := shell.RunCmdsFromStr(
-		"git add -A", commitCmd, "git push",
+		"git add -A",
+		fmt.Sprintf("git commit -m %q", params[0]),
+		"git push",
 	)
 	return err
 }
