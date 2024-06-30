@@ -5,6 +5,7 @@ import (
 	"toolbelt/pkg/cli"
 	"toolbelt/pkg/datadog"
 	"toolbelt/pkg/devspace"
+	"toolbelt/pkg/git"
 	"toolbelt/pkg/kill"
 	"toolbelt/pkg/repo"
 )
@@ -15,6 +16,19 @@ var CmdTree = []cli.Command{
 		Description: "update toolbelt",
 		Run: func(params []string) error {
 			return update.Run()
+		},
+	},
+	{
+		Name:        "git",
+		Description: "git utilities",
+		Children: []cli.Command{
+			{
+				Name:        "save",
+				Description: "git add -A, git commit -m, and git push",
+				Run: func(params []string) error {
+					return git.Save(params)
+				},
+			},
 		},
 	},
 	{

@@ -49,7 +49,7 @@ func (c *Cmd) RunCmd() (string, error) {
 	if c.dir != nil {
 		fmt.Printf("dir: %v cmd: %v\n", *c.dir, c.cmd)
 	} else {
-		fmt.Printf("cmd %v\n", c.cmd)
+		fmt.Printf("cmd: %v\n", c.cmd)
 	}
 	toRun := exec.Command(c.cmd[0], c.cmd[1:]...)
 	var stdout bytes.Buffer
@@ -70,6 +70,15 @@ func (c *Cmd) RunCmd() (string, error) {
 	return printOut, nil
 }
 
+func RunCmdsFromStr(cmds ...string) ([]string, error) {
+	result := []Cmd{}
+	for _, cmd := range cmds {
+		result = append(result, New(cmd))
+	}
+	return RunCmds(result)
+}
+
+// TODO replace with the str method?
 func RunCmds(cmds []Cmd) ([]string, error) {
 	outs := []string{}
 	for _, cmd := range cmds {
