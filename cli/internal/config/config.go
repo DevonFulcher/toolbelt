@@ -7,10 +7,7 @@ import (
 
 var home = os.Getenv("HOME")
 
-const REPO_NAME = "toolbelt"
-const EXECUTABLE_NAME = "toolbelt"
 const DOTFILES_REPO = "dotfiles"
-const GITHUB_USERNAME = "DevonFulcher"
 const DEVSPACE_NAMESPACE = "dev-devonfulcher"
 
 var REPOS_PATH = path.Join(home, "git")

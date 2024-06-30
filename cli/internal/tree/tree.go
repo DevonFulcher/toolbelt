@@ -1,23 +1,14 @@
 package tree
 
 import (
-	"toolbelt/internal/update"
 	"toolbelt/pkg/cli"
 	"toolbelt/pkg/datadog"
-	"toolbelt/pkg/devspace"
 	"toolbelt/pkg/git"
 	"toolbelt/pkg/kill"
 	"toolbelt/pkg/repo"
 )
 
 var CmdTree = []cli.Command{
-	{
-		Name:        "update",
-		Description: "update toolbelt",
-		Run: func(params []string) error {
-			return update.Run()
-		},
-	},
 	{
 		Name:        "git",
 		Description: "git utilities",
@@ -36,19 +27,6 @@ var CmdTree = []cli.Command{
 		Description: "kill a process for a given port",
 		Run: func(params []string) error {
 			return kill.Port(params)
-		},
-	},
-	{
-		Name:        "devspace",
-		Description: "utilities for devspace",
-		Children: []cli.Command{
-			{
-				Name:        "reset",
-				Description: "reset devspace",
-				Run: func(params []string) error {
-					return devspace.Reset()
-				},
-			},
 		},
 	},
 	{
