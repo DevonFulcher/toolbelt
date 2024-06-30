@@ -42,6 +42,6 @@ func Save(params []string) error {
 	//   aicommits || { echo "aicommits failed"; exit 1; }
 	// fi
 	// git push --quiet && echo "commit pushed" || echo "push failed";
-	_, err := shell.RunCmdsFromStr("git add -A", fmt.Sprintf("git commit -m %v", "test"), "git push")
+	_, err := shell.RunCmdsFromStr("git add -A", fmt.Sprintf("git commit -m \"%v\"", params[0]), "git push")
 	return err
 }
