@@ -35,13 +35,8 @@ func CloneIfNotExist(parentDirPath string, org string, repo string) error {
 }
 
 func Save(params []string) error {
-	// git add -A;
-	// if [ -n "$1" ]; then
-	//   git commit -m "$1" --quiet && echo "code committed" || { echo "commit failed"; exit 1; }
-	// else
-	//   aicommits || { echo "aicommits failed"; exit 1; }
-	// fi
-	// git push --quiet && echo "commit pushed" || echo "push failed";
-	_, err := shell.RunCmdsFromStr("git add -A", fmt.Sprintf("git commit -m \"%v\"", params[0]), "git push")
+	_, err := shell.RunCmdsFromStr(
+		"git add -A", fmt.Sprintf("git commit -m \"%v\"", "testing again"), "git push",
+	)
 	return err
 }
