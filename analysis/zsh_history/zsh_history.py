@@ -65,6 +65,10 @@ commands_timestamp_df = commands_df.dropna(subset=["Timestamp"])
 commands_timestamp_df.set_index("Timestamp", inplace=True)
 print(f"Number of rows: {len(commands_df)}")
 
+# Determine date range for titles
+start_date = commands_timestamp_df.index.min().strftime("%Y-%m-%d")
+end_date = commands_timestamp_df.index.max().strftime("%Y-%m-%d")
+
 output_path = Path(f"./data_viz/{str(datetime.now()).replace(' ', '_')}")
 output_path.mkdir(parents=True, exist_ok=True)
 
@@ -75,7 +79,7 @@ commands_per_day = commands_timestamp_df["full_command"].resample("D").count()
 
 plt.figure(figsize=(12, 6))
 sns.lineplot(data=commands_per_day)
-plt.title("Commands Run Over Time")
+plt.title(f"Commands Run Over Time ({start_date} to {end_date})")
 plt.xlabel("Date")
 plt.ylabel("Number of Commands")
 plt.savefig(os.path.join(output_path, "commands_run.png"))
@@ -86,7 +90,7 @@ command_counts = commands_df["full_command"].value_counts().head(10)  # Top 10 c
 
 plt.figure(figsize=(12, 6))
 sns.barplot(x=command_counts.values, y=command_counts.index)
-plt.title("Top 10 Most Frequent Commands")
+plt.title(f"Top 10 Most Frequent Commands ({start_date} to {end_date})")
 plt.xlabel("Frequency")
 plt.ylabel("Command")
 plt.savefig(os.path.join(output_path, "command_frequency.png"))
@@ -97,7 +101,7 @@ command_counts = commands_df["command_0"].value_counts().head(10)  # Top 10 comm
 
 plt.figure(figsize=(12, 6))
 sns.barplot(x=command_counts.values, y=command_counts.index)
-plt.title("Top 10 Most Frequent Top-level Commands")
+plt.title(f"Top 10 Most Frequent Top-level Commands ({start_date} to {end_date})")
 plt.xlabel("Frequency")
 plt.ylabel("Command")
 plt.savefig(os.path.join(output_path, "top_level_command_frequency.png"))
@@ -110,7 +114,7 @@ command_counts = (
 
 plt.figure(figsize=(12, 6))
 sns.barplot(x=command_counts.values, y=command_counts.index)
-plt.title("Top 10 Most Frequent Git Commands")
+plt.title(f"Top 10 Most Frequent Git Commands ({start_date} to {end_date})")
 plt.xlabel("Frequency")
 plt.ylabel("Command")
 plt.savefig(os.path.join(output_path, "git_command_frequency.png"))
