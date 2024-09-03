@@ -11,7 +11,7 @@ func Save(params []string) error {
 	_, err := shell.RunCmdsFromStr(
 		dir,
 		"git add -A",
-		fmt.Sprintf("git commit -m \"%s\"", params[0]),
+		fmt.Sprintf("git commit -m %s", params[0]),
 		"git push",
 	)
 	return err

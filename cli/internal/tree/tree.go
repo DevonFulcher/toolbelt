@@ -15,7 +15,7 @@ var CmdTree = []cli.Command{
 		Children: []cli.Command{
 			{
 				Name:        "save",
-				Description: "git add -A, git commit -m, and git push - test",
+				Description: "git add -A, git commit -m, and git push",
 				Run: func(params []string) error {
 					return git.Save(params)
 				},
