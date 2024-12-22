@@ -86,22 +86,22 @@ plt.savefig(os.path.join(output_path, "commands_run.png"))
 
 # Visualization 2: Most Frequent Commands
 # Count the frequency of each command
-command_counts = commands_df["full_command"].value_counts().head(10)  # Top 10 commands
+command_counts = commands_df["full_command"].value_counts().head(20)  # Top 10 commands
 
 plt.figure(figsize=(12, 6))
 sns.barplot(x=command_counts.values, y=command_counts.index)
-plt.title(f"Top 10 Most Frequent Commands ({start_date} to {end_date})")
+plt.title(f"Top 20 Most Frequent Commands ({start_date} to {end_date})")
 plt.xlabel("Frequency")
 plt.ylabel("Command")
 plt.savefig(os.path.join(output_path, "command_frequency.png"))
 
 # Visualization 3: Most Frequent Top-level Commands
 # Count the frequency of each command
-command_counts = commands_df["command_0"].value_counts().head(10)  # Top 10 commands
+command_counts = commands_df["command_0"].value_counts().head(20)  # Top 10 commands
 
 plt.figure(figsize=(12, 6))
 sns.barplot(x=command_counts.values, y=command_counts.index)
-plt.title(f"Top 10 Most Frequent Top-level Commands ({start_date} to {end_date})")
+plt.title(f"Top 20 Most Frequent Top-level Commands ({start_date} to {end_date})")
 plt.xlabel("Frequency")
 plt.ylabel("Command")
 plt.savefig(os.path.join(output_path, "top_level_command_frequency.png"))
@@ -109,12 +109,12 @@ plt.savefig(os.path.join(output_path, "top_level_command_frequency.png"))
 # Visualization 4: Most Frequent Git Commands
 # Count the frequency of each command
 command_counts = (
-    commands_df[commands_df["command_0"] == "git"]["command_1"].value_counts().head(10)
+    commands_df[commands_df["command_0"] == "git"]["command_1"].value_counts().head(20)
 )  # Top 10 commands
 
 plt.figure(figsize=(12, 6))
 sns.barplot(x=command_counts.values, y=command_counts.index)
-plt.title(f"Top 10 Most Frequent Git Commands ({start_date} to {end_date})")
+plt.title(f"Top 20 Most Frequent Git Commands ({start_date} to {end_date})")
 plt.xlabel("Frequency")
 plt.ylabel("Command")
 plt.savefig(os.path.join(output_path, "git_command_frequency.png"))
