@@ -201,28 +201,36 @@ def render_helm_yaml(repo_path: Path, git_projects_workdir: Path) -> dict:
         "charts",
         service_name,
     )
+    if not charts_path.exists():
+        return {}
+    helm_params = []
+    service_default_values = charts_path / "values.yaml"
+    if service_default_values.exists():
+        helm_params.append("-f")
+        helm_params.append(str(service_default_values))
     standard_values = (
         git_projects_workdir / "helm-releases/releases/dbt-labs/dev/main.yaml"
     )
-    service_default_values = charts_path / "values.yaml"
+    if standard_values.exists():
+        helm_params.append("-f")
+        helm_params.append(str(standard_values))
     service_dev_values = (
         git_projects_workdir
         / f"helm-releases/releases/dbt-labs/dev/{service_name}.yaml"
     )
-    helm_command = [
-        "helm",
-        "template",
-        "dev",
-        str(charts_path),
-        "-f",
-        str(service_default_values),
-        "-f",
-        str(standard_values),
-        "-f",
-        str(service_dev_values),
-    ]
+    if service_dev_values.exists():
+        helm_params.append("-f")
+        helm_params.append(str(service_dev_values))
+    if not helm_params:
+        return {}
     process = subprocess.run(
-        helm_command,
+        [
+            "helm",
+            "template",
+            "dev",
+            str(charts_path),
+        ]
+        + helm_params,
         capture_output=True,
         text=True,
         check=True,
