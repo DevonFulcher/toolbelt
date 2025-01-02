@@ -34,7 +34,31 @@ class AiCodegeApi(Repo):
         return ["task", "test"]
 
 
-repos = [AiCodegeApi()]
+class MetricflowServer(Repo):
+    def name(self) -> str:
+        return "metricflow-server"
+
+    def unit_cmd(self) -> list[str]:
+        return ["make", "test"]
+
+
+class Metricflow(Repo):
+    def name(self) -> str:
+        return "metricflow"
+
+    def unit_cmd(self) -> list[str]:
+        return ["make", "test"]
+
+
+class DbtSemanticInterfaces(Repo):
+    def name(self) -> str:
+        return "dbt-semantic-interfaces"
+
+    def unit_cmd(self) -> list[str]:
+        return ["make", "test"]
+
+
+repos = [AiCodegeApi(), MetricflowServer(), Metricflow(), DbtSemanticInterfaces()]
 
 
 def current_repo_name() -> str:

@@ -3,7 +3,7 @@ import subprocess
 
 from toolbelt.git import git
 from toolbelt.repos import current_repo
-from toolbelt.env_var import get_git_projects_workdir
+from toolbelt.datadog_form import form as datadog_form
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -15,6 +15,9 @@ def create_parser() -> argparse.ArgumentParser:
 
     # Unit command
     subparsers.add_parser("unit", help="Run unit tests for this repo")
+
+    # Datadog command
+    subparsers.add_parser("datadog", aliases=["dd"], help="Datadog form")
 
     # Git command and its subcommands
     git_parser = subparsers.add_parser("git", help="Git workflow commands")
@@ -95,6 +98,8 @@ def main() -> None:
                 ],
                 check=True,
             )
+        case "datadog":
+            datadog_form()
         case "git":
             git(args)
         case "unit":

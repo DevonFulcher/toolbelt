@@ -5,11 +5,7 @@ description = ""
 readme = "README.md"
 authors = []
 requires-python = ">=3.12"
-dependencies = [
-    "boto3>=1.35.90",
-    "pyyaml>=6.0.2",
-    "toml>=0.10.2",
-]
+dependencies = ["boto3", "pyyaml", "toml", "textual"]
 
 [dependency-groups]
 dev = ["types-toml", "pre-commit", "mypy", "ruff"]
