@@ -9,6 +9,8 @@ import yaml
 from toolbelt.repos import current_repo
 import argparse
 from toolbelt.env_var import get_env_var_or_exit, get_git_projects_workdir
+import boto3
+import json
 
 
 def get_default_branch() -> Literal["main", "master"]:
@@ -179,6 +181,17 @@ def git_setup(target_path: Path, git_projects_workdir: Path) -> None:
             f.write("dotenv\n")
 
 
+def get_aws_secret(secret_name: str, region: str = "us-east-1") -> dict:
+    session = boto3.session.Session()
+    client = session.client(service_name="secretsmanager", region_name=region)
+
+    response = client.get_secret_value(SecretId=secret_name)
+    if "SecretString" in response:
+        return json.loads(response["SecretString"])
+    else:
+        raise RuntimeError(f"No secret string found for {secret_name}")
+
+
 def render_helm_yaml(repo_path: Path, git_projects_workdir: Path) -> dict:
     service_name = Path.cwd().name if str(repo_path) == "." else repo_path.name
     charts_path = Path(
@@ -220,9 +233,19 @@ def render_helm_yaml(repo_path: Path, git_projects_workdir: Path) -> dict:
     dot_envs = {}
     for doc in documents:
         if isinstance(doc, dict):
-            config_data = doc.get("data")
-            if isinstance(config_data, dict):
+            kind = doc.get("kind")
+            if kind == "ConfigMap":
+                config_data = doc.get("data", {})
                 dot_envs.update(config_data)
+            elif kind == "ExternalSecret":
+                spec = doc.get("spec", {})
+                if spec.get("backendType") == "secretsManager":
+                    data_from = spec.get("dataFrom", [])
+                    for secret_ref in data_from:
+                        if isinstance(secret_ref, str):
+                            secrets = get_aws_secret(secret_ref)
+                            dot_envs.update(secrets)
+
     return dot_envs
 
 
