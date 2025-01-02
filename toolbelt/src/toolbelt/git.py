@@ -8,7 +8,7 @@ import toml
 import yaml
 from toolbelt.repos import current_repo
 import argparse
-from toolbelt.env_var import get_env_var_or_exit, get_git_projects_workdir
+from toolbelt.env_var import get_git_projects_workdir
 import boto3
 import json
 
@@ -152,6 +152,7 @@ def get_branch_name(args: argparse.Namespace) -> str:
 
 
 def git_setup(target_path: Path, git_projects_workdir: Path) -> None:
+    os.chdir(target_path)
     if not (target_path / ".git-branches.toml").exists():
         git_branches_path = git_projects_workdir / "dotfiles/config/.git-branches.toml"
         git_branches = toml.loads(git_branches_path.read_text())
@@ -271,8 +272,7 @@ def git(args: argparse.Namespace):
                 target_path=clone_path,
                 git_projects_workdir=git_projects_workdir,
             )
-            editor = get_env_var_or_exit("EDITOR")
-            subprocess.run([editor, str(clone_path)], check=True)
+            subprocess.run(["edit", str(clone_path)], check=True)
         case "setup":
             git_setup(
                 target_path=Path(args.repo_path),
