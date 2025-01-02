@@ -5,7 +5,10 @@ description = ""
 readme = "README.md"
 authors = []
 requires-python = ">=3.12"
-dependencies = ["toml>=0.10.2"]
+dependencies = [
+    "pyyaml>=6.0.2",
+    "toml>=0.10.2",
+]
 
 [dependency-groups]
 dev = ["types-toml", "pre-commit", "mypy", "ruff"]

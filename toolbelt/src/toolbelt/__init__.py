@@ -1,13 +1,19 @@
 import argparse
+import subprocess
 
 from toolbelt.git import git
 from toolbelt.repos import current_repo
+from toolbelt.env_var import get_git_projects_workdir
 
 
 def create_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Git workflow helper")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    # Upgrade command
+    subparsers.add_parser("upgrade", help="Upgrade toolbelt")
+
+    # Unit command
     subparsers.add_parser("unit", help="Run unit tests for this repo")
 
     # Git command and its subcommands
@@ -78,6 +84,17 @@ def main() -> None:
     parser = create_parser()
     args = parser.parse_args()
     match args.command:
+        case "upgrade":
+            subprocess.run(
+                [
+                    "uv",
+                    "tool",
+                    "upgrade",
+                    "--reinstall",
+                    "toolbelt",
+                ],
+                check=True,
+            )
         case "git":
             git(args)
         case "unit":
