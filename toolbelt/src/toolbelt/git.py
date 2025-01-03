@@ -330,6 +330,7 @@ def git(args: argparse.Namespace):
                     ":!*package-lock.json",
                     ":!*pnpm-lock.yaml",
                     ":!*uv.lock",
+                    ":!*go.sum",
                 ]
             )
         case _:
