@@ -136,7 +136,7 @@ def get_branch_name(args: argparse.Namespace) -> str:
         branch_name = selected_branch.strip()
     elif args.branch in ["main", "master"]:
         branch_name = get_default_branch()
-    if args.branch == "-" and args.command == "combine":
+    elif args.branch == "-" and args.command == "combine":
         branch_name = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "@{-1}"],
             capture_output=True,
