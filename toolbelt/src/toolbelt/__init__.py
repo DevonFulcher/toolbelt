@@ -76,6 +76,10 @@ def create_parser() -> argparse.ArgumentParser:
         "compare_args", nargs="*", help="Commands to pass to git diff"
     )
 
+    # Combine command
+    combine_parser = git_subparsers.add_parser("combine", help="Combine branches")
+    combine_parser.add_argument("branch", help="Branch to combine")
+
     # Setup command
     setup_parser = git_subparsers.add_parser("setup", help="Setup git config")
     setup_parser.add_argument("repo_path", help="Path to the repository to setup")
