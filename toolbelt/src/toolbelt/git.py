@@ -1,16 +1,18 @@
+import argparse
+import json
 import os
-from pathlib import Path
 import re
-import sys
 import subprocess
+import sys
+from pathlib import Path
 from typing import Literal
+
+import boto3
 import toml
 import yaml
-from toolbelt.repos import current_repo
-import argparse
+
 from toolbelt.env_var import get_env_var_or_exit, get_git_projects_workdir
-import boto3
-import json
+from toolbelt.repos import current_repo
 
 
 def get_default_branch() -> Literal["main", "master"]:
@@ -99,26 +101,17 @@ def git_save(args: argparse.Namespace) -> None:
     ]
     if args.no_verify:
         git_commit_command.append("--no-verify")
-    commit_result = subprocess.run(
+    subprocess.run(
         git_commit_command,
-        capture_output=True,
+        check=True,
         text=True,
     )
-    if commit_result.returncode == 0:
-        print("code committed")
-    else:
-        print(commit_result.stderr, file=sys.stderr)
-        sys.exit(1)
 
     if not args.no_push:
         git_push_command = ["git", "push"]
         if args.force:
             git_push_command.append("-f")
-        push_result = subprocess.run(git_push_command, capture_output=True)
-        if push_result.returncode == 0:
-            print("commit pushed")
-        else:
-            print(str(push_result.stderr), file=sys.stderr)
+        subprocess.run(git_push_command, check=True)
     print("git status:")
     subprocess.run(["git", "status"], check=True)
 
