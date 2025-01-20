@@ -57,7 +57,7 @@ def git_pr():
     if repo:
         repo.unit()
     subprocess.run(
-        ["git-town", "propose"],
+        ["gh", "pr", "create"],
     )
 
 
@@ -255,6 +255,20 @@ def render_helm_yaml(repo_path: Path, git_projects_workdir: Path) -> dict:
     return dot_envs
 
 
+def is_git_repo(path: Path) -> bool:
+    try:
+        subprocess.run(
+            ["git", "rev-parse", "--git-dir"],
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=str(path),
+        )
+        return True
+    except subprocess.CalledProcessError:
+        return False
+
+
 def git(args: argparse.Namespace):
     git_projects_workdir = get_git_projects_workdir()
     match args.git_command:
@@ -267,12 +281,13 @@ def git(args: argparse.Namespace):
                 os.path.basename(args.repo_url),
             )
             clone_path = git_projects_workdir / repo_name
-            subprocess.run(
-                ["git", "clone", args.repo_url, str(clone_path)],
-                check=True,
-            )
-            if not os.path.isdir(clone_path):
-                raise ValueError(f"Failed to clone {args.repo_url} to {clone_path}")
+            if not is_git_repo(clone_path):
+                subprocess.run(
+                    ["git", "clone", args.repo_url, str(clone_path)],
+                    check=True,
+                )
+                if not os.path.isdir(clone_path):
+                    raise ValueError(f"Failed to clone {args.repo_url} to {clone_path}")
             git_setup(
                 target_path=clone_path,
                 git_projects_workdir=git_projects_workdir,
