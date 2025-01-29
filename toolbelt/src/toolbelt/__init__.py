@@ -1,9 +1,9 @@
 import argparse
 import subprocess
 
+from toolbelt.datadog_form import form as datadog_form
 from toolbelt.git import git
 from toolbelt.repos import current_repo
-from toolbelt.datadog_form import form as datadog_form
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -24,7 +24,15 @@ def create_parser() -> argparse.ArgumentParser:
     git_subparsers = git_parser.add_subparsers(dest="git_command", required=True)
 
     # PR command
-    git_subparsers.add_parser("pr", help="Create or view a pull request")
+    git_pr_parser = git_subparsers.add_parser(
+        "pr",
+        help="Create or view a pull request",
+    )
+    git_pr_parser.add_argument(
+        "--skip-tests",
+        action="store_true",
+        help="Skip tests",
+    )
 
     # Get command
     get_parser = git_subparsers.add_parser("get", help="Get a repository")

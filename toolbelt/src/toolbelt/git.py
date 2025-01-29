@@ -49,15 +49,15 @@ def get_current_branch_name() -> str:
     ).stdout.strip()
 
 
-def git_pr():
+def git_pr(args: argparse.Namespace):
     view_pr = subprocess.run(["gh", "pr", "view", "--web"])
     if view_pr.returncode == 0:
         return
     repo = current_repo()
-    if repo:
+    if repo and not args.skip_tests:
         repo.unit()
     subprocess.run(
-        ["gh", "pr", "create"],
+        ["gh", "pr", "create", "--web"],
     )
 
 
@@ -273,7 +273,7 @@ def git(args: argparse.Namespace):
     git_projects_workdir = get_git_projects_workdir()
     match args.git_command:
         case "pr":
-            git_pr()
+            git_pr(args)
         case "get":
             repo_name = re.sub(
                 r"\..*$",
