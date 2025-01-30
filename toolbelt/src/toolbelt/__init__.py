@@ -67,6 +67,11 @@ def create_parser() -> argparse.ArgumentParser:
     send_parser.add_argument(
         "pathspec", nargs="*", help="Files to stage (defaults to '-A')"
     )
+    send_parser.add_argument(
+        "--skip-tests",
+        action="store_true",
+        help="Skip tests",
+    )
 
     # Change command
     change_parser = git_subparsers.add_parser("change", help="Change git branch")
