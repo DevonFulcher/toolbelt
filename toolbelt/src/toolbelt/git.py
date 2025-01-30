@@ -321,7 +321,7 @@ def git(args: argparse.Namespace):
                     + f"Continuing from this branch: {current_branch}"
                 )
             git_save(args)
-            git_pr()
+            git_pr(args)
         case "change":
             subprocess.run(["git", "checkout", get_branch_name(args)], check=True)
         case "combine":
