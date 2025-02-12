@@ -206,18 +206,18 @@ def render_helm_yaml(repo_path: Path, git_projects_workdir: Path) -> dict:
         helm_params.append("-f")
         helm_params.append(str(service_default_values))
     standard_values = (
-        git_projects_workdir / "helm-releases/releases/dbt-labs/dev/main.yaml"
+        git_projects_workdir / "helm-releases/releases/dbt-labs/devspace/main.yaml"
     )
     if standard_values.exists():
         helm_params.append("-f")
         helm_params.append(str(standard_values))
-    service_dev_values = (
+    service_devspace_values = (
         git_projects_workdir
-        / f"helm-releases/releases/dbt-labs/dev/{service_name}.yaml"
+        / f"helm-releases/releases/dbt-labs/devspace/{service_name}.yaml"
     )
-    if service_dev_values.exists():
+    if service_devspace_values.exists():
         helm_params.append("-f")
-        helm_params.append(str(service_dev_values))
+        helm_params.append(str(service_devspace_values))
     if not helm_params:
         return {}
     process = subprocess.run(
