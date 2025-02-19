@@ -194,6 +194,40 @@ def get_aws_secret(secret_name: str, region: str = "us-east-1") -> dict:
     else:
         raise RuntimeError(f"No secret string found for {secret_name}")
 
+def escape_env_value(value: str) -> str:
+    """
+    Escape environment variable values that contain special characters.
+    Returns the original value if no escaping is needed.
+    """
+    # Check if value needs escaping
+    needs_escaping = any((
+        '\n' in value,         # newlines
+        ' ' in value,          # spaces
+        '<' in value,          # angle brackets
+        '>' in value,
+        '"' in value,          # quotes
+        '$' in value,          # shell variables
+        '#' in value,          # comments
+        ';' in value,          # command separators
+        '&' in value,
+        '|' in value,
+        '(' in value,          # parentheses
+        ')' in value,
+        '[' in value,          # brackets
+        ']' in value,
+        '{' in value,          # braces
+        '}' in value,
+    ))
+
+    if not needs_escaping:
+        return value
+
+    # Escape shell variables first
+    escaped = value.replace('${', '\\${')
+    # Escape any existing quotes
+    escaped = escaped.replace('"', '\\"')
+    # Wrap in quotes to preserve special characters
+    return f'"{escaped}"'
 
 def render_helm_yaml(
     repo_path: Path,
@@ -265,7 +299,8 @@ def render_helm_yaml(
                             secrets = get_aws_secret(secret_ref)
                             dot_envs.update(secrets)
 
-    return dot_envs
+    # direnv can't handle env vars with newlines even with escaping.
+    return {k: escape_env_value(v) for k, v in dot_envs.items() if "\n" not in v}
 
 
 def is_git_repo(path: Path) -> bool:
