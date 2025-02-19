@@ -37,6 +37,10 @@ def create_parser() -> argparse.ArgumentParser:
     # Get command
     get_parser = git_subparsers.add_parser("get", help="Get a repository")
     get_parser.add_argument("repo_url", help="URL of the repository to get")
+    get_parser.add_argument(
+        "--service-name",
+        help="The name of the service for retrieving helm values. If not provided, the repo name will be used.",
+    )
 
     # Save command
     save_parser = git_subparsers.add_parser("save", help="Save and push changes")
@@ -96,6 +100,10 @@ def create_parser() -> argparse.ArgumentParser:
     # Setup command
     setup_parser = git_subparsers.add_parser("setup", help="Setup git config")
     setup_parser.add_argument("repo_path", help="Path to the repository to setup")
+    setup_parser.add_argument(
+        "--service-name",
+        help="The name of the service for retrieving helm values. If not provided, the repo name will be used.",
+    )
 
     return parser
 

@@ -144,7 +144,11 @@ def get_branch_name(args: argparse.Namespace) -> str:
     return branch_name
 
 
-def git_setup(target_path: Path, git_projects_workdir: Path) -> None:
+def git_setup(
+    target_path: Path,
+    git_projects_workdir: Path,
+    service_name: str | None = None,
+) -> None:
     os.chdir(target_path)
     if not (target_path / ".git-branches.toml").exists():
         git_branches_path = git_projects_workdir / "dotfiles/config/.git-branches.toml"
@@ -155,6 +159,7 @@ def git_setup(target_path: Path, git_projects_workdir: Path) -> None:
     env_vars = render_helm_yaml(
         target_path,
         git_projects_workdir,
+        service_name,
     )
     if (target_path / ".env").exists():
         if env_vars:
@@ -190,13 +195,21 @@ def get_aws_secret(secret_name: str, region: str = "us-east-1") -> dict:
         raise RuntimeError(f"No secret string found for {secret_name}")
 
 
-def render_helm_yaml(repo_path: Path, git_projects_workdir: Path) -> dict:
-    service_name = Path.cwd().name if str(repo_path) == "." else repo_path.name
+def render_helm_yaml(
+    repo_path: Path,
+    git_projects_workdir: Path,
+    service_name: str | None = None,
+) -> dict:
+    repo_name = (
+        Path.cwd().name
+        if str(repo_path) == "."
+        else repo_path.name
+    )
     charts_path = Path(
         git_projects_workdir,
-        service_name,
+        repo_name,
         "charts",
-        service_name,
+        service_name or repo_name,
     )
     if not charts_path.exists():
         return {}
@@ -213,7 +226,7 @@ def render_helm_yaml(repo_path: Path, git_projects_workdir: Path) -> dict:
         helm_params.append(str(standard_values))
     service_devspace_values = (
         git_projects_workdir
-        / f"helm-releases/releases/dbt-labs/devspace/{service_name}.yaml"
+        / f"helm-releases/releases/dbt-labs/devspace/{service_name or repo_name}.yaml"
     )
     if service_devspace_values.exists():
         helm_params.append("-f")
@@ -291,6 +304,7 @@ def git(args: argparse.Namespace):
             git_setup(
                 target_path=clone_path,
                 git_projects_workdir=git_projects_workdir,
+                service_name=args.service_name,
             )
             # TODO: This can use the `edit` shell function
             editor = get_env_var_or_exit("EDITOR")
@@ -299,6 +313,7 @@ def git(args: argparse.Namespace):
             git_setup(
                 target_path=Path(args.repo_path),
                 git_projects_workdir=git_projects_workdir,
+                service_name=args.service_name,
             )
         case "save":
             git_save(args)
