@@ -304,6 +304,8 @@ def render_helm_yaml(
 
 
 def is_git_repo(path: Path) -> bool:
+    if not path.exists():
+        return False
     try:
         subprocess.run(
             ["git", "rev-parse", "--git-dir"],
