@@ -48,6 +48,14 @@ def get_current_branch_name() -> str:
         text=True,
     ).stdout.strip()
 
+def get_parent_branch_name(child_branch_name: str) -> str:
+    return subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", f"{child_branch_name}@{{u}}"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
 
 def git_pr(args: argparse.Namespace):
     view_pr = subprocess.run(["gh", "pr", "view", "--web"])
@@ -60,12 +68,85 @@ def git_pr(args: argparse.Namespace):
         ["gh", "pr", "create", "--web"],
     )
 
+def check_for_parent_branch_merge_conflicts(*, current_branch: str, default_branch: str) -> None:
+    print("Checking for merge conflicts with parent branch")
+    try:
+        parent_branch = get_parent_branch_name(current_branch)
+    except subprocess.CalledProcessError:
+        if current_branch == default_branch:
+            # Default branch without upstream - this is unusual but can happen
+            print(f"Warning: {default_branch} has no upstream branch set")
+            sys.exit(1)
+        else:
+            # Regular branch without upstream - offer to set it
+            print(f"Branch '{current_branch}' has no upstream branch set")
+            should_set_upstream = input("Would you like to set an upstream branch? (y/n): ")
+            if should_set_upstream.lower() == 'y':
+                try:
+                    # Try to set upstream to origin/branch_name
+                    subprocess.run(
+                        ["git", "branch", "--set-upstream-to", f"origin/{current_branch}", current_branch],
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                    )
+                    print(f"Set upstream branch to origin/{current_branch}")
+                    # Try conflict check again with newly set upstream
+                    parent_branch = get_parent_branch_name(current_branch)
+                except subprocess.CalledProcessError:
+                    # If setting upstream failed (e.g., remote branch doesn't exist)
+                    print("Failed to set upstream branch - remote branch may not exist")
+                    should_push = input("Would you like to push and set upstream now? (y/n): ")
+                    if should_push.lower() == 'y':
+                        try:
+                            subprocess.run(
+                                ["git", "push", "--set-upstream", "origin", current_branch],
+                                check=True,
+                                capture_output=True,
+                                text=True,
+                            )
+                            print(f"Pushed and set upstream to origin/{current_branch}")
+                            # Try conflict check one final time
+                            parent_branch = get_parent_branch_name(current_branch)
+                        except subprocess.CalledProcessError:
+                            print("Failed to push and set upstream branch")
+                            sys.exit(1)
+                    else:
+                        sys.exit(1)
+            else:
+                sys.exit(1)
+
+    if parent_branch:
+        try:
+            merge_tree_result = subprocess.run(
+                ["git", "merge-tree", parent_branch, current_branch],
+                capture_output=True,
+                text=True,
+            )
+            if "changed in both" in merge_tree_result.stdout:
+                print("⚠️  Warning: This commit may create merge conflicts with the parent branch.")
+                proceed = input("Do you want to continue anyway? (y/n): ")
+                if proceed.lower() != 'y':
+                    # Unstage changes if user aborts
+                    subprocess.run(["git", "reset"], check=True)
+                    print("Changes unstaged. Aborting commit.")
+                    sys.exit(1)
+        except subprocess.CalledProcessError as e:
+            # This might happen in detached HEAD state
+            print("Error checking for merge conflicts - you may be in detached HEAD state")
+            print("Aborting to be safe")
+            subprocess.run(["git", "reset"], check=True)
+            sys.exit(1)
+    print("No merge conflicts found with parent branch")
+
 
 def git_save(args: argparse.Namespace) -> None:
+    current_branch = get_current_branch_name()
+    default_branch = get_default_branch()
+
+    # Check if the current branch is a default branch
     current_org = os.getenv("CURRENT_ORG")
     if current_org:
-        current_branch = get_current_branch_name()
-        default_branch = get_default_branch()
         remote_url = subprocess.run(
             ["git", "remote", "get-url", "origin"],
             check=True,
@@ -98,6 +179,8 @@ def git_save(args: argparse.Namespace) -> None:
                 + f"Continuing from this branch: {current_branch}"
             )
 
+
+    # Add changes to the staging area
     git_add_command = ["git", "add"]
     if args.pathspec:
         git_add_command.extend(args.pathspec)
@@ -105,6 +188,10 @@ def git_save(args: argparse.Namespace) -> None:
         git_add_command.append("-A")
     subprocess.run(git_add_command, check=True)
 
+    # Check for conflicts with the parent branch
+    check_for_parent_branch_merge_conflicts(current_branch=current_branch, default_branch=default_branch)
+
+    # Commit the changes
     git_commit_command = [
         "git",
         "commit",
@@ -119,11 +206,14 @@ def git_save(args: argparse.Namespace) -> None:
         text=True,
     )
 
+    # Push the changes
     if not args.no_push:
         git_push_command = ["git", "push"]
         if args.force:
             git_push_command.append("-f")
         subprocess.run(git_push_command, check=True)
+
+    # Print the status
     print("git status:")
     subprocess.run(["git", "status"], check=True)
 
