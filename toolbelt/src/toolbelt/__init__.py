@@ -48,9 +48,8 @@ def create_parser() -> argparse.ArgumentParser:
     save_parser.add_argument(
         "--no-verify", action="store_true", help="Skip pre-commit hooks"
     )
-    save_parser.add_argument("-f", "--force", action="store_true", help="Force push")
     save_parser.add_argument(
-        "--no-push", action="store_true", help="Skip pushing changes"
+        "--no-sync", action="store_true", help="Skip syncing changes in this stack"
     )
     save_parser.add_argument(
         "pathspec", nargs="*", help="Files to stage (defaults to '-A')"

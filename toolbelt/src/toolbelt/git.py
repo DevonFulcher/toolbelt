@@ -206,12 +206,9 @@ def git_save(args: argparse.Namespace) -> None:
         text=True,
     )
 
-    # Push the changes
-    if not args.no_push:
-        git_push_command = ["git", "push"]
-        if args.force:
-            git_push_command.append("-f")
-        subprocess.run(git_push_command, check=True)
+    # Sync the changes
+    if not args.no_sync:
+        subprocess.run(["git-town", "sync", "--stack"], check=True)
 
     # Print the status
     print("git status:")
