@@ -105,6 +105,9 @@ def create_parser() -> argparse.ArgumentParser:
         help="The name of the service for retrieving helm values. If not provided, the repo name will be used.",
     )
 
+    # Safe pull command
+    safe_pull_parser = git_subparsers.add_parser("safe-pull", help="Safe pull")
+
     return parser
 
 

@@ -442,6 +442,46 @@ def is_git_repo(path: Path) -> bool:
         return False
 
 
+def git_safe_pull() -> None:
+    """
+    Safely pull changes from remote by checking for uncommitted changes and
+    ensuring the pull can be done without conflicts.
+    """
+    # Check for uncommitted changes first
+    uncommitted_check = subprocess.run(
+        ["git", "diff-index", "--quiet", "HEAD", "--"],
+        capture_output=True,
+        text=True,
+    )
+    if uncommitted_check.returncode != 0:
+        print("⚠️  Uncommitted changes found. Please commit or stash them before pulling.")
+        sys.exit(1)
+
+    current_branch = get_current_branch_name()
+
+    # Fetch latest changes
+    print("Fetching latest changes...")
+    subprocess.run(["git", "fetch"], check=True)
+
+    # Check if current branch has diverged from remote
+    try:
+        subprocess.run(
+            ["git", "merge-base", "--is-ancestor", "HEAD", f"origin/{current_branch}"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        # If we get here, it's safe to pull
+        print("Branch can be fast-forwarded. Pulling changes...")
+        subprocess.run(["git", "pull"], check=True)
+        print("Successfully pulled changes!")
+
+    except subprocess.CalledProcessError:
+        print("⚠️  Warning: Local branch has diverged from remote. Pulling might cause conflicts.")
+        sys.exit(1)
+
+
 def git(args: argparse.Namespace):
     git_projects_workdir = get_git_projects_workdir()
     match args.git_command:
@@ -499,6 +539,8 @@ def git(args: argparse.Namespace):
                     ":!*go.sum",
                 ]
             )
+        case "safe-pull":
+            git_safe_pull()
         case _:
             print(f"Unknown command: {args.command}")
             sys.exit(1)
