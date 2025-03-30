@@ -79,12 +79,24 @@ def git_save(args: argparse.Namespace) -> None:
             and org_match.group(1) == current_org.replace("_", "-")
             and current_branch == default_branch
         ):
-            print(
-                "Cannot commit to the default branch"
-                + " for a repo of the current organization.",
-                file=sys.stderr,
+            new_branch_name = args.message.replace(" ", "_")
+            should_commit = input(
+                "On a default branch. "
+                + f"Should these changes be committed to a new branch called {new_branch_name}? (y/n): "
             )
-            sys.exit(1)
+            if should_commit.lower() == "y":
+                subprocess.run(
+                    ["git-town", "append", new_branch_name],
+                    check=True,
+                )
+            else:
+                print("Changes not committed. Use `git commit` to commit to a default branch.")
+                sys.exit(1)
+        else:
+            print(
+                "Not on the default branch. "
+                + f"Continuing from this branch: {current_branch}"
+            )
 
     git_add_command = ["git", "add"]
     if args.pathspec:
@@ -355,23 +367,6 @@ def git(args: argparse.Namespace):
         case "save":
             git_save(args)
         case "send":
-            current_branch = get_current_branch_name()
-            default_branch = get_default_branch()
-            if default_branch == current_branch:
-                new_branch_name = args.message.replace(" ", "_")
-                print(
-                    "On a default branch. "
-                    + f"Creating a new branch called {new_branch_name}"
-                )
-                subprocess.run(
-                    ["git-town", "append", new_branch_name],
-                    check=True,
-                )
-            else:
-                print(
-                    "Not on a default branch. "
-                    + f"Continuing from this branch: {current_branch}"
-                )
             git_save(args)
             git_pr(args)
         case "change":
