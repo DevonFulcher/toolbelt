@@ -141,18 +141,39 @@ def get_branch_name(args: argparse.Namespace) -> str:
         branch_name = selected_branch.strip()
     elif args.branch in ["main", "master"]:
         branch_name = get_default_branch()
-    elif args.branch == "-" and args.command == "combine":
-        branch_name = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "@{-1}"],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
+    elif args.branch == "-":
+        if args.command == "combine":
+            branch_name = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "@{-1}"],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+        else:
+            branch_name = args.branch
     else:
-        branch_name = args.branch
-    if not branch_name:
-        print("No branch name provided.", file=sys.stderr)
-        sys.exit(1)
+        if args.command == "change":
+            try:
+                subprocess.run(
+                    ["git", "rev-parse", "--verify", args.branch],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                branch_name = args.branch
+            except subprocess.CalledProcessError:
+                should_create_branch = input(f"Branch '{args.branch}' does not exist. Would you like to create it? (y/n): ")
+                if should_create_branch.lower() == "y":
+                    subprocess.run(
+                        ["git-town", "append", args.branch],
+                        check=True,
+                    )
+                    branch_name = args.branch
+                else:
+                    print("Exiting. Unable to continue without a valid branch name.", file=sys.stderr)
+                    sys.exit(1)
+        else:
+            branch_name = args.branch
     return branch_name
 
 
