@@ -479,6 +479,26 @@ def git_safe_pull() -> None:
         sys.exit(1)
 
 
+def git_replace(args: argparse.Namespace) -> None:
+    """
+    Squashes the current changes into the last commit.
+    If a message is provided, it will be used as the new commit message.
+    """
+    # If no message provided, get the original commit message before resetting
+    if not args.message:
+        args.message = subprocess.run(
+            ["git", "log", "-1", "--pretty=%B"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+    # Reset the last commit while keeping the changes
+    subprocess.run(["git", "reset", "--soft", "HEAD~1"], check=True)
+
+    # Use git_save to handle adding changes, committing, and pushing
+    git_save(args)
+
 def git(args: argparse.Namespace):
     git_projects_workdir = get_git_projects_workdir()
     match args.git_command:
@@ -538,6 +558,8 @@ def git(args: argparse.Namespace):
             )
         case "safe-pull":
             git_safe_pull()
+        case "replace":
+            git_replace(args)
         case _:
             print(f"Unknown command: {args.command}")
             sys.exit(1)
