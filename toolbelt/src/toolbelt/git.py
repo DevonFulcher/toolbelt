@@ -207,7 +207,7 @@ def git_save(args: argparse.Namespace) -> None:
     )
 
     # Sync the changes
-    if not args.no_sync:
+    if not hasattr(args, "no_sync") or not args.no_sync:
         subprocess.run(["git-town", "sync", "--stack"], check=True)
 
     # Print the status

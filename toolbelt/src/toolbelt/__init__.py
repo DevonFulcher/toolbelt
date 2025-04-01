@@ -65,15 +65,15 @@ def create_parser() -> argparse.ArgumentParser:
     )
     send_parser.add_argument("-f", "--force", action="store_true", help="Force push")
     send_parser.add_argument(
-        "--no-push", action="store_true", help="Skip pushing changes"
-    )
-    send_parser.add_argument(
         "pathspec", nargs="*", help="Files to stage (defaults to '-A')"
     )
     send_parser.add_argument(
         "--skip-tests",
         action="store_true",
         help="Skip tests",
+    )
+    send_parser.add_argument(
+        "--no-sync", action="store_true", help="Skip syncing changes in this stack"
     )
 
     # Change command
