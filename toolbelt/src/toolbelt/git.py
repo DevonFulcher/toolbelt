@@ -208,6 +208,8 @@ def git_save(args: argparse.Namespace) -> None:
 
     # Sync the changes
     if not hasattr(args, "no_sync") or not args.no_sync:
+        # Run git-town continue in case a git conflict happened during the last save
+        subprocess.run(["git-town", "continue"], check=True)
         subprocess.run(["git-town", "sync", "--stack"], check=True)
 
     # Print the status
