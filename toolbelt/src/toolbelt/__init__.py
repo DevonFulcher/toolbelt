@@ -85,7 +85,6 @@ def create_parser() -> argparse.ArgumentParser:
     )
     change_parser.add_argument(
         "-b",
-        action="new_branch",
         help="Create a new branch and switch to it",
     )
 
