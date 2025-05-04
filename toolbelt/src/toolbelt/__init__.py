@@ -121,6 +121,9 @@ def create_parser() -> argparse.ArgumentParser:
         help="Commit message to replace original commit message",
     )
 
+    # List command
+    git_subparsers.add_parser("list", help="List all repos")
+
     return parser
 
 

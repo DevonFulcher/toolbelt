@@ -566,6 +566,23 @@ def git(args: argparse.Namespace):
             git_safe_pull()
         case "fix":
             git_fix(args)
+        case "list":
+            subprocess.run(
+                [
+                    "eza",
+                    "--classify",
+                    "--all",
+                    "--group-directories-first",
+                    "--long",
+                    "--git",
+                    "--git-repos",
+                    "--no-permissions",
+                    "--no-user",
+                    "--no-time",
+                    str(git_projects_workdir),
+                ],
+                check=True,
+            )
         case _:
             print(f"Unknown command: {args.command}")
             sys.exit(1)
