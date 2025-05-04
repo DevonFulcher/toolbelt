@@ -112,8 +112,8 @@ def create_parser() -> argparse.ArgumentParser:
     # Safe pull command
     safe_pull_parser = git_subparsers.add_parser("safe-pull", help="Safe pull")
 
-    # Replace command
-    replace_parser = git_subparsers.add_parser("replace", help="Replace")
+    # Fix command
+    replace_parser = git_subparsers.add_parser("fix", help="Fix the last commit by replacing it with the current changes.")
     replace_parser.add_argument(
         "-m",
         "--message",

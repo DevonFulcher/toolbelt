@@ -481,7 +481,7 @@ def git_safe_pull() -> None:
         sys.exit(1)
 
 
-def git_replace(args: argparse.Namespace) -> None:
+def git_fix(args: argparse.Namespace) -> None:
     """
     Squashes the current changes into the last commit.
     If a message is provided, it will be used as the new commit message.
@@ -564,8 +564,8 @@ def git(args: argparse.Namespace):
             )
         case "safe-pull":
             git_safe_pull()
-        case "replace":
-            git_replace(args)
+        case "fix":
+            git_fix(args)
         case _:
             print(f"Unknown command: {args.command}")
             sys.exit(1)
