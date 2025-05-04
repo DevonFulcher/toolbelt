@@ -83,6 +83,11 @@ def create_parser() -> argparse.ArgumentParser:
         nargs="?",
         help="Branch name to change to. If omitted, will use fzf to select",
     )
+    change_parser.add_argument(
+        "-b",
+        action="new_branch",
+        help="Create a new branch and switch to it",
+    )
 
     # Compare command
     compare_parser = git_subparsers.add_parser(
