@@ -541,6 +541,7 @@ def git(args: argparse.Namespace):
             git_pr(args)
         case "change":
             subprocess.run(["git", "checkout", get_branch_name(args)], check=True)
+            git_safe_pull()
         case "combine":
             subprocess.run(["git", "merge", get_branch_name(args)], check=True)
         case "compare":
