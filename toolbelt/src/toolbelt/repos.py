@@ -10,14 +10,14 @@ class Repo(ABC):
     def name(self) -> str: ...
 
     @abstractmethod
-    def unit_cmd(self) -> list[str]: ...
+    def check_cmd(self) -> list[str]: ...
 
     def _run(self, cmd: list[str]) -> None:
         os.chdir(self.path())
         subprocess.run(cmd, check=True)
 
-    def unit(self) -> None:
-        self._run(self.unit_cmd())
+    def check(self) -> None:
+        self._run(self.check_cmd())
 
     def path(self) -> Path:
         git_projects_workdir = os.getenv("GIT_PROJECTS_WORKDIR")
@@ -30,7 +30,14 @@ class AiCodegeApi(Repo):
     def name(self) -> str:
         return "ai-codegen-api"
 
-    def unit_cmd(self) -> list[str]:
+    def check_cmd(self) -> list[str]:
+        return ["task", "test"]
+
+class DbtMcp(Repo):
+    def name(self) -> str:
+        return "dbt-mcp"
+
+    def check_cmd(self) -> list[str]:
         return ["task", "test"]
 
 
@@ -38,7 +45,7 @@ class MetricflowServer(Repo):
     def name(self) -> str:
         return "metricflow-server"
 
-    def unit_cmd(self) -> list[str]:
+    def check_cmd(self) -> list[str]:
         return ["make", "test"]
 
 
@@ -46,7 +53,7 @@ class Metricflow(Repo):
     def name(self) -> str:
         return "metricflow"
 
-    def unit_cmd(self) -> list[str]:
+    def check_cmd(self) -> list[str]:
         return ["make", "test"]
 
 
@@ -54,7 +61,7 @@ class DbtSemanticInterfaces(Repo):
     def name(self) -> str:
         return "dbt-semantic-interfaces"
 
-    def unit_cmd(self) -> list[str]:
+    def check_cmd(self) -> list[str]:
         return ["make", "test"]
 
 

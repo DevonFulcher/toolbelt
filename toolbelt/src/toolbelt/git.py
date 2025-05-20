@@ -63,7 +63,7 @@ def git_pr(args: argparse.Namespace):
         return
     repo = current_repo()
     if repo and not args.skip_tests:
-        repo.unit()
+        repo.check()
     subprocess.run(
         ["gh", "pr", "create", "--web"],
     )
