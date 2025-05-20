@@ -182,7 +182,7 @@ def git_save(args: argparse.Namespace) -> None:
 
     # Add changes to the staging area
     git_add_command = ["git", "add"]
-    if args.pathspec:
+    if "pathspec" in args and args.pathspec:
         git_add_command.extend(args.pathspec)
     else:
         git_add_command.append("-A")
@@ -198,7 +198,7 @@ def git_save(args: argparse.Namespace) -> None:
         "-m",
         args.message,
     ]
-    if args.no_verify:
+    if "no_verify" in args and args.no_verify:
         git_commit_command.append("--no-verify")
     subprocess.run(
         git_commit_command,
