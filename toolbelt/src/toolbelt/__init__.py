@@ -149,7 +149,7 @@ def main() -> None:
         case "unit":
             repo = current_repo()
             if repo:
-                repo.unit()
+                repo.check()
             else:
                 print("No unit tests configured for this repo")
 
