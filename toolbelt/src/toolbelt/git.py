@@ -198,6 +198,8 @@ def git_save(args: argparse.Namespace) -> None:
         "-m",
         args.message,
     ]
+    if args.amend:
+        git_commit_command.append("--amend")
     if args.no_verify:
         git_commit_command.append("--no-verify")
     subprocess.run(

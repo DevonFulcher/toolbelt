@@ -43,13 +43,16 @@ def create_parser() -> argparse.ArgumentParser:
     )
 
     # Save command
-    save_parser = git_subparsers.add_parser("save", help="Save and push changes")
+    save_parser = git_subparsers.add_parser("save", help="Add, commit, and push changes")
     save_parser.add_argument("-m", "--message", required=True, help="Commit message")
     save_parser.add_argument(
         "--no-verify", action="store_true", help="Skip pre-commit hooks"
     )
     save_parser.add_argument(
         "--no-sync", action="store_true", help="Skip syncing changes in this stack"
+    )
+    save_parser.add_argument(
+        "--amend", action="store_true", help="Amend the last commit"
     )
     save_parser.add_argument(
         "pathspec", nargs="*", help="Files to stage (defaults to '-A')"
