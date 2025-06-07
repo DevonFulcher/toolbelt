@@ -552,7 +552,7 @@ def git(args: argparse.Namespace):
         case "compare":
             # Exclude files from diff that I rarely care about. Reference: https://stackoverflow.com/a/48259275/8925314
             subprocess.run(
-                ["git", "diff"]
+                ["git", "diff", "--ignore-all-space"] # Ignore all whitespace differences
                 + args.compare_args
                 + [
                     "--",
