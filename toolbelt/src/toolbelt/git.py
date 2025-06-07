@@ -143,6 +143,7 @@ def check_for_parent_branch_merge_conflicts(*, current_branch: str, default_bran
 def git_save(args: argparse.Namespace) -> None:
     current_branch = get_current_branch_name()
     default_branch = get_default_branch()
+    print("test")
 
     # Check if the current branch is a default branch
     current_org = os.getenv("CURRENT_ORG")
@@ -182,7 +183,7 @@ def git_save(args: argparse.Namespace) -> None:
 
     # Add changes to the staging area
     git_add_command = ["git", "add"]
-    if args.pathspec:
+    if "pathspec" in args and args.pathspec:
         git_add_command.extend(args.pathspec)
     else:
         git_add_command.append("-A")
@@ -200,7 +201,7 @@ def git_save(args: argparse.Namespace) -> None:
     ]
     if "amend" in args and args.amend:
         git_commit_command.append("--amend")
-    if args.no_verify:
+    if "no_verify" in args and args.no_verify:
         git_commit_command.append("--no-verify")
     subprocess.run(
         git_commit_command,
