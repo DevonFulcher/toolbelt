@@ -1,4 +1,3 @@
-import argparse
 import json
 import os
 import re
@@ -11,7 +10,6 @@ import boto3
 import toml
 import yaml
 
-from toolbelt.env_var import get_env_var_or_exit, get_git_projects_workdir
 from toolbelt.repos import current_repo
 
 
@@ -502,89 +500,3 @@ def git_fix(message: str | None) -> None:
 
     # Use git_save to handle adding changes, committing, and pushing
     git_save(message=message, no_verify=False, no_sync=False, amend=False, pathspec=None,)
-
-def git(args: argparse.Namespace):
-    git_projects_workdir = get_git_projects_workdir()
-    match args.git_command:
-        case "pr":
-            git_pr(args)
-        case "get":
-            repo_name = re.sub(
-                r"\..*$",
-                "",
-                os.path.basename(args.repo_url),
-            )
-            clone_path = git_projects_workdir / repo_name
-            if not is_git_repo(clone_path):
-                subprocess.run(
-                    ["git", "clone", args.repo_url, str(clone_path)],
-                    check=True,
-                )
-                if not os.path.isdir(clone_path):
-                    raise ValueError(f"Failed to clone {args.repo_url} to {clone_path}")
-            git_setup(
-                target_path=clone_path,
-                git_projects_workdir=git_projects_workdir,
-                service_name=args.service_name,
-            )
-            # TODO: This can use the `edit` shell function
-            editor = get_env_var_or_exit("EDITOR")
-            subprocess.run([editor, str(clone_path)], check=True)
-        case "setup":
-            git_setup(
-                target_path=Path(args.repo_path),
-                git_projects_workdir=git_projects_workdir,
-                service_name=args.service_name,
-            )
-        case "save":
-            git_save(args.message, args.no_verify, args.no_sync, args.amend, args.pathspec)
-        case "send":
-            git_save(args.message, args.no_verify, args.no_sync, args.amend, args.pathspec)
-            git_pr(args)
-        case "change":
-            if args.new_branch:
-                subprocess.run(["git", "checkout", "-b", args.new_branch], check=True)
-            else:
-                subprocess.run(["git", "checkout", get_branch_name(args)], check=True)
-                git_safe_pull()
-        case "combine":
-            subprocess.run(["git", "merge", get_branch_name(args)], check=True)
-        case "compare":
-            # Exclude files from diff that I rarely care about. Reference: https://stackoverflow.com/a/48259275/8925314
-            subprocess.run(
-                ["git", "diff", "--ignore-all-space"] # Ignore all whitespace differences
-                + args.compare_args
-                + [
-                    "--",
-                    ":!*Cargo.lock",
-                    ":!*poetry.lock",
-                    ":!*package-lock.json",
-                    ":!*pnpm-lock.yaml",
-                    ":!*uv.lock",
-                    ":!*go.sum",
-                ]
-            )
-        case "safe-pull":
-            git_safe_pull()
-        case "fix":
-            git_fix(args)
-        case "list":
-            subprocess.run(
-                [
-                    "eza",
-                    "--classify",
-                    "--all",
-                    "--group-directories-first",
-                    "--long",
-                    "--git",
-                    "--git-repos",
-                    "--no-permissions",
-                    "--no-user",
-                    "--no-time",
-                    str(git_projects_workdir),
-                ],
-                check=True,
-            )
-        case _:
-            print(f"Unknown command: {args.command}")
-            sys.exit(1)
