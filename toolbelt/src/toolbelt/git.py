@@ -57,12 +57,12 @@ def get_parent_branch_name(child_branch_name: str) -> str:
     ).stdout.strip()
 
 
-def git_pr(args: argparse.Namespace):
+def git_pr(skip_tests: bool) -> None:
     view_pr = subprocess.run(["gh", "pr", "view", "--web"])
     if view_pr.returncode == 0:
         return
     repo = current_repo()
-    if repo and not args.skip_tests:
+    if repo and not skip_tests:
         repo.check()
     subprocess.run(
         ["gh", "pr", "create", "--web"],
@@ -140,10 +140,9 @@ def check_for_parent_branch_merge_conflicts(*, current_branch: str, default_bran
     print("No merge conflicts found with parent branch")
 
 
-def git_save(args: argparse.Namespace) -> None:
+def git_save(message: str, no_verify: bool, no_sync: bool, amend: bool, pathspec: list[str] | None) -> None:
     current_branch = get_current_branch_name()
     default_branch = get_default_branch()
-    print("test")
 
     # Check if the current branch is a default branch
     current_org = os.getenv("CURRENT_ORG")
@@ -161,7 +160,7 @@ def git_save(args: argparse.Namespace) -> None:
             and org_match.group(1) == current_org.replace("_", "-")
             and current_branch == default_branch
         ):
-            new_branch_name = args.message.replace(" ", "_")
+            new_branch_name = message.replace(" ", "_")
             should_commit = input(
                 "On a default branch. "
                 + f"Should these changes be committed to a new branch called {new_branch_name}? (y/n): "
@@ -183,8 +182,8 @@ def git_save(args: argparse.Namespace) -> None:
 
     # Add changes to the staging area
     git_add_command = ["git", "add"]
-    if "pathspec" in args and args.pathspec:
-        git_add_command.extend(args.pathspec)
+    if pathspec:
+        git_add_command.extend(pathspec)
     else:
         git_add_command.append("-A")
     subprocess.run(git_add_command, check=True)
@@ -197,11 +196,11 @@ def git_save(args: argparse.Namespace) -> None:
         "git",
         "commit",
         "-m",
-        args.message,
+        message,
     ]
-    if "amend" in args and args.amend:
+    if amend:
         git_commit_command.append("--amend")
-    if "no_verify" in args and args.no_verify:
+    if no_verify:
         git_commit_command.append("--no-verify")
     subprocess.run(
         git_commit_command,
@@ -210,7 +209,7 @@ def git_save(args: argparse.Namespace) -> None:
     )
 
     # Sync the changes
-    if not hasattr(args, "no_sync") or not args.no_sync:
+    if not no_sync:
         # Run git-town continue in case a git conflict happened during the last save
         subprocess.run(["git-town", "continue"], check=True)
         subprocess.run(["git-town", "sync", "--stack"], check=True)
@@ -220,8 +219,8 @@ def git_save(args: argparse.Namespace) -> None:
     subprocess.run(["git", "status"], check=True)
 
 
-def get_branch_name(args: argparse.Namespace) -> str:
-    if not args.branch:
+def get_branch_name(branch: str | None, command: Literal["change", "combine"] | None = None) -> str:
+    if not branch:
         # Interactive branch selection
         branches: str = subprocess.run(
             ["git", "branch"], check=True, capture_output=True, text=True
@@ -231,10 +230,10 @@ def get_branch_name(args: argparse.Namespace) -> str:
         )
         selected_branch, _ = fzf.communicate(input=branches)
         branch_name = selected_branch.strip()
-    elif args.branch in ["main", "master"]:
+    elif branch in ["main", "master"]:
         branch_name = get_default_branch()
-    elif args.branch == "-":
-        if args.command == "combine":
+    elif branch == "-":
+        if command == "combine":
             branch_name = subprocess.run(
                 ["git", "rev-parse", "--abbrev-ref", "@{-1}"],
                 capture_output=True,
@@ -242,30 +241,30 @@ def get_branch_name(args: argparse.Namespace) -> str:
                 check=True,
             ).stdout.strip()
         else:
-            branch_name = args.branch
+            branch_name = branch
     else:
-        if args.command == "change":
+        if command == "change":
             try:
                 subprocess.run(
-                    ["git", "rev-parse", "--verify", args.branch],
+                    ["git", "rev-parse", "--verify", branch],
                     check=True,
                     capture_output=True,
                     text=True,
                 )
-                branch_name = args.branch
+                branch_name = branch
             except subprocess.CalledProcessError:
-                should_create_branch = input(f"Branch '{args.branch}' does not exist. Would you like to create it? (y/n): ")
+                should_create_branch = input(f"Branch '{branch}' does not exist. Would you like to create it? (y/n): ")
                 if should_create_branch.lower() == "y":
                     subprocess.run(
-                        ["git-town", "append", args.branch],
+                        ["git-town", "append", branch],
                         check=True,
                     )
-                    branch_name = args.branch
+                    branch_name = branch
                 else:
                     print("Exiting. Unable to continue without a valid branch name.", file=sys.stderr)
                     sys.exit(1)
         else:
-            branch_name = args.branch
+            branch_name = branch
     return branch_name
 
 
@@ -484,14 +483,14 @@ def git_safe_pull() -> None:
         sys.exit(1)
 
 
-def git_fix(args: argparse.Namespace) -> None:
+def git_fix(message: str | None) -> None:
     """
     Squashes the current changes into the last commit.
     If a message is provided, it will be used as the new commit message.
     """
     # If no message provided, get the original commit message before resetting
-    if not args.message:
-        args.message = subprocess.run(
+    if not message:
+        message = subprocess.run(
             ["git", "log", "-1", "--pretty=%B"],
             check=True,
             capture_output=True,
@@ -502,7 +501,7 @@ def git_fix(args: argparse.Namespace) -> None:
     subprocess.run(["git", "reset", "--soft", "HEAD~1"], check=True)
 
     # Use git_save to handle adding changes, committing, and pushing
-    git_save(args)
+    git_save(message=message, no_verify=False, no_sync=False, amend=False, pathspec=None,)
 
 def git(args: argparse.Namespace):
     git_projects_workdir = get_git_projects_workdir()
@@ -538,9 +537,9 @@ def git(args: argparse.Namespace):
                 service_name=args.service_name,
             )
         case "save":
-            git_save(args)
+            git_save(args.message, args.no_verify, args.no_sync, args.amend, args.pathspec)
         case "send":
-            git_save(args)
+            git_save(args.message, args.no_verify, args.no_sync, args.amend, args.pathspec)
             git_pr(args)
         case "change":
             if args.new_branch:
