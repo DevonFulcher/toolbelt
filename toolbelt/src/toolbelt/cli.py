@@ -1,24 +1,17 @@
 import subprocess
-from pathlib import Path
-from typing import Optional, List
 
 import typer
-from typing_extensions import Annotated
 
 from toolbelt.datadog_form import form as datadog_form
-from toolbelt.git import git_pr, get_branch_name, git_safe_pull, git_fix
 from toolbelt.repos import current_repo
-from toolbelt.env_var import get_env_var_or_exit, get_git_projects_workdir
-from toolbelt.git import git_setup, is_git_repo, git_save
-
-import os
-import re
+from toolbelt.git.cli import git_typer
+from toolbelt.zsh import zsh_typer
 import subprocess
-from pathlib import Path
 
 # Create Typer app instances
 app = typer.Typer(help="A collection of tools that I use.")
-app.add_typer(git_app, name="git")
+app.add_typer(git_typer, name="git")
+app.add_typer(zsh_typer, name="zsh")
 
 @app.command()
 def upgrade():

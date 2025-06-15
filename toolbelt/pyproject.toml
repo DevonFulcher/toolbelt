@@ -7,10 +7,14 @@ authors = []
 requires-python = ">=3.12"
 dependencies = [
     "boto3",
- "pyyaml",
- "toml",
- "textual",
- "typer>=0.16.0",
+    "pyyaml",
+    "toml",
+    "textual",
+    "typer>=0.16.0",
+    "pandas>=2.3.0",
+    "matplotlib>=3.10.3",
+    "seaborn>=0.13.2",
+    "pyarrow>=20.0.0",
 ]
 
 [dependency-groups]
