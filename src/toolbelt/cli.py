@@ -6,12 +6,12 @@ from toolbelt.datadog_form import form as datadog_form
 from toolbelt.repos import current_repo
 from toolbelt.git.cli import git_typer
 from toolbelt.zsh import zsh_typer
-import subprocess
 
 # Create Typer app instances
 app = typer.Typer(help="A collection of tools that I use.")
 app.add_typer(git_typer, name="git")
 app.add_typer(zsh_typer, name="zsh")
+
 
 @app.command()
 def upgrade():
@@ -27,6 +27,7 @@ def upgrade():
         check=True,
     )
 
+
 @app.command()
 def unit():
     """Run unit tests for this repo"""
@@ -35,6 +36,7 @@ def unit():
         repo.check()
     else:
         print("No unit tests configured for this repo")
+
 
 @app.command(name="datadog", help="Datadog form")
 def datadog():

@@ -61,6 +61,7 @@ def load_zsh_history(path):
     df["Timestamp"] = pd.to_datetime(df["Timestamp"], unit="s")
     return df
 
+
 @zsh_typer.command()
 def history():
     history_path = os.path.expanduser("~/.zsh_history")
@@ -76,7 +77,6 @@ def history():
     output_path = Path(f"./data_viz/{str(datetime.now()).replace(' ', '_')}")
     output_path.mkdir(parents=True, exist_ok=True)
 
-
     # Visualization 1: Commands over Time
     # Resample to count commands per day (or another time period)
     commands_per_day = commands_timestamp_df["full_command"].resample("D").count()
@@ -90,7 +90,9 @@ def history():
 
     # Visualization 2: Most Frequent Commands
     # Count the frequency of each command
-    command_counts = commands_df["full_command"].value_counts().head(20)  # Top 10 commands
+    command_counts = (
+        commands_df["full_command"].value_counts().head(20)
+    )  # Top 10 commands
 
     plt.figure(figsize=(12, 6))
     sns.barplot(x=command_counts.values, y=command_counts.index)
@@ -113,7 +115,9 @@ def history():
     # Visualization 4: Most Frequent Git Commands
     # Count the frequency of each command
     command_counts = (
-        commands_df[commands_df["command_0"] == "git"]["command_1"].value_counts().head(20)
+        commands_df[commands_df["command_0"] == "git"]["command_1"]
+        .value_counts()
+        .head(20)
     )  # Top 10 commands
 
     plt.figure(figsize=(12, 6))

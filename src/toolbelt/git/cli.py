@@ -5,22 +5,32 @@ from typing import Optional, List
 import typer
 from typing_extensions import Annotated
 
-from toolbelt.git.commands import git_pr, get_branch_name, git_safe_pull, git_fix, git_setup, is_git_repo, git_save
+from toolbelt.git.commands import (
+    git_pr,
+    get_branch_name,
+    git_safe_pull,
+    git_fix,
+    git_setup,
+    is_git_repo,
+    git_save,
+)
 from toolbelt.env_var import get_env_var_or_exit, get_git_projects_workdir
 
 import os
 import re
-import subprocess
-from pathlib import Path
 
 git_typer = typer.Typer(help="Git workflow commands")
 
+
 @git_typer.command()
 def pr(
-    skip_tests: Annotated[bool, typer.Option("--skip-tests", help="Skip tests")] = False,
+    skip_tests: Annotated[
+        bool, typer.Option("--skip-tests", help="Skip tests")
+    ] = False,
 ):
     """Create or view a pull request"""
     git_pr(skip_tests)
+
 
 @git_typer.command()
 def get(
@@ -56,49 +66,74 @@ def get(
     editor = get_env_var_or_exit("EDITOR")
     subprocess.run([editor, str(clone_path)], check=True)
 
+
 @git_typer.command()
 def save(
     message: Annotated[str, typer.Option("-m", "--message", help="Commit message")],
     no_verify: Annotated[bool, typer.Option(help="Skip pre-commit hooks")] = False,
-    no_sync: Annotated[bool, typer.Option(help="Skip syncing changes in this stack")] = False,
+    no_sync: Annotated[
+        bool, typer.Option(help="Skip syncing changes in this stack")
+    ] = False,
     amend: Annotated[bool, typer.Option(help="Amend the last commit")] = False,
-    pathspec: Annotated[List[str] | None, typer.Argument(help="Files to stage (defaults to '-A')")] = None,
+    pathspec: Annotated[
+        List[str] | None, typer.Argument(help="Files to stage (defaults to '-A')")
+    ] = None,
 ):
     """Add, commit, and push changes"""
     git_save(message, no_verify, no_sync, amend, pathspec)
 
+
 @git_typer.command()
 def send(
-    message: Annotated[str, typer.Option("-m", "--message", help="Commit/branch message")],
+    message: Annotated[
+        str, typer.Option("-m", "--message", help="Commit/branch message")
+    ],
     no_verify: Annotated[bool, typer.Option(help="Skip pre-commit hooks")] = False,
     skip_tests: Annotated[bool, typer.Option(help="Skip tests")] = False,
-    no_sync: Annotated[bool, typer.Option(help="Skip syncing changes in this stack")] = False,
-    pathspec: Annotated[List[str] | None, typer.Argument(help="Files to stage (defaults to '-A')")] = None,
+    no_sync: Annotated[
+        bool, typer.Option(help="Skip syncing changes in this stack")
+    ] = False,
+    pathspec: Annotated[
+        List[str] | None, typer.Argument(help="Files to stage (defaults to '-A')")
+    ] = None,
 ):
     """Save changes and create PR"""
     git_save(message, no_verify, no_sync, False, pathspec)
     git_pr(skip_tests)
 
+
 @git_typer.command()
 def change(
-    branch: Annotated[Optional[str], typer.Argument(help="Branch name to change to. If omitted, will use fzf to select")] = None,
-    new_branch: Annotated[Optional[str], typer.Option("-b", help="Create a new branch and switch to it")] = None,
+    branch: Annotated[
+        Optional[str],
+        typer.Argument(
+            help="Branch name to change to. If omitted, will use fzf to select"
+        ),
+    ] = None,
+    new_branch: Annotated[
+        Optional[str], typer.Option("-b", help="Create a new branch and switch to it")
+    ] = None,
 ):
     """Change git branch"""
     if new_branch:
         subprocess.run(["git", "checkout", "-b", new_branch], check=True)
     else:
-        subprocess.run(["git", "checkout", get_branch_name(branch, "change")], check=True)
+        subprocess.run(
+            ["git", "checkout", get_branch_name(branch, "change")], check=True
+        )
         git_safe_pull()
+
 
 @git_typer.command()
 def compare(
-    compare_args: Annotated[List[str] | None, typer.Argument(help="Commands to pass to git diff")] = None,
+    compare_args: Annotated[
+        List[str] | None, typer.Argument(help="Commands to pass to git diff")
+    ] = None,
 ):
     """Compare commits with git diff"""
     # Exclude files from diff that I rarely care about. Reference: https://stackoverflow.com/a/48259275/8925314
     subprocess.run(
-        ["git", "diff", "--ignore-all-space"] # Ignore all whitespace differences
+        ["git", "diff", "--ignore-all-space"]  # Ignore all whitespace differences
         + (compare_args or [])
         + [
             "--",
@@ -111,11 +146,13 @@ def compare(
         ]
     )
 
+
 @git_typer.command()
 def combine(
     branch: Annotated[str, typer.Argument(help="Branch to combine")],
 ):
     subprocess.run(["git", "merge", get_branch_name(branch)], check=True)
+
 
 @git_typer.command()
 def setup(
@@ -134,20 +171,25 @@ def setup(
         service_name=service_name,
     )
 
+
 @git_typer.command(name="safe-pull")
 def safe_pull():
     """Safe pull"""
     git_safe_pull()
 
+
 @git_typer.command()
 def fix(
     message: Annotated[
         Optional[str],
-        typer.Option("-m", "--message", help="Commit message to replace original commit message"),
+        typer.Option(
+            "-m", "--message", help="Commit message to replace original commit message"
+        ),
     ] = None,
 ):
     """Fix the last commit by replacing it with the current changes"""
     git_fix(message)
+
 
 @git_typer.command()
 def list():

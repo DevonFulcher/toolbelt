@@ -1,20 +1,20 @@
 exclude: |
   (?x)^(
       .mypy_cache/
+      | .venv/
   )$
 
 repos:
-  - repo: https://github.com/psf/black
-    rev: 24.10.0
-    hooks:
-      - id: black
-        language: system
-  - repo: https://github.com/charliermarsh/ruff-pre-commit
-    rev: "v0.7.1"
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.5
     hooks:
       - id: ruff
-        language: system
         args: [--fix]
+      - id: ruff-format
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    rev: 0.6.14
+    hooks:
+      - id: uv-lock
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.13.0
     hooks:

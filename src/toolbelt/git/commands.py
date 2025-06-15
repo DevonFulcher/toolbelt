@@ -46,6 +46,7 @@ def get_current_branch_name() -> str:
         text=True,
     ).stdout.strip()
 
+
 def get_parent_branch_name(child_branch_name: str) -> str:
     return subprocess.run(
         ["git", "rev-parse", "--abbrev-ref", f"{child_branch_name}@{{u}}"],
@@ -66,7 +67,10 @@ def git_pr(skip_tests: bool) -> None:
         ["gh", "pr", "create", "--web"],
     )
 
-def check_for_parent_branch_merge_conflicts(*, current_branch: str, default_branch: str) -> None:
+
+def check_for_parent_branch_merge_conflicts(
+    *, current_branch: str, default_branch: str
+) -> None:
     print("Checking for merge conflicts with parent branch")
     try:
         parent_branch = get_parent_branch_name(current_branch)
@@ -78,12 +82,20 @@ def check_for_parent_branch_merge_conflicts(*, current_branch: str, default_bran
         else:
             # Regular branch without upstream - offer to set it
             print(f"Branch '{current_branch}' has no upstream branch set")
-            should_set_upstream = input("Would you like to set an upstream branch? (y/n): ")
-            if should_set_upstream.lower() == 'y':
+            should_set_upstream = input(
+                "Would you like to set an upstream branch? (y/n): "
+            )
+            if should_set_upstream.lower() == "y":
                 try:
                     # Try to set upstream to origin/branch_name
                     subprocess.run(
-                        ["git", "branch", "--set-upstream-to", f"origin/{current_branch}", current_branch],
+                        [
+                            "git",
+                            "branch",
+                            "--set-upstream-to",
+                            f"origin/{current_branch}",
+                            current_branch,
+                        ],
                         check=True,
                         capture_output=True,
                         text=True,
@@ -94,11 +106,19 @@ def check_for_parent_branch_merge_conflicts(*, current_branch: str, default_bran
                 except subprocess.CalledProcessError:
                     # If setting upstream failed (e.g., remote branch doesn't exist)
                     print("Failed to set upstream branch - remote branch may not exist")
-                    should_push = input("Would you like to push and set upstream now? (y/n): ")
-                    if should_push.lower() == 'y':
+                    should_push = input(
+                        "Would you like to push and set upstream now? (y/n): "
+                    )
+                    if should_push.lower() == "y":
                         try:
                             subprocess.run(
-                                ["git", "push", "--set-upstream", "origin", current_branch],
+                                [
+                                    "git",
+                                    "push",
+                                    "--set-upstream",
+                                    "origin",
+                                    current_branch,
+                                ],
                                 check=True,
                                 capture_output=True,
                                 text=True,
@@ -122,23 +142,33 @@ def check_for_parent_branch_merge_conflicts(*, current_branch: str, default_bran
                 text=True,
             )
             if "changed in both" in merge_tree_result.stdout:
-                print("⚠️  Warning: This commit may create merge conflicts with the parent branch.")
+                print(
+                    "⚠️  Warning: This commit may create merge conflicts with the parent branch."
+                )
                 proceed = input("Do you want to continue anyway? (y/n): ")
-                if proceed.lower() != 'y':
+                if proceed.lower() != "y":
                     # Unstage changes if user aborts
                     subprocess.run(["git", "reset"], check=True)
                     print("Changes unstaged. Aborting commit.")
                     sys.exit(1)
-        except subprocess.CalledProcessError as e:
+        except subprocess.CalledProcessError:
             # This might happen in detached HEAD state
-            print("Error checking for merge conflicts - you may be in detached HEAD state")
+            print(
+                "Error checking for merge conflicts - you may be in detached HEAD state"
+            )
             print("Aborting to be safe")
             subprocess.run(["git", "reset"], check=True)
             sys.exit(1)
     print("No merge conflicts found with parent branch")
 
 
-def git_save(message: str, no_verify: bool, no_sync: bool, amend: bool, pathspec: list[str] | None) -> None:
+def git_save(
+    message: str,
+    no_verify: bool,
+    no_sync: bool,
+    amend: bool,
+    pathspec: list[str] | None,
+) -> None:
     current_branch = get_current_branch_name()
     default_branch = get_default_branch()
 
@@ -169,14 +199,15 @@ def git_save(message: str, no_verify: bool, no_sync: bool, amend: bool, pathspec
                     check=True,
                 )
             else:
-                print("Changes not committed. Use `git commit` to commit to a default branch.")
+                print(
+                    "Changes not committed. Use `git commit` to commit to a default branch."
+                )
                 sys.exit(1)
         else:
             print(
                 "Not on the default branch. "
                 + f"Continuing from this branch: {current_branch}"
             )
-
 
     # Add changes to the staging area
     git_add_command = ["git", "add"]
@@ -187,7 +218,9 @@ def git_save(message: str, no_verify: bool, no_sync: bool, amend: bool, pathspec
     subprocess.run(git_add_command, check=True)
 
     # Check for conflicts with the parent branch
-    check_for_parent_branch_merge_conflicts(current_branch=current_branch, default_branch=default_branch)
+    check_for_parent_branch_merge_conflicts(
+        current_branch=current_branch, default_branch=default_branch
+    )
 
     # Commit the changes
     git_commit_command = [
@@ -217,7 +250,9 @@ def git_save(message: str, no_verify: bool, no_sync: bool, amend: bool, pathspec
     subprocess.run(["git", "status"], check=True)
 
 
-def get_branch_name(branch: str | None, command: Literal["change", "combine"] | None = None) -> str:
+def get_branch_name(
+    branch: str | None, command: Literal["change", "combine"] | None = None
+) -> str:
     if not branch:
         # Interactive branch selection
         branches: str = subprocess.run(
@@ -251,7 +286,9 @@ def get_branch_name(branch: str | None, command: Literal["change", "combine"] | 
                 )
                 branch_name = branch
             except subprocess.CalledProcessError:
-                should_create_branch = input(f"Branch '{branch}' does not exist. Would you like to create it? (y/n): ")
+                should_create_branch = input(
+                    f"Branch '{branch}' does not exist. Would you like to create it? (y/n): "
+                )
                 if should_create_branch.lower() == "y":
                     subprocess.run(
                         ["git-town", "append", branch],
@@ -259,7 +296,10 @@ def get_branch_name(branch: str | None, command: Literal["change", "combine"] | 
                     )
                     branch_name = branch
                 else:
-                    print("Exiting. Unable to continue without a valid branch name.", file=sys.stderr)
+                    print(
+                        "Exiting. Unable to continue without a valid branch name.",
+                        file=sys.stderr,
+                    )
                     sys.exit(1)
         else:
             branch_name = branch
@@ -320,51 +360,51 @@ def get_aws_secret(secret_name: str, region: str = "us-east-1") -> dict:
     else:
         raise RuntimeError(f"No secret string found for {secret_name}")
 
+
 def escape_env_value(value: str) -> str:
     """
     Escape environment variable values that contain special characters.
     Returns the original value if no escaping is needed.
     """
     # Check if value needs escaping
-    needs_escaping = any((
-        '\n' in value,         # newlines
-        ' ' in value,          # spaces
-        '<' in value,          # angle brackets
-        '>' in value,
-        '"' in value,          # quotes
-        '$' in value,          # shell variables
-        '#' in value,          # comments
-        ';' in value,          # command separators
-        '&' in value,
-        '|' in value,
-        '(' in value,          # parentheses
-        ')' in value,
-        '[' in value,          # brackets
-        ']' in value,
-        '{' in value,          # braces
-        '}' in value,
-    ))
+    needs_escaping = any(
+        (
+            "\n" in value,  # newlines
+            " " in value,  # spaces
+            "<" in value,  # angle brackets
+            ">" in value,
+            '"' in value,  # quotes
+            "$" in value,  # shell variables
+            "#" in value,  # comments
+            ";" in value,  # command separators
+            "&" in value,
+            "|" in value,
+            "(" in value,  # parentheses
+            ")" in value,
+            "[" in value,  # brackets
+            "]" in value,
+            "{" in value,  # braces
+            "}" in value,
+        )
+    )
 
     if not needs_escaping:
         return value
 
     # Escape shell variables first
-    escaped = value.replace('${', '\\${')
+    escaped = value.replace("${", "\\${")
     # Escape any existing quotes
     escaped = escaped.replace('"', '\\"')
     # Wrap in quotes to preserve special characters
     return f'"{escaped}"'
+
 
 def render_helm_yaml(
     repo_path: Path,
     git_projects_workdir: Path,
     service_name: str | None = None,
 ) -> dict:
-    repo_name = (
-        Path.cwd().name
-        if str(repo_path) == "."
-        else repo_path.name
-    )
+    repo_name = Path.cwd().name if str(repo_path) == "." else repo_path.name
     charts_path = Path(
         git_projects_workdir,
         repo_name,
@@ -457,7 +497,9 @@ def git_safe_pull() -> None:
         text=True,
     )
     if uncommitted_check.returncode != 0:
-        print("⚠️  Uncommitted changes found. Please commit or stash them before pulling.")
+        print(
+            "⚠️  Uncommitted changes found. Please commit or stash them before pulling."
+        )
         sys.exit(1)
 
     current_branch = get_current_branch_name()
@@ -481,7 +523,9 @@ def git_safe_pull() -> None:
         print("Successfully pulled changes!")
 
     except subprocess.CalledProcessError:
-        print("⚠️  Warning: Local branch has diverged from remote. Pulling might cause conflicts.")
+        print(
+            "⚠️  Warning: Local branch has diverged from remote. Pulling might cause conflicts."
+        )
         sys.exit(1)
 
 
@@ -503,4 +547,10 @@ def git_fix(message: str | None) -> None:
     subprocess.run(["git", "reset", "--soft", "HEAD~1"], check=True)
 
     # Use git_save to handle adding changes, committing, and pushing
-    git_save(message=message, no_verify=False, no_sync=False, amend=False, pathspec=None,)
+    git_save(
+        message=message,
+        no_verify=False,
+        no_sync=False,
+        amend=False,
+        pathspec=None,
+    )

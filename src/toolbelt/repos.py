@@ -33,6 +33,7 @@ class AiCodegeApi(Repo):
     def check_cmd(self) -> list[str]:
         return ["task", "test"]
 
+
 class DbtMcp(Repo):
     def name(self) -> str:
         return "dbt-mcp"

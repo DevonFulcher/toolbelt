@@ -18,7 +18,16 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["types-toml", "pre-commit", "mypy", "ruff"]
+dev = [
+    "types-toml",
+    "pre-commit",
+    "mypy",
+    "ruff",
+    "types-pyyaml>=6.0.12.20250516",
+    "pandas-stubs>=2.2.3.250527",
+    "boto3-stubs>=1.38.36",
+    "types-seaborn>=0.13.2.20250516",
+]
 
 [project.scripts]
 toolbelt = "toolbelt:main"
