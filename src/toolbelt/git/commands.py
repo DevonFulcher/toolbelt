@@ -5,6 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Literal
+import shutil
 
 import boto3
 import toml
@@ -317,7 +318,7 @@ def git_setup(
         git_branches = toml.loads(git_branches_path.read_text())
         default_branch = get_default_branch()
         git_branches["branches"]["main"] = default_branch
-        Path(target_path, ".git-branches.toml").write_text(toml.dumps(git_branches))
+        (target_path / ".git-branches.toml").write_text(toml.dumps(git_branches))
     env_vars = render_helm_yaml(
         target_path,
         git_projects_workdir,
@@ -329,7 +330,7 @@ def git_setup(
         else:
             original_dot_env = ""
     else:
-        Path(target_path, ".env").touch()
+        (target_path / ".env").touch()
         original_dot_env = ""
     if env_vars:
         updated_dot_env = (
@@ -340,11 +341,15 @@ def git_setup(
         )
         (target_path / ".env").write_text(updated_dot_env)
     if not (target_path / ".envrc").exists():
-        Path(target_path, ".envrc").touch()
+        (target_path / ".envrc").touch()
     if "dotenv" not in (target_path / ".envrc").read_text():
         (target_path / ".envrc").write_text("dotenv\n")
     if (target_path / ".pre-commit-config.yaml").exists():
         subprocess.run(["pre-commit", "install"], check=True)
+    (target_path / ".cursor/rules").mkdir(parents=True, exist_ok=True)
+    for file in (git_projects_workdir / "dotfiles/cursor/rules").glob("*.mdc"):
+        if not (target_path / ".cursor/rules" / file.name).exists():
+            shutil.copy2(file, target_path / ".cursor/rules" / file.name)
     if (target_path / ".tool-versions").exists():
         # This may fail if the plugins in .tool-versions are not installed
         subprocess.run(["asdf", "install"], check=True)
