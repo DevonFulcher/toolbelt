@@ -302,8 +302,12 @@ def git_setup(
     if not (target_path / ".envrc").exists():
         Path(target_path, ".envrc").touch()
     if "dotenv" not in (target_path / ".envrc").read_text():
-        with open(target_path / ".envrc", "a") as f:
-            f.write("dotenv\n")
+        (target_path / ".envrc").write_text("dotenv\n")
+    if (target_path / ".pre-commit-config.yaml").exists():
+        subprocess.run(["pre-commit", "install"], check=True)
+    if (target_path / ".tool-versions").exists():
+        # This may fail if the plugins in .tool-versions are not installed
+        subprocess.run(["asdf", "install"], check=True)
 
 
 def get_aws_secret(secret_name: str, region: str = "us-east-1") -> dict:
