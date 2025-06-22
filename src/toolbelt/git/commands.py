@@ -547,16 +547,13 @@ def git_fix(message: str | None) -> None:
     # If no message provided, get the original commit message before resetting
     if not message:
         message = subprocess.run(
-            ["git", "log", "-1", "--pretty=%B"],
+            ["g", "log", "-1", "--pretty=%B"],
             check=True,
             capture_output=True,
             text=True,
         ).stdout.strip()
-
     # Reset the last commit while keeping the changes
     subprocess.run(["git", "reset", "--soft", "HEAD~1"], check=True)
-
-    # Use git_save to handle adding changes, committing, and pushing
     git_save(
         message=message,
         no_verify=False,
