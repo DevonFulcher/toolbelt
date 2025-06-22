@@ -541,21 +541,33 @@ def git_safe_pull() -> None:
 
 def git_fix(message: str | None) -> None:
     """
-    Squashes the current changes into the last commit.
-    If a message is provided, it will be used as the new commit message.
+    Creates a new commit with current changes and squashes it with the previous commit.
+    If a message is provided, it will be used as the squashed commit message,
+    otherwise the original commit message is preserved.
     """
-    # If no message provided, get the original commit message before resetting
-    if not message:
-        message = subprocess.run(
-            ["g", "log", "-1", "--pretty=%B"],
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-    # Reset the last commit while keeping the changes
+    # First get the original commit message
+    original_message = subprocess.run(
+        ["git", "log", "-1", "--pretty=%B"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    # Stage all changes
+    subprocess.run(["git", "add", "-A"], check=True)
+
+    # Create a temporary commit without pushing
+    subprocess.run(
+        ["git", "commit", "-m", "WIP: Changes to be squashed"],
+        check=True,
+    )
+
+    # Now reset back one commit to squash them
     subprocess.run(["git", "reset", "--soft", "HEAD~1"], check=True)
+
+    # Create the final squashed commit and sync
     git_save(
-        message=message,
+        message=message or original_message,
         no_verify=False,
         no_sync=False,
         amend=False,
