@@ -1,7 +1,6 @@
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -352,8 +351,9 @@ def git_setup(
         subprocess.run(["pre-commit", "install"], check=True)
     (target_path / ".cursor/rules").mkdir(parents=True, exist_ok=True)
     for file in (git_projects_workdir / "dotfiles/cursor/rules").glob("*.mdc"):
-        if not (target_path / ".cursor/rules" / file.name).exists():
-            shutil.copy2(file, target_path / ".cursor/rules" / file.name)
+        target_file = target_path / ".cursor/rules" / file.name
+        if not target_file.exists():
+            os.symlink(file, target_file)
     if (target_path / ".tool-versions").exists():
         # This may fail if the plugins in .tool-versions are not installed
         subprocess.run(["asdf", "install"], check=True)
