@@ -547,7 +547,7 @@ def git_fix(message: str | None) -> None:
     # If no message provided, get the original commit message before resetting
     if not message:
         message = subprocess.run(
-            ["git", "log", "-1", "--pretty=%B"],
+            ["g", "log", "-1", "--pretty=%B"],
             check=True,
             capture_output=True,
             text=True,
