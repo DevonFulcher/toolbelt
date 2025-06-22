@@ -1,10 +1,11 @@
-from datetime import datetime
-from pathlib import Path
-import pandas as pd
 import os
 from collections import defaultdict
-import seaborn as sns
+from datetime import datetime
+from pathlib import Path
+
 import matplotlib.pyplot as plt
+import pandas as pd
+import seaborn as sns
 import typer
 
 zsh_typer = typer.Typer(help="Zsh commands")
@@ -25,7 +26,7 @@ def load_zsh_history(path):
 
     timestamps = []
     full_commands = []
-    with open(path, "r", errors="ignore") as file:
+    with open(path, errors="ignore") as file:
         errors = 0
         for line in file:
             line = line.strip()

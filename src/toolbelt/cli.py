@@ -3,14 +3,16 @@ import subprocess
 import typer
 
 from toolbelt.datadog_form import form as datadog_form
-from toolbelt.repos import current_repo
 from toolbelt.git.cli import git_typer
+from toolbelt.mcp_server import mcp_typer
+from toolbelt.repos import current_repo
 from toolbelt.zsh import zsh_typer
 
 # Create Typer app instances
 app = typer.Typer(help="A collection of tools that I use.")
 app.add_typer(git_typer, name="git")
 app.add_typer(zsh_typer, name="zsh")
+app.add_typer(mcp_typer, name="mcp")
 
 
 @app.command()
