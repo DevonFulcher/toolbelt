@@ -190,10 +190,10 @@ def git_save(
             and org_match.group(1) == current_org.replace("_", "-")
             and current_branch == default_branch
         ):
-            new_branch_name = message.replace(" ", "_")
+            new_branch_name = "devon/" + message.replace(" ", "_")
             should_commit = input(
                 "On a default branch. "
-                + f"Should these changes be committed to a new branch called {new_branch_name}? (y/n): "
+                + f"Commit to a new branch called {new_branch_name}? (y/n): "
             )
             if should_commit.lower() == "y":
                 subprocess.run(

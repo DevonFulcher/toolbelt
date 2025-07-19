@@ -123,6 +123,8 @@ def change(
             ["git", "checkout", get_branch_name(branch, "change")], check=True
         )
         git_safe_pull()
+        if Path("uv.lock").exists():
+            subprocess.run(["uv", "sync"], check=True)
 
 
 @git_typer.command(help="Compare commits with git diff")
