@@ -1,6 +1,6 @@
 import os
-from pathlib import Path
 import sys
+from pathlib import Path
 
 
 def get_env_var_or_exit(env_var_name: str) -> str:

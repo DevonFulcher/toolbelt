@@ -1,9 +1,9 @@
-from datetime import datetime
 import json
 import os
 import re
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
@@ -55,6 +55,21 @@ def get_parent_branch_name(child_branch_name: str) -> str:
         capture_output=True,
         text=True,
     ).stdout.strip()
+
+
+def update_repo(target_path: Path):
+    if (target_path / ".tool-versions").exists():
+        # This may fail if the plugins in .tool-versions are not installed
+        subprocess.run(["asdf", "install"], check=True)
+    if (target_path / "uv.lock").exists():
+        subprocess.run(["uv", "sync"], check=True)
+
+
+def sync_repo():
+    # Run git-town continue in case a git conflict happened during the last save
+    subprocess.run(["git-town", "continue"], check=True)
+    subprocess.run(["git-town", "sync", "--stack"], check=True)
+    update_repo(get_current_repo_root_path())
 
 
 def git_pr(skip_tests: bool) -> None:
@@ -244,9 +259,7 @@ def git_save(
 
     # Sync the changes
     if not no_sync:
-        # Run git-town continue in case a git conflict happened during the last save
-        subprocess.run(["git-town", "continue"], check=True)
-        subprocess.run(["git-town", "sync", "--stack"], check=True)
+        sync_repo()
 
     # Print the status
     print("git status:")
@@ -308,6 +321,17 @@ def get_branch_name(
     return branch_name
 
 
+def get_current_repo_root_path() -> Path:
+    return Path(
+        subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    )
+
+
 def git_setup(
     target_path: Path,
     git_projects_workdir: Path,
@@ -356,9 +380,7 @@ def git_setup(
         target_file = target_path / ".cursor/rules" / file.name
         if not target_file.exists():
             os.symlink(file, target_file)
-    if (target_path / ".tool-versions").exists():
-        # This may fail if the plugins in .tool-versions are not installed
-        subprocess.run(["asdf", "install"], check=True)
+    update_repo(target_path)
 
 
 def get_aws_secret(secret_name: str, region: str = "us-east-1") -> dict:
@@ -539,31 +561,3 @@ def git_safe_pull() -> None:
             "⚠️  Warning: Local branch has diverged from remote. Pulling might cause conflicts."
         )
         sys.exit(1)
-
-
-def git_fix(message: str | None) -> None:
-    """
-    Creates a new commit with current changes and squashes it with the previous commit.
-    If a message is provided, it will be used as the squashed commit message,
-    otherwise the original commit message is preserved.
-    """
-    original_message = subprocess.run(
-        ["git", "log", "-1", "--pretty=%B"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-    subprocess.run(["git", "add", "-A"], check=True)
-    # Create a temporary commit without pushing
-    subprocess.run(
-        ["git", "commit", "-m", "WIP: Changes to be squashed"],
-        check=True,
-    )
-    subprocess.run(["git", "reset", "--soft", "HEAD~1"], check=True)
-    git_save(
-        message=message or original_message,
-        no_verify=False,
-        no_sync=False,
-        amend=False,
-        pathspec=None,
-    )

@@ -9,12 +9,14 @@ import typer
 from toolbelt.env_var import get_env_var_or_exit, get_git_projects_workdir
 from toolbelt.git.commands import (
     get_branch_name,
-    git_fix,
+    get_current_repo_root_path,
     git_pr,
     git_safe_pull,
     git_save,
     git_setup,
     is_git_repo,
+    sync_repo,
+    update_repo,
 )
 
 git_typer = typer.Typer(help="Git workflow commands")
@@ -123,8 +125,7 @@ def change(
             ["git", "checkout", get_branch_name(branch, "change")], check=True
         )
         git_safe_pull()
-        if Path("uv.lock").exists():
-            subprocess.run(["uv", "sync"], check=True)
+        update_repo(get_current_repo_root_path())
 
 
 @git_typer.command(help="Compare commits with git diff")
@@ -181,18 +182,6 @@ def safe_pull():
     git_safe_pull()
 
 
-@git_typer.command(help="Fix the last commit by replacing it with the current changes")
-def fix(
-    message: Annotated[
-        Optional[str],
-        typer.Option(
-            "-m", "--message", help="Commit message to replace original commit message"
-        ),
-    ] = None,
-):
-    git_fix(message)
-
-
 @git_typer.command(name="list", help="List all repos")
 def git_list():
     git_projects_workdir = get_git_projects_workdir()
@@ -212,3 +201,8 @@ def git_list():
         ],
         check=True,
     )
+
+
+@git_typer.command(help="Sync the current repo")
+def sync():
+    sync_repo()
