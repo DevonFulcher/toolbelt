@@ -70,6 +70,7 @@ def sync_repo():
     subprocess.run(["git-town", "continue"], check=True)
     subprocess.run(["git-town", "sync", "--stack"], check=True)
     update_repo(get_current_repo_root_path())
+    subprocess.run(["git", "push"], check=True)
 
 
 def git_pr(skip_tests: bool) -> None:
