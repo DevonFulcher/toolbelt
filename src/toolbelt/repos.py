@@ -1,7 +1,8 @@
-from abc import ABC, abstractmethod
 import os
-from pathlib import Path
 import subprocess
+from abc import ABC, abstractmethod
+from pathlib import Path
+
 from toolbelt.env_var import get_git_projects_workdir
 
 
@@ -66,7 +67,12 @@ class DbtSemanticInterfaces(Repo):
         return ["make", "test"]
 
 
-repos = [AiCodegeApi(), MetricflowServer(), Metricflow(), DbtSemanticInterfaces()]
+repos: list[Repo] = [
+    AiCodegeApi(),
+    MetricflowServer(),
+    Metricflow(),
+    DbtSemanticInterfaces(),
+]
 
 
 def current_repo_name() -> str:

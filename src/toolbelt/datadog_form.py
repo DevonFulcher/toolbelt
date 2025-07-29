@@ -1,11 +1,12 @@
 import time
+import webbrowser
 from typing import List, Tuple
 from urllib.parse import quote
-import webbrowser
+
 from textual.app import App, ComposeResult
 from textual.containers import Container
-from textual.widgets import Input, Select, Button, Label, SelectionList
 from textual.screen import Screen
+from textual.widgets import Button, Input, Label, Select, SelectionList
 
 
 def get_structured_log_query(service: str, key: str, value: str) -> str:

@@ -6,6 +6,7 @@ from toolbelt.datadog_form import form as datadog_form
 from toolbelt.git.cli import git_typer
 from toolbelt.mcp_server import mcp_typer
 from toolbelt.repos import current_repo
+from toolbelt.standup import standup_notes
 from toolbelt.zsh import zsh_typer
 
 # Create Typer app instances
@@ -44,6 +45,12 @@ def unit():
 def datadog():
     """Open Datadog form"""
     datadog_form()
+
+
+@app.command(name="standup", help="Prepare notes for standup")
+def standup():
+    """Prepare notes for standup"""
+    standup_notes()
 
 
 if __name__ == "__main__":
