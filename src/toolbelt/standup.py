@@ -1,8 +1,10 @@
 import os
 import textwrap
+from string import Template
 
 import pyperclip  # type: ignore[import-untyped]
 
+from toolbelt.git.commits import get_yesterdays_commits, summarize_commits
 from toolbelt.github import get_open_pull_requests
 
 
@@ -15,12 +17,16 @@ def standup_notes() -> None:
     prs_text = "\n".join(
         [f"    * {pr.url} (Open for {pr.time_open})" for pr in open_prs]
     )
-    standup_text = textwrap.dedent(f"""
-    Yesterday
-    *
-    Today
-    *
-    Blockers & Open PRs\n{prs_text}
-    """)
+    yesterday_commits = get_yesterdays_commits()
+    commit_summary = summarize_commits(yesterday_commits)
+    standup_text = Template(
+        textwrap.dedent(f"""
+        Yesterday
+        $commit_summary
+        Today
+        *
+        Blockers & Open PRs\n{prs_text}
+        """)
+    ).substitute(commit_summary=commit_summary)
     print(standup_text)
     pyperclip.copy(standup_text)

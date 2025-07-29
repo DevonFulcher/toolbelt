@@ -11,7 +11,8 @@ import boto3
 import toml
 import yaml
 
-from toolbelt.repos import current_repo
+from toolbelt.git.commits import store_commit
+from toolbelt.repos import current_repo, current_repo_name
 
 
 def get_default_branch() -> Literal["main", "master"]:
@@ -261,6 +262,8 @@ def git_save(
     # Sync the changes
     if not no_sync:
         sync_repo()
+
+    store_commit(message, current_repo_name())
 
     # Print the status
     print("git status:")

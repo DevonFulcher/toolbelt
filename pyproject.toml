@@ -17,6 +17,7 @@ dependencies = [
     "pyarrow>=20.0.0",
     "mcp>=1.9.4",
     "pyperclip>=1.9.0",
+    "openai>=1.97.1",
 ]
 
 [dependency-groups]
