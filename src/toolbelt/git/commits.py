@@ -15,12 +15,6 @@ class Commit:
     org: str
 
 
-def _extract_org(repo_name: str) -> str:
-    """Extract the organization name from the repo name."""
-    parts = repo_name.split("/", 1)
-    return parts[0] if len(parts) > 1 else ""
-
-
 def _get_db_path() -> Path:
     """Get the path to the database file."""
     toolbelt_dir = Path.home() / ".toolbelt"
@@ -42,7 +36,7 @@ def _ensure_db(conn: sqlite3.Connection) -> None:
     """)
 
 
-def store_commit(message: str, repo_name: str) -> None:
+def store_commit(message: str, repo_name: str, org: str) -> None:
     """Store a commit message in the database.
 
     Args:
@@ -57,7 +51,7 @@ def store_commit(message: str, repo_name: str) -> None:
             (
                 message,
                 repo_name,
-                _extract_org(repo_name),
+                org,
                 datetime.now(timezone.utc),
             ),
         )
