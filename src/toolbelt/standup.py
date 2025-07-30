@@ -15,18 +15,28 @@ def standup_notes() -> None:
     assert username and token
     open_prs = get_open_pull_requests(username, token)
     prs_text = "\n".join(
-        [f"    * {pr.url} (Open for {pr.time_open})" for pr in open_prs]
+        [
+            f"        * {pr.title}: {pr.url} (Created {pr.time_open} ago)"
+            for pr in open_prs
+        ]
     )
     yesterday_commits = get_yesterdays_commits()
+    print(yesterday_commits)
     commit_summary = summarize_commits(yesterday_commits)
-    standup_text = Template(
-        textwrap.dedent(f"""
+    standup_text = (
+        Template(
+            textwrap.dedent(f"""
         Yesterday
         $commit_summary
         Today
         *
-        Blockers & Open PRs\n{prs_text}
+        Blockers
+        * None
+        Open PRs\n{prs_text}
         """)
-    ).substitute(commit_summary=commit_summary)
+        )
+        .substitute(commit_summary=commit_summary)
+        .strip()
+    )
     print(standup_text)
     pyperclip.copy(standup_text)

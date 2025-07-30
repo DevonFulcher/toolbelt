@@ -49,7 +49,7 @@ def get_open_pull_requests(username: str, token: str) -> list[PullRequest]:
         while True:
             url = (
                 "https://api.github.com/search/issues"
-                f"?q=is:pr+is:open+author:{username}+archived:false"
+                f"?q=is:pr+is:open+author:{username}+archived:false+-draft:true+-review:approved"
                 f"&per_page=100&page={page}"
             )
             response = client.get(url)
