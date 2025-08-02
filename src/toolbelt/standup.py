@@ -21,7 +21,6 @@ def standup_notes() -> None:
         ]
     )
     yesterday_commits = get_yesterdays_commits()
-    print(yesterday_commits)
     commit_summary = summarize_commits(yesterday_commits)
     standup_text = (
         Template(

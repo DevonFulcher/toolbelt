@@ -77,12 +77,17 @@ def get_yesterdays_commits() -> list[Commit]:
         query = """
             SELECT message, repo_name, created_at, org
             FROM commits
-            WHERE date(created_at) = date('now', '-1 day')
+            WHERE date(created_at) = CASE
+                -- If it's Monday (weekday 1), get Friday's commits (3 days ago)
+                WHEN strftime('%w', 'now') = '1' THEN date('now', '-3 days')
+                -- Otherwise get yesterday's commits
+                ELSE date('now', '-1 day')
+            END
             AND org = ?
             ORDER BY created_at DESC
         """
 
-        cursor.execute(query, [current_org])
+        cursor.execute(query, [current_org.replace("_", "-")])
         return [
             Commit(message, repo, datetime.fromisoformat(created_at), org)
             for message, repo, created_at, org in cursor.fetchall()
