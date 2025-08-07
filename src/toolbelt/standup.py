@@ -23,19 +23,19 @@ def standup_notes() -> None:
     yesterday_commits = get_yesterdays_commits()
     commit_summary = summarize_commits(yesterday_commits)
     standup_text = (
-        Template(
-            textwrap.dedent(f"""
+        (
+            Template(
+                textwrap.dedent("""
         Yesterday
         $commit_summary
         Today
         *
         Blockers
         * None
-        Open PRs\n{prs_text}
         """)
+            ).substitute(commit_summary=commit_summary)
         )
-        .substitute(commit_summary=commit_summary)
-        .strip()
-    )
+        + (f"Open PRs\n{prs_text}" if prs_text else "")
+    ).strip()
     print(standup_text)
     pyperclip.copy(standup_text)

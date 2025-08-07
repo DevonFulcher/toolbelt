@@ -112,7 +112,7 @@ def summarize_commits(commits: list[Commit]) -> str:
     )
 
     # Create the prompt
-    prompt = f"""Summarize these git commits into 1-3 clear bullet points that explain the key changes:
+    prompt = f"""Summarize these git commits into 1-3 clear bullet points that explain the key changes. Don't include references to BugBot:
 
 {commit_text}
 
