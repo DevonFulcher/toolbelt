@@ -15,10 +15,7 @@ def standup_notes() -> None:
     assert username and token
     open_prs = get_open_pull_requests(username, token)
     prs_text = "\n".join(
-        [
-            f"        * {pr.title}: {pr.url} (Created {pr.time_open} ago)"
-            for pr in open_prs
-        ]
+        [f"* {pr.title}: {pr.url} (Created {pr.time_open} ago)" for pr in open_prs]
     )
     yesterday_commits = get_yesterdays_commits()
     commit_summary = summarize_commits(yesterday_commits)
