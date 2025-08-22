@@ -9,6 +9,7 @@ from typing import Literal
 
 import boto3
 import toml
+import typer
 import yaml
 
 from toolbelt.git.commits import store_commit
@@ -183,12 +184,14 @@ def check_for_parent_branch_merge_conflicts(
 
 
 def git_save(
-    message: str,
+    message: str | None,
     no_verify: bool,
     no_sync: bool,
     amend: bool,
     pathspec: list[str] | None,
 ) -> None:
+    if not message and not amend:
+        raise typer.BadParameter("Commit message or --amend is required")
     current_branch = get_current_branch_name()
     default_branch = get_default_branch()
 
@@ -208,6 +211,7 @@ def git_save(
             and org_match.group(1) == current_org.replace("_", "-")
             and current_branch == default_branch
         ):
+            assert message, "Message is required when committing to a default branch"
             new_branch_name = "devon/" + message.replace(" ", "_")
             should_commit = input(
                 "On a default branch. "
@@ -243,12 +247,10 @@ def git_save(
     )
 
     # Commit the changes
-    git_commit_command = [
-        "git",
-        "commit",
-        "-m",
-        message,
-    ]
+    git_commit_command = ["git", "commit"]
+    if message:
+        git_commit_command.append("-m")
+        git_commit_command.append(message)
     if amend:
         git_commit_command.append("--amend")
     if no_verify:
@@ -263,7 +265,8 @@ def git_save(
     if not no_sync:
         sync_repo()
 
-    store_commit(message, current_repo_name(), current_repo_org())
+    if message:
+        store_commit(message, current_repo_name(), current_repo_org())
 
     # Print the status
     print("git status:")

@@ -73,7 +73,9 @@ def get(
 
 @git_typer.command(help="Git add, commit, and push changes")
 def save(
-    message: Annotated[str, typer.Option("-m", "--message", help="Commit message")],
+    message: Annotated[
+        str | None, typer.Option("-m", "--message", help="Commit message")
+    ] = None,
     no_verify: Annotated[bool, typer.Option(help="Skip pre-commit hooks")] = False,
     no_sync: Annotated[
         bool, typer.Option(help="Skip syncing changes in this stack")
