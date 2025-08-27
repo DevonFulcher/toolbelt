@@ -21,7 +21,7 @@ from toolbelt.git.commands import (
 from toolbelt.git.worktrees import worktrees_typer
 
 git_typer = typer.Typer(help="Git workflow commands")
-git_typer.add_typer(worktrees_typer, name="worktrees")
+git_typer.add_typer(worktrees_typer, name="worktree")
 git_typer.add_typer(worktrees_typer, name="wt")  # Add alias for worktrees
 
 
