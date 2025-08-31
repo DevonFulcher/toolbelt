@@ -1,6 +1,8 @@
 import subprocess
 from pathlib import Path
 
+from toolbelt.env_var import get_git_projects_workdir
+from toolbelt.git.commands import git_setup
 import typer
 
 worktrees_typer = typer.Typer(help="git worktree helpers")
@@ -26,7 +28,7 @@ def current_branch(root: Path) -> str:
     br = capture(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=root)
     if br == "HEAD":
         typer.echo(
-            "Error: detached HEAD. Use --start <ref> or checkout a branch.", err=True
+            "Error: detached HEAD.", err=True
         )
         raise typer.Exit(2)
     return br
@@ -49,6 +51,7 @@ def add(
 
     typer.echo("$ " + " ".join(cmd))
     run(cmd, cwd=root)
+    git_setup(wt_path, get_git_projects_workdir())
     typer.echo(f"Created worktree at {wt_path}")
 
 
