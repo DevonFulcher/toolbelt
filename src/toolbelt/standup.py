@@ -1,5 +1,6 @@
 import os
 import textwrap
+import webbrowser
 from string import Template
 
 import pyperclip  # type: ignore[import-untyped]
@@ -36,3 +37,6 @@ def standup_notes() -> None:
     ).strip()
     print(standup_text)
     pyperclip.copy(standup_text)
+    webbrowser.open(
+        "https://www.notion.so/dbtlabs/Devon-Fulcher-413bb38ebda783a0b19e8180994322fe"
+    )
