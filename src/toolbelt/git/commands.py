@@ -405,7 +405,8 @@ def git_setup(
     if not (target_path / ".envrc").exists():
         (target_path / ".envrc").touch()
     if "dotenv" not in (target_path / ".envrc").read_text():
-        (target_path / ".envrc").write_text("dotenv\n")
+        with open(target_path / ".envrc", "a") as f:
+            f.write("dotenv\n")
     if (target_path / ".pre-commit-config.yaml").exists():
         subprocess.run(["pre-commit", "install"], check=True)
     (target_path / ".cursor/rules").mkdir(parents=True, exist_ok=True)
