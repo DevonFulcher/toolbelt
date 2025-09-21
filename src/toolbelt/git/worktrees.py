@@ -2,7 +2,7 @@ import subprocess
 from pathlib import Path
 
 from toolbelt.env_var import get_git_projects_workdir
-from toolbelt.git.commands import git_setup
+from toolbelt.git.commands import git_setup, git_safe_pull, update_repo
 import typer
 
 worktrees_typer = typer.Typer(help="git worktree helpers")
@@ -27,9 +27,7 @@ def repo_root() -> Path:
 def current_branch(root: Path) -> str:
     br = capture(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=root)
     if br == "HEAD":
-        typer.echo(
-            "Error: detached HEAD.", err=True
-        )
+        typer.echo("Error: detached HEAD.", err=True)
         raise typer.Exit(2)
     return br
 
@@ -102,6 +100,48 @@ def remove(
     typer.echo("$ " + " ".join(cmd))
     run(cmd, cwd=root)
     typer.echo(f"Deleted branch {name}")
+
+
+@worktrees_typer.command()
+def change(
+    name: str | None = typer.Argument(None, help="Worktree name to change to"),
+) -> None:
+    """Change to a worktree and switch to a branch."""
+    root = repo_root()
+
+    if name is None:
+        worktrees = get_worktrees()
+        if not worktrees:
+            typer.echo("No worktrees found", err=True)
+            raise typer.Exit(1)
+
+        try:
+            # Use subprocess.run directly for fzf since we need to pipe input
+            proc = subprocess.run(
+                ["fzf"],
+                input="\n".join(worktrees).encode(),
+                capture_output=True,
+                check=True,
+            )
+            name = proc.stdout.decode().strip()
+        except subprocess.CalledProcessError as err:
+            typer.echo("No worktree selected", err=True)
+            raise typer.Exit(1) from err
+
+    wt_path = root / "worktrees" / name
+    if not wt_path.exists():
+        typer.echo(f"Worktree {name} does not exist", err=True)
+        raise typer.Exit(1)
+
+    # Get current branch and switch to it, then safe pull
+    current_br = current_branch(wt_path)
+    run(["git", "checkout", current_br], cwd=wt_path)
+
+    git_safe_pull()
+    update_repo(wt_path)
+
+    # Output the directory path for shell integration
+    typer.echo(str(wt_path))
 
 
 @worktrees_typer.command(name="list")
