@@ -266,7 +266,7 @@ def git_save(
         sync_repo()
 
     if message:
-        store_commit(message, current_repo_name(), current_repo_org())
+        store_commit(message, current_repo_name(), current_repo_org(), current_branch)
 
     # Print the status
     print("git status:")
