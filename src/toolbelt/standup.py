@@ -1,11 +1,10 @@
 import os
 import textwrap
 import webbrowser
-from string import Template
 
 import pyperclip  # type: ignore[import-untyped]
 
-from toolbelt.git.commits import get_yesterdays_commits, summarize_commits
+from toolbelt.git.commits import get_yesterdays_commits
 from toolbelt.github import get_open_pull_requests
 
 
@@ -19,22 +18,25 @@ def standup_notes() -> None:
         [f"* {pr.title}: {pr.url} (Created {pr.time_open} ago)" for pr in open_prs]
     )
     yesterday_commits = get_yesterdays_commits()
-    commit_summary = summarize_commits(yesterday_commits)
+    commits_section = ""
+    if yesterday_commits:
+        commits_text = "\n".join(
+            [f"* {c.repo_name} ({c.branch}): {c.message}" for c in yesterday_commits]
+        )
+        commits_section = f"\nRecent Commits\n{commits_text}"
+
     standup_text = (
-        (
-            Template(
-                textwrap.dedent("""
+        textwrap.dedent("""
         Yesterday
-        $commit_summary
+        *
         Today
         *
         Blockers
         * None
-        """)
-            ).substitute(commit_summary=commit_summary)
-        )
-        + (f"Open PRs\n{prs_text}" if prs_text else "")
-    ).strip()
+        """).strip()
+        + commits_section
+        + (f"\nOpen PRs\n{prs_text}" if prs_text else "")
+    )
     print(standup_text)
     pyperclip.copy(standup_text)
     webbrowser.open(
