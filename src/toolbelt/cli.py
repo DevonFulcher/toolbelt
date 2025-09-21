@@ -1,9 +1,11 @@
+import os
 import subprocess
 
 import typer
 
 from toolbelt.datadog_form import form as datadog_form
 from toolbelt.git.cli import git_typer
+from toolbelt.github import display_status
 from toolbelt.mcp_server import mcp_typer
 from toolbelt.repos import current_repo
 from toolbelt.standup import standup_notes
@@ -51,6 +53,21 @@ def datadog():
 def standup():
     """Prepare notes for standup"""
     standup_notes()
+
+
+@app.command(name="status", help="Show GitHub PR status")
+def status():
+    """Show your PRs and review requests with status information"""
+    username = os.getenv("GITHUB_USERNAME")
+    token = os.getenv("GITHUB_PERSONAL_ACCESS_TOKEN")
+
+    if not username or not token:
+        print(
+            "Error: GITHUB_USERNAME and GITHUB_PERSONAL_ACCESS_TOKEN environment variables must be set"
+        )
+        return
+
+    display_status(username, token)
 
 
 if __name__ == "__main__":
