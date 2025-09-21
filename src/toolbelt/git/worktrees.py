@@ -141,7 +141,7 @@ def change(
     update_repo(wt_path)
 
     # Output the directory path for shell integration
-    typer.echo(str(wt_path))
+    typer.echo(f"cd {wt_path}")
 
 
 @worktrees_typer.command(name="list")
