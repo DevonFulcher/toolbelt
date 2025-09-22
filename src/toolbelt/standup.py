@@ -21,9 +21,9 @@ def standup_notes() -> None:
     commits_section = ""
     if yesterday_commits:
         commits_text = "\n".join(
-            [f"* {c.repo_name} ({c.branch}): {c.message}" for c in yesterday_commits]
+            [f"* {c.repo_name}: {c.message}" for c in yesterday_commits]
         )
-        commits_section = f"\nRecent Commits\n{commits_text}"
+        commits_section = f"\nRecent Changes\n{commits_text}"
 
     standup_text = (
         textwrap.dedent("""
