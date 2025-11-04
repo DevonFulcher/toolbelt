@@ -15,30 +15,34 @@ import yaml
 from toolbelt.git.commits import store_commit
 from toolbelt.repos import current_repo, current_repo_name
 
+DefaultBranchName = Literal["main", "master", "current"]
 
-def get_default_branch() -> Literal["main", "master"]:
-    try:
-        # Check if 'main' branch exists
-        subprocess.run(
-            ["git", "rev-parse", "--verify", "main"],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        return "main"
-    except subprocess.CalledProcessError:
+DEFAULT_BRANCH_NAMES: tuple[DefaultBranchName, ...] = (
+    "main",
+    "master",
+    "current",
+)
+
+
+def get_default_branch() -> DefaultBranchName:
+    for branch_name in DEFAULT_BRANCH_NAMES:
         try:
-            # Check if 'master' branch exists
             subprocess.run(
-                ["git", "rev-parse", "--verify", "master"],
+                ["git", "rev-parse", "--verify", branch_name],
                 check=True,
                 capture_output=True,
                 text=True,
             )
-            return "master"
+            return branch_name
         except subprocess.CalledProcessError:
-            print("Neither 'main' nor 'master' branch exists.", file=sys.stderr)
-            sys.exit(1)
+            continue
+
+    formatted_names = ", ".join(f"'{name}'" for name in DEFAULT_BRANCH_NAMES)
+    print(
+        f"None of the default branches {formatted_names} exist.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 
 def get_current_branch_name() -> str:
@@ -286,7 +290,7 @@ def get_branch_name(
         )
         selected_branch, _ = fzf.communicate(input=branches)
         branch_name = selected_branch.strip()
-    elif branch in ["main", "master"]:
+    elif branch in DEFAULT_BRANCH_NAMES:
         branch_name = get_default_branch()
     elif branch == "-":
         if command == "combine":
