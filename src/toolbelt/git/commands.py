@@ -92,6 +92,42 @@ def git_pr(skip_tests: bool) -> None:
     )
 
 
+def git_branch_clean() -> None:
+    """
+    Delete local branches whose upstream has been removed.
+    """
+    subprocess.run(["git", "fetch", "-p"], check=True)
+    branch_list = subprocess.run(
+        ["git", "branch", "-vv"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+
+    deleted_branches: list[str] = []
+    for line in branch_list:
+        if ": gone]" not in line:
+            continue
+        tokens = line.split()
+        if not tokens:
+            continue
+        if tokens[0] == "*":
+            if len(tokens) < 2:
+                continue
+            branch_name = tokens[1]
+        else:
+            branch_name = tokens[0]
+        subprocess.run(["git", "branch", "-D", branch_name], check=True)
+        deleted_branches.append(branch_name)
+
+    if deleted_branches:
+        print("Deleted branches:")
+        for branch_name in deleted_branches:
+            print(f"  {branch_name}")
+    else:
+        print("No branches to delete.")
+
+
 def check_for_parent_branch_merge_conflicts(
     *, current_branch: str, default_branch: str
 ) -> None:

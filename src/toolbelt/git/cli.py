@@ -8,6 +8,7 @@ import typer
 
 from toolbelt.env_var import get_env_var_or_exit, get_git_projects_workdir
 from toolbelt.git.commands import (
+    git_branch_clean,
     get_branch_name,
     get_current_repo_root_path,
     git_pr,
@@ -34,6 +35,14 @@ def pr(
     ] = False,
 ):
     git_pr(skip_tests)
+
+
+@git_typer.command(
+    name="branch-clean",
+    help="Delete local branches whose upstream has been removed.",
+)
+def branch_clean():
+    git_branch_clean()
 
 
 @git_typer.command(
