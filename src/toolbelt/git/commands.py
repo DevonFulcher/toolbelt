@@ -396,7 +396,9 @@ def git_setup(
             line.strip() for line in original_dot_env.split("\n") if line.strip()
         ]
         env_var_lines = [
-            f"{k}={v}" for k, v in env_vars.items() if k not in original_env_var_lines
+            f"{k}={v}"
+            for k, v in env_vars.items()
+            if f"{k}={v}" not in original_env_var_lines
         ]
         generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         updated_dot_env = (
