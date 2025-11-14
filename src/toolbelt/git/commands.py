@@ -111,7 +111,7 @@ def git_branch_clean() -> None:
         tokens = line.split()
         if not tokens:
             continue
-        if tokens[0] == "*":
+        if tokens[0] in {"*", "+"}:
             if len(tokens) < 2:
                 continue
             branch_name = tokens[1]
