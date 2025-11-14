@@ -2,7 +2,12 @@ import subprocess
 from pathlib import Path
 
 from toolbelt.env_var import get_git_projects_workdir
-from toolbelt.git.commands import git_setup, git_safe_pull, update_repo
+from toolbelt.git.commands import (
+    delete_branch_and_worktree,
+    git_safe_pull,
+    git_setup,
+    update_repo,
+)
 import typer
 
 worktrees_typer = typer.Typer(help="git worktree helpers")
@@ -87,19 +92,7 @@ def remove(
             raise typer.Exit(1) from err
 
     root = repo_root()
-    wt_path = root / "worktrees" / name
-
-    # Remove worktree
-    cmd = ["git", "worktree", "remove", str(wt_path)]
-    typer.echo("$ " + " ".join(cmd))
-    run(cmd, cwd=root)
-    typer.echo(f"Removed {wt_path}")
-
-    # Delete branch
-    cmd = ["git", "branch", "-D", name]
-    typer.echo("$ " + " ".join(cmd))
-    run(cmd, cwd=root)
-    typer.echo(f"Deleted branch {name}")
+    delete_branch_and_worktree(name, repo_root=root)
 
 
 @worktrees_typer.command()

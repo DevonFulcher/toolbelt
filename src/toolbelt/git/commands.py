@@ -104,6 +104,7 @@ def git_branch_clean() -> None:
         text=True,
     ).stdout.splitlines()
 
+    repo_root = get_current_repo_root_path()
     deleted_branches: list[str] = []
     for line in branch_list:
         if ": gone]" not in line:
@@ -117,7 +118,7 @@ def git_branch_clean() -> None:
             branch_name = tokens[1]
         else:
             branch_name = tokens[0]
-        subprocess.run(["git", "branch", "-D", branch_name], check=True)
+        delete_branch_and_worktree(branch_name, repo_root=repo_root)
         deleted_branches.append(branch_name)
 
     if deleted_branches:
@@ -126,6 +127,39 @@ def git_branch_clean() -> None:
             print(f"  {branch_name}")
     else:
         print("No branches to delete.")
+
+
+def delete_branch_and_worktree(
+    branch_name: str,
+    *,
+    repo_root: Path | None = None,
+) -> None:
+    """
+    Delete a local branch and its associated worktree (if present).
+
+    Parameters
+    ----------
+    branch_name:
+        The name of the branch to delete.
+    repo_root:
+        Optional path to the repository root. If omitted, the current repository
+        root is detected automatically.
+    """
+    root = repo_root or get_current_repo_root_path()
+    worktree_path = root / "worktrees" / branch_name
+
+    if worktree_path.exists():
+        typer.echo(f"$ git worktree remove {worktree_path}")
+        subprocess.run(
+            ["git", "worktree", "remove", str(worktree_path)],
+            check=True,
+            cwd=root,
+        )
+        typer.echo(f"Removed {worktree_path}")
+
+    typer.echo(f"$ git branch -D {branch_name}")
+    subprocess.run(["git", "branch", "-D", branch_name], check=True, cwd=root)
+    typer.echo(f"Deleted branch {branch_name}")
 
 
 def check_for_parent_branch_merge_conflicts(
