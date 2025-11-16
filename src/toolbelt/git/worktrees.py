@@ -43,13 +43,15 @@ def add(
 ) -> None:
     """Create ./worktrees/<n>."""
     root = repo_root()
-    normalized_name = f"devon/{name.replace(' ', '_')}"
-    wt_path = root / "worktrees" / normalized_name
+    # Branch name includes devon/ prefix, but path does not
+    branch_name = f"devon/{name.replace(' ', '_')}"
+    path_name = name.replace(" ", "_")
+    wt_path = root / "worktrees" / path_name
     wt_path.parent.mkdir(parents=True, exist_ok=True)
 
     start_ref = current_branch(root)
     cmd = ["git", "worktree", "add"]
-    cmd += ["-b", normalized_name]
+    cmd += ["-b", branch_name]
     cmd += [str(wt_path), start_ref]
 
     typer.echo("$ " + " ".join(cmd))
