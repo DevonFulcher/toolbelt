@@ -445,6 +445,8 @@ def git_setup(
     service_name: str | None = None,
 ) -> None:
     os.chdir(target_path)
+    if not (target_path / ".techdocs").exists():
+        (target_path / ".techdocs").mkdir(parents=True, exist_ok=True)
     if not (target_path / ".git-branches.toml").exists():
         git_branches_path = git_projects_workdir / "dotfiles/config/.git-branches.toml"
         git_branches = toml.loads(git_branches_path.read_text())
