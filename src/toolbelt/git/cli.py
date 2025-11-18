@@ -6,11 +6,12 @@ from typing import Annotated, Optional
 
 import typer
 
-from toolbelt.env_var import get_env_var_or_exit, get_git_projects_workdir
+from toolbelt.editor import open_in_editor
+from toolbelt.env_var import get_git_projects_workdir
 from toolbelt.git.commands import (
-    git_branch_clean,
     get_branch_name,
     get_current_repo_root_path,
+    git_branch_clean,
     git_pr,
     git_safe_pull,
     git_save,
@@ -78,9 +79,7 @@ def get(
         git_projects_workdir=git_projects_workdir,
         service_name=service_name,
     )
-    # TODO: This can use the `edit` shell function
-    editor = get_env_var_or_exit("EDITOR")
-    subprocess.run([editor, str(clone_path)], check=True)
+    open_in_editor(clone_path)
 
 
 @git_typer.command(help="Git add, commit, and push changes")

@@ -1,6 +1,10 @@
+import os
 import subprocess
 from pathlib import Path
 
+import typer
+
+from toolbelt.editor import open_in_editor
 from toolbelt.env_var import get_git_projects_workdir
 from toolbelt.git.commands import (
     delete_branch_and_worktree,
@@ -8,7 +12,6 @@ from toolbelt.git.commands import (
     git_setup,
     update_repo,
 )
-import typer
 
 worktrees_typer = typer.Typer(help="git worktree helpers")
 
@@ -57,7 +60,14 @@ def add(
     typer.echo("$ " + " ".join(cmd))
     run(cmd, cwd=root)
     git_setup(wt_path, get_git_projects_workdir())
+    setup_script = wt_path / ".setup.sh"
+    if setup_script.exists():
+        if os.access(setup_script, os.X_OK):
+            subprocess.run([str(setup_script)], check=True)
+        else:
+            typer.echo("Skipping '.setup.sh'; file is not executable.", err=True)
     typer.echo(f"Created worktree at {wt_path}")
+    open_in_editor(wt_path)
 
 
 def get_worktrees() -> list[str]:

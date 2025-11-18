@@ -546,8 +546,14 @@ def git_setup(
     service_name: str | None = None,
 ) -> None:
     os.chdir(target_path)
+    # Create .gitignored directory for technical documentation
     if not (target_path / ".techdocs").exists():
         (target_path / ".techdocs").mkdir(parents=True, exist_ok=True)
+    # Create .gitignored file for setup script. Ran for worktrees setup.
+    setup_script = target_path / ".setup.sh"
+    if not setup_script.exists():
+        setup_script.write_text("#!/usr/bin/env sh\n")
+        setup_script.chmod(0o755)
     if not (target_path / ".git-branches.toml").exists():
         git_branches_path = git_projects_workdir / "dotfiles/config/.git-branches.toml"
         git_branches = toml.loads(git_branches_path.read_text())
