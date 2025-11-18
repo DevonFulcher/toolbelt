@@ -129,6 +129,70 @@ def git_branch_clean() -> None:
         print("No branches to delete.")
 
 
+def _worktree_entries(root: Path) -> list[tuple[Path, str | None]]:
+    """
+    Return the registered git worktrees and their associated branch names.
+
+    Parameters
+    ----------
+    root:
+        Path to the repository root.
+    """
+    result = subprocess.run(
+        ["git", "worktree", "list", "--porcelain"],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=root,
+    )
+
+    entries: list[tuple[Path, str | None]] = []
+    current_path: Path | None = None
+    current_branch: str | None = None
+    for raw_line in result.stdout.splitlines():
+        line = raw_line.strip()
+        if not line:
+            if current_path is not None:
+                entries.append((current_path, current_branch))
+            current_path = None
+            current_branch = None
+            continue
+
+        key, _, value = line.partition(" ")
+        if key == "worktree":
+            current_path = Path(value)
+        elif key == "branch":
+            current_branch = value.removeprefix("refs/heads/")
+        elif key == "detached":
+            current_branch = None
+
+    if current_path is not None:
+        entries.append((current_path, current_branch))
+
+    return entries
+
+
+def _worktree_paths_for_branch(branch_name: str, root: Path) -> list[Path]:
+    """
+    Return the list of worktree paths that are currently checked out to the
+    provided branch.
+    """
+    paths = [
+        path
+        for path, branch in _worktree_entries(root)
+        if branch is not None and branch == branch_name
+    ]
+
+    unique_paths: list[Path] = []
+    seen_paths: set[Path] = set()
+    for path in paths:
+        if path not in seen_paths:
+            unique_paths.append(path)
+            seen_paths.add(path)
+
+    return unique_paths
+
+
 def delete_branch_and_worktree(
     branch_name: str,
     *,
@@ -146,19 +210,56 @@ def delete_branch_and_worktree(
         root is detected automatically.
     """
     root = repo_root or get_current_repo_root_path()
-    worktree_path = root / "worktrees" / branch_name
+    worktree_paths = _worktree_paths_for_branch(branch_name, root)
 
-    if worktree_path.exists():
-        typer.echo(f"$ git worktree remove {worktree_path}")
-        subprocess.run(
-            ["git", "worktree", "remove", str(worktree_path)],
-            check=True,
+    legacy_path = root / "worktrees" / branch_name
+    if legacy_path.exists() and legacy_path not in worktree_paths:
+        worktree_paths.append(legacy_path)
+
+    for path in worktree_paths:
+        typer.echo(f"git worktree remove {path}")
+        result = subprocess.run(
+            ["git", "worktree", "remove", str(path)],
+            capture_output=True,
+            text=True,
             cwd=root,
+            check=False,
         )
-        typer.echo(f"Removed {worktree_path}")
+        if result.stdout:
+            typer.echo(result.stdout.rstrip())
+        if result.returncode != 0:
+            if result.stderr:
+                typer.echo(result.stderr.rstrip(), err=True)
+            raise subprocess.CalledProcessError(
+                result.returncode,
+                result.args,
+                output=result.stdout,
+                stderr=result.stderr,
+            )
+        typer.echo(f"Removed {path}")
 
-    typer.echo(f"$ git branch -D {branch_name}")
-    subprocess.run(["git", "branch", "-D", branch_name], check=True, cwd=root)
+    # Clean up any stale worktree references so branch deletion succeeds.
+    subprocess.run(["git", "worktree", "prune"], check=True, cwd=root)
+
+    typer.echo(f"git branch -D {branch_name}")
+    branch_delete = subprocess.run(
+        ["git", "branch", "-D", branch_name],
+        capture_output=True,
+        text=True,
+        cwd=root,
+        check=False,
+    )
+    if branch_delete.stdout:
+        typer.echo(branch_delete.stdout.rstrip())
+    if branch_delete.returncode != 0:
+        if branch_delete.stderr:
+            typer.echo(branch_delete.stderr.rstrip(), err=True)
+        raise subprocess.CalledProcessError(
+            branch_delete.returncode,
+            branch_delete.args,
+            output=branch_delete.stdout,
+            stderr=branch_delete.stderr,
+        )
     typer.echo(f"Deleted branch {branch_name}")
 
 
