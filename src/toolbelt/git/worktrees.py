@@ -81,7 +81,10 @@ def get_worktrees() -> list[str]:
 
 @worktrees_typer.command()
 def remove(
-    name: str | None = typer.Argument(None, help="Worktree name"),
+    name: str | None = typer.Argument(
+        None,
+        help="Worktree name (with or without devon/ prefix)",
+    ),
     force: bool = typer.Option(
         False,
         "--force",

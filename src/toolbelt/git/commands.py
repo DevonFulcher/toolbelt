@@ -213,11 +213,30 @@ def delete_branch_and_worktree(
         If True, pass ``--force`` to ``git worktree remove``.
     """
     root = repo_root or get_current_repo_root_path()
-    worktree_paths = _worktree_paths_for_branch(branch_name, root)
+    branch_to_delete = branch_name
 
-    legacy_path = root / "worktrees" / branch_name
-    if legacy_path.exists() and legacy_path not in worktree_paths:
-        worktree_paths.append(legacy_path)
+    def branch_exists(name: str) -> bool:
+        result = subprocess.run(
+            ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{name}"],
+            cwd=root,
+            check=False,
+        )
+        return result.returncode == 0
+
+    candidates: list[str] = []
+    candidates.append(branch_name)
+    bare_name = branch_name.removeprefix("devon/")
+    if branch_name == bare_name:
+        candidates.append(f"devon/{bare_name}")
+    else:
+        candidates.append(bare_name)
+
+    for candidate in candidates:
+        if candidate and branch_exists(candidate):
+            branch_to_delete = candidate
+            break
+
+    worktree_paths = _worktree_paths_for_branch(branch_to_delete, root)
 
     for path in worktree_paths:
         cmd = ["git", "worktree", "remove"]
@@ -248,9 +267,9 @@ def delete_branch_and_worktree(
     # Clean up any stale worktree references so branch deletion succeeds.
     subprocess.run(["git", "worktree", "prune"], check=True, cwd=root)
 
-    typer.echo(f"git branch -D {branch_name}")
+    typer.echo(f"git branch -D {branch_to_delete}")
     branch_delete = subprocess.run(
-        ["git", "branch", "-D", branch_name],
+        ["git", "branch", "-D", branch_to_delete],
         capture_output=True,
         text=True,
         cwd=root,
@@ -267,7 +286,7 @@ def delete_branch_and_worktree(
             output=branch_delete.stdout,
             stderr=branch_delete.stderr,
         )
-    typer.echo(f"Deleted branch {branch_name}")
+    typer.echo(f"Deleted branch {branch_to_delete}")
 
 
 def check_for_parent_branch_merge_conflicts(
