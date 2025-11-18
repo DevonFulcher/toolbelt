@@ -82,6 +82,12 @@ def get_worktrees() -> list[str]:
 @worktrees_typer.command()
 def remove(
     name: str | None = typer.Argument(None, help="Worktree name"),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Pass --force to git worktree remove.",
+    ),
 ) -> None:
     """Remove ./worktrees/<n> and its branch."""
     if name is None:
@@ -104,7 +110,7 @@ def remove(
             raise typer.Exit(1) from err
 
     root = repo_root()
-    delete_branch_and_worktree(name, repo_root=root)
+    delete_branch_and_worktree(name, repo_root=root, force=force)
 
 
 @worktrees_typer.command()

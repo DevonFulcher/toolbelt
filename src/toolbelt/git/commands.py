@@ -197,6 +197,7 @@ def delete_branch_and_worktree(
     branch_name: str,
     *,
     repo_root: Path | None = None,
+    force: bool = False,
 ) -> None:
     """
     Delete a local branch and its associated worktree (if present).
@@ -208,6 +209,8 @@ def delete_branch_and_worktree(
     repo_root:
         Optional path to the repository root. If omitted, the current repository
         root is detected automatically.
+    force:
+        If True, pass ``--force`` to ``git worktree remove``.
     """
     root = repo_root or get_current_repo_root_path()
     worktree_paths = _worktree_paths_for_branch(branch_name, root)
@@ -217,9 +220,13 @@ def delete_branch_and_worktree(
         worktree_paths.append(legacy_path)
 
     for path in worktree_paths:
-        typer.echo(f"git worktree remove {path}")
+        cmd = ["git", "worktree", "remove"]
+        if force:
+            cmd.append("--force")
+        cmd.append(str(path))
+        typer.echo(" ".join(cmd))
         result = subprocess.run(
-            ["git", "worktree", "remove", str(path)],
+            cmd,
             capture_output=True,
             text=True,
             cwd=root,
