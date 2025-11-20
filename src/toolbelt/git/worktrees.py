@@ -40,17 +40,22 @@ def current_branch(root: Path) -> str:
     return br
 
 
+def get_worktrees_root() -> Path:
+    return get_git_projects_workdir() / "worktrees"
+
+
 @worktrees_typer.command()
 def add(
     name: str = typer.Argument(..., help="Name of the new worktree"),
 ) -> None:
-    """Create ./worktrees/<n>."""
+    """Create $GIT_PROJECTS_WORK_DIR/worktrees/<n>."""
     root = repo_root()
     # Branch name includes devon/ prefix, but path does not
     branch_name = f"devon/{name.replace(' ', '_')}"
     path_name = name.replace(" ", "_")
-    wt_path = root / "worktrees" / path_name
-    wt_path.parent.mkdir(parents=True, exist_ok=True)
+    worktrees_root = get_worktrees_root()
+    wt_path = worktrees_root / path_name
+    worktrees_root.mkdir(parents=True, exist_ok=True)
 
     start_ref = current_branch(root)
     cmd = ["git", "worktree", "add"]
@@ -72,8 +77,7 @@ def add(
 
 def get_worktrees() -> list[str]:
     """Get list of worktree names."""
-    root = repo_root()
-    worktrees_dir = root / "worktrees"
+    worktrees_dir = get_worktrees_root()
     if not worktrees_dir.exists():
         return []
     return [d.name for d in worktrees_dir.iterdir() if d.is_dir()]
@@ -92,7 +96,7 @@ def remove(
         help="Pass --force to git worktree remove.",
     ),
 ) -> None:
-    """Remove ./worktrees/<n> and its branch."""
+    """Remove $GIT_PROJECTS_WORK_DIR/worktrees/<n> and its branch."""
     if name is None:
         worktrees = get_worktrees()
         if not worktrees:
@@ -121,7 +125,7 @@ def change(
     name: str | None = typer.Argument(None, help="Worktree name to change to"),
 ) -> None:
     """Change to a worktree and switch to a branch."""
-    root = repo_root()
+    repo_root()
 
     if name is None:
         worktrees = get_worktrees()
@@ -142,7 +146,7 @@ def change(
             typer.echo("No worktree selected", err=True)
             raise typer.Exit(1) from err
 
-    wt_path = root / "worktrees" / name
+    wt_path = get_worktrees_root() / name
     if not wt_path.exists():
         typer.echo(f"Worktree {name} does not exist", err=True)
         raise typer.Exit(1)

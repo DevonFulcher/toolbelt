@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-
 @dataclass
 class Commit:
     message: str
@@ -38,7 +37,7 @@ def _ensure_db(conn: sqlite3.Connection) -> None:
     # Migration: Add branch column if it doesn't exist
     cursor.execute("PRAGMA table_info(commits)")
     columns = [column[1] for column in cursor.fetchall()]
-    if 'branch' not in columns:
+    if "branch" not in columns:
         cursor.execute("ALTER TABLE commits ADD COLUMN branch TEXT DEFAULT 'main'")
 
 

@@ -38,11 +38,11 @@ def get_default_branch() -> DefaultBranchName:
             continue
 
     formatted_names = ", ".join(f"'{name}'" for name in DEFAULT_BRANCH_NAMES)
-    print(
+    typer.echo(
         f"None of the default branches {formatted_names} exist.",
-        file=sys.stderr,
+        err=True,
     )
-    sys.exit(1)
+    raise typer.Exit(1)
 
 
 def get_current_branch_name() -> str:
