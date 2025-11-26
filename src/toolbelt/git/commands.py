@@ -572,9 +572,12 @@ def git_setup(
     service_name: str | None = None,
 ) -> None:
     os.chdir(target_path)
-    # Create .gitignored directory for technical documentation
-    if not (target_path / ".techdocs").exists():
-        (target_path / ".techdocs").mkdir(parents=True, exist_ok=True)
+    # Create .gitignored symlink to technical documentation directory
+    techdocs_source = git_projects_workdir / "tech-docs" / f"{target_path.name}"
+    techdocs_target = target_path / ".techdocs"
+
+    if techdocs_source.exists() and not techdocs_target.exists():
+        os.symlink(techdocs_source, techdocs_target)
     # Create .gitignored file for setup script. Ran for worktrees setup.
     setup_script = target_path / ".setup.sh"
     if not setup_script.exists():
@@ -620,11 +623,12 @@ def git_setup(
             f.write("dotenv\n")
     if (target_path / ".pre-commit-config.yaml").exists():
         subprocess.run(["pre-commit", "install"], check=True)
-    (target_path / ".cursor/rules").mkdir(parents=True, exist_ok=True)
-    for file in (git_projects_workdir / "dotfiles/cursor/rules").glob("*.mdc"):
-        target_file = target_path / ".cursor/rules" / file.name
-        if not target_file.exists():
-            os.symlink(file, target_file)
+    # Create .cursor/rules symlink to cursor rules directory
+    cursor_rules_source = git_projects_workdir / "dotfiles/cursor/rules"
+    cursor_rules_target = target_path / ".cursor/rules"
+
+    if cursor_rules_source.exists() and not cursor_rules_target.exists():
+        os.symlink(cursor_rules_source, cursor_rules_target)
     update_repo(target_path)
 
 
