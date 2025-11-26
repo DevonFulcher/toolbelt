@@ -8,6 +8,8 @@ import pandas as pd
 import seaborn as sns
 import typer
 
+from toolbelt.logger import logger
+
 zsh_typer = typer.Typer(help="Zsh commands")
 
 
@@ -16,12 +18,12 @@ def parse_timestamp(timestamp):
     if len(parts) == 3:
         return parts[1].strip()
     else:
-        print("Error: timestamp without 3 parts")
+        logger.error("Error: timestamp without 3 parts")
 
 
 def load_zsh_history(path):
     if not os.path.exists(path):
-        print("File not found:", path)
+        logger.error(f"File not found: {path}")
         return None
 
     timestamps = []
@@ -41,7 +43,7 @@ def load_zsh_history(path):
             else:
                 full_commands.append(line)
                 timestamps.append(None)
-        print(f"Read file with {errors} error rows")
+        logger.info(f"Read file with {errors} error rows")
 
     max_num_sub_commands = 0
     for command in full_commands:
@@ -69,7 +71,7 @@ def history():
     commands_df = load_zsh_history(history_path)
     commands_timestamp_df = commands_df.dropna(subset=["Timestamp"])
     commands_timestamp_df.set_index("Timestamp", inplace=True)
-    print(f"Number of rows: {len(commands_df)}")
+    logger.info(f"Number of rows: {len(commands_df)}")
 
     # Determine date range for titles
     start_date = commands_timestamp_df.index.min().strftime("%Y-%m-%d")
@@ -128,4 +130,4 @@ def history():
     plt.ylabel("Command")
     plt.savefig(os.path.join(output_path, "git_command_frequency.png"))
 
-    print(f"Output saved to {output_path.absolute()}")
+    logger.info(f"Output saved to {output_path.absolute()}")

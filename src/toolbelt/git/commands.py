@@ -13,6 +13,7 @@ import typer
 import yaml
 
 from toolbelt.git.commits import store_commit
+from toolbelt.logger import logger
 from toolbelt.repos import current_repo, current_repo_name
 
 DefaultBranchName = Literal["main", "master", "current"]
@@ -122,11 +123,11 @@ def git_branch_clean() -> None:
         deleted_branches.append(branch_name)
 
     if deleted_branches:
-        print("Deleted branches:")
+        logger.info("Deleted branches:")
         for branch_name in deleted_branches:
-            print(f"  {branch_name}")
+            logger.info(f"  {branch_name}")
     else:
-        print("No branches to delete.")
+        logger.info("No branches to delete.")
 
 
 def _worktree_entries(root: Path) -> list[tuple[Path, str | None]]:
@@ -292,17 +293,17 @@ def delete_branch_and_worktree(
 def check_for_parent_branch_merge_conflicts(
     *, current_branch: str, default_branch: str
 ) -> None:
-    print("Checking for merge conflicts with parent branch")
+    logger.info("Checking for merge conflicts with parent branch")
     try:
         parent_branch = get_parent_branch_name(current_branch)
     except subprocess.CalledProcessError:
         if current_branch == default_branch:
             # Default branch without upstream - this is unusual but can happen
-            print(f"Warning: {default_branch} has no upstream branch set")
+            logger.warning(f"Warning: {default_branch} has no upstream branch set")
             sys.exit(1)
         else:
             # Regular branch without upstream - offer to set it
-            print(f"Branch '{current_branch}' has no upstream branch set")
+            logger.info(f"Branch '{current_branch}' has no upstream branch set")
             should_set_upstream = input(
                 "Would you like to set an upstream branch? (y/n): "
             )
@@ -321,12 +322,14 @@ def check_for_parent_branch_merge_conflicts(
                         capture_output=True,
                         text=True,
                     )
-                    print(f"Set upstream branch to origin/{current_branch}")
+                    logger.info(f"Set upstream branch to origin/{current_branch}")
                     # Try conflict check again with newly set upstream
                     parent_branch = get_parent_branch_name(current_branch)
                 except subprocess.CalledProcessError:
                     # If setting upstream failed (e.g., remote branch doesn't exist)
-                    print("Failed to set upstream branch - remote branch may not exist")
+                    logger.warning(
+                        "Failed to set upstream branch - remote branch may not exist"
+                    )
                     should_push = input(
                         "Would you like to push and set upstream now? (y/n): "
                     )
@@ -344,11 +347,13 @@ def check_for_parent_branch_merge_conflicts(
                                 capture_output=True,
                                 text=True,
                             )
-                            print(f"Pushed and set upstream to origin/{current_branch}")
+                            logger.info(
+                                f"Pushed and set upstream to origin/{current_branch}"
+                            )
                             # Try conflict check one final time
                             parent_branch = get_parent_branch_name(current_branch)
                         except subprocess.CalledProcessError:
-                            print("Failed to push and set upstream branch")
+                            logger.error("Failed to push and set upstream branch")
                             sys.exit(1)
                     else:
                         sys.exit(1)
@@ -364,24 +369,24 @@ def check_for_parent_branch_merge_conflicts(
                 check=False,
             )
             if "changed in both" in merge_tree_result.stdout:
-                print(
+                logger.warning(
                     "⚠️  Warning: This commit may create merge conflicts with the parent branch."
                 )
                 proceed = input("Do you want to continue anyway? (y/n): ")
                 if proceed.lower() != "y":
                     # Unstage changes if user aborts
                     subprocess.run(["git", "reset"], check=True)
-                    print("Changes unstaged. Aborting commit.")
+                    logger.info("Changes unstaged. Aborting commit.")
                     sys.exit(1)
         except subprocess.CalledProcessError:
             # This might happen in detached HEAD state
-            print(
+            logger.error(
                 "Error checking for merge conflicts - you may be in detached HEAD state"
             )
-            print("Aborting to be safe")
+            logger.error("Aborting to be safe")
             subprocess.run(["git", "reset"], check=True)
             sys.exit(1)
-    print("No merge conflicts found with parent branch")
+    logger.info("No merge conflicts found with parent branch")
 
 
 def git_save(
@@ -424,12 +429,12 @@ def git_save(
                     check=True,
                 )
             else:
-                print(
+                logger.info(
                     "Changes not committed. Use `git commit` to commit to a default branch."
                 )
                 sys.exit(1)
         else:
-            print(
+            logger.info(
                 "Not on the default branch. "
                 + f"Continuing from this branch: {current_branch}"
             )
@@ -470,7 +475,7 @@ def git_save(
         store_commit(message, current_repo_name(), current_repo_org(), current_branch)
 
     # Print the status
-    print("git status:")
+    logger.info("git status:")
     subprocess.run(["git", "status"], check=True)
 
 
@@ -519,10 +524,7 @@ def get_branch_name(
                 )
                 branch_name = branch
             else:
-                print(
-                    "Exiting. Unable to continue without a valid branch name.",
-                    file=sys.stderr,
-                )
+                logger.error("Exiting. Unable to continue without a valid branch name.")
                 sys.exit(1)
     else:
         branch_name = branch
@@ -780,7 +782,7 @@ def git_safe_pull() -> None:
         check=False,
     )
     if uncommitted_check.returncode != 0:
-        print(
+        logger.warning(
             "⚠️  Uncommitted changes found. Please commit or stash them before pulling."
         )
         sys.exit(1)
@@ -788,7 +790,7 @@ def git_safe_pull() -> None:
     current_branch = get_current_branch_name()
 
     # Fetch latest changes
-    print("Fetching latest changes...")
+    logger.info("Fetching latest changes...")
     subprocess.run(["git", "fetch"], check=True)
 
     # Check if current branch has diverged from remote
@@ -801,12 +803,12 @@ def git_safe_pull() -> None:
         )
 
         # If we get here, it's safe to pull
-        print("Branch can be fast-forwarded. Pulling changes...")
+        logger.info("Branch can be fast-forwarded. Pulling changes...")
         subprocess.run(["git", "pull"], check=True)
-        print("Successfully pulled changes!")
+        logger.info("Successfully pulled changes!")
 
     except subprocess.CalledProcessError:
-        print(
+        logger.warning(
             "⚠️  Warning: Local branch has diverged from remote. Pulling might cause conflicts."
         )
         sys.exit(1)

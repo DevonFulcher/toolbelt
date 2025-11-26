@@ -6,6 +6,7 @@ import pyperclip  # type: ignore[import-untyped]
 
 from toolbelt.git.commits import get_yesterdays_commits
 from toolbelt.github import get_open_pull_requests
+from toolbelt.logger import logger
 
 
 def standup_notes() -> None:
@@ -37,7 +38,7 @@ def standup_notes() -> None:
         + commits_section
         + (f"\nOpen PRs\n{prs_text}" if prs_text else "")
     )
-    print(standup_text)
+    logger.info(standup_text)
     pyperclip.copy(standup_text)
     webbrowser.open(
         "https://www.notion.so/dbtlabs/Devon-Fulcher-413bb38ebda783a0b19e8180994322fe"

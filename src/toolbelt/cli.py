@@ -6,6 +6,7 @@ import typer
 from toolbelt.datadog_form import form as datadog_form
 from toolbelt.git.cli import git_typer
 from toolbelt.github import display_status
+from toolbelt.logger import logger
 from toolbelt.mcp_server import mcp_typer
 from toolbelt.repos import current_repo
 from toolbelt.standup import standup_notes
@@ -40,7 +41,7 @@ def unit():
     if repo:
         repo.check()
     else:
-        print("No unit tests configured for this repo")
+        logger.info("No unit tests configured for this repo")
 
 
 @app.command(name="datadog", help="Datadog form")
@@ -62,7 +63,7 @@ def status():
     token = os.getenv("GITHUB_PERSONAL_ACCESS_TOKEN")
 
     if not username or not token:
-        print(
+        logger.error(
             "Error: GITHUB_USERNAME and GITHUB_PERSONAL_ACCESS_TOKEN environment variables must be set"
         )
         return

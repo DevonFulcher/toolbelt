@@ -4,6 +4,8 @@ from typing import Optional
 
 import httpx
 
+from toolbelt.logger import logger
+
 
 @dataclass
 class TimeOpen:
@@ -275,7 +277,7 @@ def get_review_requests(username: str, token: str) -> list[PullRequest]:
 
 def display_status(username: str, token: str) -> None:
     """Display GitHub PR status and review requests."""
-    print("🔍 Fetching your PRs and review requests...")
+    logger.info("🔍 Fetching your PRs and review requests...")
 
     # Get PRs created by user
     my_prs = get_pr_status(username, token)
@@ -285,8 +287,8 @@ def display_status(username: str, token: str) -> None:
 
     # Display created PRs
     if my_prs:
-        print(f"\n📝 Your PRs ({len(my_prs)}):")
-        print("=" * 80)
+        logger.info(f"\n📝 Your PRs ({len(my_prs)}):")
+        logger.info("=" * 80)
 
         for pr in my_prs:
             status_icons = []
@@ -315,19 +317,19 @@ def display_status(username: str, token: str) -> None:
 
             status_text = " | ".join(status_icons) if status_icons else "No status"
 
-            print(f"#{pr.number} {pr.title}")
-            print(f"  📁 {pr.repo}")
-            print(f"  🔗 {pr.url}")
-            print(f"  📊 {status_text}")
-            print(f"  ⏰ Created {pr.time_open} ago")
-            print()
+            logger.info(f"#{pr.number} {pr.title}")
+            logger.info(f"  📁 {pr.repo}")
+            logger.info(f"  🔗 {pr.url}")
+            logger.info(f"  📊 {status_text}")
+            logger.info(f"  ⏰ Created {pr.time_open} ago")
+            logger.info("")
     else:
-        print("\n📝 No PRs found")
+        logger.info("\n📝 No PRs found")
 
     # Display review requests
     if review_requests:
-        print(f"\n👀 Review Requests ({len(review_requests)}):")
-        print("=" * 80)
+        logger.info(f"\n👀 Review Requests ({len(review_requests)}):")
+        logger.info("=" * 80)
 
         for pr in review_requests:
             status_icons = []
@@ -345,11 +347,11 @@ def display_status(username: str, token: str) -> None:
 
             status_text = " | ".join(status_icons) if status_icons else "No status"
 
-            print(f"#{pr.number} {pr.title}")
-            print(f"  📁 {pr.repo}")
-            print(f"  🔗 {pr.url}")
-            print(f"  📊 {status_text}")
-            print(f"  ⏰ Created {pr.time_open} ago")
-            print()
+            logger.info(f"#{pr.number} {pr.title}")
+            logger.info(f"  📁 {pr.repo}")
+            logger.info(f"  🔗 {pr.url}")
+            logger.info(f"  📊 {status_text}")
+            logger.info(f"  ⏰ Created {pr.time_open} ago")
+            logger.info("")
     else:
-        print("\n👀 No review requests found")
+        logger.info("\n👀 No review requests found")
