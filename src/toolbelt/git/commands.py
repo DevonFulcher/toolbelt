@@ -2,7 +2,6 @@ import json
 import os
 import re
 import subprocess
-import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
@@ -299,7 +298,7 @@ def check_for_parent_branch_merge_conflicts(
         if current_branch == default_branch:
             # Default branch without upstream - this is unusual but can happen
             logger.warning(f"Warning: {default_branch} has no upstream branch set")
-            sys.exit(1)
+            raise typer.Exit(1)
         else:
             # Regular branch without upstream - offer to set it
             logger.info(f"Branch '{current_branch}' has no upstream branch set")
@@ -353,11 +352,11 @@ def check_for_parent_branch_merge_conflicts(
                             parent_branch = get_parent_branch_name(current_branch)
                         except subprocess.CalledProcessError:
                             logger.error("Failed to push and set upstream branch")
-                            sys.exit(1)
+                            raise typer.Exit(1)
                     else:
-                        sys.exit(1)
+                        raise typer.Exit(1)
             else:
-                sys.exit(1)
+                raise typer.Exit(1)
 
     if parent_branch:
         try:
@@ -376,7 +375,7 @@ def check_for_parent_branch_merge_conflicts(
                     # Unstage changes if user aborts
                     subprocess.run(["git", "reset"], check=True)
                     logger.info("Changes unstaged. Aborting commit.")
-                    sys.exit(1)
+                    raise typer.Exit(1)
         except subprocess.CalledProcessError:
             # This might happen in detached HEAD state
             logger.error(
@@ -384,7 +383,7 @@ def check_for_parent_branch_merge_conflicts(
             )
             logger.error("Aborting to be safe")
             subprocess.run(["git", "reset"], check=True)
-            sys.exit(1)
+            raise typer.Exit(1)
     logger.info("No merge conflicts found with parent branch")
 
 
@@ -431,7 +430,7 @@ def git_save(
                 logger.info(
                     "Changes not committed. Use `git commit` to commit to a default branch."
                 )
-                sys.exit(1)
+                raise typer.Exit(1)
         else:
             logger.info(
                 "Not on the default branch. "
@@ -524,7 +523,7 @@ def get_branch_name(
                 branch_name = branch
             else:
                 logger.error("Exiting. Unable to continue without a valid branch name.")
-                sys.exit(1)
+                raise typer.Exit(1)
     else:
         branch_name = branch
     return branch_name
@@ -784,7 +783,7 @@ def git_safe_pull() -> None:
         logger.warning(
             "⚠️  Uncommitted changes found. Please commit or stash them before pulling."
         )
-        sys.exit(1)
+        raise typer.Exit(1)
 
     current_branch = get_current_branch_name()
 
@@ -810,4 +809,4 @@ def git_safe_pull() -> None:
         logger.warning(
             "⚠️  Warning: Local branch has diverged from remote. Pulling might cause conflicts."
         )
-        sys.exit(1)
+        raise typer.Exit(1)
