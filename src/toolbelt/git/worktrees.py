@@ -12,6 +12,7 @@ from toolbelt.git.commands import (
     git_setup,
     update_repo,
 )
+from toolbelt.logger import logger
 
 worktrees_typer = typer.Typer(help="git worktree helpers")
 
@@ -28,14 +29,14 @@ def repo_root() -> Path:
     try:
         return Path(capture(["git", "rev-parse", "--show-toplevel"]))
     except subprocess.CalledProcessError as err:
-        typer.echo("Error: not inside a Git repository.", err=True)
+        logger.error("Error: not inside a Git repository.")
         raise typer.Exit(2) from err
 
 
 def current_branch(root: Path) -> str:
     br = capture(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=root)
     if br == "HEAD":
-        typer.echo("Error: detached HEAD.", err=True)
+        logger.error("Error: detached HEAD.")
         raise typer.Exit(2)
     return br
 
@@ -62,7 +63,7 @@ def add(
     cmd += ["-b", branch_name]
     cmd += [str(wt_path), start_ref]
 
-    typer.echo("$ " + " ".join(cmd))
+    logger.info("$ " + " ".join(cmd))
     run(cmd, cwd=root)
     git_setup(wt_path, get_git_projects_workdir())
     setup_script = wt_path / ".setup.sh"
@@ -70,8 +71,8 @@ def add(
         if os.access(setup_script, os.X_OK):
             subprocess.run([str(setup_script)], check=True)
         else:
-            typer.echo("Skipping '.setup.sh'; file is not executable.", err=True)
-    typer.echo(f"Created worktree at {wt_path}")
+            logger.warning("Skipping '.setup.sh'; file is not executable.")
+    logger.info(f"Created worktree at {wt_path}")
     open_in_editor(wt_path)
 
 
@@ -100,7 +101,7 @@ def remove(
     if name is None:
         worktrees = get_worktrees()
         if not worktrees:
-            typer.echo("No worktrees found", err=True)
+            logger.error("No worktrees found")
             raise typer.Exit(1)
 
         try:
@@ -113,7 +114,7 @@ def remove(
             )
             name = proc.stdout.decode().strip()
         except subprocess.CalledProcessError as err:
-            typer.echo("No worktree selected", err=True)
+            logger.error("No worktree selected")
             raise typer.Exit(1) from err
 
     root = repo_root()
@@ -130,7 +131,7 @@ def change(
     if name is None:
         worktrees = get_worktrees()
         if not worktrees:
-            typer.echo("No worktrees found", err=True)
+            logger.error("No worktrees found")
             raise typer.Exit(1)
 
         try:
@@ -143,12 +144,12 @@ def change(
             )
             name = proc.stdout.decode().strip()
         except subprocess.CalledProcessError as err:
-            typer.echo("No worktree selected", err=True)
+            logger.error("No worktree selected")
             raise typer.Exit(1) from err
 
     wt_path = get_worktrees_root() / name
     if not wt_path.exists():
-        typer.echo(f"Worktree {name} does not exist", err=True)
+        logger.error(f"Worktree {name} does not exist")
         raise typer.Exit(1)
 
     # Get current branch and switch to it, then safe pull
@@ -159,11 +160,11 @@ def change(
     update_repo(wt_path)
 
     # Output the directory path for shell integration
-    typer.echo(f"cd {wt_path}")
+    logger.info(f"cd {wt_path}")
 
 
 @worktrees_typer.command(name="list")
 def list_worktrees() -> None:
     """List worktrees."""
     root = repo_root()
-    typer.echo(capture(["git", "worktree", "list"], cwd=root))
+    logger.info(capture(["git", "worktree", "list"], cwd=root))

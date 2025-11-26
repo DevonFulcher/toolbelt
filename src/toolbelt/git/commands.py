@@ -39,9 +39,8 @@ def get_default_branch() -> DefaultBranchName:
             continue
 
     formatted_names = ", ".join(f"'{name}'" for name in DEFAULT_BRANCH_NAMES)
-    typer.echo(
+    logger.error(
         f"None of the default branches {formatted_names} exist.",
-        err=True,
     )
     raise typer.Exit(1)
 
@@ -244,7 +243,7 @@ def delete_branch_and_worktree(
         if force:
             cmd.append("--force")
         cmd.append(str(path))
-        typer.echo(" ".join(cmd))
+        logger.info(" ".join(cmd))
         result = subprocess.run(
             cmd,
             capture_output=True,
@@ -253,22 +252,22 @@ def delete_branch_and_worktree(
             check=False,
         )
         if result.stdout:
-            typer.echo(result.stdout.rstrip())
+            logger.info(result.stdout.rstrip())
         if result.returncode != 0:
             if result.stderr:
-                typer.echo(result.stderr.rstrip(), err=True)
+                logger.error(result.stderr.rstrip())
             raise subprocess.CalledProcessError(
                 result.returncode,
                 result.args,
                 output=result.stdout,
                 stderr=result.stderr,
             )
-        typer.echo(f"Removed {path}")
+        logger.info(f"Removed {path}")
 
     # Clean up any stale worktree references so branch deletion succeeds.
     subprocess.run(["git", "worktree", "prune"], check=True, cwd=root)
 
-    typer.echo(f"git branch -D {branch_to_delete}")
+    logger.info(f"git branch -D {branch_to_delete}")
     branch_delete = subprocess.run(
         ["git", "branch", "-D", branch_to_delete],
         capture_output=True,
@@ -277,17 +276,17 @@ def delete_branch_and_worktree(
         check=False,
     )
     if branch_delete.stdout:
-        typer.echo(branch_delete.stdout.rstrip())
+        logger.info(branch_delete.stdout.rstrip())
     if branch_delete.returncode != 0:
         if branch_delete.stderr:
-            typer.echo(branch_delete.stderr.rstrip(), err=True)
+            logger.error(branch_delete.stderr.rstrip())
         raise subprocess.CalledProcessError(
             branch_delete.returncode,
             branch_delete.args,
             output=branch_delete.stdout,
             stderr=branch_delete.stderr,
         )
-    typer.echo(f"Deleted branch {branch_to_delete}")
+    logger.info(f"Deleted branch {branch_to_delete}")
 
 
 def check_for_parent_branch_merge_conflicts(
