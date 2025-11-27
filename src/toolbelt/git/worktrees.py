@@ -1,4 +1,5 @@
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -65,7 +66,9 @@ def add(
 
     logger.info("$ " + " ".join(cmd))
     run(cmd, cwd=root)
-    git_setup(wt_path, get_git_projects_workdir())
+    git_projects_workdir = get_git_projects_workdir()
+    git_setup(wt_path, git_projects_workdir, index_serena=False)
+    shutil.copy(root / ".serena/cache", wt_path / ".serena/cache")
     setup_script = wt_path / ".setup.sh"
     if setup_script.exists():
         if os.access(setup_script, os.X_OK):

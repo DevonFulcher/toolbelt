@@ -570,12 +570,12 @@ def git_setup(
     target_path: Path,
     git_projects_workdir: Path,
     service_name: str | None = None,
+    index_serena: bool = True,
 ) -> None:
     os.chdir(target_path)
     # Create .gitignored symlink to technical documentation directory
     techdocs_source = git_projects_workdir / "tech-docs" / f"{target_path.name}"
     techdocs_target = target_path / ".techdocs"
-
     if techdocs_source.exists() and not techdocs_target.exists():
         os.symlink(techdocs_source, techdocs_target)
     # Create .gitignored file for setup script. Ran for worktrees setup.
@@ -626,9 +626,34 @@ def git_setup(
     # Create .cursor/rules symlink to cursor rules directory
     cursor_rules_source = git_projects_workdir / "dotfiles/cursor/rules"
     cursor_rules_target = target_path / ".cursor/rules"
-
     if cursor_rules_source.exists() and not cursor_rules_target.exists():
         os.symlink(cursor_rules_source, cursor_rules_target)
+    if not (target_path / ".serena/project.yml").exists():
+        subprocess.run(
+            [
+                "uvx",
+                "--from",
+                "git+https://github.com/oraios/serena",
+                "serena",
+                "project",
+                "create",
+            ],
+            check=True,
+            cwd=target_path,
+        )
+    if index_serena:
+        subprocess.run(
+            [
+                "uvx",
+                "--from",
+                "git+https://github.com/oraios/serena",
+                "serena",
+                "project",
+                "index",
+            ],
+            check=True,
+            cwd=target_path,
+        )
     update_repo(target_path)
 
 
