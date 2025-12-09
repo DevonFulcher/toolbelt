@@ -3,6 +3,7 @@ import subprocess
 
 import typer
 
+from toolbelt.agent.cli import agent_typer
 from toolbelt.datadog_form import form as datadog_form
 from toolbelt.git.cli import git_typer
 from toolbelt.github import display_status
@@ -17,6 +18,7 @@ app = typer.Typer(help="A collection of tools that I use.")
 app.add_typer(git_typer, name="git")
 app.add_typer(zsh_typer, name="zsh")
 app.add_typer(mcp_typer, name="mcp")
+app.add_typer(agent_typer, name="agent")
 
 
 @app.command()

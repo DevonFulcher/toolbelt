@@ -17,6 +17,8 @@ dependencies = [
     "pyarrow>=20.0.0",
     "mcp>=1.9.4",
     "pyperclip>=1.9.0",
+    "langchain-openai>=1.1.1",
+    "deepagents>=0.3.0",
 ]
 
 [dependency-groups]
@@ -37,3 +39,12 @@ toolbelt = "toolbelt:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.mypy]
+[[tool.mypy.overrides]]
+module = [
+    "deepagents.*",
+    "langchain.*",
+    "langgraph.*",
+]
+ignore_missing_imports = true
