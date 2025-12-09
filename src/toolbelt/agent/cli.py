@@ -15,23 +15,41 @@ agent_typer = typer.Typer(help="Deep agent commands")
 
 
 @agent_typer.command(name="run", help="Run deep agent")
-def run():
+def run(
+    root_dir: str = typer.Option(
+        None,
+        "--root-dir",
+        "-r",
+        help="Root directory for the workspace (defaults to GIT_PROJECTS_WORKDIR env var)",
+    ),
+):
     """Run an interactive deep agent session"""
-    asyncio.run(_run_agent())
+    asyncio.run(_run_agent(root_dir=root_dir))
 
 
-async def _run_agent():
+async def _run_agent(root_dir: str | None = None):
     """Run the deep agent interactively"""
     checkpointer = MemorySaver()
 
-    # Get the workspace directory from environment variable
-    workspace_dir = os.getenv("GIT_PROJECTS_WORKDIR")
-    if not workspace_dir:
-        raise ValueError("GIT_PROJECTS_WORKDIR environment variable is not set")
+    # Get the workspace directory from CLI arg or environment variable
+    working_directory = root_dir or os.getenv("GIT_PROJECTS_WORKDIR")
+    if not working_directory:
+        raise ValueError(
+            "Workspace directory must be provided via --root-dir option or "
+            "GIT_PROJECTS_WORKDIR environment variable"
+        )
+
+    # Validate the path
+    if not os.path.exists(working_directory):
+        raise ValueError(f"Path does not exist: {working_directory}")
+    if not os.path.isdir(working_directory):
+        raise ValueError(f"Path is not a directory: {working_directory}")
+    if not os.access(working_directory, os.R_OK):
+        raise ValueError(f"Path is not readable: {working_directory}")
 
     # Create filesystem backend for workspace access
     workspace_backend = FilesystemBackend(
-        root_dir=workspace_dir,
+        root_dir=working_directory,
         virtual_mode=True,  # Treat paths as virtual paths under root_dir
     )
 
