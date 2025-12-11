@@ -64,11 +64,16 @@ def add(
     cmd += ["-b", branch_name]
     cmd += [str(wt_path), start_ref]
 
-    logger.info("$ " + " ".join(cmd))
+    logger.info(" ".join(cmd))
     run(cmd, cwd=root)
     git_projects_workdir = get_git_projects_workdir()
     git_setup(wt_path, git_projects_workdir, index_serena=False)
-    shutil.copy(root / ".serena/cache", wt_path / ".serena/cache")
+
+    src_cache = root / ".serena/cache"
+    dest_cache = wt_path / ".serena/cache"
+    if src_cache.exists():
+        dest_cache.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(src_cache, dest_cache, dirs_exist_ok=True)
     setup_script = wt_path / ".setup.sh"
     if setup_script.exists():
         if os.access(setup_script, os.X_OK):
