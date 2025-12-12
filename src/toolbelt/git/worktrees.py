@@ -66,6 +66,9 @@ def add(
 
     logger.info(" ".join(cmd))
     run(cmd, cwd=root)
+    shutil.copy(root / ".env", wt_path / ".env")
+    shutil.copy(root / ".envrc", wt_path / ".envrc")
+
     git_projects_workdir = get_git_projects_workdir()
     git_setup(wt_path, git_projects_workdir, index_serena=False)
 
