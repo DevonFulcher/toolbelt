@@ -623,11 +623,11 @@ def git_setup(
             f.write("dotenv\n")
     if (target_path / ".pre-commit-config.yaml").exists():
         subprocess.run(["pre-commit", "install"], check=True)
-    # Create .cursor/rules symlink to cursor rules directory
-    cursor_rules_source = git_projects_workdir / "dotfiles/cursor/rules"
-    cursor_rules_target = target_path / ".cursor/rules"
-    if cursor_rules_source.exists() and not cursor_rules_target.exists():
-        os.symlink(cursor_rules_source, cursor_rules_target)
+    (target_path / ".cursor/rules").mkdir(parents=True, exist_ok=True)
+    for file in (git_projects_workdir / "dotfiles/cursor/rules").glob("*.mdc"):
+        target_file = target_path / ".cursor/rules" / file.name
+        if not target_file.exists():
+            os.symlink(file, target_file)
     if not (target_path / ".serena/project.yml").exists():
         subprocess.run(
             [
