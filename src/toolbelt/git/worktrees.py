@@ -7,23 +7,12 @@ import typer
 
 from toolbelt.editor import open_in_editor
 from toolbelt.env_var import get_git_projects_workdir
-from toolbelt.git.commands import (
-    delete_branch_and_worktree,
-    git_safe_pull,
-    git_setup,
-    update_repo,
-)
+from toolbelt.git.exec import capture, run
+from toolbelt.git.commands import git_safe_pull, git_setup, update_repo
+from toolbelt.git.worktrees_ops import delete_branch_and_worktree
 from toolbelt.logger import logger
 
 worktrees_typer = typer.Typer(help="git worktree helpers")
-
-
-def run(cmd: list[str], cwd: Path | None = None) -> None:
-    subprocess.run(cmd, cwd=str(cwd) if cwd else None, check=True)
-
-
-def capture(cmd: list[str], cwd: Path | None = None) -> str:
-    return subprocess.check_output(cmd, cwd=str(cwd) if cwd else None).decode().strip()
 
 
 def repo_root() -> Path:
