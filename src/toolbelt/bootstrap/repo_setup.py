@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 from datetime import datetime
@@ -85,6 +86,39 @@ def git_setup(
             check=True,
             cwd=target_path,
         )
+    cursor_mcp_relative_path = Path(".cursor/mcp.json")
+    cursor_mcp_project_path = target_path / cursor_mcp_relative_path
+    if not cursor_mcp_project_path.exists():
+        cursor_mcp_project_path.write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "serena": {
+                            "command": "uvx",
+                            "args": [
+                                "--from",
+                                "git+https://github.com/oraios/serena",
+                                "serena",
+                                "start-mcp-server",
+                                "--context",
+                                "ide-assistant",
+                                "--enable-web-dashboard",
+                                "false",
+                                "--project",
+                                str(target_path.absolute()),
+                            ],
+                        },
+                    },
+                },
+                indent=4,
+            )
+        )
+        git_info_exclude = target_path / ".git/info/exclude"
+        if not git_info_exclude.exists():
+            git_info_exclude.touch()
+        if str(cursor_mcp_relative_path) not in git_info_exclude.read_text():
+            with open(git_info_exclude, "a") as f:
+                f.write(str(cursor_mcp_relative_path) + "\n")
     if index_serena:
         subprocess.run(
             [
