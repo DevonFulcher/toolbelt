@@ -2,6 +2,7 @@ import os
 import webbrowser
 from datetime import datetime, time, timezone
 
+from toolbelt.env_var import get_git_projects_workdir
 from toolbelt.git.commits import (
     get_recent_commits_for_standup,
     get_standup_date_window,
@@ -112,6 +113,17 @@ def standup_notes(*, standup_weekdays: set[int]) -> None:
         + linear_section
         + (f"\nOpen PRs\n{prs_text}" if prs_text else "")
     )
+    now = datetime.now()
+    today = now.strftime("%Y-%m-%d")
+    year = now.strftime("%Y")
+    month = now.strftime("%m")
+    techdocs_repo = get_git_projects_workdir() / "tech-docs"
+    if not techdocs_repo.exists():
+        logger.error("Techdocs repository not found")
+        return
+    standup_file = techdocs_repo / "standups" / year / month / f"{today}.md"
+    standup_file.parent.mkdir(parents=True, exist_ok=True)
+    standup_file.write_text(standup_text)
     logger.info(standup_text)
     webbrowser.open(
         "https://www.notion.so/dbtlabs/Devon-Fulcher-413bb38ebda783a0b19e8180994322fe"
