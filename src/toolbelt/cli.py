@@ -9,7 +9,7 @@ from toolbelt.git.cli import git_typer
 from toolbelt.github import display_status
 from toolbelt.logger import logger
 from toolbelt.repos import current_repo
-from toolbelt.standup import standup_notes
+from toolbelt.standup import parse_standup_weekdays, standup_notes
 from toolbelt.zsh import zsh_typer
 
 # Create Typer app instances
@@ -51,9 +51,15 @@ def datadog():
 
 
 @app.command(name="standup", help="Prepare notes for standup")
-def standup():
+def standup(
+    days: str = typer.Option(
+        "tue,thu",
+        "--days",
+        help=("Standup weekdays. Examples: 'tue,thu'."),
+    ),
+):
     """Prepare notes for standup"""
-    standup_notes()
+    standup_notes(standup_weekdays=parse_standup_weekdays(days))
 
 
 @app.command(name="status", help="Show GitHub PR status")
@@ -64,7 +70,8 @@ def status():
 
     if not username or not token:
         logger.error(
-            "Error: GITHUB_USERNAME and GITHUB_PERSONAL_ACCESS_TOKEN environment variables must be set"
+            "Error: GITHUB_USERNAME and GITHUB_PERSONAL_ACCESS_TOKEN environment "
+            "variables must be set"
         )
         return
 

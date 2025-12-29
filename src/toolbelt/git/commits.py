@@ -1,7 +1,7 @@
 import os
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -65,18 +65,14 @@ def store_commit(message: str, repo_name: str, org: str, branch: str) -> None:
         )
 
 
-def get_yesterdays_commits() -> list[Commit]:
-    """Get all commits from yesterday for the current organization.
-
-    Returns:
-        List of Commit objects from yesterday for CURRENT_ORG
-
-    Raises:
-        ValueError: If CURRENT_ORG environment variable is not set
-    """
-    current_org = os.getenv("CURRENT_ORG")
-    if not current_org:
-        raise ValueError("CURRENT_ORG environment variable must be set")
+def _get_commits_between_dates(
+    start_date: date,
+    end_date: date,
+    *,
+    org: str,
+) -> list[Commit]:
+    if end_date < start_date:
+        return []
 
     with sqlite3.connect(str(_get_db_path())) as conn:
         _ensure_db(conn)
@@ -85,18 +81,68 @@ def get_yesterdays_commits() -> list[Commit]:
         query = """
             SELECT message, repo_name, created_at, org, branch
             FROM commits
-            WHERE date(created_at) = CASE
-                -- If it's Monday (weekday 1), get Friday's commits (3 days ago)
-                WHEN strftime('%w', 'now') = '1' THEN date('now', '-3 days')
-                -- Otherwise get yesterday's commits
-                ELSE date('now', '-1 day')
-            END
+            WHERE date(created_at) BETWEEN ? AND ?
             AND org = ?
             ORDER BY created_at DESC
         """
-
-        cursor.execute(query, [current_org.replace("_", "-")])
+        cursor.execute(query, [start_date.isoformat(), end_date.isoformat(), org])
         return [
-            Commit(message, repo, datetime.fromisoformat(created_at), org, branch)
-            for message, repo, created_at, org, branch in cursor.fetchall()
+            Commit(
+                message, repo, datetime.fromisoformat(created_at), commit_org, branch
+            )
+            for message, repo, created_at, commit_org, branch in cursor.fetchall()
         ]
+
+
+def _previous_standup_date(
+    today: date,
+    *,
+    standup_weekdays: set[int],
+) -> date:
+    """
+    Find the most recent standup date strictly before today.
+
+    `standup_weekdays` uses Python's weekday numbering: Monday=0 ... Sunday=6.
+    """
+    if not standup_weekdays:
+        raise ValueError("standup_weekdays must not be empty")
+
+    for days_ago in range(1, 8):
+        candidate = today - timedelta(days=days_ago)
+        if candidate.weekday() in standup_weekdays:
+            return candidate
+
+    # If the set is non-empty, we should always find one within the last 7 days.
+    raise RuntimeError("Failed to compute previous standup date")
+
+
+def get_recent_commits_for_standup(
+    standup_weekdays: set[int],
+    *,
+    now: datetime | None = None,
+) -> list[Commit]:
+    """
+    Get commits since the previous standup day (inclusive date range), excluding today.
+
+    Example (Tue/Thu standups):
+    - On Tuesday: includes Fri..Mon
+    - On Thursday: includes Wed
+    """
+    current_org = os.getenv("CURRENT_ORG")
+    if not current_org:
+        raise ValueError("CURRENT_ORG environment variable must be set")
+
+    now_utc = now or datetime.now(timezone.utc)
+    today = now_utc.date()
+    end_date = today - timedelta(days=1)
+    if end_date < date.min:
+        return []
+
+    prev_standup = _previous_standup_date(today, standup_weekdays=standup_weekdays)
+    start_date = prev_standup + timedelta(days=1)
+
+    return _get_commits_between_dates(
+        start_date,
+        end_date,
+        org=current_org.replace("_", "-"),
+    )
