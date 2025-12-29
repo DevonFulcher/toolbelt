@@ -1,11 +1,16 @@
 import os
-import textwrap
 import webbrowser
+from datetime import datetime, time, timezone
 
-import pyperclip  # type: ignore[import-untyped]
-
-from toolbelt.git.commits import get_recent_commits_for_standup
+from toolbelt.git.commits import (
+    get_recent_commits_for_standup,
+    get_standup_date_window,
+)
 from toolbelt.github import get_open_pull_requests
+from toolbelt.linear import (
+    LinearGraphQLError,
+    get_in_progress_issues_with_changes_since,
+)
 from toolbelt.logger import logger
 
 
@@ -50,6 +55,10 @@ def standup_notes(*, standup_weekdays: set[int]) -> None:
     username = os.getenv("GITHUB_USERNAME")
     token = os.getenv("GITHUB_PERSONAL_ACCESS_TOKEN")
     assert username and token
+
+    start_date, _end_date, _previous_standup = get_standup_date_window(standup_weekdays)
+    since = datetime.combine(start_date, time.min, tzinfo=timezone.utc)
+
     open_prs = get_open_pull_requests(username, token)
     prs_text = "\n".join(
         [f"* {pr.title}: {pr.url} (Created {pr.time_open} ago)" for pr in open_prs]
@@ -62,20 +71,48 @@ def standup_notes(*, standup_weekdays: set[int]) -> None:
         )
         commits_section = f"\nRecent Changes\n{commits_text}"
 
+    linear_section = ""
+    linear_api_key = os.getenv("LINEAR_API_KEY")
+    if linear_api_key:
+        try:
+            in_progress = get_in_progress_issues_with_changes_since(
+                api_key=linear_api_key,
+                since=since,
+            )
+        except LinearGraphQLError as e:
+            logger.error(f"Failed to fetch Linear issues: {e}")
+            in_progress = []
+
+        if in_progress:
+            lines: list[str] = []
+            for issue in in_progress:
+                lines.append(f"* {issue.identifier}: {issue.title} ({issue.url})")
+                if not issue.changes:
+                    lines.append("  * (No changes since last standup)")
+                    continue
+
+                for change in issue.changes:
+                    actor = f" ({change.actor})" if change.actor else ""
+                    when = change.created_at.astimezone(timezone.utc).strftime(
+                        "%Y-%m-%d"
+                    )
+                    detail = change.type or "updated"
+                    if change.from_value and change.to_value:
+                        detail = f"{detail}: {change.from_value} -> {change.to_value}"
+                    elif change.data:
+                        detail = f"{detail}: {change.data}"
+                    lines.append(f"  * {when}: {detail}{actor}")
+
+            linear_section = "\nLinear (In Progress)\n" + "\n".join(lines)
+    else:
+        logger.warning("No Linear API key found")
+
     standup_text = (
-        textwrap.dedent("""
-        Yesterday
-        *
-        Today
-        *
-        Blockers
-        * None
-        """).strip()
-        + commits_section
+        commits_section
+        + linear_section
         + (f"\nOpen PRs\n{prs_text}" if prs_text else "")
     )
     logger.info(standup_text)
-    pyperclip.copy(standup_text)
     webbrowser.open(
         "https://www.notion.so/dbtlabs/Devon-Fulcher-413bb38ebda783a0b19e8180994322fe"
     )

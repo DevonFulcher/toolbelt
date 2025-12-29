@@ -116,6 +116,31 @@ def _previous_standup_date(
     raise RuntimeError("Failed to compute previous standup date")
 
 
+def get_standup_date_window(
+    standup_weekdays: set[int],
+    *,
+    now: datetime | None = None,
+) -> tuple[date, date, date]:
+    """
+    Return a (start_date, end_date, previous_standup_date) window for standup-related
+    reporting.
+
+    This mirrors the window used by `get_recent_commits_for_standup`:
+    - end_date: yesterday (today - 1)
+    - start_date: the day after the most recent standup date strictly before today
+    """
+    now_utc = now or datetime.now(timezone.utc)
+    today = now_utc.date()
+    end_date = today - timedelta(days=1)
+    if end_date < date.min:
+        # Defensive: should never happen in practice.
+        end_date = date.min
+
+    prev_standup = _previous_standup_date(today, standup_weekdays=standup_weekdays)
+    start_date = prev_standup + timedelta(days=1)
+    return start_date, end_date, prev_standup
+
+
 def get_recent_commits_for_standup(
     standup_weekdays: set[int],
     *,
@@ -132,14 +157,11 @@ def get_recent_commits_for_standup(
     if not current_org:
         raise ValueError("CURRENT_ORG environment variable must be set")
 
-    now_utc = now or datetime.now(timezone.utc)
-    today = now_utc.date()
-    end_date = today - timedelta(days=1)
-    if end_date < date.min:
+    start_date, end_date, _prev_standup = get_standup_date_window(
+        standup_weekdays, now=now
+    )
+    if end_date < start_date:
         return []
-
-    prev_standup = _previous_standup_date(today, standup_weekdays=standup_weekdays)
-    start_date = prev_standup + timedelta(days=1)
 
     return _get_commits_between_dates(
         start_date,
