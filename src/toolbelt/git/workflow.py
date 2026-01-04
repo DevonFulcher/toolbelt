@@ -268,10 +268,6 @@ def git_save(
     if message:
         store_commit(message, current_repo_name(), current_repo_org(), current_branch)
 
-    # Print the status
-    logger.info("git status:")
-    subprocess.run(["git", "status"], check=True)
-
 
 def git_safe_pull() -> None:
     """
