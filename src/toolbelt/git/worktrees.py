@@ -8,11 +8,12 @@ import typer
 from toolbelt.editor import open_in_editor
 from toolbelt.env_var import get_git_projects_workdir
 from toolbelt.git.exec import capture, run
-from toolbelt.git.commands import git_safe_pull, git_setup, update_repo
+from toolbelt.git.commands import git_setup
 from toolbelt.git.worktrees_ops import delete_branch_and_worktree
 from toolbelt.logger import logger
 
 worktrees_typer = typer.Typer(help="git worktree helpers")
+WORKTREES_DIRNAME = "wt"
 
 
 def repo_root() -> Path:
@@ -31,22 +32,51 @@ def current_branch(root: Path) -> str:
     return br
 
 
-def get_worktrees_root() -> Path:
-    return get_git_projects_workdir() / "worktrees"
+def _repo_name_from_repo_root(repo_root: Path, git_projects_workdir: Path) -> str:
+    """
+    Derive a stable repo name for worktree namespacing.
+
+    Prefer the repo root directory name, except when called from within a
+    worktree path of the form:
+
+        $GIT_PROJECTS_WORKDIR/worktrees/<repo>/<worktree>
+
+    In that case, return the worktree's parent repo name (<repo>).
+    """
+    # Three cases:
+    # - $GIT_PROJECTS_WORKDIR/worktrees/<repo>/<worktree>
+    # - Repo is not under $GIT_PROJECTS_WORKDIR (fallback to repo_root.name)
+    try:
+        relative = repo_root.relative_to(git_projects_workdir)
+    except ValueError:
+        return repo_root.name
+
+    match relative.parts:
+        case (dirname, repo_name, *_) if dirname == WORKTREES_DIRNAME:
+            return repo_name
+        case _:
+            # Defensive fallback; should be unreachable for existing path shapes.
+            return repo_root.name
+
+
+def get_worktrees_root(*, repo_root: Path) -> Path:
+    git_projects_workdir = get_git_projects_workdir()
+    repo_name = _repo_name_from_repo_root(repo_root, git_projects_workdir)
+    return git_projects_workdir / WORKTREES_DIRNAME / repo_name
 
 
 @worktrees_typer.command()
 def add(
     name: str = typer.Argument(..., help="Name of the new worktree"),
 ) -> None:
-    """Create $GIT_PROJECTS_WORK_DIR/worktrees/<n>."""
+    """Create $GIT_PROJECTS_WORK_DIR/worktrees/<repo>/<n>."""
     root = repo_root()
     # Branch name includes devon/ prefix, but path does not
     branch_name = f"devon/{name.replace(' ', '_')}"
     path_name = name.replace(" ", "_")
-    worktrees_root = get_worktrees_root()
-    wt_path = worktrees_root / path_name
+    worktrees_root = get_worktrees_root(repo_root=root)
     worktrees_root.mkdir(parents=True, exist_ok=True)
+    wt_path = worktrees_root / path_name
 
     start_ref = current_branch(root)
     cmd = ["git", "worktree", "add"]
@@ -78,7 +108,8 @@ def add(
 
 def get_worktrees() -> list[str]:
     """Get list of worktree names."""
-    worktrees_dir = get_worktrees_root()
+    root = repo_root()
+    worktrees_dir = get_worktrees_root(repo_root=root)
     if not worktrees_dir.exists():
         return []
     return [d.name for d in worktrees_dir.iterdir() if d.is_dir()]
@@ -97,7 +128,7 @@ def remove(
         help="Pass --force to git worktree remove.",
     ),
 ) -> None:
-    """Remove $GIT_PROJECTS_WORK_DIR/worktrees/<n> and its branch."""
+    """Remove $GIT_PROJECTS_WORK_DIR/worktrees/<repo>/<n> and its branch."""
     if name is None:
         worktrees = get_worktrees()
         if not worktrees:
@@ -119,48 +150,6 @@ def remove(
 
     root = repo_root()
     delete_branch_and_worktree(name, repo_root=root, force=force)
-
-
-@worktrees_typer.command()
-def change(
-    name: str | None = typer.Argument(None, help="Worktree name to change to"),
-) -> None:
-    """Change to a worktree and switch to a branch."""
-    repo_root()
-
-    if name is None:
-        worktrees = get_worktrees()
-        if not worktrees:
-            logger.error("No worktrees found")
-            raise typer.Exit(1)
-
-        try:
-            # Use subprocess.run directly for fzf since we need to pipe input
-            proc = subprocess.run(
-                ["fzf"],
-                input="\n".join(worktrees).encode(),
-                capture_output=True,
-                check=True,
-            )
-            name = proc.stdout.decode().strip()
-        except subprocess.CalledProcessError as err:
-            logger.error("No worktree selected")
-            raise typer.Exit(1) from err
-
-    wt_path = get_worktrees_root() / name
-    if not wt_path.exists():
-        logger.error(f"Worktree {name} does not exist")
-        raise typer.Exit(1)
-
-    # Get current branch and switch to it, then safe pull
-    current_br = current_branch(wt_path)
-    run(["git", "checkout", current_br], cwd=wt_path)
-
-    git_safe_pull()
-    update_repo(wt_path)
-
-    # Output the directory path for shell integration
-    logger.info(f"cd {wt_path}")
 
 
 @worktrees_typer.command(name="list")
