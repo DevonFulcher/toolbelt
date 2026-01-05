@@ -7,7 +7,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import Button, Footer, Header, Input, Label, ListItem, ListView
 
-from toolbelt.linear import LinearIssue, LinearTeam
+from toolbelt.linear.client import LinearIssue, LinearTeam
 from toolbelt.logger import logger
 
 TChoice = TypeVar("TChoice")

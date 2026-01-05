@@ -7,10 +7,7 @@ from toolbelt.git.commits import (
     get_standup_date_window,
 )
 from toolbelt.github import get_open_pull_requests
-from toolbelt.linear import (
-    LinearGraphQLError,
-    LinearClient,
-)
+from toolbelt.linear.client import LinearClient, LinearGraphQLError
 from toolbelt.logger import logger
 
 

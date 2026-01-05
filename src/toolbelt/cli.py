@@ -10,7 +10,7 @@ from toolbelt.git.cli import git_typer
 from toolbelt.github import display_status
 from toolbelt.task.cli import task_typer
 from toolbelt.logger import logger
-from toolbelt.linear import LinearClient
+from toolbelt.linear.client import LinearClient
 from toolbelt.repos import current_repo
 from toolbelt.standup import parse_standup_weekdays, standup_notes
 from toolbelt.zsh import zsh_typer

@@ -206,7 +206,7 @@ class LinearClient:
         cached = self._query_cache.get(name)
         if cached is not None:
             return cached
-        base = Path(__file__).with_name("linear_graphql")
+        base = Path(__file__).with_name("graphql")
         path = base / f"{name}.graphql"
         query = path.read_text(encoding="utf-8")
         self._query_cache[name] = query

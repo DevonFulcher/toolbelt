@@ -10,11 +10,7 @@ from toolbelt.git.exec import run
 from toolbelt.git.workflow import git_save
 from toolbelt.git.worktrees import append_worktree
 from toolbelt.llm import generate_short_title_from_plan
-from toolbelt.linear import (
-    LinearIssue,
-    LinearTeam,
-    LinearClient,
-)
+from toolbelt.linear.client import LinearClient, LinearIssue, LinearTeam
 from toolbelt.logger import logger
 from toolbelt.task.textual_picker import (
     confirm_and_edit_title,
