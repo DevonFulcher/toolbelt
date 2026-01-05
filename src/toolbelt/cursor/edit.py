@@ -7,7 +7,7 @@ import typer
 from toolbelt.logger import logger
 
 
-def edit_text_with_cursor(*, initial_text: str) -> str:
+def edit_text(*, initial_text: str) -> str:
     """
     Open Cursor to edit text and return the edited text.
 

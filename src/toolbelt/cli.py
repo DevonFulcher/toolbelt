@@ -8,6 +8,7 @@ from toolbelt.agent.cli import agent_typer
 from toolbelt.datadog_form import form as datadog_form
 from toolbelt.git.cli import git_typer
 from toolbelt.github import display_status
+from toolbelt.cursor.cli import cursor_typer
 from toolbelt.task.cli import task_typer
 from toolbelt.logger import logger
 from toolbelt.linear.client import LinearClient
@@ -21,6 +22,7 @@ app.add_typer(git_typer, name="git")
 app.add_typer(zsh_typer, name="zsh")
 app.add_typer(agent_typer, name="agent")
 app.add_typer(task_typer, name="task")
+app.add_typer(cursor_typer, name="cursor")
 
 
 @app.command()
@@ -43,7 +45,7 @@ def unit():
     """Run unit tests for this repo"""
     repo = current_repo()
     if repo:
-        repo.check()
+        repo.unit()
     else:
         logger.info("No unit tests configured for this repo")
 

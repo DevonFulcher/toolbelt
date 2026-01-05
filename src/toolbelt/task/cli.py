@@ -4,7 +4,7 @@ from typing import assert_never
 
 import typer
 
-from toolbelt.cursor_edit import edit_text_with_cursor
+from toolbelt.cursor.edit import edit_text
 from toolbelt.fs import chdir
 from toolbelt.git.exec import run
 from toolbelt.git.workflow import git_save
@@ -92,7 +92,7 @@ async def _start_async() -> None:
                     identifier=selection.identifier
                 )
                 initial_text = issue.description or _default_new_plan_template()
-                plan_text = edit_text_with_cursor(initial_text=initial_text)
+                plan_text = edit_text(initial_text=initial_text)
 
                 started_state_id, _ = await asyncio.gather(
                     linear.get_team_started_state_id(team_id=issue.team_id),
@@ -131,9 +131,7 @@ async def _start_async() -> None:
                 else:
                     team = pick_team(teams=teams)
 
-                plan_text = edit_text_with_cursor(
-                    initial_text=_default_new_plan_template()
-                )
+                plan_text = edit_text(initial_text=_default_new_plan_template())
                 title = generate_short_title_from_plan(plan=plan_text)
                 title = confirm_and_edit_title(initial_title=title)
                 started_state_id = await linear.get_team_started_state_id(

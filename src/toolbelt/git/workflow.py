@@ -40,7 +40,7 @@ def git_pr(skip_tests: bool) -> None:
         return
     repo = current_repo()
     if repo and not skip_tests:
-        repo.check()
+        repo.unit()
     subprocess.run(
         ["gh", "pr", "create", "--web"],
         check=False,
