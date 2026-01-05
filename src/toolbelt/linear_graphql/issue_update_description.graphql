@@ -1,0 +1,5 @@
+mutation IssueUpdateDescription($issueId: String!, $description: String!) {
+  issueUpdate(id: $issueId, input: { description: $description }) {
+    success
+  }
+}

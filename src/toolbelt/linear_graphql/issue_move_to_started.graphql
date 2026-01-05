@@ -1,0 +1,5 @@
+mutation IssueMoveToStarted($issueId: String!, $stateId: String!) {
+  issueUpdate(id: $issueId, input: { stateId: $stateId }) {
+    success
+  }
+}

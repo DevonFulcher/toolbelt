@@ -1,0 +1,18 @@
+query IssuesInProgressNoHistory($assigneeId: ID!, $first: Int!, $after: String) {
+  issues(
+    first: $first
+    after: $after
+    filter: {
+      assignee: { id: { eq: $assigneeId } }
+      state: { type: { eq: "started" } }
+    }
+  ) {
+    nodes {
+      identifier
+      title
+      url
+      updatedAt
+    }
+    pageInfo { hasNextPage endCursor }
+  }
+}

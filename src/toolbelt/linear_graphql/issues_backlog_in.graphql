@@ -1,0 +1,26 @@
+query IssuesBacklogIn(
+  $assigneeId: ID!
+  $first: Int!
+  $after: String
+  $stateTypes: [String!]!
+) {
+  issues(
+    first: $first
+    after: $after
+    filter: {
+      assignee: { id: { eq: $assigneeId } }
+      state: { type: { in: $stateTypes } }
+    }
+  ) {
+    nodes {
+      id
+      identifier
+      title
+      description
+      url
+      team { id }
+      state { id type }
+    }
+    pageInfo { hasNextPage endCursor }
+  }
+}

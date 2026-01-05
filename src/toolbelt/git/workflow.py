@@ -91,68 +91,10 @@ def check_for_parent_branch_merge_conflicts(
     try:
         parent_branch = get_parent_branch_name(current_branch)
     except subprocess.CalledProcessError:
-        if current_branch == default_branch:
-            # Default branch without upstream - this is unusual but can happen
-            logger.warning(f"Warning: {default_branch} has no upstream branch set")
-            raise typer.Exit(1)
-        else:
-            # Regular branch without upstream - offer to set it
-            logger.info(f"Branch '{current_branch}' has no upstream branch set")
-            should_set_upstream = input(
-                "Would you like to set an upstream branch? (y/n): "
-            )
-            if should_set_upstream.lower() == "y":
-                try:
-                    # Try to set upstream to origin/branch_name
-                    subprocess.run(
-                        [
-                            "git",
-                            "branch",
-                            "--set-upstream-to",
-                            f"origin/{current_branch}",
-                            current_branch,
-                        ],
-                        check=True,
-                        capture_output=True,
-                        text=True,
-                    )
-                    logger.info(f"Set upstream branch to origin/{current_branch}")
-                    # Try conflict check again with newly set upstream
-                    parent_branch = get_parent_branch_name(current_branch)
-                except subprocess.CalledProcessError:
-                    # If setting upstream failed (e.g., remote branch doesn't exist)
-                    logger.warning(
-                        "Failed to set upstream branch - remote branch may not exist"
-                    )
-                    should_push = input(
-                        "Would you like to push and set upstream now? (y/n): "
-                    )
-                    if should_push.lower() == "y":
-                        try:
-                            subprocess.run(
-                                [
-                                    "git",
-                                    "push",
-                                    "--set-upstream",
-                                    "origin",
-                                    current_branch,
-                                ],
-                                check=True,
-                                capture_output=True,
-                                text=True,
-                            )
-                            logger.info(
-                                f"Pushed and set upstream to origin/{current_branch}"
-                            )
-                            # Try conflict check one final time
-                            parent_branch = get_parent_branch_name(current_branch)
-                        except subprocess.CalledProcessError:
-                            logger.error("Failed to push and set upstream branch")
-                            raise typer.Exit(1)
-                    else:
-                        raise typer.Exit(1)
-            else:
-                raise typer.Exit(1)
+        logger.warning(
+            f"Branch '{current_branch}' has no upstream configured; skipping parent-branch conflict check."
+        )
+        return
 
     if parent_branch:
         try:

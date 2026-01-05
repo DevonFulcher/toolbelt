@@ -13,6 +13,7 @@ def run(
     cwd: Path | None = None,
     check: bool = True,
     exit_on_error: bool = False,
+    capture_output: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     """
     Run a command with consistent logging and error-handling policy.
@@ -26,6 +27,7 @@ def run(
         exit_on_error: If True, convert failures into `typer.Exit` for CLI-friendly
             termination (avoids a traceback). This applies both when `check=True`
             (exception path) and when `check=False` (non-zero return code path).
+        capture_output: If True, capture stdout/stderr into the returned result.
 
     Notes:
         Common combinations:
@@ -42,7 +44,13 @@ def run(
             cwd=str(cwd) if cwd else None,
             check=check,
             text=True,
+            capture_output=capture_output,
         )
+    except FileNotFoundError as err:
+        logger.error(f"Command not found: {cmd[0]}")
+        if exit_on_error:
+            raise typer.Exit(127) from err
+        raise
     except subprocess.CalledProcessError as err:
         logger.error(f"Command failed: {' '.join(cmd)}")
         if exit_on_error:

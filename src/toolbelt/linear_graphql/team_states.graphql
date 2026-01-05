@@ -1,0 +1,12 @@
+query TeamStates($teamId: ID!) {
+  team(id: $teamId) {
+    id
+    states {
+      nodes {
+        id
+        type
+        name
+      }
+    }
+  }
+}

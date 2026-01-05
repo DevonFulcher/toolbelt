@@ -1,0 +1,24 @@
+query IssuesBacklogOr($assigneeId: ID!, $first: Int!, $after: String) {
+  issues(
+    first: $first
+    after: $after
+    filter: {
+      assignee: { id: { eq: $assigneeId } }
+      or: [
+        { state: { type: { eq: "backlog" } } }
+        { state: { type: { eq: "unstarted" } } }
+      ]
+    }
+  ) {
+    nodes {
+      id
+      identifier
+      title
+      description
+      url
+      team { id }
+      state { id type }
+    }
+    pageInfo { hasNextPage endCursor }
+  }
+}

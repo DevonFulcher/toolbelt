@@ -139,35 +139,7 @@ def _create_stash(*, root: Path, message: str) -> str:
     return stash_ref
 
 
-@worktrees_typer.command()
-def add(
-    name: str = typer.Argument(..., help="Name of the new worktree"),
-) -> None:
-    """Create $GIT_PROJECTS_WORKDIR/wt/<repo>/<n>."""
-    root = repo_root()
-    # Branch name includes devon/ prefix, but path does not
-    branch_name = _branch_name_for_worktree_name(name)
-    wt_path = _worktree_path_for_name(name=name, repo_root=root)
-    if wt_path.exists():
-        logger.error(f"Error: worktree path already exists: {wt_path}")
-        raise typer.Exit(1)
-
-    start_ref = current_branch(root)
-    cmd = ["git", "worktree", "add"]
-    cmd += ["-b", branch_name]
-    cmd += [str(wt_path), start_ref]
-
-    logger.info(" ".join(cmd))
-    run(cmd, cwd=root, exit_on_error=True)
-    _setup_new_worktree(root=root, wt_path=wt_path)
-    logger.info(f"Created worktree at {wt_path}")
-    open_in_editor(wt_path)
-
-
-@worktrees_typer.command()
-def append(
-    name: str = typer.Argument(..., help="Name of the new stacked worktree"),
-) -> None:
+def append_worktree(*, name: str) -> Path:
     """
     Create a new stacked branch via git-town and open it in a new worktree.
 
@@ -214,10 +186,40 @@ def append(
         _setup_new_worktree(root=root, wt_path=wt_path)
         logger.info(f"Created worktree at {wt_path}")
         open_in_editor(wt_path)
+        return wt_path
     finally:
         # Best-effort: ensure we leave the original worktree on the branch
         # the user started on, even if later steps fail.
         run(["git", "checkout", orig_branch], cwd=root, check=False)
+
+
+@worktrees_typer.command()
+def add(
+    name: str = typer.Argument(..., help="Name of the new worktree"),
+) -> None:
+    """Create $GIT_PROJECTS_WORKDIR/wt/<repo>/<n>."""
+    root = repo_root()
+    # Branch name includes devon/ prefix, but path does not
+    branch_name = _branch_name_for_worktree_name(name)
+    wt_path = _worktree_path_for_name(name=name, repo_root=root)
+    if wt_path.exists():
+        logger.error(f"Error: worktree path already exists: {wt_path}")
+        raise typer.Exit(1)
+
+    start_ref = current_branch(root)
+    cmd = ["git", "worktree", "add", "-b", branch_name, str(wt_path), start_ref]
+
+    run(cmd, cwd=root, exit_on_error=True)
+    _setup_new_worktree(root=root, wt_path=wt_path)
+    logger.info(f"Created worktree at {wt_path}")
+    open_in_editor(wt_path)
+
+
+@worktrees_typer.command()
+def append(
+    name: str = typer.Argument(..., help="Name of the new stacked worktree"),
+) -> None:
+    append_worktree(name=name)
 
 
 @worktrees_typer.command()

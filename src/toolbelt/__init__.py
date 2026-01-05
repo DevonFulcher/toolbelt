@@ -1,7 +1,7 @@
 from toolbelt.cli import app
 
 
-def main():
+def main() -> None:
     app()
 
 
