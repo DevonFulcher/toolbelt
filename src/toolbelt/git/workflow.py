@@ -154,7 +154,7 @@ def git_save(
             and current_branch == default_branch
         ):
             assert message, "Message is required when committing to a default branch"
-            new_branch_name = "devon/" + message.replace(" ", "_")
+            new_branch_name = "devon/" + message.replace(" ", "_").rstrip(".")
             should_commit = input(
                 "On a default branch. "
                 + f"Commit to a new branch called {new_branch_name}? (y/n): "
