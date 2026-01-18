@@ -92,12 +92,20 @@ def save(
         bool, typer.Option(help="Skip syncing changes in this stack")
     ] = False,
     amend: Annotated[bool, typer.Option(help="Amend the last commit")] = False,
+    yes: Annotated[
+        bool,
+        typer.Option(
+            "-y",
+            "--yes",
+            help=("Auto-accept prompts (e.g. auto create a branch)"),
+        ),
+    ] = False,
     pathspec: Annotated[
         list[str] | None, typer.Argument(help="Files to stage (defaults to '-A')")
     ] = None,
 ):
     """Add, commit, and push changes"""
-    git_save(message, no_verify, no_sync, amend, pathspec)
+    git_save(message, no_verify, no_sync, amend, pathspec, yes)
 
 
 @git_typer.command(help="Save changes and create a PR")
@@ -110,12 +118,20 @@ def send(
     no_sync: Annotated[
         bool, typer.Option(help="Skip syncing changes in this stack")
     ] = False,
+    yes: Annotated[
+        bool,
+        typer.Option(
+            "-y",
+            "--yes",
+            help=("Auto-accept prompts (e.g. auto create a branch)"),
+        ),
+    ] = False,
     pathspec: Annotated[
         list[str] | None, typer.Argument(help="Files to stage (defaults to '-A')")
     ] = None,
 ):
     """Save changes and create PR"""
-    git_save(message, no_verify, no_sync, False, pathspec)
+    git_save(message, no_verify, no_sync, False, pathspec, yes)
     git_pr(skip_tests)
 
 

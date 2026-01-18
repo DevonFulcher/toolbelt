@@ -84,15 +84,14 @@ def git_branch_clean() -> None:
         logger.info("No branches to delete.")
 
 
-def check_for_parent_branch_merge_conflicts(
-    *, current_branch: str, default_branch: str
-) -> None:
+def check_for_parent_branch_merge_conflicts(*, current_branch: str, yes: bool) -> None:
     logger.info("Checking for merge conflicts with parent branch")
     try:
         parent_branch = get_parent_branch_name(current_branch)
     except subprocess.CalledProcessError:
         logger.warning(
-            f"Branch '{current_branch}' has no upstream configured; skipping parent-branch conflict check."
+            f"Branch '{current_branch}' has no upstream configured; "
+            "skipping parent-branch conflict check."
         )
         return
 
@@ -108,12 +107,15 @@ def check_for_parent_branch_merge_conflicts(
                 logger.warning(
                     "⚠️  Warning: This commit may create merge conflicts with the parent branch."
                 )
-                proceed = input("Do you want to continue anyway? (y/n): ")
-                if proceed.lower() != "y":
-                    # Unstage changes if user aborts
-                    subprocess.run(["git", "reset"], check=True)
-                    logger.info("Changes unstaged. Aborting commit.")
-                    raise typer.Exit(1)
+                if yes:
+                    logger.info("Continuing anyway due to --yes")
+                else:
+                    proceed = input("Do you want to continue anyway? (y/n): ")
+                    if proceed.lower() != "y":
+                        # Unstage changes if user aborts
+                        subprocess.run(["git", "reset"], check=True)
+                        logger.info("Changes unstaged. Aborting commit.")
+                        raise typer.Exit(1)
         except subprocess.CalledProcessError:
             # This might happen in detached HEAD state
             logger.error(
@@ -122,7 +124,6 @@ def check_for_parent_branch_merge_conflicts(
             logger.error("Aborting to be safe")
             subprocess.run(["git", "reset"], check=True)
             raise typer.Exit(1)
-    logger.info("No merge conflicts found with parent branch")
 
 
 def git_save(
@@ -131,6 +132,7 @@ def git_save(
     no_sync: bool,
     amend: bool,
     pathspec: list[str] | None,
+    yes: bool,
 ) -> None:
     if not message and not amend:
         raise typer.BadParameter("Commit message or --amend is required")
@@ -155,11 +157,16 @@ def git_save(
         ):
             assert message, "Message is required when committing to a default branch"
             new_branch_name = "devon/" + message.replace(" ", "_")
-            should_commit = input(
-                "On a default branch. "
-                + f"Commit to a new branch called {new_branch_name}? (y/n): "
-            )
-            if should_commit.lower() == "y":
+            if yes:
+                should_create_branch = True
+            else:
+                should_commit = input(
+                    "On a default branch. "
+                    + f"Commit to a new branch called {new_branch_name}? (y/n): "
+                )
+                should_create_branch = should_commit.lower() == "y"
+
+            if should_create_branch:
                 subprocess.run(
                     ["git-town", "append", new_branch_name],
                     check=True,
@@ -185,7 +192,8 @@ def git_save(
 
     # Check for conflicts with the parent branch
     check_for_parent_branch_merge_conflicts(
-        current_branch=current_branch, default_branch=default_branch
+        current_branch=current_branch,
+        yes=yes,
     )
 
     # Commit the changes
