@@ -27,7 +27,8 @@ def escape_env_value(value: str) -> str:
             " " in value,  # spaces
             "<" in value,  # angle brackets
             ">" in value,
-            '"' in value,  # quotes
+            '"' in value,  # double quotes
+            "'" in value,  # single quotes
             "$" in value,  # shell variables
             "#" in value,  # comments
             ";" in value,  # command separators

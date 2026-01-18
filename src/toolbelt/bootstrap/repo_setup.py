@@ -10,6 +10,13 @@ from toolbelt.git.branches import get_default_branch
 from toolbelt.git.workflow import update_repo
 
 
+def symlink_files(*, source_path: Path, target_path: Path) -> None:
+    target_path.mkdir(parents=True, exist_ok=True)
+    for file in source_path.glob("*"):
+        if not (target_path / file.name).exists():
+            os.symlink(file, target_path / file.name)
+
+
 def git_setup(
     target_path: Path,
     git_projects_workdir: Path,
@@ -33,6 +40,10 @@ def git_setup(
         default_branch = get_default_branch()
         git_branches["branches"]["main"] = default_branch
         (target_path / ".git-branches.toml").write_text(toml.dumps(git_branches))
+    symlink_files(
+        source_path=git_projects_workdir / "dotfiles/cursor/rules",
+        target_path=target_path / ".cursor/rules",
+    )
     env_vars = render_helm_yaml(
         target_path,
         git_projects_workdir,
@@ -67,11 +78,6 @@ def git_setup(
             f.write("dotenv\n")
     if (target_path / ".pre-commit-config.yaml").exists():
         subprocess.run(["pre-commit", "install"], check=True)
-    (target_path / ".cursor/rules").mkdir(parents=True, exist_ok=True)
-    for file in (git_projects_workdir / "dotfiles/cursor/rules").glob("*.mdc"):
-        target_file = target_path / ".cursor/rules" / file.name
-        if not target_file.exists():
-            os.symlink(file, target_file)
     if not (target_path / ".serena/project.yml").exists():
         subprocess.run(
             [
