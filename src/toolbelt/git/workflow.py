@@ -217,6 +217,13 @@ def git_save(
 
     if message:
         store_commit(message, current_repo_name(), current_repo_org(), current_branch)
+    staged_description = f"{len(pathspec)} files" if pathspec else "all changes"
+    commit_description = "amended commit" if amend else "new commit"
+    sync_description = "; synced stack + pushed" if not no_sync else "; sync skipped"
+    logger.info(
+        f"Git save complete: committed {staged_description}; "
+        f"{commit_description} on {current_branch}{sync_description}."
+    )
 
 
 def git_safe_pull() -> None:

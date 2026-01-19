@@ -8,8 +8,8 @@ import typer
 
 from toolbelt.editor import open_in_editor
 from toolbelt.env_var import get_git_projects_workdir
-from toolbelt.git.exec import capture, run
 from toolbelt.git.commands import git_setup
+from toolbelt.git.exec import capture, run
 from toolbelt.git.worktrees_ops import delete_branch_and_worktree
 from toolbelt.logger import logger
 

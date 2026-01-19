@@ -3,8 +3,8 @@ from pathlib import Path
 from uuid import UUID
 
 import typer
-from pydantic import BaseModel
-from pydantic import ConfigDict
+from pydantic import BaseModel, ConfigDict
+
 from toolbelt.logger import logger
 from toolbelt.repos import AfterFileEditHook, repo_for_path
 
