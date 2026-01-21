@@ -1,6 +1,7 @@
 import subprocess
 from pathlib import Path
 
+from toolbelt.git.constants import GIT_BRANCH_PREFIX
 from toolbelt.logger import logger
 
 
@@ -99,9 +100,9 @@ def delete_branch_and_worktree(
 
     candidates: list[str] = []
     candidates.append(branch_name)
-    bare_name = branch_name.removeprefix("devon/")
+    bare_name = branch_name.removeprefix(GIT_BRANCH_PREFIX)
     if branch_name == bare_name:
-        candidates.append(f"devon/{bare_name}")
+        candidates.append(f"{GIT_BRANCH_PREFIX}{bare_name}")
     else:
         candidates.append(bare_name)
 
