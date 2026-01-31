@@ -9,7 +9,7 @@ from openai import OpenAI
 
 def generate_short_title_from_plan(*, plan: str) -> str:
     """
-    Generate a short Linear ticket title from a plan using OpenAI Responses API.
+    Generate a short ticket title from a plan using OpenAI Responses API.
     """
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:

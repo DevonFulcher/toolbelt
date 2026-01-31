@@ -1,4 +1,3 @@
-import asyncio
 import os
 import subprocess
 
@@ -9,9 +8,7 @@ from toolbelt.datadog_form import form as datadog_form
 from toolbelt.git.cli import git_typer
 from toolbelt.github import display_status
 from toolbelt.cursor.cli import cursor_typer
-from toolbelt.task.cli import task_typer
 from toolbelt.logger import logger
-from toolbelt.linear.client import LinearClient
 from toolbelt.repos import current_repo
 from toolbelt.standup import parse_standup_weekdays, standup_notes
 from toolbelt.zsh import zsh_typer
@@ -21,7 +18,6 @@ app = typer.Typer(help="A collection of tools that I use.")
 app.add_typer(git_typer, name="git")
 app.add_typer(zsh_typer, name="zsh")
 app.add_typer(agent_typer, name="agent")
-app.add_typer(task_typer, name="task")
 app.add_typer(cursor_typer, name="cursor")
 
 
@@ -65,15 +61,7 @@ def standup(
     ),
 ):
     """Prepare notes for standup"""
-    asyncio.run(_standup_async(days=days))
-
-
-async def _standup_async(*, days: str) -> None:
-    async with LinearClient.from_env() as linear:
-        await standup_notes(
-            standup_weekdays=parse_standup_weekdays(days),
-            linear=linear,
-        )
+    standup_notes(standup_weekdays=parse_standup_weekdays(days))
 
 
 @app.command(name="status", help="Show GitHub PR status")
