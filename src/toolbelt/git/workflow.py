@@ -24,7 +24,7 @@ def update_repo(target_path: Path):
         # This may fail if the plugins in .tool-versions are not installed
         subprocess.run(["asdf", "install"], check=True)
     if (target_path / "uv.lock").exists():
-        subprocess.run(["uv", "sync"], check=True)
+        subprocess.run(["uv", "sync", "--all-groups"], check=True)
 
 
 def sync_repo() -> None:
