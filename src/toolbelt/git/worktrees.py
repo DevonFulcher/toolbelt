@@ -6,10 +6,10 @@ from pathlib import Path
 
 import typer
 
+from toolbelt.bootstrap.repo_setup import git_setup
 from toolbelt.editor import open_in_editor
 from toolbelt.env_var import get_git_projects_workdir
 from toolbelt.git.branches import get_default_branch
-from toolbelt.git.commands import git_setup
 from toolbelt.git.constants import GIT_BRANCH_PREFIX
 from toolbelt.git.exec import capture, run
 from toolbelt.git.worktrees_ops import delete_branch_and_worktree
@@ -92,6 +92,13 @@ def _branch_name_for_worktree_name(name: str) -> str:
     return f"{GIT_BRANCH_PREFIX}{_normalize_worktree_name(name)}"
 
 
+def _copy_file_if_present(src: Path, dest: Path) -> None:
+    try:
+        shutil.copy(src, dest)
+    except FileNotFoundError:
+        return
+
+
 def _worktree_path_for_name(*, name: str, repo_root: Path) -> Path:
     worktrees_root = get_worktrees_root(repo_root=repo_root)
     worktrees_root.mkdir(parents=True, exist_ok=True)
@@ -100,21 +107,16 @@ def _worktree_path_for_name(*, name: str, repo_root: Path) -> Path:
 
 def _setup_new_worktree(*, root: Path, wt_path: Path) -> None:
     # Keep parity with `add` and avoid failing when these are absent.
-    env_file = root / ".env"
-    if env_file.exists():
-        shutil.copy(env_file, wt_path / ".env")
-    envrc_file = root / ".envrc"
-    if envrc_file.exists():
-        shutil.copy(envrc_file, wt_path / ".envrc")
+    _copy_file_if_present(root / ".env", wt_path / ".env")
+    _copy_file_if_present(root / ".envrc", wt_path / ".envrc")
 
-    git_projects_workdir = get_git_projects_workdir()
-    git_setup(wt_path, git_projects_workdir, index_serena=False)
-
-    src_cache = root / ".serena/cache"
-    dest_cache = wt_path / ".serena/cache"
+    src_cache = root / ".serena"
+    dest_cache = wt_path / ".serena"
     if src_cache.exists():
         dest_cache.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(src_cache, dest_cache, dirs_exist_ok=True)
+
+    git_setup(wt_path)
 
     setup_script = wt_path / ".setup.sh"
     if setup_script.exists():

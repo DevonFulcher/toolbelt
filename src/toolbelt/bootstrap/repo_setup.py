@@ -6,6 +6,7 @@ from pathlib import Path
 import toml
 
 from toolbelt.bootstrap.helm_env import render_helm_yaml
+from toolbelt.env_var import get_git_projects_workdir
 from toolbelt.git.branches import get_default_branch
 from toolbelt.git.workflow import update_repo
 
@@ -19,10 +20,11 @@ def symlink_files(*, source_path: Path, target_path: Path) -> None:
 
 def git_setup(
     target_path: Path,
-    git_projects_workdir: Path,
+    git_projects_workdir: Path | None = None,
     service_name: str | None = None,
-    index_serena: bool = True,
 ) -> None:
+    if not git_projects_workdir:
+        git_projects_workdir = get_git_projects_workdir()
     os.chdir(target_path)
     # Create .gitignored symlink to technical documentation directory
     techdocs_source = git_projects_workdir / "tech-docs" / f"{target_path.name}"
@@ -91,7 +93,7 @@ def git_setup(
             check=True,
             cwd=target_path,
         )
-    if index_serena:
+    if not (target_path / ".serena/cache").exists():
         subprocess.run(
             [
                 "uvx",
