@@ -30,6 +30,6 @@ repos:
         pass_filenames: false
       - id: mypy
         name: mypy
-        entry: uv run mypy --show-error-codes .
+        entry: uv run mypy --show-error-codes src
         language: system
         types_or: [python, pyi, jupyter]

@@ -6,17 +6,17 @@ from typing import Annotated, Optional
 
 import typer
 
+from toolbelt.bootstrap.repo_setup import git_setup
 from toolbelt.editor import open_in_editor
 from toolbelt.env_var import get_git_projects_workdir
-from toolbelt.git.commands import (
-    get_branch_name,
-    get_current_repo_root_path,
+from toolbelt.git.branches import get_branch_name
+from toolbelt.git.commands import is_git_repo
+from toolbelt.git.repo import get_current_repo_root_path
+from toolbelt.git.workflow import (
     git_branch_clean,
     git_pr,
     git_safe_pull,
     git_save,
-    git_setup,
-    is_git_repo,
     sync_repo,
     update_repo,
 )
@@ -198,10 +198,8 @@ def setup(
         ),
     ] = None,
 ):
-    git_projects_workdir = get_git_projects_workdir()
     git_setup(
         target_path=Path(repo_path),
-        git_projects_workdir=git_projects_workdir,
         service_name=service_name,
     )
 
