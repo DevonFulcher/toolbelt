@@ -1,0 +1,1 @@
+GIT_BRANCH_PREFIX = "devon/"

@@ -9,6 +9,8 @@ import typer
 from toolbelt.bootstrap.repo_setup import git_setup
 from toolbelt.editor import open_in_editor
 from toolbelt.env_var import get_git_projects_workdir
+from toolbelt.git.branches import get_default_branch
+from toolbelt.git.constants import GIT_BRANCH_PREFIX
 from toolbelt.git.exec import capture, run
 from toolbelt.git.worktrees_ops import delete_branch_and_worktree
 from toolbelt.logger import logger
@@ -87,7 +89,7 @@ def _normalize_worktree_name(name: str) -> str:
 
 
 def _branch_name_for_worktree_name(name: str) -> str:
-    return f"devon/{_normalize_worktree_name(name)}"
+    return f"{GIT_BRANCH_PREFIX}{_normalize_worktree_name(name)}"
 
 
 def _copy_file_if_present(src: Path, dest: Path) -> None:
@@ -128,33 +130,45 @@ def _has_uncommitted_changes(*, root: Path) -> bool:
     return bool(capture(["git", "status", "--porcelain"], cwd=root))
 
 
-def _create_stash(*, root: Path, message: str) -> str:
-    run(
-        ["git", "stash", "push", "-u", "-m", message],
-        cwd=root,
-        exit_on_error=True,
-    )
-    stash_ref = capture(["git", "stash", "list", "-1", "--format=%gd"], cwd=root)
-    if not stash_ref:
-        logger.error("Failed to create git stash.")
+def _commit_uncommitted(*, root: Path) -> None:
+    if not _has_uncommitted_changes(root=root):
+        return
+    run(["git", "add", "-A"], cwd=root, exit_on_error=True)
+    run(["git", "commit", "-m", "WIP"], cwd=root, exit_on_error=True)
+
+
+def branch_to_worktree(
+    *,
+    root: Path,
+    branch: str,
+    name: str,
+    checkout_original_to: str,
+) -> Path:
+    """Create a worktree for a branch and checkout another in the original repo."""
+    wt_path = _worktree_path_for_name(name=name, repo_root=root)
+    if wt_path.exists():
+        logger.error(f"Error: worktree path already exists: {wt_path}")
         raise typer.Exit(1)
-    return stash_ref
+
+    run(["git", "checkout", checkout_original_to], cwd=root, exit_on_error=True)
+    run(["git", "worktree", "add", str(wt_path), branch], cwd=root, exit_on_error=True)
+
+    _setup_new_worktree(root=root, wt_path=wt_path)
+    logger.info(f"Created worktree at {wt_path}")
+    open_in_editor(wt_path)
+    return wt_path
 
 
 def append_worktree(*, name: str) -> Path:
     """
     Create a new stacked branch via git-town and open it in a new worktree.
 
-    This carries over any uncommitted changes into the new worktree.
+    This commits any uncommitted changes into the new worktree.
     """
     root = repo_root()
 
     orig_branch = current_branch(root)
     new_branch = _branch_name_for_worktree_name(name)
-    wt_path = _worktree_path_for_name(name=name, repo_root=root)
-    if wt_path.exists():
-        logger.error(f"Error: worktree path already exists: {wt_path}")
-        raise typer.Exit(1)
 
     # git-town append checks out the new branch in the current worktree.
     run(
@@ -162,37 +176,13 @@ def append_worktree(*, name: str) -> Path:
         cwd=root,
         exit_on_error=True,
     )
-
-    stash_ref: str | None = None
-    try:
-        if _has_uncommitted_changes(root=root):
-            stash_ref = _create_stash(
-                root=root,
-                message=f"toolbelt wt append {new_branch}",
-            )
-
-        # Switch back so we can check out the new branch in the new worktree.
-        run(["git", "checkout", orig_branch], cwd=root, exit_on_error=True)
-
-        cmd = ["git", "worktree", "add", str(wt_path), new_branch]
-        run(cmd, cwd=root, exit_on_error=True)
-
-        if stash_ref is not None:
-            run(["git", "stash", "apply", stash_ref], cwd=wt_path, exit_on_error=True)
-            run(
-                ["git", "stash", "drop", stash_ref],
-                cwd=wt_path,
-                exit_on_error=True,
-            )
-
-        _setup_new_worktree(root=root, wt_path=wt_path)
-        logger.info(f"Created worktree at {wt_path}")
-        open_in_editor(wt_path)
-        return wt_path
-    finally:
-        # Best-effort: ensure we leave the original worktree on the branch
-        # the user started on, even if later steps fail.
-        run(["git", "checkout", orig_branch], cwd=root, check=False)
+    _commit_uncommitted(root=root)
+    return branch_to_worktree(
+        root=root,
+        branch=new_branch,
+        name=name,
+        checkout_original_to=orig_branch,
+    )
 
 
 @worktrees_typer.command()
@@ -222,6 +212,26 @@ def append(
     name: str = typer.Argument(..., help="Name of the new stacked worktree"),
 ) -> None:
     append_worktree(name=name)
+
+
+@worktrees_typer.command()
+def move() -> None:
+    """Move the current branch into its own worktree."""
+    root = repo_root()
+    branch = current_branch(root)
+    default_branch = get_default_branch()
+    if branch == default_branch:
+        logger.error(f"Already on {default_branch}; nothing to move.")
+        raise typer.Exit(1)
+
+    _commit_uncommitted(root=root)
+    name = branch.removeprefix(GIT_BRANCH_PREFIX)
+    branch_to_worktree(
+        root=root,
+        branch=branch,
+        name=name,
+        checkout_original_to=default_branch,
+    )
 
 
 @worktrees_typer.command()

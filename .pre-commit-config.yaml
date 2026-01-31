@@ -33,3 +33,4 @@ repos:
         entry: uv run mypy --show-error-codes src
         language: system
         types_or: [python, pyi, jupyter]
+        pass_filenames: false

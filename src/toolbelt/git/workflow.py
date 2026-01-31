@@ -6,6 +6,7 @@ from pathlib import Path
 import typer
 
 from toolbelt.git.commits import store_commit
+from toolbelt.git.constants import GIT_BRANCH_PREFIX
 from toolbelt.logger import logger
 from toolbelt.repos import current_repo, current_repo_name
 
@@ -23,7 +24,7 @@ def update_repo(target_path: Path):
         # This may fail if the plugins in .tool-versions are not installed
         subprocess.run(["asdf", "install"], check=True)
     if (target_path / "uv.lock").exists():
-        subprocess.run(["uv", "sync"], check=True)
+        subprocess.run(["uv", "sync", "--all-groups"], check=True)
 
 
 def sync_repo() -> None:
@@ -156,7 +157,9 @@ def git_save(
             and current_branch == default_branch
         ):
             assert message, "Message is required when committing to a default branch"
-            new_branch_name = "devon/" + message.replace(" ", "_").rstrip(".")
+            new_branch_name = (
+                f"{GIT_BRANCH_PREFIX}{message.replace(' ', '_').rstrip('.')}"
+            )
             if yes:
                 should_create_branch = True
             else:
