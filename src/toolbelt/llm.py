@@ -2,9 +2,9 @@ import os
 import re
 
 import typer
+from openai import OpenAI
 
 from toolbelt.logger import logger
-from openai import OpenAI
 
 
 def generate_short_title_from_plan(*, plan: str) -> str:

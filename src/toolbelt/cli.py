@@ -4,13 +4,14 @@ import subprocess
 import typer
 
 from toolbelt.agent.cli import agent_typer
+from toolbelt.cursor.cli import cursor_typer
 from toolbelt.datadog_form import form as datadog_form
 from toolbelt.git.cli import git_typer
 from toolbelt.github import display_status
-from toolbelt.cursor.cli import cursor_typer
 from toolbelt.logger import logger
 from toolbelt.repos import current_repo
 from toolbelt.standup import parse_standup_weekdays, standup_notes
+from toolbelt.task.cli import task_typer
 from toolbelt.zsh import zsh_typer
 
 # Create Typer app instances
@@ -18,6 +19,7 @@ app = typer.Typer(help="A collection of tools that I use.")
 app.add_typer(git_typer, name="git")
 app.add_typer(zsh_typer, name="zsh")
 app.add_typer(agent_typer, name="agent")
+app.add_typer(task_typer, name="task")
 app.add_typer(cursor_typer, name="cursor")
 
 
