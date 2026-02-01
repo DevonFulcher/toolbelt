@@ -1,3 +1,4 @@
+import asyncio
 import os
 import subprocess
 
@@ -7,7 +8,8 @@ from toolbelt.agent.cli import agent_typer
 from toolbelt.cursor.cli import cursor_typer
 from toolbelt.datadog_form import form as datadog_form
 from toolbelt.git.cli import git_typer
-from toolbelt.github import display_status
+from toolbelt.github.pr_monitor import LoggingPrMonitorHooks, PrMonitorRunner
+from toolbelt.github.status import display_status
 from toolbelt.logger import logger
 from toolbelt.repos import current_repo
 from toolbelt.standup import parse_standup_weekdays, standup_notes
@@ -63,7 +65,7 @@ def standup(
     ),
 ):
     """Prepare notes for standup"""
-    standup_notes(standup_weekdays=parse_standup_weekdays(days))
+    asyncio.run(standup_notes(standup_weekdays=parse_standup_weekdays(days)))
 
 
 @app.command(name="status", help="Show GitHub PR status")
@@ -79,7 +81,28 @@ def status():
         )
         return
 
-    display_status(username, token)
+    asyncio.run(display_status(username, token))
+
+
+@app.command(name="pr-monitor", help="Monitor your authored PRs via polling")
+def pr_monitor():
+    """Poll GitHub and log PR events for authored PRs."""
+    username = os.getenv("GITHUB_USERNAME")
+    token = os.getenv("GITHUB_PERSONAL_ACCESS_TOKEN")
+
+    if not username or not token:
+        logger.error(
+            "Error: GITHUB_USERNAME and GITHUB_PERSONAL_ACCESS_TOKEN environment "
+            "variables must be set"
+        )
+        return
+
+    runner = PrMonitorRunner(
+        username,
+        token,
+        LoggingPrMonitorHooks(),
+    )
+    asyncio.run(runner.run())
 
 
 if __name__ == "__main__":

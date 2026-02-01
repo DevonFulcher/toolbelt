@@ -1,9 +1,10 @@
 import os
 import webbrowser
 from datetime import datetime
+
 from toolbelt.env_var import get_git_projects_workdir
 from toolbelt.git.commits import get_recent_commits_for_standup
-from toolbelt.github import get_open_pull_requests
+from toolbelt.github.api import get_open_pull_requests
 from toolbelt.logger import logger
 
 
@@ -43,13 +44,13 @@ def parse_standup_weekdays(raw: str) -> set[int]:
     return {by_name[t] for t in tokens}
 
 
-def standup_notes(*, standup_weekdays: set[int]) -> None:
+async def standup_notes(*, standup_weekdays: set[int]) -> None:
     """Prepare notes for standup and copy them to clipboard"""
     username = os.getenv("GITHUB_USERNAME")
     token = os.getenv("GITHUB_PERSONAL_ACCESS_TOKEN")
     assert username and token
 
-    open_prs = get_open_pull_requests(username, token)
+    open_prs = await get_open_pull_requests(username, token)
     prs_text = "\n".join(
         [f"* {pr.title}: {pr.url} (Created {pr.time_open} ago)" for pr in open_prs]
     )
