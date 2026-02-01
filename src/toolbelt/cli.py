@@ -8,7 +8,8 @@ from toolbelt.agent.cli import agent_typer
 from toolbelt.cursor.cli import cursor_typer
 from toolbelt.datadog_form import form as datadog_form
 from toolbelt.git.cli import git_typer
-from toolbelt.github.pr_monitor import LoggingPrMonitorHooks, PrMonitorRunner
+from toolbelt.github.hooks.logging import LoggingPrMonitorHooks
+from toolbelt.github.pr_monitor import PrMonitorRunner
 from toolbelt.github.status import display_status
 from toolbelt.logger import logger
 from toolbelt.repos import current_repo

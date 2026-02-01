@@ -1,6 +1,5 @@
 import asyncio
-from abc import ABC, abstractmethod
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -8,7 +7,9 @@ import httpx
 
 from toolbelt.github.api import (
     CheckRun,
+    CheckRunConclusion,
     CheckRunsResponse,
+    CheckRunStatus,
     IssueComment,
     PullRequestDetails,
     PullRequestMergeableState,
@@ -17,11 +18,15 @@ from toolbelt.github.api import (
     SearchIssueItem,
     search_open_authored_prs,
 )
-from toolbelt.github.client import (
-    GithubClient,
-    build_async_github_client,
+from toolbelt.github.client import GithubClient, build_async_github_client
+from toolbelt.github.hooks.base import (
+    AbstractPrMonitorHooks,
+    PrRef,
+    ReviewWithComments,
 )
 from toolbelt.logger import logger
+
+HooksFactory = Callable[[GithubClient], AbstractPrMonitorHooks]
 
 
 @dataclass
@@ -31,105 +36,11 @@ class PrState:
     last_review_id: int = 0
     last_issue_comment_id: int = 0
     last_review_comment_id: int = 0
-
-
-@dataclass
-class ReviewWithComments:
-    review: Review
-    comments: list[ReviewComment]
+    ci_all_completed: bool = False
 
 
 class HasId(Protocol):
     id: int
-
-
-@dataclass(frozen=True)
-class PrRef:
-    repo: str
-    number: int
-
-    @property
-    def pr_url(self) -> str:
-        return f"https://github.com/{self.repo}/pull/{self.number}"
-
-
-class PrMonitorHooks(ABC):
-    @abstractmethod
-    def on_merge_conflict(
-        self,
-        pr: PrRef,
-    ) -> None:
-        raise NotImplementedError
-
-    @abstractmethod
-    def on_new_review(
-        self,
-        pr: PrRef,
-        reviews: list[ReviewWithComments],
-    ) -> None:
-        raise NotImplementedError
-
-    @abstractmethod
-    def on_new_issue_comment(
-        self,
-        pr: PrRef,
-        comments: list[IssueComment],
-    ) -> None:
-        raise NotImplementedError
-
-    @abstractmethod
-    def on_ci_status_change(
-        self,
-        pr: PrRef,
-        check_run: CheckRun,
-    ) -> None:
-        raise NotImplementedError
-
-
-class LoggingPrMonitorHooks(PrMonitorHooks):
-    def on_merge_conflict(self, pr: PrRef) -> None:
-        logger.info(
-            "Merge conflict detected for %s (%s)",
-            pr.repo,
-            pr.number,
-        )
-
-    def on_new_review(
-        self,
-        pr: PrRef,
-        reviews: list[ReviewWithComments],
-    ) -> None:
-        logger.info(
-            "New reviews for %s#%s (%s reviews, %s comments)",
-            pr.repo,
-            pr.number,
-            len(reviews),
-            sum(len(entry.comments) for entry in reviews),
-        )
-
-    def on_new_issue_comment(
-        self,
-        pr: PrRef,
-        comments: list[IssueComment],
-    ) -> None:
-        logger.info(
-            "New comments for %s#%s (%s)",
-            pr.repo,
-            pr.number,
-            len(comments),
-        )
-
-    def on_ci_status_change(
-        self,
-        pr: PrRef,
-        check_run: CheckRun,
-    ) -> None:
-        logger.info(
-            "CI check run updated for %s#%s (check %s)",
-            pr.repo,
-            pr.number,
-            check_run.id,
-        )
 
 
 class PrMonitor:
@@ -137,7 +48,7 @@ class PrMonitor:
         self,
         client: GithubClient,
         username: str,
-        hooks: PrMonitorHooks,
+        hooks: AbstractPrMonitorHooks,
     ) -> None:
         self._client = client
         self._username = username
@@ -190,12 +101,19 @@ class PrMonitor:
         check_runs = check_runs_payload.check_runs
 
         mergeable_state = pr_details.mergeable_state
+        ci_all_completed = (
+            all(run.status == CheckRunStatus.COMPLETED for run in check_runs)
+            if check_runs
+            else False
+        )
+
         current_state = PrState(
             mergeable_state=mergeable_state,
             last_check_run_id=self._max_id(check_runs),
             last_review_id=self._max_id(reviews),
             last_issue_comment_id=self._max_id(issue_comments),
             last_review_comment_id=self._max_id(review_comments),
+            ci_all_completed=ci_all_completed,
         )
 
         pr_key = self._summarize_pr_key(repo, issue_search_result)
@@ -209,12 +127,12 @@ class PrMonitor:
             repo=repo,
             number=number,
         )
-        self._handle_mergeable_change(
+        await self._handle_mergeable_change(
             pr_ref,
             previous,
             mergeable_state,
         )
-        self._handle_new_reviews(
+        await self._handle_new_reviews(
             pr_ref,
             reviews,
             review_comments,
@@ -225,7 +143,7 @@ class PrMonitor:
             issue_comments,
             previous.last_issue_comment_id,
         )
-        self._handle_ci_status_change(pr_ref, previous, check_runs)
+        await self._handle_ci_status_change(pr_ref, previous, check_runs)
 
         self._state[pr_key] = current_state
         return pr_key
@@ -234,7 +152,7 @@ class PrMonitor:
     def _summarize_pr_key(repo: str, pr_summary: SearchIssueItem) -> str:
         return f"{repo}#{pr_summary.number}"
 
-    def _handle_mergeable_change(
+    async def _handle_mergeable_change(
         self,
         pr: PrRef,
         previous: PrState,
@@ -243,9 +161,9 @@ class PrMonitor:
         if current == previous.mergeable_state:
             return
         if current == PullRequestMergeableState.DIRTY:
-            self._hooks.on_merge_conflict(pr)
+            await self._hooks.on_merge_conflict(pr)
 
-    def _handle_new_reviews(
+    async def _handle_new_reviews(
         self,
         pr: PrRef,
         reviews: list[Review],
@@ -290,7 +208,7 @@ class PrMonitor:
 
         if not review_entries:
             return
-        self._hooks.on_new_review(pr, review_entries)
+        await self._hooks.on_new_review(pr, review_entries)
 
     def _handle_new_issue_comments(
         self,
@@ -306,21 +224,23 @@ class PrMonitor:
             sorted(new_comments, key=lambda item: item.id),
         )
 
-    def _handle_ci_status_change(
+    async def _handle_ci_status_change(
         self,
         pr: PrRef,
         previous: PrState,
         current: list[CheckRun],
     ) -> None:
-        new_runs = [
-            run
-            for run in current
-            if run.id is not None and run.id > previous.last_check_run_id
-        ]
-        if not new_runs:
+        if not current:
             return
-        for check_run in sorted(new_runs, key=lambda item: item.id or 0):
-            self._hooks.on_ci_status_change(pr, check_run)
+
+        all_completed = all(run.status == CheckRunStatus.COMPLETED for run in current)
+
+        # Only fire once when transitioning to "all completed"
+        if all_completed and not previous.ci_all_completed:
+            has_failure = any(
+                run.conclusion == CheckRunConclusion.FAILURE for run in current
+            )
+            await self._hooks.on_ci_status_change(pr, has_failure)
 
     @staticmethod
     def _max_id(items: Iterable[HasId]) -> int:
@@ -332,7 +252,7 @@ class PrMonitorRunner:
         self,
         username: str,
         token: str,
-        hooks: PrMonitorHooks,
+        hooks: AbstractPrMonitorHooks,
     ) -> None:
         self._username = username
         self._token = token
