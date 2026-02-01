@@ -4,7 +4,7 @@ from enum import Enum
 from typing import Optional
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from toolbelt.github.client import GithubClient, build_async_github_client
 
@@ -191,6 +191,13 @@ class Review(BaseModel):
     state: ReviewState
     user: GithubUser
 
+    @field_validator("state", mode="before")
+    @classmethod
+    def _normalize_state(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.lower()
+        return value
+
 
 class IssueComment(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -206,7 +213,7 @@ class ReviewComment(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     id: int
-    review_id: int
+    pull_request_review_id: Optional[int] = None
     user: GithubUser
     html_url: str
     url: str

@@ -1,5 +1,4 @@
 import asyncio
-import logging
 import os
 import subprocess
 
@@ -11,7 +10,7 @@ from toolbelt.datadog_form import form as datadog_form
 from toolbelt.git.cli import git_typer
 from toolbelt.github.pr_monitor import LoggingPrMonitorHooks, PrMonitorRunner
 from toolbelt.github.status import display_status
-from toolbelt.logger import logger, setup_logging
+from toolbelt.logger import logger
 from toolbelt.repos import current_repo
 from toolbelt.standup import parse_standup_weekdays, standup_notes
 from toolbelt.task.cli import task_typer
@@ -86,13 +85,8 @@ def status():
 
 
 @app.command(name="pr-monitor", help="Monitor your authored PRs via polling")
-def pr_monitor(
-    debug: bool = typer.Option(False, "--debug", help="Enable debug logging"),
-):
+def pr_monitor():
     """Poll GitHub and log PR events for authored PRs."""
-    if debug:
-        setup_logging(logging.DEBUG)
-
     username = os.getenv("GITHUB_USERNAME")
     token = os.getenv("GITHUB_PERSONAL_ACCESS_TOKEN")
 

@@ -1,9 +1,10 @@
-from __future__ import annotations
-
+import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Protocol
+
+import httpx
 
 from toolbelt.github.api import (
     CheckRun,
@@ -26,8 +27,6 @@ from toolbelt.logger import logger
 @dataclass
 class PrState:
     mergeable_state: str | None = None
-    review_decision: str | None = None
-    check_runs: list[CheckRun] = field(default_factory=list)
     last_check_run_id: int = 0
     last_review_id: int = 0
     last_issue_comment_id: int = 0
@@ -101,7 +100,9 @@ class LoggingPrMonitorHooks(PrMonitorHooks):
         reviews: list[ReviewWithComments],
     ) -> None:
         logger.info(
-            "New reviews (%s reviews, %s comments)",
+            "New reviews for %s#%s (%s reviews, %s comments)",
+            pr.repo,
+            pr.number,
             len(reviews),
             sum(len(entry.comments) for entry in reviews),
         )
@@ -112,7 +113,9 @@ class LoggingPrMonitorHooks(PrMonitorHooks):
         comments: list[IssueComment],
     ) -> None:
         logger.info(
-            "New comments on (%s)",
+            "New comments for %s#%s (%s)",
+            pr.repo,
+            pr.number,
             len(comments),
         )
 
@@ -122,9 +125,10 @@ class LoggingPrMonitorHooks(PrMonitorHooks):
         check_run: CheckRun,
     ) -> None:
         logger.info(
-            "CI check run updated for: %s (%s)",
-            check_run.id,
+            "CI check run updated for %s#%s (check %s)",
+            pr.repo,
             pr.number,
+            check_run.id,
         )
 
 
@@ -145,6 +149,7 @@ class PrMonitor:
             self._client,
             self._username,
         )
+        logger.info("Found %s open PRs", len(prs))
 
         seen_keys: set[str] = set()
         for pr in prs:
@@ -154,7 +159,7 @@ class PrMonitor:
 
         stale_keys = set(self._state.keys()) - seen_keys
         for key in stale_keys:
-            logger.debug("Removing stale PR state for %s", key)
+            logger.info("Removing stale PR state for %s", key)
             self._state.pop(key, None)
 
     async def _process_pr(self, issue_search_result: SearchIssueItem) -> str | None:
@@ -185,11 +190,8 @@ class PrMonitor:
         check_runs = check_runs_payload.check_runs
 
         mergeable_state = pr_details.mergeable_state
-        review_decision = pr_details.review_decision
         current_state = PrState(
             mergeable_state=mergeable_state,
-            review_decision=review_decision,
-            check_runs=check_runs,
             last_check_run_id=self._max_id(check_runs),
             last_review_id=self._max_id(reviews),
             last_issue_comment_id=self._max_id(issue_comments),
@@ -199,7 +201,6 @@ class PrMonitor:
         pr_key = self._summarize_pr_key(repo, issue_search_result)
         if pr_key not in self._state:
             self._state[pr_key] = current_state
-            logger.debug("Initialized state for %s", pr_key)
             return pr_key
 
         previous = self._state[pr_key]
@@ -231,7 +232,7 @@ class PrMonitor:
 
     @staticmethod
     def _summarize_pr_key(repo: str, pr_summary: SearchIssueItem) -> str:
-        return f"{repo}#{pr_summary.number} ({pr_summary.title})"
+        return f"{repo}#{pr_summary.number}"
 
     def _handle_mergeable_change(
         self,
@@ -259,17 +260,21 @@ class PrMonitor:
             for comment in review_comments
             if comment.id > previous.last_review_comment_id
         ]
-        if not new_reviews and not new_review_comments:
+        if not new_reviews:
             return
 
         review_by_id = {review.id: review for review in reviews}
-        review_ids = {review.id for review in new_reviews} | {
-            comment.review_id for comment in new_review_comments
-        }
+        review_ids = {review.id for review in new_reviews}
 
         grouped_comments: dict[int, list[ReviewComment]] = {}
         for comment in sorted(new_review_comments, key=lambda item: item.id):
-            grouped_comments.setdefault(comment.review_id, []).append(comment)
+            if comment.pull_request_review_id is None:
+                continue
+            if comment.pull_request_review_id not in review_ids:
+                continue
+            grouped_comments.setdefault(comment.pull_request_review_id, []).append(
+                comment
+            )
 
         review_entries: list[ReviewWithComments] = []
         for review_id in sorted(review_ids):
@@ -332,6 +337,7 @@ class PrMonitorRunner:
         self._username = username
         self._token = token
         self._hooks = hooks
+        self._poll_interval = 30.0
 
     async def run(self) -> None:
         async with build_async_github_client(self._token) as client:
@@ -341,5 +347,9 @@ class PrMonitorRunner:
                 self._hooks,
             )
             while True:
-                logger.debug("Starting polling cycle")
-                await monitor.poll_once()
+                try:
+                    await monitor.poll_once()
+                except httpx.HTTPError:
+                    logger.exception("Polling cycle failed; retrying after delay")
+                logger.info("Sleeping for %s seconds", self._poll_interval)
+                await asyncio.sleep(self._poll_interval)
