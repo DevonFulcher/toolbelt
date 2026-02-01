@@ -41,13 +41,13 @@ class GithubClient:
         self._retry_statuses = {429, 500, 502, 503, 504}
         self._locks: dict[ResourceType, asyncio.Lock] = {}
 
-    async def _get(self, url: str, **kwargs: Any) -> httpx.Response:
+    async def _request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
         last_response: httpx.Response | None = None
         resource = self._resource_for_url(url)
         for attempt in range(self._max_retries):
             async with self._get_lock(resource):
                 await self._maybe_sleep(resource)
-                response = await self._client.get(url, **kwargs)
+                response = await self._client.request(method, url, **kwargs)
                 self._update_from_response(response)
             last_response = response
             if (
@@ -73,6 +73,12 @@ class GithubClient:
             request=last_response.request,
             response=last_response,
         )
+
+    async def _get(self, url: str, **kwargs: Any) -> httpx.Response:
+        return await self._request("GET", url, **kwargs)
+
+    async def post(self, url: str, **kwargs: Any) -> httpx.Response:
+        return await self._request("POST", url, **kwargs)
 
     async def paged_get[TModel: BaseModel](
         self,
