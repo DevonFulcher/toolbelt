@@ -19,25 +19,50 @@ class WrenchFormatter(logging.Formatter):
 def setup_logging(level: int = logging.INFO) -> None:
     """Set up centralized logging configuration."""
     # Get the root logger
-    logger = logging.getLogger()
-    logger.setLevel(level)
+    root_logger = logging.getLogger()
+    root_logger.setLevel(level)
 
     # Remove existing handlers to avoid duplicates
-    logger.handlers.clear()
+    root_logger.handlers.clear()
 
     # Create console handler
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(level)
 
     # Create formatter with wrench emoji
+    # Simple format, just the message (emoji added in format method)
     formatter = WrenchFormatter(
-        fmt="%(message)s",  # Simple format, just the message (emoji added in format method)
+        fmt="%(message)s",
         datefmt=None,
     )
     console_handler.setFormatter(formatter)
 
     # Add handler to logger
-    logger.addHandler(console_handler)
+    root_logger.addHandler(console_handler)
+
+
+def setup_app_only_logging(level: int = logging.INFO) -> None:
+    """Set up logging to emit only toolbelt application logs."""
+    root_logger = logging.getLogger()
+
+    # Remove existing handlers to avoid duplicates
+    root_logger.handlers.clear()
+    root_logger.setLevel(logging.WARNING)
+
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(level)
+    console_handler.setFormatter(
+        WrenchFormatter(
+            fmt="%(message)s",
+            datefmt=None,
+        )
+    )
+
+    app_logger = logging.getLogger("toolbelt")
+    app_logger.setLevel(level)
+    app_logger.handlers.clear()
+    app_logger.addHandler(console_handler)
+    app_logger.propagate = False
 
 
 def get_logger(name: Optional[str] = None) -> logging.Logger:

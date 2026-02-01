@@ -24,7 +24,7 @@ from toolbelt.github.hooks.base import (
     PrRef,
     ReviewWithComments,
 )
-from toolbelt.logger import logger
+from toolbelt.logger import logger, setup_app_only_logging
 
 HooksFactory = Callable[[GithubClient], AbstractPrMonitorHooks]
 
@@ -260,6 +260,7 @@ class PrMonitorRunner:
         self._poll_interval = 30.0
 
     async def run(self) -> None:
+        setup_app_only_logging()
         async with build_async_github_client(self._token) as client:
             monitor = PrMonitor(
                 client,
