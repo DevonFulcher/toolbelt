@@ -45,35 +45,46 @@ class CursorPrMonitorHooks(AbstractPrMonitorHooks):
         )
 
         for entry in reviews:
-            if entry.review.user.login not in bot_logins:
-                continue
-            # Only reply to the first comment of each bot review
+            # Only reply to thread-starting comments from bots.
             if not entry.comments:
                 continue
-            first_comment = min(entry.comments, key=lambda c: c.id)
-            url = (
-                f"https://api.github.com/repos/{pr.repo}/pulls/{pr.number}"
-                f"/comments/{first_comment.id}/replies"
-            )
-            try:
-                logger.info(
-                    "Replying to review comment %s for %s",
-                    first_comment.id,
-                    pr.pr_url,
+            thread_starters = [
+                comment
+                for comment in entry.comments
+                if comment.in_reply_to_id is None and comment.user.login in bot_logins
+            ]
+            if not thread_starters:
+                continue
+            for thread_start in sorted(thread_starters, key=lambda c: c.id):
+                if any(
+                    comment.in_reply_to_id == thread_start.id
+                    and comment.user.login in bot_logins
+                    for comment in entry.comments
+                ):
+                    continue
+                url = (
+                    f"https://api.github.com/repos/{pr.repo}/pulls/{pr.number}"
+                    f"/comments/{thread_start.id}/replies"
                 )
-                response = await self._client.post(url, json={"body": body})
-                response.raise_for_status()
-                logger.info(
-                    "Replied to review comment %s for %s",
-                    first_comment.id,
-                    pr.pr_url,
-                )
-            except httpx.HTTPError:
-                logger.exception(
-                    "Failed to reply to review comment %s for %s",
-                    first_comment.id,
-                    pr.pr_url,
-                )
+                try:
+                    logger.info(
+                        "Replying to review comment %s for %s",
+                        thread_start.id,
+                        pr.pr_url,
+                    )
+                    response = await self._client.post(url, json={"body": body})
+                    response.raise_for_status()
+                    logger.info(
+                        "Replied to review comment %s for %s",
+                        thread_start.id,
+                        pr.pr_url,
+                    )
+                except httpx.HTTPError:
+                    logger.exception(
+                        "Failed to reply to review comment %s for %s",
+                        thread_start.id,
+                        pr.pr_url,
+                    )
 
     def on_new_issue_comment(
         self,

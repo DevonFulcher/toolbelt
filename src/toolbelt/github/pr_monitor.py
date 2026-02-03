@@ -15,6 +15,7 @@ from toolbelt.github.api import (
     PullRequestMergeableState,
     Review,
     ReviewComment,
+    ReviewState,
     SearchIssueItem,
     search_open_authored_prs,
 )
@@ -60,10 +61,10 @@ class PrMonitor:
             self._client,
             self._username,
         )
-        logger.info(
-            f"Found {len(prs)} open PRs: "
-            f"{", ".join([f"{item.repo_full_name}#{item.number}: {item.title}" for item in prs])}"
+        pr_summaries = ", ".join(
+            f"{item.repo_full_name}#{item.number}: {item.title}" for item in prs
         )
+        logger.info("Found %s open PRs: %s", len(prs), pr_summaries)
 
         seen_keys: set[str] = set()
         for pr in prs:
@@ -199,7 +200,7 @@ class PrMonitor:
             for comment in review_comments
             if comment.id > previous.last_review_comment_id
         ]
-        if not new_reviews:
+        if not new_reviews and not new_review_comments:
             return
         logger.info(
             "New reviews for %s#%s: reviews=%s review_comments=%s",
@@ -211,6 +212,13 @@ class PrMonitor:
 
         review_by_id = {review.id: review for review in reviews}
         review_ids = {review.id for review in new_reviews}
+        review_ids.update(
+            comment.pull_request_review_id
+            for comment in new_review_comments
+            if comment.pull_request_review_id is not None
+        )
+        if not review_ids:
+            return
 
         grouped_comments: dict[int, list[ReviewComment]] = {}
         for comment in sorted(new_review_comments, key=lambda item: item.id):
@@ -226,7 +234,14 @@ class PrMonitor:
         for review_id in sorted(review_ids):
             review = review_by_id.get(review_id)
             if not review:
-                continue
+                fallback_comments = grouped_comments.get(review_id, [])
+                if not fallback_comments:
+                    continue
+                review = Review(
+                    id=review_id,
+                    state=ReviewState.COMMENTED,
+                    user=fallback_comments[0].user,
+                )
             review_entries.append(
                 ReviewWithComments(
                     review=review,
