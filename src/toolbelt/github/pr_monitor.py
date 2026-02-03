@@ -18,13 +18,13 @@ from toolbelt.github.api import (
     SearchIssueItem,
     search_open_authored_prs,
 )
-from toolbelt.github.client import GithubClient, build_async_github_client
+from toolbelt.github.client import GithubClient
 from toolbelt.github.hooks.base import (
     AbstractPrMonitorHooks,
     PrRef,
     ReviewWithComments,
 )
-from toolbelt.logger import logger, setup_app_only_logging
+from toolbelt.logger import logger
 
 HooksFactory = Callable[[GithubClient], AbstractPrMonitorHooks]
 
@@ -60,7 +60,10 @@ class PrMonitor:
             self._client,
             self._username,
         )
-        logger.info("Found %s open PRs", len(prs))
+        logger.info(
+            f"Found {len(prs)} open PRs: "
+            f"{", ".join([f"{item.repo_full_name}#{item.number}: {item.title}" for item in prs])}"
+        )
 
         seen_keys: set[str] = set()
         for pr in prs:
@@ -81,6 +84,7 @@ class PrMonitor:
 
         number = issue_search_result.number
         repo = pr_details.base.repo.full_name
+        logger.info(f"Processing PR {repo}#{number}")
         repo_api_prefix = f"https://api.github.com/repos/{repo}"
         reviews = await self._client.paged_get(
             f"{repo_api_prefix}/pulls/{number}/reviews",
@@ -99,6 +103,16 @@ class PrMonitor:
             CheckRunsResponse,
         )
         check_runs = check_runs_payload.check_runs
+        logger.info(
+            "Fetched PR data for %s#%s: reviews=%s issue_comments=%s "
+            "review_comments=%s check_runs=%s",
+            repo,
+            number,
+            len(reviews),
+            len(issue_comments),
+            len(review_comments),
+            len(check_runs),
+        )
 
         mergeable_state = pr_details.mergeable_state
         ci_all_completed = (
@@ -160,6 +174,13 @@ class PrMonitor:
     ) -> None:
         if current == previous.mergeable_state:
             return
+        logger.info(
+            "Mergeable state changed for %s#%s: %s -> %s",
+            pr.repo,
+            pr.number,
+            previous.mergeable_state,
+            current,
+        )
         if current == PullRequestMergeableState.DIRTY:
             await self._hooks.on_merge_conflict(pr)
 
@@ -180,6 +201,13 @@ class PrMonitor:
         ]
         if not new_reviews:
             return
+        logger.info(
+            "New reviews for %s#%s: reviews=%s review_comments=%s",
+            pr.repo,
+            pr.number,
+            len(new_reviews),
+            len(new_review_comments),
+        )
 
         review_by_id = {review.id: review for review in reviews}
         review_ids = {review.id for review in new_reviews}
@@ -219,6 +247,12 @@ class PrMonitor:
         new_comments = [comment for comment in comments if comment.id > last_comment_id]
         if not new_comments:
             return
+        logger.info(
+            "New issue comments for %s#%s: %s",
+            pr.repo,
+            pr.number,
+            len(new_comments),
+        )
         self._hooks.on_new_issue_comment(
             pr,
             sorted(new_comments, key=lambda item: item.id),
@@ -240,6 +274,12 @@ class PrMonitor:
             has_failure = any(
                 run.conclusion == CheckRunConclusion.FAILURE for run in current
             )
+            logger.info(
+                "CI completed for %s#%s: has_failure=%s",
+                pr.repo,
+                pr.number,
+                has_failure,
+            )
             await self._hooks.on_ci_status_change(pr, has_failure)
 
     @staticmethod
@@ -251,26 +291,24 @@ class PrMonitorRunner:
     def __init__(
         self,
         username: str,
-        token: str,
         hooks: AbstractPrMonitorHooks,
+        client: GithubClient,
     ) -> None:
         self._username = username
-        self._token = token
         self._hooks = hooks
+        self._client = client
         self._poll_interval = 30.0
 
     async def run(self) -> None:
-        setup_app_only_logging()
-        async with build_async_github_client(self._token) as client:
-            monitor = PrMonitor(
-                client,
-                self._username,
-                self._hooks,
-            )
-            while True:
-                try:
-                    await monitor.poll_once()
-                except httpx.HTTPError:
-                    logger.exception("Polling cycle failed; retrying after delay")
-                logger.info("Sleeping for %s seconds", self._poll_interval)
-                await asyncio.sleep(self._poll_interval)
+        monitor = PrMonitor(
+            self._client,
+            self._username,
+            self._hooks,
+        )
+        while True:
+            try:
+                await monitor.poll_once()
+            except httpx.HTTPError:
+                logger.exception("Polling cycle failed; retrying after delay")
+            logger.info("Sleeping for %s seconds", self._poll_interval)
+            await asyncio.sleep(self._poll_interval)

@@ -12,14 +12,17 @@ class CursorPrMonitorHooks(AbstractPrMonitorHooks):
 
     async def on_merge_conflict(self, pr: PrRef) -> None:
         if not pr.repo.startswith("dbt-labs/"):
+            logger.info("Skipping merge conflict hook for %s", pr.pr_url)
             return
 
         url = f"https://api.github.com/repos/{pr.repo}/issues/{pr.number}/comments"
         try:
+            logger.info("Posting merge conflict comment for %s", pr.pr_url)
             response = await self._client.post(
                 url, json={"body": "@cursor address the merge conflicts"}
             )
             response.raise_for_status()
+            logger.info("Posted merge conflict comment for %s", pr.pr_url)
         except httpx.HTTPError:
             logger.exception("Failed to comment on merge conflict for %s", pr.pr_url)
 
@@ -29,6 +32,7 @@ class CursorPrMonitorHooks(AbstractPrMonitorHooks):
         reviews: list[ReviewWithComments],
     ) -> None:
         if not pr.repo.startswith("dbt-labs/"):
+            logger.info("Skipping review hook for %s", pr.pr_url)
             return
 
         bot_logins = {
@@ -52,8 +56,18 @@ class CursorPrMonitorHooks(AbstractPrMonitorHooks):
                 f"/comments/{first_comment.id}/replies"
             )
             try:
+                logger.info(
+                    "Replying to review comment %s for %s",
+                    first_comment.id,
+                    pr.pr_url,
+                )
                 response = await self._client.post(url, json={"body": body})
                 response.raise_for_status()
+                logger.info(
+                    "Replied to review comment %s for %s",
+                    first_comment.id,
+                    pr.pr_url,
+                )
             except httpx.HTTPError:
                 logger.exception(
                     "Failed to reply to review comment %s for %s",
@@ -74,16 +88,20 @@ class CursorPrMonitorHooks(AbstractPrMonitorHooks):
         has_failure: bool,
     ) -> None:
         if not pr.repo.startswith("dbt-labs/"):
+            logger.info("Skipping CI hook for %s", pr.pr_url)
             return
 
         if not has_failure:
+            logger.info("CI passed for %s; no action", pr.pr_url)
             return
 
         url = f"https://api.github.com/repos/{pr.repo}/issues/{pr.number}/comments"
         try:
+            logger.info("Posting CI failure comment for %s", pr.pr_url)
             response = await self._client.post(
                 url, json={"body": "@cursor investigate and fix the CI failure"}
             )
             response.raise_for_status()
+            logger.info("Posted CI failure comment for %s", pr.pr_url)
         except httpx.HTTPError:
             logger.exception("Failed to comment on CI failure for %s", pr.pr_url)
