@@ -4,7 +4,7 @@ from enum import Enum
 from typing import Optional
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 from toolbelt.github.client import GithubClient, build_async_github_client
 
@@ -114,6 +114,16 @@ class PullRequestLink(BaseModel):
     url: str
 
 
+def _repo_full_name_from_url(url: str) -> str:
+    min_repo_parts = 2
+    if "/repos/" in url:
+        return url.split("/repos/")[-1]
+    parts = url.strip("/").split("/")
+    if len(parts) >= min_repo_parts:
+        return "/".join(parts[-min_repo_parts:])
+    return url
+
+
 class SearchIssueItem(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -122,6 +132,10 @@ class SearchIssueItem(BaseModel):
     repository_url: str
     pull_request: PullRequestLink
     number: int
+
+    @computed_field(return_type=str)
+    def repo_full_name(self) -> str:
+        return _repo_full_name_from_url(self.repository_url)
 
 
 class SearchIssueItemDetailed(BaseModel):
@@ -135,6 +149,10 @@ class SearchIssueItemDetailed(BaseModel):
     state: PullRequestState
     draft: bool = False
     created_at: str
+
+    @computed_field(return_type=str)
+    def repo_full_name(self) -> str:
+        return _repo_full_name_from_url(self.repository_url)
 
 
 class SearchIssuesResponse(BaseModel):

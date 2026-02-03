@@ -8,10 +8,11 @@ from toolbelt.agent.cli import agent_typer
 from toolbelt.cursor.cli import cursor_typer
 from toolbelt.datadog_form import form as datadog_form
 from toolbelt.git.cli import git_typer
-from toolbelt.github.hooks.logging import LoggingPrMonitorHooks
+from toolbelt.github.client import build_async_github_client
+from toolbelt.github.hooks.cursor import CursorPrMonitorHooks
 from toolbelt.github.pr_monitor import PrMonitorRunner
 from toolbelt.github.status import display_status
-from toolbelt.logger import logger
+from toolbelt.logger import logger, setup_app_only_logging
 from toolbelt.repos import current_repo
 from toolbelt.standup import parse_standup_weekdays, standup_notes
 from toolbelt.task.cli import task_typer
@@ -98,12 +99,18 @@ def pr_monitor():
         )
         return
 
-    runner = PrMonitorRunner(
-        username,
-        token,
-        LoggingPrMonitorHooks(),
-    )
-    asyncio.run(runner.run())
+    setup_app_only_logging()
+
+    async def run():
+        async with build_async_github_client(token) as client:
+            runner = PrMonitorRunner(
+                username,
+                CursorPrMonitorHooks(client),
+                client,
+            )
+            await runner.run()
+
+    asyncio.run(run())
 
 
 if __name__ == "__main__":
