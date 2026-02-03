@@ -232,6 +232,7 @@ class ReviewComment(BaseModel):
 
     id: int
     pull_request_review_id: Optional[int] = None
+    in_reply_to_id: Optional[int] = None
     user: GithubUser
     html_url: str
     url: str
