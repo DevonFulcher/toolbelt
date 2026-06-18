@@ -12,6 +12,7 @@ import typer
 from toolbelt.editor import open_in_editor
 from toolbelt.git.stack import lineage
 from toolbelt.git.stack.append import create_stacked_branch
+from toolbelt.git.stack.sync import sync_stack
 from toolbelt.git.stack.viz import render
 from toolbelt.git.stack.worktree import worktree_paths
 from toolbelt.git.worktrees import (
@@ -36,6 +37,12 @@ def append(
     _setup_new_worktree(root=root, wt_path=wt_path)
     logger.info(f"Created worktree at {wt_path}")
     open_in_editor(wt_path)
+
+
+@stack_typer.command()
+def sync() -> None:
+    """Merge-sync the whole stack the current branch belongs to."""
+    sync_stack(root=repo_root())
 
 
 @stack_typer.command()
