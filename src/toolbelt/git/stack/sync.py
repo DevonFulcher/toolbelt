@@ -17,7 +17,12 @@ import typer
 
 from toolbelt.git.exec import run
 from toolbelt.git.stack.forge import Forge
-from toolbelt.git.stack.lineage import all_parents, resolve_stack, set_parent
+from toolbelt.git.stack.lineage import (
+    all_parents,
+    remove_parent,
+    resolve_stack,
+    set_parent,
+)
 from toolbelt.git.stack.worktree import worktree_paths
 from toolbelt.git.worktrees import current_branch
 from toolbelt.git.worktrees_ops import delete_branch_and_worktree
@@ -62,16 +67,17 @@ def _rebase_in_progress(worktree: Path) -> bool:
     return False
 
 
-def _restack(child: str, *, worktree: Path, onto: str, parent_tip: str) -> bool:
-    """Rebase ``child``'s own commits onto ``onto``; resume if already mid-rebase.
+def _restack(child: str, *, worktree: Path, onto: str, upstream: str) -> bool:
+    """Replay ``child``'s own commits (those after ``upstream``) onto ``onto``.
 
-    Returns True on success, False if a conflict left the rebase in progress.
+    Resumes if the worktree is already mid-rebase. Returns True on success,
+    False if a conflict left the rebase in progress.
     """
     if _rebase_in_progress(worktree):
         result = run(["git", "rebase", "--continue"], cwd=worktree, check=False)
     else:
         result = run(
-            ["git", "rebase", "--onto", onto, parent_tip, child],
+            ["git", "rebase", "--onto", onto, upstream, child],
             cwd=worktree,
             check=False,
         )
@@ -84,7 +90,8 @@ def sync_stack(*, root: Path, forge: Forge) -> None:
     Processes branches root -> leaf so each parent is up to date before being
     merged into its children. The stack root merges ``origin/<base>`` so landed
     work propagates down. When ``forge`` reports a parent's PR merged, that
-    parent's children are rebased onto the grandparent and the parent is removed.
+    parent's children are rebased onto the nearest surviving ancestor and every
+    landed branch is removed.
     """
     run(["git", "fetch", "-p"], cwd=root, exit_on_error=True)
 
@@ -92,9 +99,16 @@ def sync_stack(*, root: Path, forge: Forge) -> None:
     # its HEAD is detached; recover the branch from the rebase state.
     rebasing = _branch_being_rebased(root)
     branch = rebasing or current_branch(root)
-    stack = resolve_stack(branch, root=root)
     parents = all_parents(root=root)
     tracked = set(parents.keys())
+    if branch not in tracked:
+        logger.error(
+            f"'{branch}' is not part of a tracked stack. Start one with "
+            "`stack append <name>`."
+        )
+        raise typer.Exit(1)
+
+    stack = resolve_stack(branch, root=root)
     paths = worktree_paths(root=root)
     # A mid-rebase worktree shows as detached in `git worktree list`, so map the
     # branch being rebased back to this worktree.
@@ -104,11 +118,17 @@ def sync_stack(*, root: Path, forge: Forge) -> None:
     # Authoritative, queried once per branch.
     landed = {b for b in stack if forge.pr_is_merged(b)}
 
-    to_cleanup: list[str] = []
+    def surviving_base(child: str) -> str:
+        """Nearest ancestor of ``child`` that has not landed (collapses chains
+        of consecutive landed ancestors so cascading lands resolve correctly)."""
+        ancestor = parents[child]
+        while ancestor in landed:
+            ancestor = parents[ancestor]
+        return ancestor
+
     for child in stack:
         if child in landed:
-            # Its PR merged; don't sync it — it is removed once its children are
-            # restacked off it. (Cascading lands in one pass are out of scope.)
+            # Its PR merged; skip syncing — removed during cleanup below.
             continue
 
         worktree = paths.get(child)
@@ -119,36 +139,35 @@ def sync_stack(*, root: Path, forge: Forge) -> None:
             )
             raise typer.Exit(1)
 
-        parent = parents[child]
+        direct_parent = parents[child]
 
-        if parent in landed:
-            # Restack onto the grandparent (the landed parent's parent).
-            grandparent = parents[parent]
-            onto = grandparent if grandparent in tracked else f"origin/{grandparent}"
-            parent_tip = run(
-                ["git", "rev-parse", parent],
-                cwd=root,
-                capture_output=True,
-            ).stdout.strip()
+        if direct_parent in landed:
+            # Replay child's own commits (those after its direct parent) onto the
+            # nearest surviving ancestor, dropping every landed ancestor's work
+            # (already on the base via their squashes). Handles N stacked lands.
+            base = surviving_base(child)
+            onto = base if base in tracked else f"origin/{base}"
 
-            if not _restack(child, worktree=worktree, onto=onto, parent_tip=parent_tip):
+            if not _restack(
+                child, worktree=worktree, onto=onto, upstream=direct_parent
+            ):
                 logger.error(
-                    f"Rebase conflict restacking '{child}' onto '{grandparent}' "
-                    f"in {worktree}. Resolve, `git add`, then re-run `stack sync`."
+                    f"Rebase conflict restacking '{child}' onto '{base}' in "
+                    f"{worktree}. Resolve, `git add`, then re-run `stack sync`."
                 )
                 raise typer.Exit(1)
 
-            set_parent(child, grandparent, root=root)
+            set_parent(child, base, root=root)
             run(
                 ["git", "push", "--force-with-lease", "origin", child],
                 cwd=worktree,
                 exit_on_error=True,
             )
-            if parent not in to_cleanup:
-                to_cleanup.append(parent)
         else:
             # The base (e.g. main) has no lineage entry; pull it from the remote.
-            merge_ref = parent if parent in tracked else f"origin/{parent}"
+            merge_ref = (
+                direct_parent if direct_parent in tracked else f"origin/{direct_parent}"
+            )
             result = run(
                 ["git", "merge", "--no-edit", merge_ref],
                 cwd=worktree,
@@ -166,13 +185,16 @@ def sync_stack(*, root: Path, forge: Forge) -> None:
                 exit_on_error=True,
             )
 
-    for parent in to_cleanup:
-        parent_wt = paths.get(parent)
-        if parent_wt is not None and parent_wt.resolve() == root.resolve():
+    # Every landed branch has had its children restacked away, so each is now a
+    # leaf in the lineage and safe to remove (branch, worktree, and config key).
+    for landed_branch in landed:
+        landed_wt = paths.get(landed_branch)
+        if landed_wt is not None and landed_wt.resolve() == root.resolve():
             logger.warning(
-                f"Skipping cleanup of landed '{parent}': it is the current "
+                f"Skipping cleanup of landed '{landed_branch}': it is the current "
                 "worktree. Switch away and re-run `stack sync`."
             )
             continue
-        delete_branch_and_worktree(parent, repo_root=root, force=True)
-        logger.info(f"Cleaned up landed branch '{parent}'.")
+        delete_branch_and_worktree(landed_branch, repo_root=root, force=True)
+        remove_parent(landed_branch, root=root)
+        logger.info(f"Cleaned up landed branch '{landed_branch}'.")

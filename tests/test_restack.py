@@ -69,6 +69,50 @@ def test_abandoned_parent_is_not_restacked(repo: Path, tmp_path: Path):
     assert lineage.get_parent("devon/api_tests", root=repo) == "devon/api"
 
 
+def test_cascading_lands_in_one_pass(repo: Path, tmp_path: Path):
+    # main <- api (api.txt) <- mid (mid.txt) <- leaf (leaf.txt)
+    api_wt = tmp_path / "wt-api"
+    create_stacked_branch("api", root=repo, wt_path=api_wt)
+    (api_wt / "api.txt").write_text("api\n")
+    git("add", "-A", cwd=api_wt)
+    git("commit", "-m", "api", cwd=api_wt)
+
+    mid_wt = tmp_path / "wt-mid"
+    create_stacked_branch("mid", root=api_wt, wt_path=mid_wt)
+    (mid_wt / "mid.txt").write_text("mid\n")
+    git("add", "-A", cwd=mid_wt)
+    git("commit", "-m", "mid", cwd=mid_wt)
+
+    leaf_wt = tmp_path / "wt-leaf"
+    create_stacked_branch("leaf", root=mid_wt, wt_path=leaf_wt)
+    (leaf_wt / "leaf.txt").write_text("leaf\n")
+    git("add", "-A", cwd=leaf_wt)
+    git("commit", "-m", "leaf", cwd=leaf_wt)
+
+    # Both api and mid land (squashed) onto main in the same window.
+    _squash_merge_to_main(repo, "api.txt", "api\n")
+    _squash_merge_to_main(repo, "mid.txt", "mid\n")
+
+    sync_stack(root=leaf_wt, forge=FakeForge(merged={"devon/api", "devon/mid"}))
+
+    # leaf collapses straight onto the surviving base; both landed branches gone
+    assert lineage.get_parent("devon/leaf", root=repo) == "main"
+    assert "devon/api" not in _branches(repo)
+    assert "devon/mid" not in _branches(repo)
+    # stale lineage keys for deleted branches are cleaned up
+    assert lineage.all_parents(root=repo) == {"devon/leaf": "main"}
+
+    # PR diff is clean: only leaf's own file differs from main
+    diff = git("diff", "--name-only", "main", "devon/leaf", cwd=repo)
+    assert diff.splitlines() == ["leaf.txt"]
+
+
+def test_sync_on_untracked_branch_errors(repo: Path, tmp_path: Path):
+    # main is not part of any tracked stack
+    with pytest.raises(typer.Exit):
+        sync_stack(root=repo, forge=FakeForge())
+
+
 def test_restack_conflict_then_resume(repo: Path, tmp_path: Path):
     # api owns shared.txt; api_tests edits it -> its own commit touches shared.txt
     api_wt = tmp_path / "wt-api"
