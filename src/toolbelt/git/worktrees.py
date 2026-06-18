@@ -1,4 +1,3 @@
-import os
 import re
 import shutil
 import subprocess
@@ -106,24 +105,18 @@ def _worktree_path_for_name(*, name: str, repo_root: Path) -> Path:
 
 
 def _setup_new_worktree(*, root: Path, wt_path: Path) -> None:
-    # Keep parity with `add` and avoid failing when these are absent.
-    _copy_file_if_present(root / ".env", wt_path / ".env")
-    _copy_file_if_present(root / ".envrc", wt_path / ".envrc")
-
-    src_cache = root / ".serena"
-    dest_cache = wt_path / ".serena"
-    if src_cache.exists():
-        dest_cache.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(src_cache, dest_cache, dirs_exist_ok=True)
+    # Copy over all dotfiles/dot-directories so the worktree mirrors the repo
+    # root, skipping .git which git manages for the worktree itself.
+    for src in root.glob(".*"):
+        if src.name == ".git":
+            continue
+        dest = wt_path / src.name
+        if src.is_dir():
+            shutil.copytree(src, dest, dirs_exist_ok=True)
+        else:
+            _copy_file_if_present(src, dest)
 
     git_setup(wt_path)
-
-    setup_script = wt_path / ".setup.sh"
-    if setup_script.exists():
-        if os.access(setup_script, os.X_OK):
-            subprocess.run([str(setup_script)], check=True)
-        else:
-            logger.warning("Skipping '.setup.sh'; file is not executable.")
 
 
 def _has_uncommitted_changes(*, root: Path) -> bool:
