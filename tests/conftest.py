@@ -5,9 +5,20 @@ exercise actual git behavior (merge bases, rebase --onto, squash artifacts).
 """
 
 import subprocess
+from collections.abc import Iterable
 from pathlib import Path
 
 import pytest
+
+
+class FakeForge:
+    """Test `Forge`: reports a branch merged iff it was seeded as merged."""
+
+    def __init__(self, merged: Iterable[str] = ()) -> None:
+        self.merged = set(merged)
+
+    def pr_is_merged(self, branch: str) -> bool:
+        return branch in self.merged
 
 
 def git(*args: str, cwd: Path) -> str:
@@ -42,6 +53,8 @@ def repo(tmp_path: Path, git_remote: Path) -> Path:
     )
     git("config", "user.email", "test@example.com", cwd=path)
     git("config", "user.name", "Test", cwd=path)
+    # Non-interactive editor so merge/rebase --continue never block on $EDITOR.
+    git("config", "core.editor", "true", cwd=path)
     git("checkout", "-b", "main", cwd=path)
     (path / "README.md").write_text("init\n")
     git("add", "-A", cwd=path)

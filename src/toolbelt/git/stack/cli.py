@@ -12,6 +12,7 @@ import typer
 from toolbelt.editor import open_in_editor
 from toolbelt.git.stack import lineage
 from toolbelt.git.stack.append import create_stacked_branch
+from toolbelt.git.stack.forge import GhForge
 from toolbelt.git.stack.sync import sync_stack
 from toolbelt.git.stack.viz import render
 from toolbelt.git.stack.worktree import worktree_paths
@@ -42,7 +43,8 @@ def append(
 @stack_typer.command()
 def sync() -> None:
     """Merge-sync the whole stack the current branch belongs to."""
-    sync_stack(root=repo_root())
+    root = repo_root()
+    sync_stack(root=root, forge=GhForge(root))
 
 
 @stack_typer.command()

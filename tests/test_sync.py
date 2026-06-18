@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from conftest import git
+from conftest import FakeForge, git
 
 from toolbelt.git.stack.append import create_stacked_branch
 from toolbelt.git.stack.sync import sync_stack
@@ -25,7 +25,7 @@ def test_sync_propagates_parent_commit_down_the_stack(repo: Path, tmp_path: Path
     git("add", "-A", cwd=api_wt)
     git("commit", "-m", "api work", cwd=api_wt)
 
-    sync_stack(root=tests_wt)
+    sync_stack(root=tests_wt, forge=FakeForge())
 
     # devon/api's commit is now present in the leaf worktree
     assert (tests_wt / "api.txt").read_text() == "api change\n"
@@ -40,7 +40,7 @@ def test_sync_pulls_landed_base_changes(repo: Path, tmp_path: Path):
     git("commit", "-m", "landed on main", cwd=repo)
     git("push", "origin", "main", cwd=repo)
 
-    sync_stack(root=tests_wt)
+    sync_stack(root=tests_wt, forge=FakeForge())
 
     # origin/main's change propagates through the whole stack
     assert (api_wt / "landed.txt").read_text() == "landed\n"
@@ -53,11 +53,11 @@ def test_sync_is_idempotent(repo: Path, tmp_path: Path):
     git("add", "-A", cwd=api_wt)
     git("commit", "-m", "api work", cwd=api_wt)
 
-    sync_stack(root=tests_wt)
+    sync_stack(root=tests_wt, forge=FakeForge())
     head_after_first = git("rev-parse", "HEAD", cwd=tests_wt)
 
     # Re-running changes nothing and does not error.
-    sync_stack(root=tests_wt)
+    sync_stack(root=tests_wt, forge=FakeForge())
     assert git("rev-parse", "HEAD", cwd=tests_wt) == head_after_first
     assert git("status", "--porcelain", cwd=tests_wt) == ""
 
@@ -66,7 +66,7 @@ def test_sync_pushes_branches_to_origin(repo: Path, tmp_path: Path):
     _build_stack(repo, tmp_path)
     tests_wt = tmp_path / "wt-api-tests"
 
-    sync_stack(root=tests_wt)
+    sync_stack(root=tests_wt, forge=FakeForge())
 
     remote_refs = git("ls-remote", "--heads", "origin", cwd=repo)
     assert "refs/heads/devon/api" in remote_refs
