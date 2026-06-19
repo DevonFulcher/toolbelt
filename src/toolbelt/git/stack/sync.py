@@ -67,6 +67,50 @@ def _rebase_in_progress(worktree: Path) -> bool:
     return False
 
 
+def _merge_in_progress(worktree: Path) -> bool:
+    """True if ``worktree`` has an unfinished merge (a prior conflict)."""
+    path = _git_path(worktree, "MERGE_HEAD")
+    return path is not None and path.exists()
+
+
+def _has_unmerged_paths(worktree: Path) -> bool:
+    """True if ``worktree`` still has unresolved conflict entries staged."""
+    result = run(
+        ["git", "ls-files", "--unmerged"],
+        cwd=worktree,
+        capture_output=True,
+    )
+    return bool(result.stdout.strip())
+
+
+def _remote_branch_exists(branch: str, *, root: Path) -> bool:
+    result = run(
+        ["git", "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{branch}"],
+        cwd=root,
+        check=False,
+        capture_output=True,
+    )
+    return result.returncode == 0
+
+
+def _main_worktree(root: Path) -> Path:
+    """The repo's main working tree (first entry of ``git worktree list``).
+
+    Cleanup runs from here so a landed worktree can be removed even when it is
+    the caller's current directory (git only refuses to remove the worktree the
+    git process itself is running in).
+    """
+    result = run(
+        ["git", "worktree", "list", "--porcelain"],
+        cwd=root,
+        capture_output=True,
+    )
+    for line in result.stdout.splitlines():
+        if line.startswith("worktree "):
+            return Path(line[len("worktree ") :])
+    return root
+
+
 def _restack(child: str, *, worktree: Path, onto: str, upstream: str) -> bool:
     """Replay ``child``'s own commits (those after ``upstream``) onto ``onto``.
 
@@ -164,21 +208,38 @@ def sync_stack(*, root: Path, forge: Forge) -> None:
                 exit_on_error=True,
             )
         else:
-            # The base (e.g. main) has no lineage entry; pull it from the remote.
-            merge_ref = (
+            # Conclude a prior conflicted merge the user has since resolved
+            # (symmetric with the rebase --continue resume path).
+            if _merge_in_progress(worktree):
+                if _has_unmerged_paths(worktree):
+                    logger.error(
+                        f"Unresolved merge in '{child}' ({worktree}). Resolve, "
+                        "`git add`, then re-run `stack sync`."
+                    )
+                    raise typer.Exit(1)
+                run(["git", "commit", "--no-edit"], cwd=worktree, exit_on_error=True)
+
+            # Integrate the parent (base from the remote) and reconcile the
+            # branch with its own remote so a diverged push won't be rejected.
+            # The base (e.g. main) has no lineage entry; pull it from origin.
+            merge_refs = [
                 direct_parent if direct_parent in tracked else f"origin/{direct_parent}"
-            )
-            result = run(
-                ["git", "merge", "--no-edit", merge_ref],
-                cwd=worktree,
-                check=False,
-            )
-            if result.returncode != 0:
-                logger.error(
-                    f"Merge conflict while syncing '{child}' in {worktree}. "
-                    "Resolve the conflict, commit, then re-run `stack sync`."
+            ]
+            if _remote_branch_exists(child, root=root):
+                merge_refs.append(f"origin/{child}")
+
+            for merge_ref in merge_refs:
+                result = run(
+                    ["git", "merge", "--no-edit", merge_ref],
+                    cwd=worktree,
+                    check=False,
                 )
-                raise typer.Exit(1)
+                if result.returncode != 0:
+                    logger.error(
+                        f"Merge conflict while syncing '{child}' in {worktree}. "
+                        "Resolve the conflict, `git add`, then re-run `stack sync`."
+                    )
+                    raise typer.Exit(1)
             run(
                 ["git", "push", "-u", "origin", child],
                 cwd=worktree,
@@ -187,14 +248,17 @@ def sync_stack(*, root: Path, forge: Forge) -> None:
 
     # Every landed branch has had its children restacked away, so each is now a
     # leaf in the lineage and safe to remove (branch, worktree, and config key).
+    # Run from the main worktree so a landed branch can be removed even when it
+    # is the caller's current worktree.
+    main_wt = _main_worktree(root)
     for landed_branch in landed:
         landed_wt = paths.get(landed_branch)
-        if landed_wt is not None and landed_wt.resolve() == root.resolve():
+        if landed_wt is not None and landed_wt.resolve() == main_wt.resolve():
             logger.warning(
-                f"Skipping cleanup of landed '{landed_branch}': it is the current "
-                "worktree. Switch away and re-run `stack sync`."
+                f"Cannot remove '{landed_branch}': it is checked out in the main "
+                "worktree. Switch it to the base branch and re-run `stack sync`."
             )
             continue
-        delete_branch_and_worktree(landed_branch, repo_root=root, force=True)
-        remove_parent(landed_branch, root=root)
+        delete_branch_and_worktree(landed_branch, repo_root=main_wt, force=True)
+        remove_parent(landed_branch, root=main_wt)
         logger.info(f"Cleaned up landed branch '{landed_branch}'.")

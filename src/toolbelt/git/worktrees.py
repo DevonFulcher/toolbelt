@@ -104,7 +104,7 @@ def _worktree_path_for_name(*, name: str, repo_root: Path) -> Path:
     return worktrees_root / _normalize_worktree_name(name)
 
 
-def _setup_new_worktree(*, root: Path, wt_path: Path) -> None:
+def copy_dotfiles(*, root: Path, wt_path: Path) -> None:
     # Copy over all dotfiles/dot-directories so the worktree mirrors the repo
     # root, skipping .git which git manages for the worktree itself.
     for src in root.glob(".*"):
@@ -116,6 +116,9 @@ def _setup_new_worktree(*, root: Path, wt_path: Path) -> None:
         else:
             _copy_file_if_present(src, dest)
 
+
+def _setup_new_worktree(*, root: Path, wt_path: Path) -> None:
+    copy_dotfiles(root=root, wt_path=wt_path)
     git_setup(wt_path)
 
 

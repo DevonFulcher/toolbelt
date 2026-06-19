@@ -6,6 +6,7 @@ from conftest import git
 
 from toolbelt.git.stack import lineage
 from toolbelt.git.stack.append import create_stacked_branch
+from toolbelt.git.worktrees import copy_dotfiles
 
 
 def _branches(repo: Path) -> set[str]:
@@ -40,6 +41,21 @@ def test_append_moves_uncommitted_changes(repo: Path, tmp_path: Path):
     # main is clean again
     assert git("status", "--porcelain", cwd=repo) == ""
     assert not (repo / "wip.txt").exists()
+
+
+def test_copy_dotfiles_copies_dotfiles_but_not_git(repo: Path, tmp_path: Path):
+    (repo / ".env").write_text("SECRET=1\n")
+    (repo / ".config").mkdir()
+    (repo / ".config" / "settings").write_text("x\n")
+
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    copy_dotfiles(root=repo, wt_path=dest)
+
+    assert (dest / ".env").read_text() == "SECRET=1\n"
+    assert (dest / ".config" / "settings").read_text() == "x\n"
+    # .git is managed by git per-worktree and must not be copied
+    assert not (dest / ".git").exists()
 
 
 def test_append_stacks_on_current_branch(repo: Path, tmp_path: Path):

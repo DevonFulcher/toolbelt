@@ -9,7 +9,10 @@ shelling out to `gh`.
 from pathlib import Path
 from typing import Protocol
 
+import typer
+
 from toolbelt.git.exec import run
+from toolbelt.logger import logger
 
 
 class Forge(Protocol):
@@ -46,5 +49,11 @@ class GhForge:
             capture_output=True,
         )
         if result.returncode != 0:
-            return False
+            # Don't degrade silently to "not merged" — a gh failure (auth,
+            # network, missing CLI) would suppress all restacking. Crash loudly.
+            logger.error(
+                f"`gh` failed checking merge status of '{branch}': "
+                f"{result.stderr.strip()}"
+            )
+            raise typer.Exit(1)
         return result.stdout.strip() not in ("", "0")

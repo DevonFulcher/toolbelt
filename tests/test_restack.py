@@ -113,6 +113,54 @@ def test_sync_on_untracked_branch_errors(repo: Path, tmp_path: Path):
         sync_stack(root=repo, forge=FakeForge())
 
 
+def test_cleanup_landed_branch_while_standing_in_it(repo: Path, tmp_path: Path):
+    api_wt, tests_wt = _build_stack(repo, tmp_path)
+    _squash_merge_to_main(repo, "api.txt", "api\n")
+
+    # Run sync from the landed branch's own worktree.
+    sync_stack(root=api_wt, forge=FakeForge(merged={"devon/api"}))
+
+    # It is still cleaned up (cleanup runs from the main worktree).
+    assert "devon/api" not in _branches(repo)
+    assert lineage.get_parent("devon/api_tests", root=repo) == "main"
+
+
+def test_restack_when_child_never_synced_with_parent(repo: Path, tmp_path: Path):
+    # child branches off parent, then parent advances and lands WITHOUT the child
+    # ever syncing -> restack must still replay only the child's own commits.
+    api_wt = tmp_path / "wt-api"
+    create_stacked_branch("api", root=repo, wt_path=api_wt)
+    (api_wt / "api.txt").write_text("api1\n")
+    git("add", "-A", cwd=api_wt)
+    git("commit", "-m", "api1", cwd=api_wt)
+
+    tests_wt = tmp_path / "wt-api-tests"
+    create_stacked_branch("api_tests", root=api_wt, wt_path=tests_wt)
+    (tests_wt / "tests.txt").write_text("tests\n")
+    git("add", "-A", cwd=tests_wt)
+    git("commit", "-m", "tests", cwd=tests_wt)
+
+    # api gains a second commit the child never merged.
+    (api_wt / "api2.txt").write_text("api2\n")
+    git("add", "-A", cwd=api_wt)
+    git("commit", "-m", "api2", cwd=api_wt)
+
+    # Land api (squash of both api commits) on main.
+    (repo / "api.txt").write_text("api1\n")
+    (repo / "api2.txt").write_text("api2\n")
+    git("add", "-A", cwd=repo)
+    git("commit", "-m", "squash api", cwd=repo)
+    git("push", "origin", "main", cwd=repo)
+
+    sync_stack(root=tests_wt, forge=FakeForge(merged={"devon/api"}))
+
+    assert lineage.get_parent("devon/api_tests", root=repo) == "main"
+    assert "devon/api" not in _branches(repo)
+    # Only the child's own file differs from main; both api files came via main.
+    diff = git("diff", "--name-only", "main", "devon/api_tests", cwd=repo)
+    assert diff.splitlines() == ["tests.txt"]
+
+
 def test_restack_conflict_then_resume(repo: Path, tmp_path: Path):
     # api owns shared.txt; api_tests edits it -> its own commit touches shared.txt
     api_wt = tmp_path / "wt-api"

@@ -1,6 +1,10 @@
 """Integration tests for `sync` (merge path), real git in tmp."""
 
+import subprocess
 from pathlib import Path
+
+import pytest
+import typer
 
 from conftest import FakeForge, git
 
@@ -71,3 +75,59 @@ def test_sync_pushes_branches_to_origin(repo: Path, tmp_path: Path):
     remote_refs = git("ls-remote", "--heads", "origin", cwd=repo)
     assert "refs/heads/devon/api" in remote_refs
     assert "refs/heads/devon/api_tests" in remote_refs
+
+
+def test_sync_reconciles_branch_with_its_own_remote(
+    repo: Path, tmp_path: Path, git_remote: Path
+):
+    api_wt, tests_wt = _build_stack(repo, tmp_path)
+    sync_stack(root=tests_wt, forge=FakeForge())  # establish branches on origin
+
+    # Someone else advances origin/devon/api_tests via a separate clone.
+    clone2 = tmp_path / "clone2"
+    subprocess.run(
+        ["git", "clone", str(git_remote), str(clone2)],
+        check=True,
+        capture_output=True,
+    )
+    git("config", "user.email", "other@example.com", cwd=clone2)
+    git("config", "user.name", "Other", cwd=clone2)
+    git("checkout", "devon/api_tests", cwd=clone2)
+    (clone2 / "remote.txt").write_text("from remote\n")
+    git("add", "-A", cwd=clone2)
+    git("commit", "-m", "remote change", cwd=clone2)
+    git("push", "origin", "devon/api_tests", cwd=clone2)
+
+    # Diverge locally too, then sync: the remote change must be merged in and the
+    # push must succeed (rather than being rejected non-fast-forward).
+    (tests_wt / "local.txt").write_text("from local\n")
+    git("add", "-A", cwd=tests_wt)
+    git("commit", "-m", "local change", cwd=tests_wt)
+
+    sync_stack(root=tests_wt, forge=FakeForge())
+
+    assert (tests_wt / "remote.txt").read_text() == "from remote\n"
+    assert (tests_wt / "local.txt").read_text() == "from local\n"
+
+
+def test_merge_conflict_then_resume(repo: Path, tmp_path: Path):
+    api_wt, tests_wt = _build_stack(repo, tmp_path)
+
+    # api and api_tests change the same file divergently; api_tests hasn't synced.
+    (api_wt / "shared.txt").write_text("from api\n")
+    git("add", "-A", cwd=api_wt)
+    git("commit", "-m", "api shared", cwd=api_wt)
+    (tests_wt / "shared.txt").write_text("from tests\n")
+    git("add", "-A", cwd=tests_wt)
+    git("commit", "-m", "tests shared", cwd=tests_wt)
+
+    with pytest.raises(typer.Exit):
+        sync_stack(root=tests_wt, forge=FakeForge())
+
+    # Resolve and re-run WITHOUT committing — sync concludes the merge itself.
+    (tests_wt / "shared.txt").write_text("resolved\n")
+    git("add", "shared.txt", cwd=tests_wt)
+    sync_stack(root=tests_wt, forge=FakeForge())
+
+    assert (tests_wt / "shared.txt").read_text() == "resolved\n"
+    assert git("status", "--porcelain", cwd=tests_wt) == ""
