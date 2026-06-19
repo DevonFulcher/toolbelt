@@ -16,6 +16,7 @@ from toolbelt.git.stack.forge import GhForge
 from toolbelt.git.stack.sync import sync_stack
 from toolbelt.git.stack.viz import render
 from toolbelt.git.stack.worktree import worktree_paths
+from toolbelt.git.workflow import update_repo
 from toolbelt.git.worktrees import (
     _worktree_path_for_name,
     copy_dotfiles,
@@ -35,10 +36,11 @@ def append(
     root = repo_root()
     wt_path = _worktree_path_for_name(name=name, repo_root=root)
     create_stacked_branch(name, root=root, wt_path=wt_path)
-    # Copy dotfiles only — deliberately skip the heavier git_setup (which
-    # chdirs, installs pre-commit, and shells out to the network) used by the
-    # legacy worktree flow.
+    # Copy dotfiles, then install deps so the worktree is runnable. Deliberately
+    # skip the rest of git_setup (chdir, pre-commit install, serena/network) —
+    # those are either redundant for a worktree or environment-specific.
     copy_dotfiles(root=root, wt_path=wt_path)
+    update_repo(wt_path)
     logger.info(f"Created worktree at {wt_path}")
     open_in_editor(wt_path)
 

@@ -1,3 +1,4 @@
+import os
 import re
 import shutil
 import subprocess
@@ -16,6 +17,11 @@ from toolbelt.logger import logger
 
 worktrees_typer = typer.Typer(help="git worktree helpers")
 WORKTREES_DIRNAME = "wt"
+
+# Dotfiles never worth copying into a new worktree: .git is managed per-worktree
+# by git, and .venv is a build artifact whose scripts bake in absolute paths —
+# it is rebuilt fresh by `uv sync`.
+DOTFILES_COPY_EXCLUDE = {".git", ".venv"}
 
 
 def repo_root() -> Path:
@@ -105,14 +111,20 @@ def _worktree_path_for_name(*, name: str, repo_root: Path) -> Path:
 
 
 def copy_dotfiles(*, root: Path, wt_path: Path) -> None:
-    # Copy over all dotfiles/dot-directories so the worktree mirrors the repo
-    # root, skipping .git which git manages for the worktree itself.
+    # Mirror the repo root's dotfiles/dot-directories into the new worktree.
+    # Regular files are copied so each worktree's config is independent (editing
+    # one branch's .env must not affect siblings). Symlinks are preserved as
+    # symlinks so dotfiles that intentionally point at a shared/global source
+    # (e.g. cursor rules) stay live rather than being frozen into copies.
     for src in root.glob(".*"):
-        if src.name == ".git":
+        if src.name in DOTFILES_COPY_EXCLUDE:
             continue
         dest = wt_path / src.name
-        if src.is_dir():
-            shutil.copytree(src, dest, dirs_exist_ok=True)
+        if src.is_symlink():
+            dest.unlink(missing_ok=True)
+            os.symlink(os.readlink(src), dest)
+        elif src.is_dir():
+            shutil.copytree(src, dest, dirs_exist_ok=True, symlinks=True)
         else:
             _copy_file_if_present(src, dest)
 

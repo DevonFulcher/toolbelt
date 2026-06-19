@@ -43,10 +43,13 @@ def test_append_moves_uncommitted_changes(repo: Path, tmp_path: Path):
     assert not (repo / "wip.txt").exists()
 
 
-def test_copy_dotfiles_copies_dotfiles_but_not_git(repo: Path, tmp_path: Path):
+def test_copy_dotfiles_copies_dotfiles_but_not_git_or_venv(repo: Path, tmp_path: Path):
     (repo / ".env").write_text("SECRET=1\n")
     (repo / ".config").mkdir()
     (repo / ".config" / "settings").write_text("x\n")
+    # build artifact that must NOT be copied (rebuilt by uv sync instead)
+    (repo / ".venv").mkdir()
+    (repo / ".venv" / "marker").write_text("stale\n")
 
     dest = tmp_path / "dest"
     dest.mkdir()
@@ -54,8 +57,24 @@ def test_copy_dotfiles_copies_dotfiles_but_not_git(repo: Path, tmp_path: Path):
 
     assert (dest / ".env").read_text() == "SECRET=1\n"
     assert (dest / ".config" / "settings").read_text() == "x\n"
-    # .git is managed by git per-worktree and must not be copied
+    # .git is managed by git per-worktree; .venv is excluded as a build artifact
     assert not (dest / ".git").exists()
+    assert not (dest / ".venv").exists()
+
+
+def test_copy_dotfiles_preserves_symlinks(repo: Path, tmp_path: Path):
+    external = tmp_path / "shared-rules"
+    external.mkdir()
+    (external / "rule").write_text("shared\n")
+    (repo / ".rules").symlink_to(external)
+
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    copy_dotfiles(root=repo, wt_path=dest)
+
+    # the link is preserved (not dereferenced into an independent copy)
+    assert (dest / ".rules").is_symlink()
+    assert (dest / ".rules" / "rule").read_text() == "shared\n"
 
 
 def test_append_stacks_on_current_branch(repo: Path, tmp_path: Path):
