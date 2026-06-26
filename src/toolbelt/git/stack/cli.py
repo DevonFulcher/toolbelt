@@ -36,9 +36,7 @@ def append(
     root = repo_root()
     wt_path = _worktree_path_for_name(name=name, repo_root=root)
     create_stacked_branch(name, root=root, wt_path=wt_path)
-    # Copy dotfiles, then install deps so the worktree is runnable. Deliberately
-    # skip the rest of git_setup (chdir, pre-commit install, serena/network) —
-    # those are either redundant for a worktree or environment-specific.
+    # Copy dotfiles, then install deps so the worktree is runnable.
     copy_dotfiles(root=root, wt_path=wt_path)
     update_repo(wt_path)
     logger.info(f"Created worktree at {wt_path}")

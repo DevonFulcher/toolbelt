@@ -80,30 +80,4 @@ def git_setup(
             f.write("dotenv\n")
     if (target_path / ".pre-commit-config.yaml").exists():
         subprocess.run(["pre-commit", "install"], check=True)
-    if not (target_path / ".serena/project.yml").exists():
-        subprocess.run(
-            [
-                "uvx",
-                "--from",
-                "git+https://github.com/oraios/serena",
-                "serena",
-                "project",
-                "create",
-            ],
-            check=True,
-            cwd=target_path,
-        )
-    if not (target_path / ".serena/cache").exists():
-        subprocess.run(
-            [
-                "uvx",
-                "--from",
-                "git+https://github.com/oraios/serena",
-                "serena",
-                "project",
-                "index",
-            ],
-            check=True,
-            cwd=target_path,
-        )
     update_repo(target_path)
