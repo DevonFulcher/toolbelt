@@ -33,7 +33,11 @@ dev = [
     "pandas-stubs>=2.2.3.250527",
     "boto3-stubs>=1.38.36",
     "types-seaborn>=0.13.2.20250516",
+    "pytest>=8.0.0",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [project.scripts]
 toolbelt = "toolbelt:main"

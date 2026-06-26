@@ -20,11 +20,14 @@ from toolbelt.git.workflow import (
     sync_repo,
     update_repo,
 )
+from toolbelt.git.stack.cli import stack_typer
 from toolbelt.git.worktrees import worktrees_typer
 
 git_typer = typer.Typer(help="Git workflow commands")
 git_typer.add_typer(worktrees_typer, name="worktree")
 git_typer.add_typer(worktrees_typer, name="wt")  # Add alias for worktrees
+git_typer.add_typer(stack_typer, name="stack")
+git_typer.add_typer(stack_typer, name="st")  # Alias for stack
 
 
 @git_typer.command(

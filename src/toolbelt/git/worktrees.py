@@ -18,6 +18,11 @@ from toolbelt.logger import logger
 worktrees_typer = typer.Typer(help="git worktree helpers")
 WORKTREES_DIRNAME = "wt"
 
+# Dotfiles never worth copying into a new worktree: .git is managed per-worktree
+# by git, and .venv is a build artifact whose scripts bake in absolute paths —
+# it is rebuilt fresh by `uv sync`.
+DOTFILES_COPY_EXCLUDE = {".git", ".venv"}
+
 
 def repo_root() -> Path:
     try:
@@ -105,25 +110,28 @@ def _worktree_path_for_name(*, name: str, repo_root: Path) -> Path:
     return worktrees_root / _normalize_worktree_name(name)
 
 
-def _setup_new_worktree(*, root: Path, wt_path: Path) -> None:
-    # Keep parity with `add` and avoid failing when these are absent.
-    _copy_file_if_present(root / ".env", wt_path / ".env")
-    _copy_file_if_present(root / ".envrc", wt_path / ".envrc")
-
-    src_cache = root / ".serena"
-    dest_cache = wt_path / ".serena"
-    if src_cache.exists():
-        dest_cache.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(src_cache, dest_cache, dirs_exist_ok=True)
-
-    git_setup(wt_path)
-
-    setup_script = wt_path / ".setup.sh"
-    if setup_script.exists():
-        if os.access(setup_script, os.X_OK):
-            subprocess.run([str(setup_script)], check=True)
+def copy_dotfiles(*, root: Path, wt_path: Path) -> None:
+    # Mirror the repo root's dotfiles/dot-directories into the new worktree.
+    # Regular files are copied so each worktree's config is independent (editing
+    # one branch's .env must not affect siblings). Symlinks are preserved as
+    # symlinks so dotfiles that intentionally point at a shared/global source
+    # (e.g. cursor rules) stay live rather than being frozen into copies.
+    for src in root.glob(".*"):
+        if src.name in DOTFILES_COPY_EXCLUDE:
+            continue
+        dest = wt_path / src.name
+        if src.is_symlink():
+            dest.unlink(missing_ok=True)
+            os.symlink(os.readlink(src), dest)
+        elif src.is_dir():
+            shutil.copytree(src, dest, dirs_exist_ok=True, symlinks=True)
         else:
-            logger.warning("Skipping '.setup.sh'; file is not executable.")
+            _copy_file_if_present(src, dest)
+
+
+def _setup_new_worktree(*, root: Path, wt_path: Path) -> None:
+    copy_dotfiles(root=root, wt_path=wt_path)
+    git_setup(wt_path)
 
 
 def _has_uncommitted_changes(*, root: Path) -> bool:
