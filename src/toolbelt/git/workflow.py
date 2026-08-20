@@ -14,7 +14,6 @@ from toolbelt.repos import current_repo, current_repo_name
 from .branches import (
     get_current_branch_name,
     get_default_branch,
-    get_parent_branch_name,
 )
 from .repo import current_repo_org, get_current_repo_root_path
 from .worktrees_ops import delete_branch_and_worktree
@@ -102,46 +101,60 @@ def git_branch_clean() -> None:
         logger.info("No branches to delete.")
 
 
-def check_for_parent_branch_merge_conflicts(*, current_branch: str, yes: bool) -> None:
+def check_for_parent_branch_merge_conflicts(
+    *, current_branch: str, root: Path, yes: bool
+) -> None:
+    """Warn (and optionally abort) if this commit may conflict with the branch's
+    stack parent when synced.
+
+    The parent comes from stack lineage (``toolbelt-stack.*``): a branch's
+    upstream is its own remote, not its parent, so it can't be used here.
+    Conflict detection uses ``git merge-tree --write-tree``, which performs a
+    real merge and exits 1 on conflicts, 0 when clean, and >1 if it couldn't run.
+    """
+    # Lazy import to keep this module free of the stack-package import cycle.
+    from toolbelt.git.stack.lineage import get_parent
+
     logger.info("Checking for merge conflicts with parent branch")
-    try:
-        parent_branch = get_parent_branch_name(current_branch)
-    except subprocess.CalledProcessError:
+    parent_branch = get_parent(current_branch, root=root)
+    if not parent_branch:
         logger.warning(
-            f"Branch '{current_branch}' has no upstream configured; "
+            f"Branch '{current_branch}' is not tracked in a stack; "
             "skipping parent-branch conflict check."
         )
         return
 
-    if parent_branch:
-        try:
-            merge_tree_result = subprocess.run(
-                ["git", "merge-tree", parent_branch, current_branch],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if "changed in both" in merge_tree_result.stdout:
-                logger.warning(
-                    "⚠️  Warning: This commit may create merge conflicts with the parent branch."
-                )
-                if yes:
-                    logger.info("Continuing anyway due to --yes")
-                else:
-                    proceed = input("Do you want to continue anyway? (y/n): ")
-                    if proceed.lower() != "y":
-                        # Unstage changes if user aborts
-                        subprocess.run(["git", "reset"], check=True)
-                        logger.info("Changes unstaged. Aborting commit.")
-                        raise typer.Exit(1)
-        except subprocess.CalledProcessError:
-            # This might happen in detached HEAD state
-            logger.error(
-                "Error checking for merge conflicts - you may be in detached HEAD state"
-            )
-            logger.error("Aborting to be safe")
-            subprocess.run(["git", "reset"], check=True)
-            raise typer.Exit(1)
+    merge_tree_result = subprocess.run(
+        ["git", "merge-tree", "--write-tree", parent_branch, current_branch],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if merge_tree_result.returncode > 1:
+        # The check itself couldn't run (e.g. a missing ref); never block the
+        # commit for a failed warning check — just skip it.
+        logger.warning(
+            f"Could not check for conflicts with parent '{parent_branch}' "
+            f"({merge_tree_result.stderr.strip()}); skipping."
+        )
+        return
+    if merge_tree_result.returncode == 0:
+        return
+
+    logger.warning(
+        "⚠️  Warning: This commit may create merge conflicts with the parent "
+        f"branch '{parent_branch}'."
+    )
+    if yes:
+        logger.info("Continuing anyway due to --yes")
+        return
+    proceed = input("Do you want to continue anyway? (y/n): ")
+    if proceed.lower() != "y":
+        # Unstage changes if the user aborts.
+        subprocess.run(["git", "reset"], check=True, cwd=root)
+        logger.info("Changes unstaged. Aborting commit.")
+        raise typer.Exit(1)
 
 
 def _stage(*, root: Path, pathspec: list[str] | None) -> None:
@@ -288,7 +301,9 @@ def git_save(
             )
         _stage(root=root, pathspec=pathspec)
         # Check for conflicts with the parent branch (may unstage + abort).
-        check_for_parent_branch_merge_conflicts(current_branch=current, yes=yes)
+        check_for_parent_branch_merge_conflicts(
+            current_branch=current, root=root, yes=yes
+        )
         _commit(root=root, message=message, amend=amend, no_verify=no_verify)
         commit_root = root
         commit_branch = current

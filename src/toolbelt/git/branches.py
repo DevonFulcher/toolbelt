@@ -43,15 +43,6 @@ def get_current_branch_name() -> str:
     ).stdout.strip()
 
 
-def get_parent_branch_name(child_branch_name: str) -> str:
-    return subprocess.run(
-        ["git", "rev-parse", "--abbrev-ref", f"{child_branch_name}@{{u}}"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-
-
 def get_branch_name(
     branch: str | None, command: Literal["change", "combine"] | None = None
 ) -> str:
