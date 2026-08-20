@@ -4,15 +4,9 @@ import subprocess
 
 import typer
 
-from toolbelt.agent.cli import agent_typer
-from toolbelt.cursor.cli import cursor_typer
-from toolbelt.datadog_form import form as datadog_form
 from toolbelt.git.cli import git_typer
-from toolbelt.github.client import build_async_github_client
-from toolbelt.github.hooks.cursor import CursorPrMonitorHooks
-from toolbelt.github.pr_monitor import PrMonitorRunner
 from toolbelt.github.status import display_status
-from toolbelt.logger import logger, setup_app_only_logging
+from toolbelt.logger import logger
 from toolbelt.repos import current_repo
 from toolbelt.standup import parse_standup_weekdays, standup_notes
 from toolbelt.zsh import zsh_typer
@@ -21,8 +15,6 @@ from toolbelt.zsh import zsh_typer
 app = typer.Typer(help="A collection of tools that I use.")
 app.add_typer(git_typer, name="git")
 app.add_typer(zsh_typer, name="zsh")
-app.add_typer(agent_typer, name="agent")
-app.add_typer(cursor_typer, name="cursor")
 
 
 @app.command()
@@ -48,12 +40,6 @@ def unit():
         repo.unit()
     else:
         logger.info("No unit tests configured for this repo")
-
-
-@app.command(name="datadog", help="Datadog form")
-def datadog():
-    """Open Datadog form"""
-    datadog_form()
 
 
 @app.command(name="standup", help="Prepare notes for standup")
@@ -82,33 +68,6 @@ def status():
         return
 
     asyncio.run(display_status(username, token))
-
-
-@app.command(name="pr-monitor", help="Monitor your authored PRs via polling")
-def pr_monitor():
-    """Poll GitHub and log PR events for authored PRs."""
-    username = os.getenv("GITHUB_USERNAME")
-    token = os.getenv("GITHUB_PERSONAL_ACCESS_TOKEN")
-
-    if not username or not token:
-        logger.error(
-            "Error: GITHUB_USERNAME and GITHUB_PERSONAL_ACCESS_TOKEN environment "
-            "variables must be set"
-        )
-        return
-
-    setup_app_only_logging()
-
-    async def run():
-        async with build_async_github_client(token) as client:
-            runner = PrMonitorRunner(
-                username,
-                CursorPrMonitorHooks(client),
-                client,
-            )
-            await runner.run()
-
-    asyncio.run(run())
 
 
 if __name__ == "__main__":
