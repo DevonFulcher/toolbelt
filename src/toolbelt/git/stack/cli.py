@@ -1,8 +1,9 @@
 """`toolbelt git stack` command group.
 
 Exposes the stack workflow directly: `append` (create a stacked branch +
-worktree), `sync` (merge-sync the whole stack), and the read/navigation
-commands (`tree`, `switch`). The same primitives back `git save`/`git sync`.
+worktree), the read/navigation commands (`tree`, `switch`), and the
+branch-level operations (`compress`, `diff-parent`, `set-parent`). The same
+primitives back `git save`/`git sync`.
 """
 
 import subprocess
@@ -10,8 +11,16 @@ import subprocess
 import typer
 
 from toolbelt.editor import open_in_editor
+from toolbelt.git.exec import run
 from toolbelt.git.stack import lineage
 from toolbelt.git.stack.append import create_stacked_branch
+from toolbelt.git.stack.forge import GhForge
+from toolbelt.git.stack.ops import (
+    compress_branch,
+    diff_parent_command,
+    set_branch_parent,
+)
+from toolbelt.git.stack.sync import sync_stack
 from toolbelt.git.stack.viz import render
 from toolbelt.git.stack.worktree import worktree_paths
 from toolbelt.git.workflow import update_repo
@@ -39,6 +48,37 @@ def append(
     update_repo(wt_path)
     logger.info(f"Created worktree at {wt_path}")
     open_in_editor(wt_path)
+
+
+@stack_typer.command()
+def compress(
+    message: str | None = typer.Option(
+        None, "-m", "--message", help="Message for the squashed commit"
+    ),
+) -> None:
+    """Squash the current branch's commits into one (force-pushes the branch)."""
+    compress_branch(root=repo_root(), message=message)
+
+
+@stack_typer.command(name="diff-parent")
+def diff_parent(
+    args: list[str] | None = typer.Argument(
+        None, help="Extra arguments passed through to `git diff`"
+    ),
+) -> None:
+    """Diff the current branch against its stack parent."""
+    root = repo_root()
+    run(diff_parent_command(root=root, extra_args=args), cwd=root, check=False)
+
+
+@stack_typer.command(name="set-parent")
+def set_parent(
+    new_parent: str = typer.Argument(..., help="Branch to set as the new parent"),
+) -> None:
+    """Repoint the current branch's parent, then sync so it reconciles onto it."""
+    root = repo_root()
+    set_branch_parent(root=root, new_parent=new_parent)
+    sync_stack(root=root, forge=GhForge(root))
 
 
 @stack_typer.command()
