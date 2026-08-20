@@ -20,7 +20,7 @@ def _parent_or_exit(branch: str, *, root: Path) -> str:
     if parent is None:
         logger.error(
             f"'{branch}' is not tracked in a stack. Start one with "
-            "`stack append <name>`."
+            "`git append <name>`."
         )
         raise typer.Exit(1)
     return parent
@@ -40,8 +40,8 @@ def compress_branch(*, root: Path, message: str | None = None) -> None:
     """Squash the current branch's own commits (those after its parent) into one.
 
     Rewrites history, so the branch's remote is force-pushed to match. Children
-    are left untouched — a later ``stack sync`` reconciles them cleanly, since
-    the squashed commit carries the same tree they already merged.
+    are left untouched — a later ``git sync`` reconciles them cleanly, since the
+    squashed commit carries the same tree they already merged.
     """
     branch = current_branch(root)
     parent = _parent_or_exit(branch, root=root)

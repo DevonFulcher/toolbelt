@@ -148,7 +148,7 @@ def sync_stack(*, root: Path, forge: Forge) -> None:
     if branch not in tracked:
         logger.error(
             f"'{branch}' is not part of a tracked stack. Start one with "
-            "`stack append <name>`."
+            "`git append <name>`."
         )
         raise typer.Exit(1)
 
@@ -179,7 +179,7 @@ def sync_stack(*, root: Path, forge: Forge) -> None:
         if worktree is None:
             logger.error(
                 f"No worktree found for '{child}'. Every stacked branch needs "
-                "its own worktree (create it with `stack append`)."
+                "its own worktree (create it with `git append`)."
             )
             raise typer.Exit(1)
 
@@ -197,7 +197,7 @@ def sync_stack(*, root: Path, forge: Forge) -> None:
             ):
                 logger.error(
                     f"Rebase conflict restacking '{child}' onto '{base}' in "
-                    f"{worktree}. Resolve, `git add`, then re-run `stack sync`."
+                    f"{worktree}. Resolve, `git add`, then re-run `git sync`."
                 )
                 raise typer.Exit(1)
 
@@ -214,7 +214,7 @@ def sync_stack(*, root: Path, forge: Forge) -> None:
                 if _has_unmerged_paths(worktree):
                     logger.error(
                         f"Unresolved merge in '{child}' ({worktree}). Resolve, "
-                        "`git add`, then re-run `stack sync`."
+                        "`git add`, then re-run `git sync`."
                     )
                     raise typer.Exit(1)
                 run(["git", "commit", "--no-edit"], cwd=worktree, exit_on_error=True)
@@ -237,7 +237,7 @@ def sync_stack(*, root: Path, forge: Forge) -> None:
                 if result.returncode != 0:
                     logger.error(
                         f"Merge conflict while syncing '{child}' in {worktree}. "
-                        "Resolve the conflict, `git add`, then re-run `stack sync`."
+                        "Resolve the conflict, `git add`, then re-run `git sync`."
                     )
                     raise typer.Exit(1)
             run(
@@ -256,7 +256,7 @@ def sync_stack(*, root: Path, forge: Forge) -> None:
         if landed_wt is not None and landed_wt.resolve() == main_wt.resolve():
             logger.warning(
                 f"Cannot remove '{landed_branch}': it is checked out in the main "
-                "worktree. Switch it to the base branch and re-run `stack sync`."
+                "worktree. Switch it to the base branch and re-run `git sync`."
             )
             continue
         delete_branch_and_worktree(landed_branch, repo_root=main_wt, force=True)

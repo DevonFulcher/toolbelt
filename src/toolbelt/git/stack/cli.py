@@ -1,8 +1,9 @@
-"""`toolbelt git stack` command group.
+"""Stack workflow commands, registered directly under `toolbelt git`.
 
-Exposes the stack workflow directly: `append` (create a stacked branch +
-worktree), the read/navigation commands (`tree`, `switch`), and the
-branch-level operations (`compress`, `diff-parent`, `set-parent`). The same
+Defines `append` (create a stacked branch + worktree), the read/navigation
+commands (`tree`, `switch`), and the branch-level operations (`compress`,
+`diff-parent`, `set-parent`). These are flattened onto the top-level `git`
+group (see git/cli.py) rather than a nested `git stack` group. The same
 primitives back `git save`/`git sync`.
 """
 
@@ -87,7 +88,7 @@ def tree() -> None:
     root = repo_root()
     parents = lineage.all_parents(root=root)
     if not parents:
-        logger.info("No tracked stacks. Use `stack append <name>` to start one.")
+        logger.info("No tracked stacks. Use `git append <name>` to start one.")
         return
     logger.info(render(parents, current=current_branch(root)))
 
