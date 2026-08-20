@@ -11,6 +11,26 @@ from pathlib import Path
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _isolate_git_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Drop ambient git env vars so tests aren't hijacked by an outer repo.
+
+    A git hook (e.g. pre-commit running pytest) exports GIT_DIR / GIT_INDEX_FILE
+    / GIT_WORK_TREE pointing at the real repo. If those leak into the
+    throwaway-repo subprocesses, git operates on the real repo instead and
+    commands like `git clone` / `git worktree add` fail with exit 128.
+    """
+    for var in (
+        "GIT_DIR",
+        "GIT_INDEX_FILE",
+        "GIT_WORK_TREE",
+        "GIT_PREFIX",
+        "GIT_COMMON_DIR",
+        "GIT_OBJECT_DIRECTORY",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+
 class FakeForge:
     """Test `Forge`: reports a branch merged iff it was seeded as merged."""
 

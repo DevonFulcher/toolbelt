@@ -91,10 +91,24 @@ def get_branch_name(
                 f"Branch '{branch}' does not exist. Would you like to create it? (y/n): "
             )
             if should_create_branch.lower() == "y":
-                subprocess.run(
-                    ["git-town", "append", branch],
-                    check=True,
+                # Stack the new branch on the current one and record lineage in
+                # our own stack config (the git-town replacement). `git change`
+                # is single-worktree, so this creates the branch in place.
+                from pathlib import Path
+
+                from toolbelt.git.stack.lineage import set_parent
+
+                parent = get_current_branch_name()
+                root = Path(
+                    subprocess.run(
+                        ["git", "rev-parse", "--show-toplevel"],
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                    ).stdout.strip()
                 )
+                subprocess.run(["git", "checkout", "-b", branch], check=True)
+                set_parent(branch, parent, root=root)
                 branch_name = branch
             else:
                 logger.error("Exiting. Unable to continue without a valid branch name.")

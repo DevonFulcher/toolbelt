@@ -134,8 +134,8 @@ def send(
     ] = None,
 ):
     """Save changes and create PR"""
-    git_save(message, no_verify, no_sync, False, pathspec, yes)
-    git_pr(skip_tests)
+    commit_root = git_save(message, no_verify, no_sync, False, pathspec, yes)
+    git_pr(skip_tests, cwd=commit_root)
 
 
 @git_typer.command(help="Change git branch and safe pull changes")

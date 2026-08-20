@@ -20,7 +20,6 @@ dependencies = [
     "deepagents>=0.3.0",
     "httpx>=0.28.1",
     "pydantic>=2.11.7",
-    "openai>=2.9.0",
 ]
 
 [dependency-groups]

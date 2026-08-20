@@ -1,8 +1,8 @@
 """`toolbelt git stack` command group.
 
-Additive and namespaced: wiring this in does not touch the existing git-town
-workflow. v1 exposes the read/navigation commands (`tree`, `switch`); `append`
-and `sync` arrive in later phases.
+Exposes the stack workflow directly: `append` (create a stacked branch +
+worktree), `sync` (merge-sync the whole stack), and the read/navigation
+commands (`tree`, `switch`). The same primitives back `git save`/`git sync`.
 """
 
 import subprocess
@@ -12,8 +12,6 @@ import typer
 from toolbelt.editor import open_in_editor
 from toolbelt.git.stack import lineage
 from toolbelt.git.stack.append import create_stacked_branch
-from toolbelt.git.stack.forge import GhForge
-from toolbelt.git.stack.sync import sync_stack
 from toolbelt.git.stack.viz import render
 from toolbelt.git.stack.worktree import worktree_paths
 from toolbelt.git.workflow import update_repo
@@ -41,13 +39,6 @@ def append(
     update_repo(wt_path)
     logger.info(f"Created worktree at {wt_path}")
     open_in_editor(wt_path)
-
-
-@stack_typer.command()
-def sync() -> None:
-    """Merge-sync the whole stack the current branch belongs to."""
-    root = repo_root()
-    sync_stack(root=root, forge=GhForge(root))
 
 
 @stack_typer.command()

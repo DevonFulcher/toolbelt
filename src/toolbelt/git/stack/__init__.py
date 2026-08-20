@@ -1,6 +1,7 @@
-"""Homegrown stack + worktree management (git-town replacement).
+"""Homegrown stack + worktree management (the git-town replacement).
 
-Lives entirely under the `toolbelt git stack` subcommand and its own
-`toolbelt-stack.*` git-config namespace, so it coexists with the existing
-git-town workflow while being tested. See docs/stack-workflow-plan.md.
+Parent lineage is persisted in its own `toolbelt-stack.*` git-config namespace.
+This is now the sole stacking implementation: `git save`/`git sync`/`git change`
+and the worktree commands all drive it, and git-town is no longer used. See
+docs/stack-workflow-plan.md.
 """

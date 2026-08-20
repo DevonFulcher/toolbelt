@@ -167,32 +167,6 @@ def branch_to_worktree(
     return wt_path
 
 
-def append_worktree(*, name: str) -> Path:
-    """
-    Create a new stacked branch via git-town and open it in a new worktree.
-
-    This commits any uncommitted changes into the new worktree.
-    """
-    root = repo_root()
-
-    orig_branch = current_branch(root)
-    new_branch = _branch_name_for_worktree_name(name)
-
-    # git-town append checks out the new branch in the current worktree.
-    run(
-        ["git-town", "append", new_branch],
-        cwd=root,
-        exit_on_error=True,
-    )
-    _commit_uncommitted(root=root)
-    return branch_to_worktree(
-        root=root,
-        branch=new_branch,
-        name=name,
-        checkout_original_to=orig_branch,
-    )
-
-
 @worktrees_typer.command()
 def add(
     name: str = typer.Argument(..., help="Name of the new worktree"),
@@ -216,13 +190,6 @@ def add(
 
 
 @worktrees_typer.command()
-def append(
-    name: str = typer.Argument(..., help="Name of the new stacked worktree"),
-) -> None:
-    append_worktree(name=name)
-
-
-@worktrees_typer.command()
 def move() -> None:
     """Move the current branch into its own worktree."""
     root = repo_root()
@@ -240,24 +207,6 @@ def move() -> None:
         name=name,
         checkout_original_to=default_branch,
     )
-
-
-@worktrees_typer.command()
-def sync(
-    stack: bool = typer.Option(
-        False,
-        "--stack",
-        help="Sync the entire stack (git-town --stack).",
-    ),
-) -> None:
-    """Sync the current worktree's branch using git-town (respects repo config)."""
-    root = repo_root()
-    # Non-fatal when there is nothing to continue.
-    run(["git-town", "continue"], cwd=root, check=False)
-    cmd = ["git-town", "sync"]
-    if stack:
-        cmd.append("--stack")
-    run(cmd, cwd=root, exit_on_error=True)
 
 
 def get_worktrees() -> list[str]:

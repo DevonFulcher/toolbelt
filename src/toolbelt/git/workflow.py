@@ -7,6 +7,7 @@ import typer
 
 from toolbelt.git.commits import store_commit
 from toolbelt.git.constants import GIT_BRANCH_PREFIX
+from toolbelt.git.exec import run
 from toolbelt.logger import logger
 from toolbelt.repos import current_repo, current_repo_name
 
@@ -27,16 +28,31 @@ def update_repo(target_path: Path):
         subprocess.run(["uv", "sync", "--all-groups"], check=True)
 
 
-def sync_repo() -> None:
-    # Run git-town continue in case a git conflict happened during the last save
-    subprocess.run(["git-town", "continue"], check=True)
-    subprocess.run(["git-town", "sync", "--stack"], check=True)
-    update_repo(get_current_repo_root_path())
-    subprocess.run(["git", "push"], check=True)
+def sync_repo(root: Path | None = None) -> None:
+    """Merge-sync the whole stack the current branch belongs to and refresh deps.
+
+    Replaces the old git-town flow with the homegrown stack sync: each branch is
+    merged parent -> child inside its own worktree and pushed (so no extra
+    ``git push`` here — ``sync_stack`` pushes every branch). ``root`` defaults to
+    the current worktree; pass a specific worktree to sync a stack the caller
+    just moved into (e.g. a freshly created branch).
+    """
+    # Imported lazily: worktrees -> bootstrap.repo_setup -> workflow would be a
+    # circular import at module load time.
+    from toolbelt.git.stack.forge import GhForge
+    from toolbelt.git.stack.sync import sync_stack
+    from toolbelt.git.worktrees import repo_root
+
+    root = root or repo_root()
+    sync_stack(root=root, forge=GhForge(root))
+    update_repo(root)
 
 
-def git_pr(skip_tests: bool) -> None:
-    view_pr = subprocess.run(["gh", "pr", "view", "--web"], check=False)
+def git_pr(skip_tests: bool, cwd: Path | None = None) -> None:
+    # ``cwd`` targets the branch's worktree: when `git save` starts a new stacked
+    # branch it lands in its own worktree, so the PR must be opened from there
+    # rather than the (default-branch) directory the command was invoked in.
+    view_pr = subprocess.run(["gh", "pr", "view", "--web"], check=False, cwd=cwd)
     if view_pr.returncode == 0:
         return
     repo = current_repo()
@@ -45,6 +61,7 @@ def git_pr(skip_tests: bool) -> None:
     subprocess.run(
         ["gh", "pr", "create", "--web"],
         check=False,
+        cwd=cwd,
     )
 
 
@@ -127,6 +144,91 @@ def check_for_parent_branch_merge_conflicts(*, current_branch: str, yes: bool) -
             raise typer.Exit(1)
 
 
+def _stage(*, root: Path, pathspec: list[str] | None) -> None:
+    git_add_command = ["git", "add"]
+    git_add_command.extend(pathspec if pathspec else ["-A"])
+    subprocess.run(git_add_command, check=True, cwd=root)
+
+
+def _commit(*, root: Path, message: str | None, amend: bool, no_verify: bool) -> None:
+    git_commit_command = ["git", "commit"]
+    if message:
+        git_commit_command.extend(["-m", message])
+    if amend:
+        git_commit_command.append("--amend")
+    if no_verify:
+        git_commit_command.append("--no-verify")
+    subprocess.run(git_commit_command, check=True, text=True, cwd=root)
+
+
+def _should_start_new_branch(
+    *, root: Path, current_branch: str, default_branch: str
+) -> bool:
+    """True when a save on the default branch should spin up a new stacked branch.
+
+    Gated on CURRENT_ORG matching the repo's GitHub org, mirroring the previous
+    behavior: only auto-branch in the user's own org's repos.
+    """
+    current_org = os.getenv("CURRENT_ORG")
+    if not current_org or current_branch != default_branch:
+        return False
+    remote_url = subprocess.run(
+        ["git", "remote", "get-url", "origin"],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=root,
+    ).stdout.strip()
+    # Extract org from GitHub URL (handles both HTTPS and SSH formats)
+    org_match = re.search(r"[:/]([^/]+)/[^/]+$", remote_url)
+    return bool(org_match and org_match.group(1) == current_org.replace("_", "-"))
+
+
+def _start_stacked_branch(
+    *,
+    root: Path,
+    new_branch: str,
+    parent: str,
+    message: str,
+    no_verify: bool,
+    pathspec: list[str] | None,
+) -> Path:
+    """Start a new stacked branch off ``parent`` carrying the working changes.
+
+    Commits the current changes with ``message`` onto ``new_branch`` (in the main
+    worktree, where the changes live), records lineage, restores ``parent`` in the
+    main worktree, then creates the branch's own worktree and opens it. Returns
+    the new worktree path so the caller can sync the stack from there.
+    """
+    # Lazy import: worktrees -> bootstrap.repo_setup -> workflow cycle at load.
+    from toolbelt.editor import open_in_editor
+    from toolbelt.git.stack.lineage import set_parent
+    from toolbelt.git.worktrees import _worktree_path_for_name, copy_dotfiles
+
+    wt_path = _worktree_path_for_name(name=message, repo_root=root)
+    if wt_path.exists():
+        logger.error(f"Error: worktree path already exists: {wt_path}")
+        raise typer.Exit(1)
+
+    # Carry the working-tree changes onto the new branch, then restore the parent
+    # branch in the main worktree so the new work lives only in its own worktree.
+    run(["git", "checkout", "-b", new_branch], cwd=root, exit_on_error=True)
+    set_parent(new_branch, parent, root=root)
+    _stage(root=root, pathspec=pathspec)
+    _commit(root=root, message=message, amend=False, no_verify=no_verify)
+    run(["git", "checkout", parent], cwd=root, exit_on_error=True)
+    run(
+        ["git", "worktree", "add", str(wt_path), new_branch],
+        cwd=root,
+        exit_on_error=True,
+    )
+    copy_dotfiles(root=root, wt_path=wt_path)
+    update_repo(wt_path)
+    logger.info(f"Created worktree at {wt_path}")
+    open_in_editor(wt_path)
+    return wt_path
+
+
 def git_save(
     message: str | None,
     no_verify: bool,
@@ -134,99 +236,77 @@ def git_save(
     amend: bool,
     pathspec: list[str] | None,
     yes: bool,
-) -> None:
+) -> Path:
+    """Commit (and unless ``no_sync`` sync) changes; return the commit's worktree.
+
+    The returned path is the worktree the commit landed in — the current one, or
+    a freshly created stacked-branch worktree when saving off the default branch.
+    Callers that follow up (e.g. `git send` opening a PR) must act in that path.
+    """
     if not message and not amend:
         raise typer.BadParameter("Commit message or --amend is required")
-    current_branch = get_current_branch_name()
+
+    # Lazy import: worktrees -> bootstrap.repo_setup -> workflow cycle at load.
+    from toolbelt.git.worktrees import current_branch, repo_root
+
+    root = repo_root()
+    current = current_branch(root)
     default_branch = get_default_branch()
 
-    # Check if the current branch is a default branch
-    current_org = os.getenv("CURRENT_ORG")
-    if current_org:
-        remote_url = subprocess.run(
-            ["git", "remote", "get-url", "origin"],
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-        # Extract org from GitHub URL (handles both HTTPS and SSH formats)
-        org_match = re.search(r"[:/]([^/]+)/[^/]+$", remote_url)
-        if (
-            org_match
-            and org_match.group(1) == current_org.replace("_", "-")
-            and current_branch == default_branch
-        ):
-            assert message, "Message is required when committing to a default branch"
-            new_branch_name = (
-                f"{GIT_BRANCH_PREFIX}{message.replace(' ', '_').rstrip('.')}"
-            )
-            if yes:
-                should_create_branch = True
-            else:
-                should_commit = input(
-                    "On a default branch. "
-                    + f"Commit to a new branch called {new_branch_name}? (y/n): "
-                )
-                should_create_branch = should_commit.lower() == "y"
-
-            if should_create_branch:
-                subprocess.run(
-                    ["git-town", "append", new_branch_name],
-                    check=True,
-                )
-            else:
-                logger.info(
-                    "Changes not committed. Use `git commit` to commit to a default branch."
-                )
-                raise typer.Exit(1)
+    if _should_start_new_branch(
+        root=root, current_branch=current, default_branch=default_branch
+    ):
+        assert message, "Message is required when committing to a default branch"
+        new_branch_name = f"{GIT_BRANCH_PREFIX}{message.replace(' ', '_').rstrip('.')}"
+        if yes:
+            should_create_branch = True
         else:
-            logger.info(
-                "Not on the default branch. "
-                + f"Continuing from this branch: {current_branch}"
+            should_commit = input(
+                "On a default branch. "
+                f"Commit to a new branch called {new_branch_name}? (y/n): "
             )
+            should_create_branch = should_commit.lower() == "y"
+        if not should_create_branch:
+            logger.info(
+                "Changes not committed. Use `git commit` to commit to a default branch."
+            )
+            raise typer.Exit(1)
 
-    # Add changes to the staging area
-    git_add_command = ["git", "add"]
-    if pathspec:
-        git_add_command.extend(pathspec)
+        commit_root = _start_stacked_branch(
+            root=root,
+            new_branch=new_branch_name,
+            parent=default_branch,
+            message=message,
+            no_verify=no_verify,
+            pathspec=pathspec,
+        )
+        commit_branch = new_branch_name
     else:
-        git_add_command.append("-A")
-    subprocess.run(git_add_command, check=True)
-
-    # Check for conflicts with the parent branch
-    check_for_parent_branch_merge_conflicts(
-        current_branch=current_branch,
-        yes=yes,
-    )
-
-    # Commit the changes
-    git_commit_command = ["git", "commit"]
-    if message:
-        git_commit_command.append("-m")
-        git_commit_command.append(message)
-    if amend:
-        git_commit_command.append("--amend")
-    if no_verify:
-        git_commit_command.append("--no-verify")
-    subprocess.run(
-        git_commit_command,
-        check=True,
-        text=True,
-    )
+        if os.getenv("CURRENT_ORG"):
+            logger.info(
+                f"Not on the default branch. Continuing from this branch: {current}"
+            )
+        _stage(root=root, pathspec=pathspec)
+        # Check for conflicts with the parent branch (may unstage + abort).
+        check_for_parent_branch_merge_conflicts(current_branch=current, yes=yes)
+        _commit(root=root, message=message, amend=amend, no_verify=no_verify)
+        commit_root = root
+        commit_branch = current
 
     # Sync the changes
     if not no_sync:
-        sync_repo()
+        sync_repo(commit_root)
 
     if message:
-        store_commit(message, current_repo_name(), current_repo_org(), current_branch)
+        store_commit(message, current_repo_name(), current_repo_org(), commit_branch)
     staged_description = f"{len(pathspec)} files" if pathspec else "all changes"
     commit_description = "amended commit" if amend else "new commit"
     sync_description = "; synced stack + pushed" if not no_sync else "; sync skipped"
     logger.info(
         f"Git save complete: committed {staged_description}; "
-        f"{commit_description} on {current_branch}{sync_description}."
+        f"{commit_description} on {commit_branch}{sync_description}."
     )
+    return commit_root
 
 
 def git_safe_pull() -> None:
