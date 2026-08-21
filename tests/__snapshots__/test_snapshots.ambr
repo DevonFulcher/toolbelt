@@ -1,0 +1,18 @@
+# serializer version: 1
+# name: test_tree_output_branching_stack
+  '''
+  🔧 git config --get-regexp ^toolbelt\-stack\..*\.parent$
+  🔧 main *
+  └─ devon/api
+     ├─ devon/api_docs
+     └─ devon/api_tests
+  
+  '''
+# ---
+# name: test_tree_output_empty_stack
+  '''
+  🔧 git config --get-regexp ^toolbelt\-stack\..*\.parent$
+  🔧 No tracked stacks. Use `git append <name>` to start one.
+  
+  '''
+# ---

@@ -28,6 +28,8 @@ dev = [
     "boto3-stubs>=1.38.36",
     "types-seaborn>=0.13.2.20250516",
     "pytest>=8.0.0",
+    "pytest-bdd>=8.1.0",
+    "syrupy>=5.5.3",
 ]
 
 [tool.pytest.ini_options]
