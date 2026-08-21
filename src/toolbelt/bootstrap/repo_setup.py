@@ -3,11 +3,8 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-import toml
-
 from toolbelt.bootstrap.helm_env import render_helm_yaml
 from toolbelt.env_var import get_git_projects_workdir
-from toolbelt.git.branches import get_default_branch
 from toolbelt.git.workflow import update_repo
 
 
@@ -36,12 +33,6 @@ def git_setup(
     if not setup_script.exists():
         setup_script.write_text("#!/usr/bin/env sh\n")
         setup_script.chmod(0o755)
-    if not (target_path / ".git-branches.toml").exists():
-        git_branches_path = git_projects_workdir / "dotfiles/config/.git-branches.toml"
-        git_branches = toml.loads(git_branches_path.read_text())
-        default_branch = get_default_branch()
-        git_branches["branches"]["main"] = default_branch
-        (target_path / ".git-branches.toml").write_text(toml.dumps(git_branches))
     symlink_files(
         source_path=git_projects_workdir / "dotfiles/cursor/rules",
         target_path=target_path / ".cursor/rules",
