@@ -161,15 +161,32 @@ def change(
         update_repo(get_current_repo_root_path())
 
 
-@git_typer.command(help="Compare commits with git diff")
+@git_typer.command(help="Compare commits with an AST-aware diff (difftastic)")
 def compare(
     compare_args: Annotated[
         list[str] | None, typer.Argument(help="Commands to pass to git diff")
     ] = None,
+    line: Annotated[
+        bool,
+        typer.Option(
+            "--line",
+            "-l",
+            help="Use a plain line diff (rendered by delta) instead of "
+            + "difftastic. Reach for this on large or generated diffs, or when "
+            + "you want patch-like output.",
+        ),
+    ] = False,
 ):
+    # `compare` is a view-only command, so it defaults to difftastic's
+    # AST-aware diff; --line falls back to git's configured pager (delta).
+    # difft is installed alongside toolbelt by the dotfiles bootstrap, so it's
+    # assumed present.
+    git_config_args = [] if line else ["-c", "diff.external=difft"]
     # Exclude files from diff that I rarely care about. Reference: https://stackoverflow.com/a/48259275/8925314
     subprocess.run(
-        ["git", "diff", "--ignore-all-space"]  # Ignore all whitespace differences
+        ["git"]
+        + git_config_args
+        + ["diff", "--ignore-all-space"]  # Ignore all whitespace differences
         + (compare_args or [])
         + [
             "--",

@@ -166,6 +166,34 @@ def test_compress_squashes_via_cli(
     assert git("log", "-1", "--format=%s", cwd=wt) == "squashed"
 
 
+# --- compare ---------------------------------------------------------------
+
+
+def test_compare_defaults_to_difftastic(repo: Path, capfd: pytest.CaptureFixture):
+    """`compare` is view-only, so it defaults to difftastic's AST-aware diff
+    (installed alongside toolbelt by the dotfiles bootstrap)."""
+    (repo / "README.md").write_text("init\nchanged\n")
+
+    result = _invoke(["compare"], cwd=repo, capfd=capfd)
+
+    assert result.exit_code == 0, result.output
+    assert "README.md" in result.output
+
+
+def test_compare_line_falls_back_to_plain_diff(
+    repo: Path, capfd: pytest.CaptureFixture
+):
+    """`--line` forces a plain unified diff instead of difftastic."""
+    (repo / "README.md").write_text("init\nchanged\n")
+
+    result = _invoke(["compare", "--line"], cwd=repo, capfd=capfd)
+
+    assert result.exit_code == 0, result.output
+    # The `diff --git` header only appears in git's own unified diff, never in
+    # difftastic's structural rendering.
+    assert "diff --git" in result.output
+
+
 # --- append / switch / tree (editor stubbed) --------------------------------
 
 
