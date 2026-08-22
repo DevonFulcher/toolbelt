@@ -97,16 +97,22 @@ def compress_branch(*, root: Path, message: str | None = None) -> None:
 
 
 def diff_parent_command(
-    *, root: Path, extra_args: list[str] | None = None
+    *, root: Path, extra_args: list[str] | None = None, line: bool = False
 ) -> list[str]:
     """Build the ``git diff`` command for the current branch vs its stack parent.
 
     Uses the three-dot form (``parent...HEAD``) so the diff shows only this
     branch's own changes since it forked, not the parent's newer work.
+
+    Defaults to difftastic's AST-aware diff (via ``diff.external``); pass
+    ``line=True`` for a plain line diff rendered by the configured pager (delta).
+    difft is installed alongside toolbelt by the dotfiles bootstrap, so it's
+    assumed present.
     """
     branch = current_branch(root)
     parent = _parent_or_exit(branch, root=root)
-    return ["git", "diff", f"{parent}...HEAD", *(extra_args or [])]
+    config_args = [] if line else ["-c", "diff.external=difft"]
+    return ["git", *config_args, "diff", f"{parent}...HEAD", *(extra_args or [])]
 
 
 def _would_create_cycle(*, branch: str, new_parent: str, root: Path) -> bool:

@@ -86,7 +86,8 @@ def test_diff_parent_command_uses_lineage_parent(repo: Path, tmp_path: Path):
 
     cmd = diff_parent_command(root=wt)
 
-    assert cmd == ["git", "diff", "main...HEAD"]
+    # Defaults to difftastic via diff.external.
+    assert cmd == ["git", "-c", "diff.external=difft", "diff", "main...HEAD"]
 
 
 def test_diff_parent_command_passes_extra_args(repo: Path, tmp_path: Path):
@@ -95,7 +96,23 @@ def test_diff_parent_command_passes_extra_args(repo: Path, tmp_path: Path):
 
     cmd = diff_parent_command(root=wt, extra_args=["--stat"])
 
-    assert cmd == ["git", "diff", "main...HEAD", "--stat"]
+    assert cmd == [
+        "git",
+        "-c",
+        "diff.external=difft",
+        "diff",
+        "main...HEAD",
+        "--stat",
+    ]
+
+
+def test_diff_parent_command_line_uses_plain_diff(repo: Path, tmp_path: Path):
+    wt = tmp_path / "wt-api"
+    create_stacked_branch("api", root=repo, wt_path=wt)
+
+    cmd = diff_parent_command(root=wt, line=True)
+
+    assert cmd == ["git", "diff", "main...HEAD"]
 
 
 # --- set-parent -------------------------------------------------------------

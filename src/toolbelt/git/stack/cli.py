@@ -66,10 +66,20 @@ def diff_parent(
     args: list[str] | None = typer.Argument(
         None, help="Extra arguments passed through to `git diff`"
     ),
+    line: bool = typer.Option(
+        False,
+        "--line",
+        "-l",
+        help="Use a plain line diff (rendered by delta) instead of difftastic.",
+    ),
 ) -> None:
-    """Diff the current branch against its stack parent."""
+    """Diff the current branch against its stack parent (AST-aware by default)."""
     root = repo_root()
-    run(diff_parent_command(root=root, extra_args=args), cwd=root, check=False)
+    run(
+        diff_parent_command(root=root, extra_args=args, line=line),
+        cwd=root,
+        check=False,
+    )
 
 
 @stack_typer.command(name="set-parent")
