@@ -135,7 +135,10 @@ def test_diff_parent_shows_only_branch_changes(
     result = _invoke(["diff-parent"], cwd=wt, capfd=capfd)
 
     assert result.exit_code == 0, result.output
-    assert "new.txt" in result.output
+    # Assert on the added content, not just the filename: if difftastic were
+    # missing/broken, git's own error ("external diff died, stopping at
+    # new.txt") would still contain "new.txt" and false-positive this test.
+    assert "hello" in result.output
 
 
 def test_diff_parent_errors_on_untracked_branch(
