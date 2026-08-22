@@ -194,6 +194,46 @@ def test_compare_line_falls_back_to_plain_diff(
     assert "diff --git" in result.output
 
 
+def test_compare_accepts_a_path_argument(repo: Path, capfd: pytest.CaptureFixture):
+    """A file path passed to `compare` is treated as a pathspec, not a revision
+    (previously `compare <path>` failed with `bad revision`)."""
+    (repo / "other.txt").write_text("orig\n")
+    git("add", "-A", cwd=repo)
+    git("commit", "-q", "-m", "add other.txt", cwd=repo)
+    # Modify two tracked files; the path arg should scope the diff to one.
+    (repo / "README.md").write_text("init\nchanged\n")
+    (repo / "other.txt").write_text("changed\n")
+
+    result = _invoke(["compare", "--line", "README.md"], cwd=repo, capfd=capfd)
+
+    assert result.exit_code == 0, result.output
+    assert "README.md" in result.output
+    assert "other.txt" not in result.output
+
+
+# --- combine / change -------------------------------------------------------
+
+
+def test_combine_merges_a_branch(repo: Path, capfd: pytest.CaptureFixture):
+    git("checkout", "-q", "-b", "feature", cwd=repo)
+    (repo / "feature.txt").write_text("f\n")
+    git("add", "-A", cwd=repo)
+    git("commit", "-q", "-m", "add feature.txt", cwd=repo)
+    git("checkout", "-q", "main", cwd=repo)
+
+    result = _invoke(["combine", "feature"], cwd=repo, capfd=capfd)
+
+    assert result.exit_code == 0, result.output
+    assert (repo / "feature.txt").exists()
+
+
+def test_change_creates_new_branch(repo: Path, capfd: pytest.CaptureFixture):
+    result = _invoke(["change", "-b", "spike"], cwd=repo, capfd=capfd)
+
+    assert result.exit_code == 0, result.output
+    assert git("rev-parse", "--abbrev-ref", "HEAD", cwd=repo) == "spike"
+
+
 # --- append / switch / tree (editor stubbed) --------------------------------
 
 

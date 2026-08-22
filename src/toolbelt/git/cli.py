@@ -161,10 +161,35 @@ def change(
         update_repo(get_current_repo_root_path())
 
 
+def _split_revisions_and_paths(
+    args: list[str], *, cwd: Path
+) -> tuple[list[str], list[str]]:
+    """Partition `git diff` args into (revisions, paths).
+
+    `compare` appends its own `--` with lock-file excludes, so a user path
+    passed before that separator would be read as a revision (`bad revision`).
+    Splitting here lets `compare HEAD~2` and `compare src/foo.py` both work.
+
+    An explicit `--` is honored (everything after it is a path). Otherwise an
+    arg is treated as a path when it exists on disk; anything else is a
+    revision. Order is preserved within each bucket.
+    """
+    if "--" in args:
+        sep = args.index("--")
+        return args[:sep], args[sep + 1 :]
+    revisions, paths = [], []
+    for arg in args:
+        if (cwd / arg).exists():
+            paths.append(arg)
+        else:
+            revisions.append(arg)
+    return revisions, paths
+
+
 @git_typer.command(help="Compare commits with an AST-aware diff (difftastic)")
 def compare(
     compare_args: Annotated[
-        list[str] | None, typer.Argument(help="Commands to pass to git diff")
+        list[str] | None, typer.Argument(help="Revisions and/or paths for git diff")
     ] = None,
     line: Annotated[
         bool,
@@ -182,14 +207,16 @@ def compare(
     # difft is installed alongside toolbelt by the dotfiles bootstrap, so it's
     # assumed present.
     git_config_args = [] if line else ["-c", "diff.external=difft"]
+    revisions, paths = _split_revisions_and_paths(compare_args or [], cwd=Path.cwd())
     # Exclude files from diff that I rarely care about. Reference: https://stackoverflow.com/a/48259275/8925314
     subprocess.run(
         ["git"]
         + git_config_args
         + ["diff", "--ignore-all-space"]  # Ignore all whitespace differences
-        + (compare_args or [])
+        + revisions
+        + ["--"]
+        + paths
         + [
-            "--",
             ":!*Cargo.lock",
             ":!*poetry.lock",
             ":!*package-lock.json",
