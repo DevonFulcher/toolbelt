@@ -1,3 +1,5 @@
+import asyncio
+
 from toolbelt.github.api import (
     CIStatus,
     PullRequestState,
@@ -11,8 +13,10 @@ from toolbelt.logger import logger
 async def display_status(username: str, token: str) -> None:
     logger.info("🔍 Fetching your PRs and review requests...")
 
-    my_prs = await get_pr_status(username, token)
-    review_requests = await get_review_requests(username, token)
+    my_prs, review_requests = await asyncio.gather(
+        get_pr_status(username, token),
+        get_review_requests(username, token),
+    )
 
     if my_prs:
         logger.info(f"\n📝 Your PRs ({len(my_prs)}):")

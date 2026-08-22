@@ -37,7 +37,7 @@ class FakeForge:
     def __init__(self, merged: Iterable[str] = ()) -> None:
         self.merged = set(merged)
 
-    def pr_is_merged(self, branch: str) -> bool:
+    async def pr_is_merged(self, branch: str) -> bool:
         return branch in self.merged
 
 

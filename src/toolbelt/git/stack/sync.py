@@ -11,6 +11,7 @@ ancestry) and testable.
 Worktree-per-branch is assumed: each branch is synced inside its own worktree.
 """
 
+import asyncio
 from pathlib import Path
 
 import typer
@@ -93,6 +94,12 @@ def _remote_branch_exists(branch: str, *, root: Path) -> bool:
     return result.returncode == 0
 
 
+async def _resolve_landed(stack: list[str], forge: Forge) -> set[str]:
+    """Ask `forge` which of `stack`'s branches have merged, concurrently."""
+    results = await asyncio.gather(*(forge.pr_is_merged(b) for b in stack))
+    return {branch for branch, is_landed in zip(stack, results) if is_landed}
+
+
 def _main_worktree(root: Path) -> Path:
     """The repo's main working tree (first entry of ``git worktree list``).
 
@@ -159,8 +166,9 @@ def sync_stack(*, root: Path, forge: Forge) -> None:
     if rebasing is not None:
         paths.setdefault(rebasing, root)
 
-    # Authoritative, queried once per branch.
-    landed = {b for b in stack if forge.pr_is_merged(b)}
+    # Authoritative, queried once per branch (concurrently — each is an
+    # independent `gh` network round-trip).
+    landed = asyncio.run(_resolve_landed(stack, forge))
 
     def surviving_base(child: str) -> str:
         """Nearest ancestor of ``child`` that has not landed (collapses chains
