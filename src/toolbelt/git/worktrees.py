@@ -6,16 +6,11 @@ from pathlib import Path
 
 import typer
 
-from toolbelt.bootstrap.repo_setup import git_setup
-from toolbelt.editor import open_in_editor
 from toolbelt.env_var import get_git_projects_workdir
-from toolbelt.git.branches import get_default_branch
 from toolbelt.git.constants import GIT_BRANCH_PREFIX
 from toolbelt.git.exec import capture, run
-from toolbelt.git.worktrees_ops import delete_branch_and_worktree
 from toolbelt.logger import logger
 
-worktrees_typer = typer.Typer(help="git worktree helpers")
 WORKTREES_DIRNAME = "wt"
 
 # Dotfiles never worth copying into a new worktree: .git is managed per-worktree
@@ -129,11 +124,6 @@ def copy_dotfiles(*, root: Path, wt_path: Path) -> None:
             _copy_file_if_present(src, dest)
 
 
-def _setup_new_worktree(*, root: Path, wt_path: Path) -> None:
-    copy_dotfiles(root=root, wt_path=wt_path)
-    git_setup(wt_path)
-
-
 def _has_uncommitted_changes(*, root: Path) -> bool:
     return bool(capture(["git", "status", "--porcelain"], cwd=root))
 
@@ -143,120 +133,3 @@ def _commit_uncommitted(*, root: Path) -> None:
         return
     run(["git", "add", "-A"], cwd=root, exit_on_error=True)
     run(["git", "commit", "-m", "WIP"], cwd=root, exit_on_error=True)
-
-
-def branch_to_worktree(
-    *,
-    root: Path,
-    branch: str,
-    name: str,
-    checkout_original_to: str,
-) -> Path:
-    """Create a worktree for a branch and checkout another in the original repo."""
-    wt_path = _worktree_path_for_name(name=name, repo_root=root)
-    if wt_path.exists():
-        logger.error(f"Error: worktree path already exists: {wt_path}")
-        raise typer.Exit(1)
-
-    run(["git", "checkout", checkout_original_to], cwd=root, exit_on_error=True)
-    run(["git", "worktree", "add", str(wt_path), branch], cwd=root, exit_on_error=True)
-
-    _setup_new_worktree(root=root, wt_path=wt_path)
-    logger.info(f"Created worktree at {wt_path}")
-    open_in_editor(wt_path)
-    return wt_path
-
-
-@worktrees_typer.command()
-def add(
-    name: str = typer.Argument(..., help="Name of the new worktree"),
-) -> None:
-    """Create $GIT_PROJECTS_WORKDIR/wt/<repo>/<n>."""
-    root = repo_root()
-    # Branch name includes devon/ prefix, but path does not
-    branch_name = _branch_name_for_worktree_name(name)
-    wt_path = _worktree_path_for_name(name=name, repo_root=root)
-    if wt_path.exists():
-        logger.error(f"Error: worktree path already exists: {wt_path}")
-        raise typer.Exit(1)
-
-    start_ref = current_branch(root)
-    cmd = ["git", "worktree", "add", "-b", branch_name, str(wt_path), start_ref]
-
-    run(cmd, cwd=root, exit_on_error=True)
-    _setup_new_worktree(root=root, wt_path=wt_path)
-    logger.info(f"Created worktree at {wt_path}")
-    open_in_editor(wt_path)
-
-
-@worktrees_typer.command()
-def move() -> None:
-    """Move the current branch into its own worktree."""
-    root = repo_root()
-    branch = current_branch(root)
-    default_branch = get_default_branch()
-    if branch == default_branch:
-        logger.error(f"Already on {default_branch}; nothing to move.")
-        raise typer.Exit(1)
-
-    _commit_uncommitted(root=root)
-    name = branch.removeprefix(GIT_BRANCH_PREFIX)
-    branch_to_worktree(
-        root=root,
-        branch=branch,
-        name=name,
-        checkout_original_to=default_branch,
-    )
-
-
-def get_worktrees() -> list[str]:
-    """Get list of worktree names."""
-    root = repo_root()
-    worktrees_dir = get_worktrees_root(repo_root=root)
-    if not worktrees_dir.exists():
-        return []
-    return [d.name for d in worktrees_dir.iterdir() if d.is_dir()]
-
-
-@worktrees_typer.command()
-def remove(
-    name: str | None = typer.Argument(
-        None,
-        help="Worktree name (with or without devon/ prefix)",
-    ),
-    force: bool = typer.Option(
-        False,
-        "--force",
-        "-f",
-        help="Pass --force to git worktree remove.",
-    ),
-) -> None:
-    """Remove $GIT_PROJECTS_WORKDIR/wt/<repo>/<n> and its branch."""
-    if name is None:
-        worktrees = get_worktrees()
-        if not worktrees:
-            logger.error("No worktrees found")
-            raise typer.Exit(1)
-
-        try:
-            # Use subprocess.run directly for fzf since we need to pipe input
-            proc = subprocess.run(
-                ["fzf"],
-                input="\n".join(worktrees).encode(),
-                capture_output=True,
-                check=True,
-            )
-            name = proc.stdout.decode().strip()
-        except subprocess.CalledProcessError as err:
-            logger.error("No worktree selected")
-            raise typer.Exit(1) from err
-
-    root = repo_root()
-    delete_branch_and_worktree(name, repo_root=root, force=force)
-
-
-@worktrees_typer.command(name="list")
-def list_worktrees() -> None:
-    """List worktrees."""
-    root = repo_root()
-    logger.info(capture(["git", "worktree", "list"], cwd=root))

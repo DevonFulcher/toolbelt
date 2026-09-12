@@ -2,9 +2,10 @@
 
 Defines `append` (create a stacked branch + worktree), the read/navigation
 commands (`tree`, `switch`), and the branch-level operations (`compress`,
-`diff-parent`, `set-parent`). These are flattened onto the top-level `git`
-group (see git/cli.py) rather than a nested `git stack` group. The same
-primitives back `git save`/`git sync`.
+`diff-parent`, `set-parent`, `remove`). These are flattened onto the
+top-level `git` group (see git/cli.py) rather than a nested `git stack`
+group. The same primitives back `git save`/`git sync`. Worktree lifecycle is
+entirely folded in here — there is no separate `git worktree`/`git wt` group.
 """
 
 import subprocess
@@ -31,6 +32,7 @@ from toolbelt.git.worktrees import (
     current_branch,
     repo_root,
 )
+from toolbelt.git.worktrees_ops import delete_branch_and_worktree
 from toolbelt.logger import logger
 
 stack_typer = typer.Typer(help="Stack + worktree management")
@@ -40,7 +42,16 @@ stack_typer = typer.Typer(help="Stack + worktree management")
 def append(
     name: str = typer.Argument(..., help="Name of the new stacked branch"),
 ) -> None:
-    """Create a new branch stacked on the current one, in its own worktree."""
+    """Create a new branch stacked on the current one, in its own worktree.
+
+    Any uncommitted changes here are committed onto the *current* branch as
+    a checkpoint before branching, so this worktree keeps its exact
+    in-flight state (now committed instead of dirty) — nothing gets moved
+    out from under whatever is running here. The new branch forks from that
+    checkpoint. Use this to continue in-flight work as a tracked stack
+    member — it's the only way to create a worktree in this tool; there is
+    no separate untracked option.
+    """
     root = repo_root()
     wt_path = _worktree_path_for_name(name=name, repo_root=root)
     create_stacked_branch(name, root=root, wt_path=wt_path)
@@ -139,3 +150,45 @@ def switch(
         logger.error(f"No worktree found for branch '{name}'.")
         raise typer.Exit(1)
     open_in_editor(target)
+
+
+@stack_typer.command()
+def remove(
+    name: str | None = typer.Argument(
+        None,
+        help="Branch name (with or without devon/ prefix). If omitted, pick interactively.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Pass --force to git worktree remove.",
+    ),
+) -> None:
+    """Remove a branch's worktree, delete the branch, and drop it from the stack."""
+    root = repo_root()
+
+    if name is None:
+        parents = lineage.all_parents(root=root)
+        if not parents:
+            logger.error("No tracked stacks to remove from.")
+            raise typer.Exit(1)
+        logger.info(render(parents, current=current_branch(root)))
+        branches = sorted(parents.keys())
+        try:
+            proc = subprocess.run(
+                ["fzf"],
+                input="\n".join(branches).encode(),
+                capture_output=True,
+                check=True,
+            )
+            name = proc.stdout.decode().strip()
+        except subprocess.CalledProcessError as err:
+            logger.error("No branch selected")
+            raise typer.Exit(1) from err
+
+    # delete_branch_and_worktree resolves the prefixed/bare form; use its
+    # return value (not the raw argument) as the lineage key so a bare name
+    # like "feature" still clears "devon/feature"'s parent entry.
+    deleted_branch = delete_branch_and_worktree(name, repo_root=root, force=force)
+    lineage.remove_parent(deleted_branch, root=root)

@@ -247,6 +247,22 @@ def test_append_creates_worktree_via_cli(repo: Path, capfd: pytest.CaptureFixtur
     assert lineage.get_parent("devon/feature", root=repo) == "main"
 
 
+def test_remove_deletes_branch_worktree_and_lineage_via_cli(
+    repo: Path, capfd: pytest.CaptureFixture
+):
+    _invoke(["append", "feature"], cwd=repo, capfd=capfd)
+    assert lineage.get_parent("devon/feature", root=repo) == "main"
+
+    result = _invoke(["remove", "devon/feature", "--force"], cwd=repo, capfd=capfd)
+
+    assert result.exit_code == 0, result.output
+    assert lineage.get_parent("devon/feature", root=repo) is None
+    assert (
+        "devon/feature"
+        not in git("branch", "--format=%(refname:short)", cwd=repo).splitlines()
+    )
+
+
 def test_tree_reports_no_stacks_when_untracked(
     repo: Path, capfd: pytest.CaptureFixture
 ):

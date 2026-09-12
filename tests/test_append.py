@@ -30,17 +30,21 @@ def test_append_creates_branch_worktree_and_lineage(repo: Path, tmp_path: Path):
     assert git("rev-parse", "--abbrev-ref", "HEAD", cwd=repo) == "main"
 
 
-def test_append_moves_uncommitted_changes(repo: Path, tmp_path: Path):
+def test_append_checkpoints_uncommitted_changes_onto_current_branch(
+    repo: Path, tmp_path: Path
+):
     (repo / "wip.txt").write_text("work in progress\n")
 
     wt_path = tmp_path / "wt-feature"
     create_stacked_branch("feature", root=repo, wt_path=wt_path)
 
-    # the change is committed onto the new branch's worktree
-    assert (wt_path / "wip.txt").read_text() == "work in progress\n"
-    # main is clean again
+    # the change is committed onto main (the branch it was made on) as a
+    # checkpoint, so anything still running in `repo` keeps its exact
+    # in-flight state — now committed instead of dirty.
     assert git("status", "--porcelain", cwd=repo) == ""
-    assert not (repo / "wip.txt").exists()
+    assert (repo / "wip.txt").read_text() == "work in progress\n"
+    # the new branch forks from that checkpoint, so it has the change too
+    assert (wt_path / "wip.txt").read_text() == "work in progress\n"
 
 
 def test_copy_dotfiles_copies_dotfiles_but_not_git_or_venv(repo: Path, tmp_path: Path):

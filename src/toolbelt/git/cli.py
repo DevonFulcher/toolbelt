@@ -21,13 +21,12 @@ from toolbelt.git.workflow import (
     update_repo,
 )
 from toolbelt.git.stack.cli import stack_typer
-from toolbelt.git.worktrees import worktrees_typer
 
 git_typer = typer.Typer(help="Git workflow commands")
-git_typer.add_typer(worktrees_typer, name="worktree")
-git_typer.add_typer(worktrees_typer, name="wt")  # Add alias for worktrees
-# Stack commands (append, compress, diff-parent, set-parent, tree, switch) live
-# directly under `git`, not a nested `git stack` group.
+# Stack commands (append, compress, diff-parent, remove, set-parent, tree,
+# switch) live directly under `git`, not a nested `git stack` group. Worktree
+# lifecycle is entirely folded into these — there is no separate
+# `git worktree`/`git wt` group.
 git_typer.registered_commands.extend(stack_typer.registered_commands)
 
 

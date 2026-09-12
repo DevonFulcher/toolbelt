@@ -74,18 +74,26 @@ def delete_branch_and_worktree(
     *,
     repo_root: Path,
     force: bool = False,
-) -> None:
+) -> str:
     """
     Delete a local branch and its associated worktree (if present).
 
     Parameters
     ----------
     branch_name:
-        The name of the branch to delete.
+        The name of the branch to delete. Resolved against both the
+        prefixed and bare form (see ``candidates`` below), since callers may
+        not know which one is actually checked out.
     repo_root:
         Path to the repository root.
     force:
         If True, pass ``--force`` to ``git worktree remove``.
+
+    Returns
+    -------
+    The exact branch name that was deleted, after prefix resolution — use
+    this (not the original ``branch_name`` argument) for any follow-up
+    lookup keyed by branch name, e.g. ``lineage.remove_parent``.
     """
     root = repo_root
     branch_to_delete = branch_name
@@ -162,3 +170,4 @@ def delete_branch_and_worktree(
             stderr=branch_delete.stderr,
         )
     logger.info(f"Deleted branch {branch_to_delete}")
+    return branch_to_delete
