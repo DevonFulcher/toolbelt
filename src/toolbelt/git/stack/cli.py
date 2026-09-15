@@ -40,7 +40,11 @@ stack_typer = typer.Typer(help="Stack + worktree management")
 
 @stack_typer.command()
 def append(
-    name: str = typer.Argument(..., help="Name of the new stacked branch"),
+    name: str = typer.Argument(
+        ...,
+        help="Name of the new stacked branch, without the devon/ prefix "
+        "(it is added for you).",
+    ),
 ) -> None:
     """Create a new branch stacked on the current one, in its own worktree.
 
@@ -51,6 +55,10 @@ def append(
     checkpoint. Use this to continue in-flight work as a tracked stack
     member — it's the only way to create a worktree in this tool; there is
     no separate untracked option.
+
+    NAME is prefixed with "devon/" and normalized for use as a branch and
+    directory name: "/" and spaces become "_". So pass a bare name — an
+    already-prefixed "devon/foo" would become "devon/devon_foo".
     """
     root = repo_root()
     wt_path = _worktree_path_for_name(name=name, repo_root=root)
