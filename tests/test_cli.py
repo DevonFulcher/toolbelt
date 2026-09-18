@@ -10,8 +10,8 @@ Commands that reach `GhForge` (a live `gh` call) — `sync`, `set-parent` — ar
 deliberately NOT invoked here; that path is already covered at the core level
 via `sync_stack` + `FakeForge` in test_sync.py/test_restack.py. Exercising it
 through the CLI would make these tests depend on `gh` auth and network state.
-`append`/`switch` open an editor; `open_in_editor` is monkeypatched to a no-op
-so they can run headless.
+`switch` opens an editor; `open_in_editor` is monkeypatched to a no-op
+so it can run headless.
 """
 
 from dataclasses import dataclass
@@ -31,7 +31,7 @@ runner = CliRunner()
 
 @pytest.fixture(autouse=True)
 def _no_real_editor(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`append`/`switch` call `open_in_editor`; stub it out for headless CI."""
+    """`switch` calls `open_in_editor`; stub it out for headless CI."""
     monkeypatch.setattr("toolbelt.git.stack.cli.open_in_editor", lambda _path: None)
 
 
@@ -237,7 +237,7 @@ def test_change_creates_new_branch(repo: Path, capfd: pytest.CaptureFixture):
     assert git("rev-parse", "--abbrev-ref", "HEAD", cwd=repo) == "spike"
 
 
-# --- append / switch / tree (editor stubbed) --------------------------------
+# --- append / switch / tree (switch's editor stubbed) -----------------------
 
 
 def test_append_creates_worktree_via_cli(repo: Path, capfd: pytest.CaptureFixture):

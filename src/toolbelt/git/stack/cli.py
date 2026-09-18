@@ -67,7 +67,6 @@ def append(
     copy_dotfiles(root=root, wt_path=wt_path)
     update_repo(wt_path)
     logger.info(f"Created worktree at {wt_path}")
-    open_in_editor(wt_path)
 
 
 @stack_typer.command()
