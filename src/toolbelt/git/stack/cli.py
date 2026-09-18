@@ -12,7 +12,6 @@ import subprocess
 
 import typer
 
-from toolbelt.editor import open_in_editor
 from toolbelt.git.exec import run
 from toolbelt.git.stack import lineage
 from toolbelt.git.stack.append import create_stacked_branch
@@ -118,7 +117,7 @@ def tree() -> None:
     if not parents:
         logger.info("No tracked stacks. Use `git append <name>` to start one.")
         return
-    logger.info(render(parents, current=current_branch(root)))
+    typer.echo(render(parents, current=current_branch(root)))
 
 
 @stack_typer.command()
@@ -128,7 +127,7 @@ def switch(
         help="Branch to switch to. If omitted, pick interactively.",
     ),
 ) -> None:
-    """Open a stacked branch's worktree, selecting from the stack tree."""
+    """Print a stacked branch's worktree path, selecting from the stack tree."""
     root = repo_root()
     parents = lineage.all_parents(root=root)
     paths = worktree_paths(root=root)
@@ -138,7 +137,7 @@ def switch(
             logger.error("No tracked stacks to switch between.")
             raise typer.Exit(1)
         # Show the tree for context, then pick a branch by name.
-        logger.info(render(parents, current=current_branch(root)))
+        typer.echo(render(parents, current=current_branch(root)))
         branches = sorted(parents.keys())
         try:
             proc = subprocess.run(
@@ -156,7 +155,7 @@ def switch(
     if target is None:
         logger.error(f"No worktree found for branch '{name}'.")
         raise typer.Exit(1)
-    open_in_editor(target)
+    typer.echo(str(target))
 
 
 @stack_typer.command()
@@ -180,7 +179,7 @@ def remove(
         if not parents:
             logger.error("No tracked stacks to remove from.")
             raise typer.Exit(1)
-        logger.info(render(parents, current=current_branch(root)))
+        typer.echo(render(parents, current=current_branch(root)))
         branches = sorted(parents.keys())
         try:
             proc = subprocess.run(

@@ -10,8 +10,6 @@ Commands that reach `GhForge` (a live `gh` call) — `sync`, `set-parent` — ar
 deliberately NOT invoked here; that path is already covered at the core level
 via `sync_stack` + `FakeForge` in test_sync.py/test_restack.py. Exercising it
 through the CLI would make these tests depend on `gh` auth and network state.
-`switch` opens an editor; `open_in_editor` is monkeypatched to a no-op
-so it can run headless.
 """
 
 from dataclasses import dataclass
@@ -27,12 +25,6 @@ from toolbelt.git.stack import lineage
 from toolbelt.git.stack.append import create_stacked_branch
 
 runner = CliRunner()
-
-
-@pytest.fixture(autouse=True)
-def _no_real_editor(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`switch` calls `open_in_editor`; stub it out for headless CI."""
-    monkeypatch.setattr("toolbelt.git.stack.cli.open_in_editor", lambda _path: None)
 
 
 @pytest.fixture(autouse=True)
@@ -58,7 +50,13 @@ def _invoke(args: list[str], *, cwd: Path, capfd: pytest.CaptureFixture) -> Invo
     `_NamedTextIOWrapper`), so `result.output` never sees our logger either.
     Re-running `setup_logging()` right before invoking rebinds the handler to
     *this test's* current `sys.stdout`, which is what `capfd` is tracking —
-    then `capfd.readouterr()` reliably picks it up.
+    then `capfd.readouterr()` reliably picks it up. Commands that print data
+    output (e.g. `tree`'s rendered branches) go through `typer.echo` instead
+    of the logger, precisely so it isn't wrench-prefixed like a log line;
+    that output lands in `result.output` (CliRunner's own capture) rather
+    than `capfd`, so both are concatenated here, in the order each command
+    actually emits them: log/trace lines (via capfd) before echoed data (via
+    `result.output`) — true for every command today.
     """
     from toolbelt.logger import setup_logging
 
@@ -68,7 +66,10 @@ def _invoke(args: list[str], *, cwd: Path, capfd: pytest.CaptureFixture) -> Invo
         setup_logging()
         result = runner.invoke(git_typer, args)
     captured = capfd.readouterr()
-    return Invocation(exit_code=result.exit_code, output=captured.out + captured.err)
+    return Invocation(
+        exit_code=result.exit_code,
+        output=captured.out + captured.err + result.output,
+    )
 
 
 # --- save --------------------------------------------------------------
@@ -237,7 +238,7 @@ def test_change_creates_new_branch(repo: Path, capfd: pytest.CaptureFixture):
     assert git("rev-parse", "--abbrev-ref", "HEAD", cwd=repo) == "spike"
 
 
-# --- append / switch / tree (switch's editor stubbed) -----------------------
+# --- append / switch / tree ------------------------------------------------
 
 
 def test_append_creates_worktree_via_cli(repo: Path, capfd: pytest.CaptureFixture):

@@ -2,7 +2,7 @@
 # name: test_tree_output_branching_stack
   '''
   🔧 git config --get-regexp ^toolbelt\-stack\..*\.parent$
-  🔧 main *
+  main *
   └─ devon/api
      ├─ devon/api_docs
      └─ devon/api_tests
