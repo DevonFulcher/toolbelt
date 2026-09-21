@@ -14,6 +14,7 @@ from toolbelt.git.commands import is_git_repo
 from toolbelt.git.repo import get_current_repo_root_path
 from toolbelt.git.workflow import (
     git_branch_clean,
+    git_merge,
     git_pr,
     git_safe_pull,
     git_save,
@@ -39,6 +40,16 @@ def pr(
     ] = False,
 ):
     git_pr(skip_tests)
+
+
+@git_typer.command(help="Squash-merge a PR on GitHub, then sync the stack.")
+def merge(
+    pr: Annotated[
+        str,
+        typer.Argument(help="PR number, URL, or branch to merge."),
+    ],
+):
+    git_merge(pr)
 
 
 @git_typer.command(

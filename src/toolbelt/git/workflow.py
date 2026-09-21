@@ -47,6 +47,19 @@ def sync_repo(root: Path | None = None) -> None:
     update_repo(root)
 
 
+def git_merge(pr: str, cwd: Path | None = None) -> None:
+    """Squash-merge a PR, then sync the stack.
+
+    ``pr`` is passed through to ``gh pr merge`` as-is (a PR number, URL, or
+    branch name). ``cwd`` targets the branch's worktree, mirroring
+    ``git_pr``. Syncing afterward restacks any children onto the branch's
+    parent and cleans up the now-landed branch (see ``sync_stack``'s
+    restack-on-land handling).
+    """
+    subprocess.run(["gh", "pr", "merge", "--squash", pr], check=True, cwd=cwd)
+    sync_repo(cwd)
+
+
 def git_pr(skip_tests: bool, cwd: Path | None = None) -> None:
     # ``cwd`` targets the branch's worktree: when `git save` starts a new stacked
     # branch it lands in its own worktree, so the PR must be opened from there

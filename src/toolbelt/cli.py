@@ -14,6 +14,7 @@ from toolbelt.zsh import zsh_typer
 # Create Typer app instances
 app = typer.Typer(help="A collection of tools that I use.")
 app.add_typer(git_typer, name="git")
+app.add_typer(git_typer, name="g", help="Alias for 'git'")
 app.add_typer(zsh_typer, name="zsh")
 
 
