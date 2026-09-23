@@ -70,8 +70,21 @@ def git_pr(skip_tests: bool, cwd: Path | None = None) -> None:
     repo = current_repo()
     if repo and not skip_tests:
         repo.unit()
+    # Stack-aware base: target the branch's recorded stack parent (see
+    # ``toolbelt.git.stack.lineage``) rather than always the repo's default
+    # branch, so a PR for a branch stacked on another open PR's branch is
+    # opened against that branch instead of comparing the whole stack to main.
+    # ``root`` must resolve against ``cwd`` (not the process's actual cwd,
+    # which may differ — e.g. `git send` calls this with the freshly created
+    # branch's worktree as ``cwd`` without chdir'ing the process into it).
+    from toolbelt.git.stack.lineage import get_parent
+    from toolbelt.git.worktrees import current_branch, repo_root
+
+    root = cwd or repo_root()
+    branch = current_branch(root)
+    base = get_parent(branch, root=root) or get_default_branch()
     subprocess.run(
-        ["gh", "pr", "create", "--web"],
+        ["gh", "pr", "create", "--web", "--base", base],
         check=False,
         cwd=cwd,
     )
