@@ -59,6 +59,26 @@ def test_works_when_root_is_the_worktree_being_deleted(repo: Path, tmp_path: Pat
     assert lineage.get_parent("devon/api_tests", root=repo) == "main"
 
 
+def test_drops_lineage_entry_for_a_branch_already_deleted_by_other_means(
+    repo: Path, tmp_path: Path
+):
+    """A branch deleted directly (e.g. `git branch -D`), bypassing this tool
+    entirely, leaves no "gone" upstream for `git branch -vv` to catch — it
+    just doesn't exist anymore. Only a sweep over lineage entries themselves
+    catches this; without it, `git tree` shows the branch as a ghost node
+    forever."""
+    api_wt = tmp_path / "wt-api"
+    create_stacked_branch("api", root=repo, wt_path=api_wt)
+    create_stacked_branch("api_tests", root=api_wt, wt_path=tmp_path / "wt-api-tests")
+    git("worktree", "remove", "--force", str(api_wt), cwd=repo)
+    git("branch", "-D", "devon/api", cwd=repo)
+
+    git_branch_clean(root=repo)
+
+    assert lineage.get_parent("devon/api", root=repo) is None
+    assert lineage.get_parent("devon/api_tests", root=repo) == "main"
+
+
 def test_leaves_untracked_gone_branches_alone_beyond_deleting_them(
     repo: Path, tmp_path: Path
 ):

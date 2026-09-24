@@ -22,9 +22,9 @@ from .worktrees_ops import delete_branch_and_worktree, main_worktree
 def update_repo(target_path: Path):
     if (target_path / ".tool-versions").exists():
         # This may fail if the plugins in .tool-versions are not installed
-        subprocess.run(["asdf", "install"], check=True)
+        subprocess.run(["asdf", "install"], check=True, cwd=target_path)
     if (target_path / "uv.lock").exists():
-        subprocess.run(["uv", "sync", "--all-groups"], check=True)
+        subprocess.run(["uv", "sync", "--all-groups"], check=True, cwd=target_path)
 
 
 def sync_repo(root: Path | None = None) -> None:
@@ -98,15 +98,42 @@ def git_pr(skip_tests: bool, cwd: Path | None = None) -> None:
     )
 
 
+def _drop_lineage_entry(branch: str, *, root: Path) -> None:
+    """Drop ``branch``'s own lineage entry, reparenting any tracked children
+    onto its former parent first (its own history is gone, so a later
+    ``sync`` of that child's stack will merge/rebase it onto the
+    grandparent)."""
+    # Lazy import: worktrees -> bootstrap.repo_setup -> workflow would be a
+    # circular import at module load time.
+    from toolbelt.git.stack import lineage
+
+    parent = lineage.get_parent(branch, root=root)
+    if parent is not None:
+        for child, child_parent in lineage.all_parents(root=root).items():
+            if child_parent == branch:
+                lineage.set_parent(child, parent, root=root)
+    lineage.remove_parent(branch, root=root)
+
+
+def _branch_exists(branch: str, *, root: Path) -> bool:
+    return (
+        subprocess.run(
+            ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
+            cwd=root,
+        ).returncode
+        == 0
+    )
+
+
 def git_branch_clean(root: Path | None = None) -> None:
     """
-    Delete local branches whose upstream has been removed, keeping stack
-    lineage consistent: a deleted branch's own ``toolbelt-stack`` entry is
-    dropped, and any tracked children are repointed to its former parent (its
-    own history is gone, so a later ``sync`` of that child's stack will
-    merge/rebase it onto the grandparent). Without this, a deleted branch
-    keeps showing up as a ghost node in ``git tree`` forever, since that just
-    reads whatever lineage entries exist without checking the branch is real.
+    Delete local branches whose upstream has been removed, and drop stale
+    stack lineage entries — both this command's own deletions, and any
+    tracked branch that's already gone by some other means (e.g. deleted
+    directly with ``git branch -D``, bypassing this tool entirely). Without
+    this, a gone branch keeps showing up as a ghost node in ``git tree``
+    forever, since that just reads whatever lineage entries exist without
+    checking the branch is still real.
 
     ``root`` defaults to the current worktree; pass one explicitly when
     calling from a context (e.g. ``sync_repo``) where the process's cwd may
@@ -144,14 +171,16 @@ def git_branch_clean(root: Path | None = None) -> None:
         else:
             branch_name = tokens[0]
 
-        parent = lineage.get_parent(branch_name, root=root)
         deleted_branch = delete_branch_and_worktree(branch_name, repo_root=root)
-        if parent is not None:
-            for child, child_parent in lineage.all_parents(root=root).items():
-                if child_parent == deleted_branch:
-                    lineage.set_parent(child, parent, root=root)
-        lineage.remove_parent(deleted_branch, root=root)
+        _drop_lineage_entry(deleted_branch, root=root)
         deleted_branches.append(deleted_branch)
+
+    stale_entries: list[str] = []
+    for branch in lineage.all_parents(root=root):
+        if branch in deleted_branches or _branch_exists(branch, root=root):
+            continue
+        _drop_lineage_entry(branch, root=root)
+        stale_entries.append(branch)
 
     if deleted_branches:
         logger.info("Deleted branches:")
@@ -159,6 +188,10 @@ def git_branch_clean(root: Path | None = None) -> None:
             logger.info(f"  {branch_name}")
     else:
         logger.info("No branches to delete.")
+    if stale_entries:
+        logger.info("Dropped stack entries for already-gone branches:")
+        for branch_name in stale_entries:
+            logger.info(f"  {branch_name}")
 
 
 def check_for_parent_branch_merge_conflicts(
