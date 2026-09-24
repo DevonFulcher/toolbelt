@@ -264,6 +264,25 @@ def test_remove_deletes_branch_worktree_and_lineage_via_cli(
     )
 
 
+def test_remove_can_delete_the_branch_checked_out_in_cwd(
+    repo: Path, tmp_path: Path, capfd: pytest.CaptureFixture
+):
+    """`root` (from `repo_root()`) is the worktree being removed here — git
+    can't run `worktree remove` with cwd pointed at the worktree it's
+    removing, so this must actually run from the main worktree instead (see
+    `main_worktree`)."""
+    feature_wt = tmp_path / "wt-feature"
+    create_stacked_branch("feature", root=repo, wt_path=feature_wt)
+
+    result = _invoke(
+        ["remove", "devon/feature", "--force"], cwd=feature_wt, capfd=capfd
+    )
+
+    assert result.exit_code == 0, result.output
+    assert not feature_wt.exists()
+    assert lineage.get_parent("devon/feature", root=repo) is None
+
+
 def test_tree_reports_no_stacks_when_untracked(
     repo: Path, capfd: pytest.CaptureFixture
 ):

@@ -26,7 +26,7 @@ from toolbelt.git.stack.lineage import (
 )
 from toolbelt.git.stack.worktree import worktree_paths
 from toolbelt.git.worktrees import current_branch
-from toolbelt.git.worktrees_ops import delete_branch_and_worktree
+from toolbelt.git.worktrees_ops import delete_branch_and_worktree, main_worktree
 from toolbelt.logger import logger
 
 
@@ -98,24 +98,6 @@ async def _resolve_landed(stack: list[str], forge: Forge) -> set[str]:
     """Ask `forge` which of `stack`'s branches have merged, concurrently."""
     results = await asyncio.gather(*(forge.pr_is_merged(b) for b in stack))
     return {branch for branch, is_landed in zip(stack, results) if is_landed}
-
-
-def _main_worktree(root: Path) -> Path:
-    """The repo's main working tree (first entry of ``git worktree list``).
-
-    Cleanup runs from here so a landed worktree can be removed even when it is
-    the caller's current directory (git only refuses to remove the worktree the
-    git process itself is running in).
-    """
-    result = run(
-        ["git", "worktree", "list", "--porcelain"],
-        cwd=root,
-        capture_output=True,
-    )
-    for line in result.stdout.splitlines():
-        if line.startswith("worktree "):
-            return Path(line[len("worktree ") :])
-    return root
 
 
 def _restack(child: str, *, worktree: Path, onto: str, upstream: str) -> bool:
@@ -258,7 +240,7 @@ def sync_stack(*, root: Path, forge: Forge) -> None:
     # leaf in the lineage and safe to remove (branch, worktree, and config key).
     # Run from the main worktree so a landed branch can be removed even when it
     # is the caller's current worktree.
-    main_wt = _main_worktree(root)
+    main_wt = main_worktree(root)
     for landed_branch in landed:
         landed_wt = paths.get(landed_branch)
         if landed_wt is not None and landed_wt.resolve() == main_wt.resolve():

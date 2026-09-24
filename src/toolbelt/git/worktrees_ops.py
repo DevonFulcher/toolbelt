@@ -5,6 +5,28 @@ from toolbelt.git.constants import GIT_BRANCH_PREFIX
 from toolbelt.logger import logger
 
 
+def main_worktree(root: Path) -> Path:
+    """The repo's main working tree (first entry of ``git worktree list``).
+
+    Branch/worktree deletion should run with this as ``repo_root``, even when
+    the caller's own current worktree is the one being deleted: git refuses
+    to remove a worktree the git process itself is running in, and a
+    long-running process whose cwd is deleted out from under it can break in
+    stranger ways than that on top.
+    """
+    result = subprocess.run(
+        ["git", "worktree", "list", "--porcelain"],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=root,
+    )
+    for line in result.stdout.splitlines():
+        if line.startswith("worktree "):
+            return Path(line[len("worktree ") :])
+    return root
+
+
 def _worktree_entries(root: Path) -> list[tuple[Path, str | None]]:
     """
     Return the registered git worktrees and their associated branch names.

@@ -16,7 +16,7 @@ from .branches import (
     get_default_branch,
 )
 from .repo import current_repo_org, get_current_repo_root_path
-from .worktrees_ops import delete_branch_and_worktree
+from .worktrees_ops import delete_branch_and_worktree, main_worktree
 
 
 def update_repo(target_path: Path):
@@ -35,6 +35,12 @@ def sync_repo(root: Path | None = None) -> None:
     ``git push`` here — ``sync_stack`` pushes every branch). ``root`` defaults to
     the current worktree; pass a specific worktree to sync a stack the caller
     just moved into (e.g. a freshly created branch).
+
+    ``root`` itself can end up deleted by either step below: ``sync_stack``
+    removes a landed branch's worktree (which can be ``root``, e.g. syncing
+    from inside a branch whose own PR just merged), and so can
+    ``git_branch_clean``. ``update_repo`` needs a real, still-existing path,
+    so it falls back to the main worktree when ``root`` no longer exists.
     """
     # Imported lazily: worktrees -> bootstrap.repo_setup -> workflow would be a
     # circular import at module load time.
@@ -43,8 +49,10 @@ def sync_repo(root: Path | None = None) -> None:
     from toolbelt.git.worktrees import repo_root
 
     root = root or repo_root()
+    main_wt = main_worktree(root)
     sync_stack(root=root, forge=GhForge(root))
-    update_repo(root)
+    git_branch_clean(root)
+    update_repo(root if root.exists() else main_wt)
 
 
 def git_merge(pr: str, cwd: Path | None = None) -> None:
@@ -90,19 +98,38 @@ def git_pr(skip_tests: bool, cwd: Path | None = None) -> None:
     )
 
 
-def git_branch_clean() -> None:
+def git_branch_clean(root: Path | None = None) -> None:
     """
-    Delete local branches whose upstream has been removed.
+    Delete local branches whose upstream has been removed, keeping stack
+    lineage consistent: a deleted branch's own ``toolbelt-stack`` entry is
+    dropped, and any tracked children are repointed to its former parent (its
+    own history is gone, so a later ``sync`` of that child's stack will
+    merge/rebase it onto the grandparent). Without this, a deleted branch
+    keeps showing up as a ghost node in ``git tree`` forever, since that just
+    reads whatever lineage entries exist without checking the branch is real.
+
+    ``root`` defaults to the current worktree; pass one explicitly when
+    calling from a context (e.g. ``sync_repo``) where the process's cwd may
+    not be the worktree being cleaned. Either way, every git operation here
+    actually runs from the repo's *main* worktree (see ``main_worktree``), not
+    ``root`` itself — one of the "gone" branches can easily be the one
+    checked out in ``root``, e.g. running this from inside the very worktree
+    whose branch just got merged.
     """
-    subprocess.run(["git", "fetch", "-p"], check=True)
+    # Lazy import: worktrees -> bootstrap.repo_setup -> workflow would be a
+    # circular import at module load time.
+    from toolbelt.git.stack import lineage
+
+    root = main_worktree(root or get_current_repo_root_path())
+    subprocess.run(["git", "fetch", "-p"], check=True, cwd=root)
     branch_list = subprocess.run(
         ["git", "branch", "-vv"],
         check=True,
         capture_output=True,
         text=True,
+        cwd=root,
     ).stdout.splitlines()
 
-    repo_root = get_current_repo_root_path()
     deleted_branches: list[str] = []
     for line in branch_list:
         if ": gone]" not in line:
@@ -116,8 +143,15 @@ def git_branch_clean() -> None:
             branch_name = tokens[1]
         else:
             branch_name = tokens[0]
-        delete_branch_and_worktree(branch_name, repo_root=repo_root)
-        deleted_branches.append(branch_name)
+
+        parent = lineage.get_parent(branch_name, root=root)
+        deleted_branch = delete_branch_and_worktree(branch_name, repo_root=root)
+        if parent is not None:
+            for child, child_parent in lineage.all_parents(root=root).items():
+                if child_parent == deleted_branch:
+                    lineage.set_parent(child, parent, root=root)
+        lineage.remove_parent(deleted_branch, root=root)
+        deleted_branches.append(deleted_branch)
 
     if deleted_branches:
         logger.info("Deleted branches:")

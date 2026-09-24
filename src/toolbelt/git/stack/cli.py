@@ -35,7 +35,7 @@ from toolbelt.git.worktrees import (
     current_branch,
     repo_root,
 )
-from toolbelt.git.worktrees_ops import delete_branch_and_worktree
+from toolbelt.git.worktrees_ops import delete_branch_and_worktree, main_worktree
 from toolbelt.logger import logger
 
 stack_typer = typer.Typer(help="Stack + worktree management")
@@ -204,6 +204,12 @@ def remove(
 ) -> None:
     """Remove a branch's worktree, delete the branch, and drop it from the stack."""
     root = repo_root()
+    # `name` may be the branch checked out in `root` itself (the caller's own
+    # current worktree): git can't remove a worktree with cwd pointed at the
+    # worktree being removed, and if it's deleted out from under this
+    # process's actual cwd, every subsequent git call needs a cwd that still
+    # exists. So every op from here on uses the main worktree instead.
+    main_wt = main_worktree(root)
 
     if name is None:
         parents = lineage.all_parents(root=root)
@@ -227,5 +233,5 @@ def remove(
     # delete_branch_and_worktree resolves the prefixed/bare form; use its
     # return value (not the raw argument) as the lineage key so a bare name
     # like "feature" still clears "devon/feature"'s parent entry.
-    deleted_branch = delete_branch_and_worktree(name, repo_root=root, force=force)
-    lineage.remove_parent(deleted_branch, root=root)
+    deleted_branch = delete_branch_and_worktree(name, repo_root=main_wt, force=force)
+    lineage.remove_parent(deleted_branch, root=main_wt)
