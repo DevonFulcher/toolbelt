@@ -8,9 +8,12 @@ group. The same primitives back `git save`/`git sync`. Worktree lifecycle is
 entirely folded in here — there is no separate `git worktree`/`git wt` group.
 """
 
+import asyncio
 import subprocess
+import sys
 
 import typer
+from rich.live import Live
 
 from toolbelt.git.exec import run
 from toolbelt.git.stack import lineage
@@ -21,6 +24,7 @@ from toolbelt.git.stack.ops import (
     diff_parent_command,
     set_branch_parent,
 )
+from toolbelt.git.stack.status import BranchStatus, stream_branch_statuses
 from toolbelt.git.stack.sync import sync_stack
 from toolbelt.git.stack.viz import render
 from toolbelt.git.stack.worktree import worktree_paths
@@ -111,13 +115,40 @@ def set_parent(
 
 @stack_typer.command()
 def tree() -> None:
-    """Print the stack tree."""
+    """Print the stack tree, filling in each branch's PR/CI/review status.
+
+    The tree itself is local and renders instantly; the status column comes
+    from one `gh pr view` per branch, run concurrently, and fills in as each
+    completes. On a real terminal this redraws live; piped output waits for
+    every lookup and prints once.
+    """
     root = repo_root()
     parents = lineage.all_parents(root=root)
     if not parents:
         logger.info("No tracked stacks. Use `git append <name>` to start one.")
         return
-    typer.echo(render(parents, current=current_branch(root)))
+
+    current = current_branch(root)
+    branches = sorted(parents.keys())
+    statuses: dict[str, BranchStatus] = {}
+    live: Live | None = None
+
+    async def load() -> None:
+        async for branch, status in stream_branch_statuses(branches, root=root):
+            statuses[branch] = status
+            if live is not None:
+                live.update(
+                    render(parents, current=current, statuses=statuses), refresh=True
+                )
+
+    if sys.stdout.isatty():
+        with Live(
+            render(parents, current=current, statuses=statuses), auto_refresh=False
+        ) as live:
+            asyncio.run(load())
+    else:
+        asyncio.run(load())
+        typer.echo(render(parents, current=current, statuses=statuses))
 
 
 @stack_typer.command()

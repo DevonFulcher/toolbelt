@@ -3,9 +3,9 @@
   '''
   🔧 git config --get-regexp ^toolbelt\-stack\..*\.parent$
   main *
-  └─ devon/api
-     ├─ devon/api_docs
-     └─ devon/api_tests
+  └─ devon/api           PR none
+     ├─ devon/api_docs   PR none
+     └─ devon/api_tests  PR none
   
   '''
 # ---
