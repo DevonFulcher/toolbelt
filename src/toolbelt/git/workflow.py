@@ -7,7 +7,7 @@ import typer
 
 from toolbelt.git.commits import store_commit
 from toolbelt.git.constants import GIT_BRANCH_PREFIX
-from toolbelt.git.exec import run
+from toolbelt.git.exec import capture, run
 from toolbelt.logger import logger
 from toolbelt.repos import current_repo, current_repo_name
 
@@ -55,17 +55,38 @@ def sync_repo(root: Path | None = None) -> None:
     update_repo(root if root.exists() else main_wt)
 
 
-def git_merge(pr: str, cwd: Path | None = None) -> None:
-    """Squash-merge a PR, then sync the stack.
+def git_merge(pr: str) -> None:
+    """Squash-merge a PR, then sync the stack the merged branch belongs to.
 
-    ``pr`` is passed through to ``gh pr merge`` as-is (a PR number, URL, or
-    branch name). ``cwd`` targets the branch's worktree, mirroring
-    ``git_pr``. Syncing afterward restacks any children onto the branch's
-    parent and cleans up the now-landed branch (see ``sync_stack``'s
-    restack-on-land handling).
+    ``pr`` is passed through to ``gh pr merge``/``gh pr view`` as-is (a PR
+    number, URL, or branch name). The stack synced is resolved from the
+    *merged branch's own* worktree, not wherever this happens to be invoked
+    from — merging a PR by number/URL should work the same from the main
+    worktree as from the branch's own worktree, and ``sync_stack`` requires
+    the current branch of whatever worktree it's rooted at to actually be
+    part of a tracked stack. If the branch has no tracked worktree (already
+    removed, or never tracked), there's no stack to restack, so this just
+    runs the repo-wide branch/lineage cleanup instead.
     """
-    subprocess.run(["gh", "pr", "merge", "--squash", pr], check=True, cwd=cwd)
-    sync_repo(cwd)
+    # Lazy import: worktrees -> bootstrap.repo_setup -> workflow would be a
+    # circular import at module load time.
+    from toolbelt.git.stack.worktree import worktree_paths
+
+    branch = capture(
+        ["gh", "pr", "view", pr, "--json", "headRefName", "--jq", ".headRefName"]
+    )
+    subprocess.run(["gh", "pr", "merge", "--squash", pr], check=True)
+
+    root = get_current_repo_root_path()
+    worktree = worktree_paths(root=root).get(branch)
+    if worktree is None:
+        logger.warning(
+            f"No worktree tracked for '{branch}'; skipping stack sync, just "
+            "cleaning up local branches."
+        )
+        git_branch_clean(root)
+        return
+    sync_repo(worktree)
 
 
 def git_pr(skip_tests: bool, cwd: Path | None = None) -> None:
