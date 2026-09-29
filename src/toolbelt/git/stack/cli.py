@@ -56,8 +56,12 @@ def append(
     in-flight state (now committed instead of dirty) — nothing gets moved
     out from under whatever is running here. The new branch forks from that
     checkpoint. Use this to continue in-flight work as a tracked stack
-    member — it's the only way to create a worktree in this tool; there is
-    no separate untracked option.
+    member. There is no option for an untracked worktree.
+
+    The worktree is created at $GIT_PROJECTS_WORKDIR/wt/<repo>/<NAME>, gets
+    the repo root's dotfiles copied in (except .git and .venv), and has deps
+    installed (asdf install / uv sync). Nothing is pushed, and your shell
+    stays where it is; `cd` to the printed path.
 
     NAME is prefixed with "devon/" and normalized for use as a branch and
     directory name: "/" and spaces become "_". So pass a bare name — an
@@ -78,7 +82,14 @@ def compress(
         None, "-m", "--message", help="Message for the squashed commit"
     ),
 ) -> None:
-    """Squash the current branch's commits into one (force-pushes the branch)."""
+    """Squash the current branch's commits into one, then force-push it.
+
+    Soft-resets to the merge base with the stack parent and commits once
+    (pre-commit hooks run), using -m or the branch's oldest commit subject.
+    Anything already staged is folded into that commit; unstaged changes are
+    left alone. Force-pushes (--force-with-lease) if the branch exists on
+    origin. Child branches are untouched until the next `sync`.
+    """
     compress_branch(root=repo_root(), message=message)
 
 
@@ -94,7 +105,11 @@ def diff_parent(
         help="Use a plain line diff (rendered by delta) instead of difftastic.",
     ),
 ) -> None:
-    """Diff the current branch against its stack parent (AST-aware by default)."""
+    """Diff the current branch against its stack parent (AST-aware by default).
+
+    Runs `git diff <parent>...HEAD`: only this branch's committed changes
+    since it forked, not the parent's newer work or uncommitted edits.
+    """
     root = repo_root()
     run(
         diff_parent_command(root=root, extra_args=args, line=line),
@@ -105,9 +120,18 @@ def diff_parent(
 
 @stack_typer.command(name="set-parent")
 def set_parent(
-    new_parent: str = typer.Argument(..., help="Branch to set as the new parent"),
+    new_parent: str = typer.Argument(
+        ..., help="Branch to set as the new parent (full name, e.g. devon/foo)"
+    ),
 ) -> None:
-    """Repoint the current branch's parent, then sync so it reconciles onto it."""
+    """Repoint the current branch's stack parent, then sync.
+
+    Updates only the tracked parent (checking the branch exists and no cycle
+    forms), then runs `sync` (see `sync --help`), which merges the new parent
+    in and pushes. It merges rather than rebases, so commits inherited from
+    the old parent stay on the branch. Future `pr`/`send` target the new
+    parent; an existing PR's base is not changed.
+    """
     root = repo_root()
     set_branch_parent(root=root, new_parent=new_parent)
     sync_stack(root=root, forge=GhForge(root))
@@ -116,6 +140,8 @@ def set_parent(
 @stack_typer.command()
 def tree() -> None:
     """Print the stack tree, filling in each branch's PR/CI/review status.
+
+    Read-only.
 
     The tree itself is local and renders instantly; the status column comes
     from one `gh pr view` per branch, run concurrently, and fills in as each
@@ -155,10 +181,15 @@ def tree() -> None:
 def switch(
     name: str | None = typer.Argument(
         None,
-        help="Branch to switch to. If omitted, pick interactively.",
+        help="Full branch name (e.g. devon/foo). If omitted, pick interactively.",
     ),
 ) -> None:
-    """Print a stacked branch's worktree path, selecting from the stack tree."""
+    """Print a stacked branch's worktree path (does not change directory).
+
+    Use it as `cd "$(toolbelt git switch devon/<name>)"`. Without NAME it
+    prints the stack tree and picks a branch with fzf; the tree also goes to
+    stdout, so pass NAME when capturing the path.
+    """
     root = repo_root()
     parents = lineage.all_parents(root=root)
     paths = worktree_paths(root=root)
@@ -199,10 +230,18 @@ def remove(
         False,
         "--force",
         "-f",
-        help="Pass --force to git worktree remove.",
+        help="Pass --force to git worktree remove (discards uncommitted changes).",
     ),
 ) -> None:
-    """Remove a branch's worktree, delete the branch, and drop it from the stack."""
+    """Remove a branch's worktree, force-delete the branch, drop it from the stack.
+
+    Runs `git worktree remove`, which refuses a worktree with uncommitted or
+    untracked files unless --force (which discards them), then
+    `git branch -D`, which deletes the branch even if its commits are
+    unmerged. The remote branch and any PR are left alone. Child branches are
+    not reparented and still point at the removed branch, so run `set-parent`
+    on them first.
+    """
     root = repo_root()
     # `name` may be the branch checked out in `root` itself (the caller's own
     # current worktree): git can't remove a worktree with cwd pointed at the
