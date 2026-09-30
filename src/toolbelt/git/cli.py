@@ -12,6 +12,7 @@ from toolbelt.env_var import get_git_projects_workdir
 from toolbelt.git.branches import get_branch_name
 from toolbelt.git.commands import is_git_repo
 from toolbelt.git.repo import get_current_repo_root_path
+from toolbelt.git.repo_lock import repo_lock
 from toolbelt.git.workflow import (
     git_branch_clean,
     git_merge,
@@ -22,6 +23,7 @@ from toolbelt.git.workflow import (
     update_repo,
 )
 from toolbelt.git.stack.cli import stack_typer
+from toolbelt.git.worktrees import repo_root
 
 git_typer = typer.Typer(help="Git workflow commands")
 # Stack commands (append, compress, diff-parent, remove, set-parent, tree,
@@ -49,7 +51,8 @@ def merge(
         typer.Argument(help="PR number, URL, or branch to merge."),
     ],
 ):
-    git_merge(pr)
+    with repo_lock(repo_root()):
+        git_merge(pr)
 
 
 @git_typer.command(
@@ -57,7 +60,8 @@ def merge(
     help="Delete local branches whose upstream has been removed.",
 )
 def branch_clean():
-    git_branch_clean()
+    with repo_lock(repo_root()):
+        git_branch_clean()
 
 
 @git_typer.command(
@@ -119,7 +123,8 @@ def save(
     ] = None,
 ):
     """Add, commit, and push changes"""
-    git_save(message, no_verify, no_sync, amend, pathspec, yes)
+    with repo_lock(repo_root()):
+        git_save(message, no_verify, no_sync, amend, pathspec, yes)
 
 
 @git_typer.command(help="Save changes and create a PR")
@@ -145,8 +150,9 @@ def send(
     ] = None,
 ):
     """Save changes and create PR"""
-    commit_root = git_save(message, no_verify, no_sync, False, pathspec, yes)
-    git_pr(skip_tests, cwd=commit_root)
+    with repo_lock(repo_root()):
+        commit_root = git_save(message, no_verify, no_sync, False, pathspec, yes)
+        git_pr(skip_tests, cwd=commit_root)
 
 
 @git_typer.command(help="Change git branch and safe pull changes")
@@ -290,4 +296,5 @@ def git_list():
 
 @git_typer.command(help="Sync the current repo")
 def sync():
-    sync_repo()
+    with repo_lock(repo_root()):
+        sync_repo()

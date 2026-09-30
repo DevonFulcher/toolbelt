@@ -16,6 +16,7 @@ import typer
 from rich.live import Live
 
 from toolbelt.git.exec import run
+from toolbelt.git.repo_lock import repo_lock
 from toolbelt.git.stack import lineage
 from toolbelt.git.stack.append import create_stacked_branch
 from toolbelt.git.stack.forge import GhForge
@@ -64,11 +65,12 @@ def append(
     already-prefixed "devon/foo" would become "devon/devon_foo".
     """
     root = repo_root()
-    wt_path = _worktree_path_for_name(name=name, repo_root=root)
-    create_stacked_branch(name, root=root, wt_path=wt_path)
-    # Copy dotfiles, then install deps so the worktree is runnable.
-    copy_dotfiles(root=root, wt_path=wt_path)
-    update_repo(wt_path)
+    with repo_lock(root):
+        wt_path = _worktree_path_for_name(name=name, repo_root=root)
+        create_stacked_branch(name, root=root, wt_path=wt_path)
+        # Copy dotfiles, then install deps so the worktree is runnable.
+        copy_dotfiles(root=root, wt_path=wt_path)
+        update_repo(wt_path)
     logger.info(f"Created worktree at {wt_path}")
 
 
@@ -79,7 +81,9 @@ def compress(
     ),
 ) -> None:
     """Squash the current branch's commits into one (force-pushes the branch)."""
-    compress_branch(root=repo_root(), message=message)
+    root = repo_root()
+    with repo_lock(root):
+        compress_branch(root=root, message=message)
 
 
 @stack_typer.command(name="diff-parent")
@@ -109,8 +113,9 @@ def set_parent(
 ) -> None:
     """Repoint the current branch's parent, then sync so it reconciles onto it."""
     root = repo_root()
-    set_branch_parent(root=root, new_parent=new_parent)
-    sync_stack(root=root, forge=GhForge(root))
+    with repo_lock(root):
+        set_branch_parent(root=root, new_parent=new_parent)
+        sync_stack(root=root, forge=GhForge(root))
 
 
 @stack_typer.command()
@@ -233,5 +238,8 @@ def remove(
     # delete_branch_and_worktree resolves the prefixed/bare form; use its
     # return value (not the raw argument) as the lineage key so a bare name
     # like "feature" still clears "devon/feature"'s parent entry.
-    deleted_branch = delete_branch_and_worktree(name, repo_root=main_wt, force=force)
-    lineage.remove_parent(deleted_branch, root=main_wt)
+    with repo_lock(root):
+        deleted_branch = delete_branch_and_worktree(
+            name, repo_root=main_wt, force=force
+        )
+        lineage.remove_parent(deleted_branch, root=main_wt)
