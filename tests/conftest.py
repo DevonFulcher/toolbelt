@@ -32,13 +32,24 @@ def _isolate_git_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class FakeForge:
-    """Test `Forge`: reports a branch merged iff it was seeded as merged."""
+    """Test `Forge`: reports merged/published iff seeded as such.
 
-    def __init__(self, merged: Iterable[str] = ()) -> None:
+    Defaults to nothing merged and nothing published — i.e. every branch is
+    safe for `sync` to auto-compress unless a test opts a branch out via
+    `published`.
+    """
+
+    def __init__(
+        self, merged: Iterable[str] = (), published: Iterable[str] = ()
+    ) -> None:
         self.merged = set(merged)
+        self.published = set(published)
 
     async def pr_is_merged(self, branch: str) -> bool:
         return branch in self.merged
+
+    async def pr_is_published(self, branch: str) -> bool:
+        return branch in self.published
 
 
 def git(*args: str, cwd: Path) -> str:

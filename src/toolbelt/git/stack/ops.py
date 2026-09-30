@@ -36,12 +36,16 @@ def _remote_branch_exists(branch: str, *, root: Path) -> bool:
     return result.returncode == 0
 
 
-def compress_branch(*, root: Path, message: str | None = None) -> None:
+def compress_branch(
+    *, root: Path, message: str | None = None, push: bool = True
+) -> None:
     """Squash the current branch's own commits (those after its parent) into one.
 
-    Rewrites history, so the branch's remote is force-pushed to match. Children
-    are left untouched — a later ``git sync`` reconciles them cleanly, since the
-    squashed commit carries the same tree they already merged.
+    Rewrites history, so the branch's remote is force-pushed to match (unless
+    ``push`` is False — ``sync`` sets this since it does its own push right
+    after, for every branch, compressed or not). Children are left untouched
+    — a later ``git sync`` reconciles them cleanly, since the squashed commit
+    carries the same tree they already merged.
     """
     branch = current_branch(root)
     parent = _parent_or_exit(branch, root=root)
@@ -87,7 +91,7 @@ def compress_branch(*, root: Path, message: str | None = None) -> None:
     run(["git", "commit", "-m", message], cwd=root, exit_on_error=True)
     logger.info(f"Compressed {count} commits on '{branch}' into one.")
 
-    if _remote_branch_exists(branch, root=root):
+    if push and _remote_branch_exists(branch, root=root):
         run(
             ["git", "push", "--force-with-lease", "origin", branch],
             cwd=root,

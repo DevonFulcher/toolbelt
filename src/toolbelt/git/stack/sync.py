@@ -24,6 +24,7 @@ from toolbelt.git.stack.lineage import (
     resolve_stack,
     set_parent,
 )
+from toolbelt.git.stack.ops import compress_branch
 from toolbelt.git.stack.worktree import worktree_paths
 from toolbelt.git.worktrees import current_branch
 from toolbelt.git.worktrees_ops import delete_branch_and_worktree, main_worktree
@@ -94,10 +95,19 @@ def _remote_branch_exists(branch: str, *, root: Path) -> bool:
     return result.returncode == 0
 
 
-async def _resolve_landed(stack: list[str], forge: Forge) -> set[str]:
-    """Ask `forge` which of `stack`'s branches have merged, concurrently."""
-    results = await asyncio.gather(*(forge.pr_is_merged(b) for b in stack))
-    return {branch for branch, is_landed in zip(stack, results) if is_landed}
+async def _resolve_stack_status(
+    stack: list[str], forge: Forge
+) -> tuple[set[str], set[str]]:
+    """Ask `forge` which of `stack`'s branches have landed, and which have a
+    published (open, non-draft) PR — both concurrently, across the whole
+    stack in one round trip."""
+    merged, published = await asyncio.gather(
+        asyncio.gather(*(forge.pr_is_merged(b) for b in stack)),
+        asyncio.gather(*(forge.pr_is_published(b) for b in stack)),
+    )
+    landed = {branch for branch, is_landed in zip(stack, merged) if is_landed}
+    is_published = {branch for branch, pub in zip(stack, published) if pub}
+    return landed, is_published
 
 
 def _restack(child: str, *, worktree: Path, onto: str, upstream: str) -> bool:
@@ -150,7 +160,7 @@ def sync_stack(*, root: Path, forge: Forge) -> None:
 
     # Authoritative, queried once per branch (concurrently — each is an
     # independent `gh` network round-trip).
-    landed = asyncio.run(_resolve_landed(stack, forge))
+    landed, published = asyncio.run(_resolve_stack_status(stack, forge))
 
     def surviving_base(child: str) -> str:
         """Nearest ancestor of ``child`` that has not landed (collapses chains
@@ -230,11 +240,27 @@ def sync_stack(*, root: Path, forge: Forge) -> None:
                         "Resolve the conflict, `git add`, then re-run `git sync`."
                     )
                     raise typer.Exit(1)
-            run(
-                ["git", "push", "-u", "origin", child],
-                cwd=worktree,
-                exit_on_error=True,
-            )
+
+            # Squash away the merge commit(s) just created (and any prior
+            # ones) unless the branch has a published PR — compressing one of
+            # those would force-push over what a reviewer is looking at. A
+            # branch with no PR yet, or still a draft, is fair game; its own
+            # no-op guards mean this is silently a no-op when there's nothing
+            # to squash. Rewrites history, so the push after must be a
+            # force-with-lease regardless of whether this call did anything.
+            if child in published:
+                run(
+                    ["git", "push", "-u", "origin", child],
+                    cwd=worktree,
+                    exit_on_error=True,
+                )
+            else:
+                compress_branch(root=worktree, push=False)
+                run(
+                    ["git", "push", "--force-with-lease", "origin", child],
+                    cwd=worktree,
+                    exit_on_error=True,
+                )
 
     # Every landed branch has had its children restacked away, so each is now a
     # leaf in the lineage and safe to remove (branch, worktree, and config key).

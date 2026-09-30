@@ -110,6 +110,46 @@ def test_sync_reconciles_branch_with_its_own_remote(
     assert (tests_wt / "local.txt").read_text() == "from local\n"
 
 
+def test_sync_compresses_merge_commit_when_pr_not_published(repo: Path, tmp_path: Path):
+    api_wt, tests_wt = _build_stack(repo, tmp_path)
+
+    (api_wt / "api.txt").write_text("api change\n")
+    git("add", "-A", cwd=api_wt)
+    git("commit", "-m", "api work", cwd=api_wt)
+    # api_tests has its own unique commit too, so merging api in is a real
+    # (non-fast-forward) merge, not just a fast-forward.
+    (tests_wt / "own.txt").write_text("own work\n")
+    git("add", "-A", cwd=tests_wt)
+    git("commit", "-m", "own work", cwd=tests_wt)
+
+    sync_stack(root=tests_wt, forge=FakeForge())  # nothing published by default
+
+    base = git("merge-base", "devon/api", "HEAD", cwd=tests_wt)
+    count = int(git("rev-list", "--count", f"{base}..HEAD", cwd=tests_wt))
+    assert count == 1, "the merge commit + own commit should collapse into one"
+    assert (tests_wt / "api.txt").read_text() == "api change\n"
+    assert (tests_wt / "own.txt").read_text() == "own work\n"
+
+
+def test_sync_leaves_merge_commit_when_pr_is_published(repo: Path, tmp_path: Path):
+    api_wt, tests_wt = _build_stack(repo, tmp_path)
+
+    (api_wt / "api.txt").write_text("api change\n")
+    git("add", "-A", cwd=api_wt)
+    git("commit", "-m", "api work", cwd=api_wt)
+    (tests_wt / "own.txt").write_text("own work\n")
+    git("add", "-A", cwd=tests_wt)
+    git("commit", "-m", "own work", cwd=tests_wt)
+
+    sync_stack(root=tests_wt, forge=FakeForge(published=["devon/api_tests"]))
+
+    base = git("merge-base", "devon/api", "HEAD", cwd=tests_wt)
+    count = int(git("rev-list", "--count", f"{base}..HEAD", cwd=tests_wt))
+    assert count > 1, "a published PR's branch must not be squashed"
+    assert (tests_wt / "api.txt").read_text() == "api change\n"
+    assert (tests_wt / "own.txt").read_text() == "own work\n"
+
+
 def test_merge_conflict_then_resume(repo: Path, tmp_path: Path):
     api_wt, tests_wt = _build_stack(repo, tmp_path)
 

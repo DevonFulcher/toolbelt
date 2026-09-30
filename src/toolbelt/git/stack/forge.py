@@ -1,12 +1,14 @@
-"""The single external seam: asking the code host whether a PR has merged.
+"""The single external seam: asking the code host about a branch's PR.
 
 Only the forge (GitHub, etc.) can authoritatively answer "did this branch's PR
-land?" — a squash-merge rewrites the SHA, so local ancestry can't tell. This is
-defined as a protocol and injected into `sync` so tests pass a fake instead of
-shelling out to `gh`.
+land?" — a squash-merge rewrites the SHA, so local ancestry can't tell — and
+"is this branch's PR published for review?", which decides whether `sync` may
+auto-compress it. Both are defined as a protocol and injected into `sync` so
+tests pass a fake instead of shelling out to `gh`.
 """
 
 import asyncio
+import json
 from pathlib import Path
 from typing import Protocol
 
@@ -16,9 +18,11 @@ from toolbelt.logger import logger
 
 
 class Forge(Protocol):
-    """A code host that can report whether a branch's PR has merged."""
+    """A code host that can report on a branch's PR."""
 
     async def pr_is_merged(self, branch: str) -> bool: ...
+
+    async def pr_is_published(self, branch: str) -> bool: ...
 
 
 class GhForge:
@@ -58,3 +62,34 @@ class GhForge:
             )
             raise typer.Exit(1)
         return stdout.decode().strip() not in ("", "0")
+
+    async def pr_is_published(self, branch: str) -> bool:
+        # "Published" means open and not draft — i.e. actually out for review.
+        # Compressing (force-pushing) one of those would disrupt reviewers, so
+        # `sync` skips auto-compress for it; no PR yet, or still a draft, is
+        # safe to keep squashing away.
+        process = await asyncio.create_subprocess_exec(
+            "gh",
+            "pr",
+            "list",
+            "--head",
+            branch,
+            "--state",
+            "open",
+            "--json",
+            "isDraft",
+            cwd=self._root,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await process.communicate()
+        if process.returncode != 0:
+            # Same reasoning as pr_is_merged: crash rather than silently
+            # treat a `gh` failure as "safe to compress".
+            logger.error(
+                f"`gh` failed checking publish status of '{branch}': "
+                f"{stderr.decode().strip()}"
+            )
+            raise typer.Exit(1)
+        prs = json.loads(stdout)
+        return any(not pr["isDraft"] for pr in prs)
