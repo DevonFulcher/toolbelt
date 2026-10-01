@@ -13,7 +13,7 @@ from enum import Enum
 from pathlib import Path
 from typing import AsyncIterator
 
-_FIELDS = "state,isDraft,reviewDecision,reviewRequests,statusCheckRollup"
+_FIELDS = "state,isDraft,reviewDecision,reviewRequests,statusCheckRollup,url"
 
 # Check-run/status-context outcomes that mean the run did not pass. Anything
 # else completed (SUCCESS, NEUTRAL, SKIPPED, STALE) counts as passing for our
@@ -49,9 +49,12 @@ class BranchStatus:
     pr: PrState
     ci: CiState
     review: ReviewState
+    url: str | None
 
 
-NO_PR = BranchStatus(pr=PrState.NONE, ci=CiState.NONE, review=ReviewState.NONE)
+NO_PR = BranchStatus(
+    pr=PrState.NONE, ci=CiState.NONE, review=ReviewState.NONE, url=None
+)
 
 
 # Widths of the longest value each field can take (excluding NONE, which is
@@ -120,6 +123,7 @@ def _parse_status(data: dict) -> BranchStatus:
         pr=pr_state,
         ci=_ci_state(data.get("statusCheckRollup") or []),
         review=review_state,
+        url=data["url"],
     )
 
 

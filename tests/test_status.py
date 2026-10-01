@@ -14,7 +14,7 @@ from toolbelt.git.stack.status import (
 
 def test_no_pr_has_no_ci_or_review():
     assert NO_PR == BranchStatus(
-        pr=PrState.NONE, ci=CiState.NONE, review=ReviewState.NONE
+        pr=PrState.NONE, ci=CiState.NONE, review=ReviewState.NONE, url=None
     )
     assert format_status(NO_PR) == "PR none"
 
@@ -53,9 +53,13 @@ def test_parse_status_draft_pr():
         "reviewDecision": "",
         "reviewRequests": [],
         "statusCheckRollup": [],
+        "url": "https://github.com/acme/widgets/pull/1",
     }
     assert _parse_status(data) == BranchStatus(
-        pr=PrState.DRAFT, ci=CiState.NONE, review=ReviewState.NONE
+        pr=PrState.DRAFT,
+        ci=CiState.NONE,
+        review=ReviewState.NONE,
+        url="https://github.com/acme/widgets/pull/1",
     )
 
 
@@ -66,9 +70,13 @@ def test_parse_status_open_pr_with_pending_review_request():
         "reviewDecision": "",
         "reviewRequests": [{"login": "someone"}],
         "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+        "url": "https://github.com/acme/widgets/pull/2",
     }
     assert _parse_status(data) == BranchStatus(
-        pr=PrState.OPEN, ci=CiState.SUCCESS, review=ReviewState.REQUESTED
+        pr=PrState.OPEN,
+        ci=CiState.SUCCESS,
+        review=ReviewState.REQUESTED,
+        url="https://github.com/acme/widgets/pull/2",
     )
 
 
@@ -79,6 +87,7 @@ def test_parse_status_changes_requested_maps_to_reviewed():
         "reviewDecision": "CHANGES_REQUESTED",
         "reviewRequests": [],
         "statusCheckRollup": [],
+        "url": "https://github.com/acme/widgets/pull/3",
     }
     assert _parse_status(data).review == ReviewState.REVIEWED
 
@@ -90,24 +99,34 @@ def test_parse_status_merged_pr():
         "reviewDecision": "APPROVED",
         "reviewRequests": [],
         "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+        "url": "https://github.com/acme/widgets/pull/4",
     }
     assert _parse_status(data) == BranchStatus(
-        pr=PrState.MERGED, ci=CiState.SUCCESS, review=ReviewState.APPROVED
+        pr=PrState.MERGED,
+        ci=CiState.SUCCESS,
+        review=ReviewState.APPROVED,
+        url="https://github.com/acme/widgets/pull/4",
     )
 
 
 def test_format_status_omits_ci_and_review_when_none():
-    status = BranchStatus(pr=PrState.DRAFT, ci=CiState.NONE, review=ReviewState.NONE)
+    status = BranchStatus(
+        pr=PrState.DRAFT, ci=CiState.NONE, review=ReviewState.NONE, url=None
+    )
     assert format_status(status) == "PR draft"
 
 
 def test_format_status_aligns_ci_column_despite_differing_pr_word_length():
     # "open" (4 chars) and "merged" (6 chars) must not shift where "CI" starts.
     open_pr = format_status(
-        BranchStatus(pr=PrState.OPEN, ci=CiState.FAILED, review=ReviewState.NONE)
+        BranchStatus(
+            pr=PrState.OPEN, ci=CiState.FAILED, review=ReviewState.NONE, url=None
+        )
     )
     merged_pr = format_status(
-        BranchStatus(pr=PrState.MERGED, ci=CiState.SUCCESS, review=ReviewState.NONE)
+        BranchStatus(
+            pr=PrState.MERGED, ci=CiState.SUCCESS, review=ReviewState.NONE, url=None
+        )
     )
     assert open_pr.index("CI") == merged_pr.index("CI")
 
@@ -115,9 +134,13 @@ def test_format_status_aligns_ci_column_despite_differing_pr_word_length():
 def test_format_status_aligns_review_column_despite_differing_ci_word_length():
     # "failed" (6 chars) and "success" (7 chars) must not shift "review".
     failed_ci = format_status(
-        BranchStatus(pr=PrState.OPEN, ci=CiState.FAILED, review=ReviewState.APPROVED)
+        BranchStatus(
+            pr=PrState.OPEN, ci=CiState.FAILED, review=ReviewState.APPROVED, url=None
+        )
     )
     success_ci = format_status(
-        BranchStatus(pr=PrState.OPEN, ci=CiState.SUCCESS, review=ReviewState.APPROVED)
+        BranchStatus(
+            pr=PrState.OPEN, ci=CiState.SUCCESS, review=ReviewState.APPROVED, url=None
+        )
     )
     assert failed_ci.index("review") == success_ci.index("review")

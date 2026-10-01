@@ -63,13 +63,27 @@ def render(
     if statuses is None:
         return "\n".join(line for line, _ in rows)
 
-    width = max((len(line) for line, branch in rows if branch is not None), default=0)
+    branch_width = max(
+        (len(line) for line, branch in rows if branch is not None), default=0
+    )
+    # Each tracked row's status suffix, computed once so its width (for
+    # aligning the PR-link column after it) and its text agree.
+    suffixes = {
+        branch: format_status(statuses[branch]) if branch in statuses else _LOADING
+        for _, branch in rows
+        if branch is not None
+    }
+    suffix_width = max((len(s) for s in suffixes.values()), default=0)
+
     lines: list[str] = []
     for line, branch in rows:
         if branch is None:
             lines.append(line)
             continue
+        suffix = suffixes[branch]
+        row = f"{line.ljust(branch_width)}  {suffix}"
         status = statuses.get(branch)
-        suffix = format_status(status) if status is not None else _LOADING
-        lines.append(f"{line.ljust(width)}  {suffix}")
+        if status is not None and status.url:
+            row = f"{row.ljust(branch_width + 2 + suffix_width)}  {status.url}"
+        lines.append(row)
     return "\n".join(lines)
