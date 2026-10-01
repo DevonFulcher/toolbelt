@@ -57,6 +57,59 @@ def test_compress_defaults_to_first_commit_subject(repo: Path, tmp_path: Path):
     assert git("log", "-1", "--format=%s", cwd=wt) == "first real"
 
 
+def test_compress_default_message_skips_merge_commits(repo: Path, tmp_path: Path):
+    wt = tmp_path / "wt-api"
+    create_stacked_branch("api", root=repo, wt_path=wt)
+    (repo / "main.txt").write_text("x\n")
+    git("add", "-A", cwd=repo)
+    git("commit", "-m", "main work", cwd=repo)
+    # The merge is the branch's oldest commit past the merge base.
+    git("merge", "--no-ff", "--no-edit", "main", cwd=wt)
+    (wt / "own.txt").write_text("x\n")
+    git("add", "-A", cwd=wt)
+    git("commit", "-m", "own work", cwd=wt)
+
+    compress_branch(root=wt, message=None)
+
+    assert _commits_since("main", cwd=wt) == 1
+    assert git("log", "-1", "--format=%s", cwd=wt) == "own work"
+
+
+def test_compress_default_message_without_parent_reflog(repo: Path, tmp_path: Path):
+    wt = tmp_path / "wt-api"
+    create_stacked_branch("api", root=repo, wt_path=wt)
+    git("reflog", "expire", "--expire=now", "--all", cwd=repo)
+    assert git("rev-list", "--walk-reflogs", "main", cwd=repo) == ""
+    for msg in ("first real", "second real"):
+        (wt / f"{msg.replace(' ', '_')}.txt").write_text("x\n")
+        git("add", "-A", cwd=wt)
+        git("commit", "-m", msg, cwd=wt)
+
+    compress_branch(root=wt, message=None)
+
+    assert _commits_since("main", cwd=wt) == 1
+    assert git("log", "-1", "--format=%s", cwd=wt) == "first real"
+
+
+def test_compress_default_message_when_only_merges_remain(
+    repo: Path, tmp_path: Path, commit
+):
+    wt = tmp_path / "wt-api"
+    create_stacked_branch("api", root=repo, wt_path=wt)
+    # Each merge also carries its own change, so the squash isn't empty.
+    for name in ("one", "two"):
+        commit(f"{name}.txt", "x\n", f"main {name}")
+        git("merge", "--no-ff", "--no-commit", "main", cwd=wt)
+        (wt / f"own_{name}.txt").write_text("x\n")
+        git("add", "-A", cwd=wt)
+        git("commit", "-m", f"merge {name}", cwd=wt)
+
+    compress_branch(root=wt, message=None)
+
+    assert _commits_since("main", cwd=wt) == 1
+    assert git("log", "-1", "--format=%s", cwd=wt) == "merge one"
+
+
 def test_compress_noop_on_single_commit(repo: Path, tmp_path: Path):
     wt = tmp_path / "wt-api"
     create_stacked_branch("api", root=repo, wt_path=wt)

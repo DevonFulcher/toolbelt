@@ -150,6 +150,37 @@ def test_sync_leaves_merge_commit_when_pr_is_published(repo: Path, tmp_path: Pat
     assert (tests_wt / "own.txt").read_text() == "own work\n"
 
 
+def test_sync_keeps_child_subject_after_parent_is_compressed(
+    repo: Path, tmp_path: Path
+):
+    api_wt = tmp_path / "wt-api"
+    create_stacked_branch("api", root=repo, wt_path=api_wt)
+    (api_wt / "api.txt").write_text("api\n")
+    git("add", "-A", cwd=api_wt)
+    git("commit", "-m", "parent work", cwd=api_wt)
+    # The child forks from the parent's commit, so that commit stays in the
+    # child's history after sync squashes the parent into a new one.
+    tests_wt = tmp_path / "wt-api-tests"
+    create_stacked_branch("api_tests", root=api_wt, wt_path=tests_wt)
+    (tests_wt / "tests.txt").write_text("tests\n")
+    git("add", "-A", cwd=tests_wt)
+    git("commit", "-m", "child work", cwd=tests_wt)
+
+    for i in range(2):
+        (api_wt / f"api{i}.txt").write_text(f"{i}\n")
+        git("add", "-A", cwd=api_wt)
+        git("commit", "-m", f"parent follow-up {i}", cwd=api_wt)
+
+        sync_stack(root=tests_wt, forge=FakeForge())
+
+        assert git("log", "-1", "--format=%s", cwd=api_wt) == "parent work"
+        base = git("merge-base", "devon/api", "HEAD", cwd=tests_wt)
+        assert git("log", "--format=%s", f"{base}..HEAD", cwd=tests_wt) == (
+            "child work"
+        )
+        assert (tests_wt / f"api{i}.txt").read_text() == f"{i}\n"
+
+
 def test_merge_conflict_then_resume(repo: Path, tmp_path: Path):
     api_wt, tests_wt = _build_stack(repo, tmp_path)
 
