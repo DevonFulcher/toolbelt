@@ -242,13 +242,21 @@ def sync_stack(*, root: Path, forge: Forge) -> None:
                     raise typer.Exit(1)
 
             # Squash away the merge commit(s) just created (and any prior
-            # ones) unless the branch has a published PR — compressing one of
-            # those would force-push over what a reviewer is looking at. A
-            # branch with no PR yet, or still a draft, is fair game; its own
-            # no-op guards mean this is silently a no-op when there's nothing
-            # to squash. Rewrites history, so the push after must be a
-            # force-with-lease regardless of whether this call did anything.
-            if child in published:
+            # ones), but only for a leaf with no published PR. A published
+            # branch is left alone — compressing it would force-push over what
+            # a reviewer is looking at. A branch with children is left alone
+            # too: its children still contain the commits being squashed, so
+            # git sees the squashed branch and its children as unrelated and
+            # reports false conflicts the next time the squashed branch is
+            # merged into them. A leaf with no PR yet, or still a draft, is
+            # fair game; its own no-op guards mean this is silently a no-op when
+            # there's nothing to squash. Squashing rewrites history, so that push
+            # must be a force-with-lease regardless of whether it did anything.
+            has_children = any(
+                parent == child and other not in landed
+                for other, parent in parents.items()
+            )
+            if child in published or has_children:
                 run(
                     ["git", "push", "-u", "origin", child],
                     cwd=worktree,

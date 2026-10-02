@@ -99,9 +99,10 @@ def compress_branch(
 
     Rewrites history, so the branch's remote is force-pushed to match (unless
     ``push`` is False — ``sync`` sets this since it does its own push right
-    after, for every branch, compressed or not). Children are left untouched
-    — a later ``git sync`` reconciles them cleanly, since the squashed commit
-    carries the same tree they already merged.
+    after, for every branch, compressed or not). Children are left untouched,
+    but they still contain the commits that were squashed, so merging this
+    branch into them afterwards can report false conflicts. ``sync`` only
+    compresses leaves for that reason.
     """
     branch = current_branch(root)
     parent = _parent_or_exit(branch, root=root)

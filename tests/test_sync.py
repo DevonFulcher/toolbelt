@@ -9,6 +9,7 @@ import typer
 from conftest import FakeForge, git
 
 from toolbelt.git.stack.append import create_stacked_branch
+from toolbelt.git.stack.ops import compress_branch
 from toolbelt.git.stack.sync import sync_stack
 
 
@@ -131,6 +132,32 @@ def test_sync_compresses_merge_commit_when_pr_not_published(repo: Path, tmp_path
     assert (tests_wt / "own.txt").read_text() == "own work\n"
 
 
+def test_sync_does_not_compress_a_branch_with_children(repo: Path, tmp_path: Path):
+    api_wt, tests_wt = _build_stack(repo, tmp_path)
+
+    (api_wt / "api.txt").write_text("api change\n")
+    git("add", "-A", cwd=api_wt)
+    git("commit", "-m", "api work", cwd=api_wt)
+    (tests_wt / "own.txt").write_text("own work\n")
+    git("add", "-A", cwd=tests_wt)
+    git("commit", "-m", "own work", cwd=tests_wt)
+    # Work landing on main makes syncing devon/api a real merge.
+    (repo / "landed.txt").write_text("landed\n")
+    git("add", "-A", cwd=repo)
+    git("commit", "-m", "landed on main", cwd=repo)
+    git("push", "origin", "main", cwd=repo)
+
+    sync_stack(root=tests_wt, forge=FakeForge())  # nothing published by default
+
+    api_count = int(git("rev-list", "--count", "origin/main..HEAD", cwd=api_wt))
+    assert api_count > 1, "devon/api has a child, so its merge must be kept"
+    base = git("merge-base", "devon/api", "HEAD", cwd=tests_wt)
+    leaf_count = int(git("rev-list", "--count", f"{base}..HEAD", cwd=tests_wt))
+    assert leaf_count == 1, "the leaf is still squashed"
+    assert (tests_wt / "landed.txt").read_text() == "landed\n"
+    assert (tests_wt / "own.txt").read_text() == "own work\n"
+
+
 def test_sync_leaves_merge_commit_when_pr_is_published(repo: Path, tmp_path: Path):
     api_wt, tests_wt = _build_stack(repo, tmp_path)
 
@@ -159,7 +186,7 @@ def test_sync_keeps_child_subject_after_parent_is_compressed(
     git("add", "-A", cwd=api_wt)
     git("commit", "-m", "parent work", cwd=api_wt)
     # The child forks from the parent's commit, so that commit stays in the
-    # child's history after sync squashes the parent into a new one.
+    # child's history after the parent is squashed into a new one by hand.
     tests_wt = tmp_path / "wt-api-tests"
     create_stacked_branch("api_tests", root=api_wt, wt_path=tests_wt)
     (tests_wt / "tests.txt").write_text("tests\n")
@@ -170,6 +197,7 @@ def test_sync_keeps_child_subject_after_parent_is_compressed(
         (api_wt / f"api{i}.txt").write_text(f"{i}\n")
         git("add", "-A", cwd=api_wt)
         git("commit", "-m", f"parent follow-up {i}", cwd=api_wt)
+        compress_branch(root=api_wt)
 
         sync_stack(root=tests_wt, forge=FakeForge())
 
