@@ -132,6 +132,29 @@ def test_sync_compresses_merge_commit_when_pr_not_published(repo: Path, tmp_path
     assert (tests_wt / "own.txt").read_text() == "own work\n"
 
 
+def test_sync_compress_ignores_a_stale_local_base(repo: Path, tmp_path: Path):
+    api_wt = tmp_path / "wt-api"
+    create_stacked_branch("api", root=repo, wt_path=api_wt)
+    (api_wt / "own.txt").write_text("own work\n")
+    git("add", "-A", cwd=api_wt)
+    git("commit", "-m", "own work", cwd=api_wt)
+    # Work lands on origin/main, but the local main branch never moves.
+    old = git("rev-parse", "main", cwd=repo)
+    (repo / "landed.txt").write_text("landed\n")
+    git("add", "-A", cwd=repo)
+    git("commit", "-m", "landed on main", cwd=repo)
+    git("push", "origin", "main", cwd=repo)
+    landed = git("rev-parse", "main", cwd=repo)
+    git("reset", "--hard", old, cwd=repo)
+
+    sync_stack(root=api_wt, forge=FakeForge())  # leaf, nothing published
+
+    # The squash sits on the current origin/main and holds only the branch's work.
+    assert git("rev-parse", "HEAD^", cwd=api_wt) == landed
+    changed = git("diff", "--name-only", "HEAD^", "HEAD", cwd=api_wt).splitlines()
+    assert changed == ["own.txt"]
+
+
 def test_sync_does_not_compress_a_branch_with_children(repo: Path, tmp_path: Path):
     api_wt, tests_wt = _build_stack(repo, tmp_path)
 

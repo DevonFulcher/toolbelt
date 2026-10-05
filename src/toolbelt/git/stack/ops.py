@@ -36,6 +36,45 @@ def _remote_branch_exists(branch: str, *, root: Path) -> bool:
     return result.returncode == 0
 
 
+def _is_ancestor(ancestor: str, descendant: str, *, root: Path) -> bool:
+    result = run(
+        ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+        cwd=root,
+        check=False,
+        capture_output=True,
+    )
+    return result.returncode == 0
+
+
+def _rev_parse(ref: str, *, root: Path) -> str:
+    return run(["git", "rev-parse", ref], cwd=root, capture_output=True).stdout.strip()
+
+
+def _parent_ref(parent: str, *, root: Path) -> str:
+    """The ref to measure a branch against its stack parent.
+
+    A parent that is itself in the stack is current locally: ``sync`` merges it
+    into its children straight from the local branch. The stack's base (e.g.
+    ``main``) is not tracked, ``sync`` merges ``origin/<base>`` into the stack
+    root, and nothing updates the local base branch, so it is often behind the
+    remote. Measuring against that stale branch treats every newer base commit
+    already merged into the branch as the branch's own work, and a squash then
+    folds them in. Use ``origin/<base>`` when the local base is behind it; keep
+    the local base when it is ahead of, or has diverged from, the remote.
+    """
+    if parent in all_parents(root=root):
+        return parent
+    run(["git", "fetch", "origin", parent], cwd=root, check=False, capture_output=True)
+    remote = f"origin/{parent}"
+    if (
+        _remote_branch_exists(parent, root=root)
+        and _rev_parse(parent, root=root) != _rev_parse(remote, root=root)
+        and _is_ancestor(parent, remote, root=root)
+    ):
+        return remote
+    return parent
+
+
 def _past_tips(branch: str, *, root: Path) -> list[str]:
     """Every commit ``branch`` has pointed at, per its reflog.
 
@@ -108,7 +147,7 @@ def compress_branch(
     parent = _parent_or_exit(branch, root=root)
 
     base = run(
-        ["git", "merge-base", parent, "HEAD"],
+        ["git", "merge-base", _parent_ref(parent, root=root), "HEAD"],
         cwd=root,
         capture_output=True,
     ).stdout.strip()
@@ -165,7 +204,8 @@ def diff_parent_command(
     branch = current_branch(root)
     parent = _parent_or_exit(branch, root=root)
     config_args = [] if line else ["-c", "diff.external=difft"]
-    return ["git", *config_args, "diff", f"{parent}...HEAD", *(extra_args or [])]
+    parent_ref = _parent_ref(parent, root=root)
+    return ["git", *config_args, "diff", f"{parent_ref}...HEAD", *(extra_args or [])]
 
 
 def _would_create_cycle(*, branch: str, new_parent: str, root: Path) -> bool:

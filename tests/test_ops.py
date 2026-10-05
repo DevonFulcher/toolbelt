@@ -110,6 +110,60 @@ def test_compress_default_message_when_only_merges_remain(
     assert git("log", "-1", "--format=%s", cwd=wt) == "merge one"
 
 
+def _stale_local_main(repo: Path, commit) -> str:
+    """Advance ``origin/main`` by one commit and leave local ``main`` behind it.
+
+    Returns the new ``origin/main`` tip. This is the usual state of a clone whose
+    stack syncs merge ``origin/main`` into branches but never update local ``main``.
+    """
+    old = git("rev-parse", "HEAD", cwd=repo)
+    commit("newer.txt", "x\n", "newer main work")
+    git("push", "origin", "main", cwd=repo)
+    newer = git("rev-parse", "HEAD", cwd=repo)
+    git("reset", "--hard", old, cwd=repo)
+    return newer
+
+
+def test_compress_squashes_onto_origin_when_local_base_is_stale(
+    repo: Path, tmp_path: Path, commit
+):
+    wt = tmp_path / "wt-api"
+    create_stacked_branch("api", root=repo, wt_path=wt)
+    newer = _stale_local_main(repo, commit)
+    for name in ("one", "two"):
+        (wt / f"{name}.txt").write_text("x\n")
+        git("add", "-A", cwd=wt)
+        git("commit", "-m", f"own {name}", cwd=wt)
+    git("merge", "--no-edit", "origin/main", cwd=wt)
+
+    compress_branch(root=wt, message="squashed")
+
+    # The squash sits on the current origin/main and holds only the branch's work.
+    assert git("rev-parse", "HEAD^", cwd=wt) == newer
+    changed = git("diff", "--name-only", "HEAD^", "HEAD", cwd=wt).splitlines()
+    assert sorted(changed) == ["one.txt", "two.txt"]
+
+
+def test_compress_squashes_onto_local_base_when_it_is_ahead_of_origin(
+    repo: Path, tmp_path: Path, commit
+):
+    wt = tmp_path / "wt-api"
+    create_stacked_branch("api", root=repo, wt_path=wt)
+    commit("unpushed.txt", "x\n", "local-only main work")  # origin/main is behind
+    local = git("rev-parse", "main", cwd=repo)
+    git("merge", "--no-edit", "main", cwd=wt)
+    for name in ("one", "two"):
+        (wt / f"{name}.txt").write_text("x\n")
+        git("add", "-A", cwd=wt)
+        git("commit", "-m", f"own {name}", cwd=wt)
+
+    compress_branch(root=wt, message="squashed", push=False)
+
+    assert git("rev-parse", "HEAD^", cwd=wt) == local
+    changed = git("diff", "--name-only", "HEAD^", "HEAD", cwd=wt).splitlines()
+    assert sorted(changed) == ["one.txt", "two.txt"]
+
+
 def test_compress_noop_on_single_commit(repo: Path, tmp_path: Path):
     wt = tmp_path / "wt-api"
     create_stacked_branch("api", root=repo, wt_path=wt)
@@ -141,6 +195,18 @@ def test_diff_parent_command_uses_lineage_parent(repo: Path, tmp_path: Path):
 
     # Defaults to difftastic via diff.external.
     assert cmd == ["git", "-c", "diff.external=difft", "diff", "main...HEAD"]
+
+
+def test_diff_parent_command_compares_with_origin_when_local_base_is_stale(
+    repo: Path, tmp_path: Path, commit
+):
+    wt = tmp_path / "wt-api"
+    create_stacked_branch("api", root=repo, wt_path=wt)
+    _stale_local_main(repo, commit)
+
+    cmd = diff_parent_command(root=wt)
+
+    assert cmd == ["git", "-c", "diff.external=difft", "diff", "origin/main...HEAD"]
 
 
 def test_diff_parent_command_passes_extra_args(repo: Path, tmp_path: Path):
