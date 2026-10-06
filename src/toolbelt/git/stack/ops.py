@@ -15,6 +15,9 @@ from toolbelt.git.worktrees import current_branch
 from toolbelt.logger import logger
 
 
+_ATTRIBUTION_TRAILER = "Co-Authored-By"
+
+
 def _parent_or_exit(branch: str, *, root: Path) -> str:
     parent = get_parent(branch, root=root)
     if parent is None:
@@ -93,13 +96,13 @@ def _past_tips(branch: str, *, root: Path) -> list[str]:
 
 
 def _default_message(*, parent: str, base: str, root: Path) -> str:
-    """The subject of the branch's oldest own commit.
+    """The full message (subject, body, trailers) of the branch's oldest own commit.
 
     ``base..HEAD`` can still hold commits the parent has since rewritten away
     (e.g. squashed by ``sync``), because the branch forked from or merged them.
     Excluding everything reachable from any tip the parent has ever had, plus
     merge commits, leaves the branch's own commits. If that leaves nothing,
-    falls back to the oldest subject in ``base..HEAD``.
+    falls back to the oldest commit in ``base..HEAD``.
 
     The parent's past tips go on the command line; branch reflogs expire and
     stay small, so this is well under the argument-length limit.
@@ -110,25 +113,63 @@ def _default_message(*, parent: str, base: str, root: Path) -> str:
             "log",
             "--reverse",
             "--no-merges",
-            "--format=%s",
+            "--format=%H",
             f"{base}..HEAD",
             "--not",
             *_past_tips(parent, root=root),
         ],
         cwd=root,
         capture_output=True,
-    ).stdout.splitlines()
+    ).stdout.split()
     if own:
-        return own[0].strip()
-    return (
-        run(
-            ["git", "log", "--reverse", "--format=%s", f"{base}..HEAD"],
+        chosen = own[0]
+    else:
+        chosen = run(
+            ["git", "log", "--reverse", "--format=%H", f"{base}..HEAD"],
             cwd=root,
             capture_output=True,
-        )
-        .stdout.splitlines()[0]
-        .strip()
-    )
+        ).stdout.split()[0]
+    message = run(
+        ["git", "log", "-1", "--format=%B", chosen], cwd=root, capture_output=True
+    ).stdout.strip()
+    return _with_attribution_trailers(message, base=base, root=root)
+
+
+def _with_attribution_trailers(message: str, *, base: str, root: Path) -> str:
+    """``message`` plus every ``Co-Authored-By`` trailer from ``base..HEAD``.
+
+    Squashing drops all but one commit's message, so attribution trailers from
+    the other commits are carried over. ``git interpret-trailers`` adds each one
+    to the message's trailer block (starting one if needed) unless an identical
+    trailer is already there.
+    """
+    found = run(
+        [
+            "git",
+            "log",
+            "--reverse",
+            "--no-merges",
+            f"--format=%(trailers:key={_ATTRIBUTION_TRAILER},unfold)",
+            f"{base}..HEAD",
+        ],
+        cwd=root,
+        capture_output=True,
+    ).stdout.splitlines()
+    trailers = list(dict.fromkeys(line.strip() for line in found if line.strip()))
+    if not trailers:
+        return message
+    args = [
+        "git",
+        "interpret-trailers",
+        "--no-divider",
+        "--where",
+        "end",
+        "--if-exists",
+        "addIfDifferent",
+    ]
+    for trailer in trailers:
+        args += ["--trailer", trailer]
+    return run(args, cwd=root, capture_output=True, input=message + "\n").stdout.strip()
 
 
 def compress_branch(
@@ -170,13 +211,21 @@ def compress_branch(
         return
 
     if message is None:
-        # Default to the branch's first (oldest) commit subject, like git-town.
+        # Default to the branch's first (oldest) commit message, like git-town.
         message = _default_message(parent=parent, base=base, root=root)
 
     # Soft reset keeps the working tree and index, so the commit captures every
     # change since the fork point as one commit; unstaged work is left alone.
     run(["git", "reset", "--soft", base], cwd=root, exit_on_error=True)
-    run(["git", "commit", "-m", message], cwd=root, exit_on_error=True)
+    # The message goes over stdin so a multi-line body survives intact; the
+    # explicit cleanup mode keeps a body line starting with ``#`` from being
+    # treated as a comment.
+    run(
+        ["git", "commit", "--cleanup=whitespace", "-F", "-"],
+        cwd=root,
+        exit_on_error=True,
+        input=message.strip() + "\n",
+    )
     logger.info(f"Compressed {count} commits on '{branch}' into one.")
 
     if push and _remote_branch_exists(branch, root=root):

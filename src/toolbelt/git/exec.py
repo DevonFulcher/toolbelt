@@ -14,6 +14,7 @@ def run(
     check: bool = True,
     exit_on_error: bool = False,
     capture_output: bool = False,
+    input: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """
     Run a command with consistent logging and error-handling policy.
@@ -28,6 +29,8 @@ def run(
             termination (avoids a traceback). This applies both when `check=True`
             (exception path) and when `check=False` (non-zero return code path).
         capture_output: If True, capture stdout/stderr into the returned result.
+        input: Text written to the command's stdin (e.g. a multi-line commit
+            message for `git commit -F -`).
 
     Notes:
         Common combinations:
@@ -45,6 +48,7 @@ def run(
             check=check,
             text=True,
             capture_output=capture_output,
+            input=input,
         )
     except FileNotFoundError as err:
         logger.error(f"Command not found: {cmd[0]}")

@@ -132,6 +132,27 @@ def test_sync_compresses_merge_commit_when_pr_not_published(repo: Path, tmp_path
     assert (tests_wt / "own.txt").read_text() == "own work\n"
 
 
+def test_sync_squash_keeps_body_and_trailer(repo: Path, tmp_path: Path):
+    api_wt = tmp_path / "wt-api"
+    create_stacked_branch("api", root=repo, wt_path=api_wt)
+    message = (
+        "Declare every third-party package imported directly\n\n"
+        "Body paragraph.\n\n"
+        "Co-Authored-By: AI Assistant <noreply@ai>"
+    )
+    (api_wt / "one.txt").write_text("one\n")
+    git("add", "-A", cwd=api_wt)
+    git("commit", "-m", message, cwd=api_wt)
+    (api_wt / "two.txt").write_text("two\n")
+    git("add", "-A", cwd=api_wt)
+    git("commit", "-m", "follow-up", cwd=api_wt)
+
+    sync_stack(root=api_wt, forge=FakeForge())  # leaf, nothing published
+
+    assert git("rev-list", "--count", "main..HEAD", cwd=api_wt) == "1"
+    assert git("log", "-1", "--format=%B", cwd=api_wt) == message
+
+
 def test_sync_compress_ignores_a_stale_local_base(repo: Path, tmp_path: Path):
     api_wt = tmp_path / "wt-api"
     create_stacked_branch("api", root=repo, wt_path=api_wt)

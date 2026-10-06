@@ -57,6 +57,104 @@ def test_compress_defaults_to_first_commit_subject(repo: Path, tmp_path: Path):
     assert git("log", "-1", "--format=%s", cwd=wt) == "first real"
 
 
+def _commit_file(wt: Path, name: str, message: str) -> None:
+    (wt / name).write_text("x\n")
+    git("add", "-A", cwd=wt)
+    git("commit", "-m", message, cwd=wt)
+
+
+def _squashed_message(wt: Path) -> str:
+    return git("log", "-1", "--format=%B", cwd=wt)
+
+
+def test_compress_default_message_keeps_body_and_trailer(repo: Path, tmp_path: Path):
+    wt = tmp_path / "wt-api"
+    create_stacked_branch("api", root=repo, wt_path=wt)
+    first = (
+        "Declare every third-party package imported directly\n\n"
+        "# Why\n"
+        "First paragraph.\n\n"
+        "Second paragraph.\n\n"
+        "Co-Authored-By: AI Assistant <noreply@ai>"
+    )
+    _commit_file(wt, "one.txt", first)
+    _commit_file(wt, "two.txt", "second real")
+
+    compress_branch(root=wt, message=None)
+
+    assert _commits_since("main", cwd=wt) == 1
+    assert _squashed_message(wt) == first
+
+
+def test_compress_adds_trailers_from_other_commits_once(repo: Path, tmp_path: Path):
+    wt = tmp_path / "wt-api"
+    create_stacked_branch("api", root=repo, wt_path=wt)
+    _commit_file(
+        wt,
+        "one.txt",
+        "first\n\nbody\n\nSigned-off-by: Test <test@example.com>\n"
+        "Co-Authored-By: Ada <ada@example.com>",
+    )
+    _commit_file(
+        wt,
+        "two.txt",
+        "second\n\nsecond body that is not carried over\n\n"
+        "Co-Authored-By: Ada <ada@example.com>\n"
+        "Co-Authored-By: Grace <grace@example.com>",
+    )
+    _commit_file(wt, "three.txt", "third\n\nco-authored-by: Linus <linus@example.com>")
+    _commit_file(wt, "four.txt", "fourth\n\nco-authored-by: Linus <linus@example.com>")
+
+    compress_branch(root=wt, message=None)
+
+    assert _commits_since("main", cwd=wt) == 1
+    assert _squashed_message(wt) == (
+        "first\n\nbody\n\nSigned-off-by: Test <test@example.com>\n"
+        "Co-Authored-By: Ada <ada@example.com>\n"
+        "Co-Authored-By: Grace <grace@example.com>\n"
+        "co-authored-by: Linus <linus@example.com>"
+    )
+
+
+def test_compress_starts_trailer_block_when_chosen_commit_has_none(
+    repo: Path, tmp_path: Path
+):
+    wt = tmp_path / "wt-api"
+    create_stacked_branch("api", root=repo, wt_path=wt)
+    _commit_file(wt, "one.txt", "first\n\nbody")
+    _commit_file(wt, "two.txt", "second\n\nCo-Authored-By: Ada <ada@example.com>")
+
+    compress_branch(root=wt, message=None)
+
+    assert _squashed_message(wt) == (
+        "first\n\nbody\n\nCo-Authored-By: Ada <ada@example.com>"
+    )
+
+
+def test_compress_subject_only_commits_stay_subject_only(repo: Path, tmp_path: Path):
+    wt = tmp_path / "wt-api"
+    create_stacked_branch("api", root=repo, wt_path=wt)
+    _commit_file(wt, "one.txt", "first real")
+    _commit_file(wt, "two.txt", "second real")
+
+    compress_branch(root=wt, message=None)
+
+    assert _squashed_message(wt) == "first real"
+
+
+def test_compress_explicit_multiline_message_is_used_verbatim(
+    repo: Path, tmp_path: Path
+):
+    wt = tmp_path / "wt-api"
+    create_stacked_branch("api", root=repo, wt_path=wt)
+    _commit_file(wt, "one.txt", "first\n\nCo-Authored-By: Ada <ada@example.com>")
+    _commit_file(wt, "two.txt", "second")
+
+    compress_branch(root=wt, message="explicit\n\n# not a comment")
+
+    assert _squashed_message(wt) == "explicit\n\n# not a comment"
+
+
 def test_compress_default_message_skips_merge_commits(repo: Path, tmp_path: Path):
     wt = tmp_path / "wt-api"
     create_stacked_branch("api", root=repo, wt_path=wt)
