@@ -7,6 +7,7 @@ from toolbelt.git.stack.status import (
     PrState,
     ReviewState,
     _ci_state,
+    _count_unresolved,
     _parse_status,
     format_status,
 )
@@ -144,3 +145,57 @@ def test_format_status_aligns_review_column_despite_differing_ci_word_length():
         )
     )
     assert failed_ci.index("review") == success_ci.index("review")
+
+
+def test_count_unresolved_counts_only_unresolved_threads():
+    payload = {
+        "data": {
+            "repository": {
+                "pullRequest": {
+                    "reviewThreads": {
+                        "nodes": [
+                            {"isResolved": False},
+                            {"isResolved": True},
+                            {"isResolved": False},
+                        ]
+                    }
+                }
+            }
+        }
+    }
+    assert _count_unresolved(payload) == 2
+
+
+def test_count_unresolved_is_zero_when_no_threads():
+    payload = {
+        "data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}
+    }
+    assert _count_unresolved(payload) == 0
+
+
+def test_format_status_shows_open_comments_only_when_nonzero():
+    no_comments = BranchStatus(
+        pr=PrState.OPEN, ci=CiState.NONE, review=ReviewState.NONE, url=None
+    )
+    assert "open comments" not in format_status(no_comments)
+
+    with_comments = BranchStatus(
+        pr=PrState.OPEN,
+        ci=CiState.NONE,
+        review=ReviewState.NONE,
+        url=None,
+        open_comments=3,
+    )
+    assert format_status(with_comments).endswith("open comments: 3")
+
+
+def test_parse_status_carries_through_open_comments():
+    data = {
+        "state": "OPEN",
+        "isDraft": False,
+        "reviewDecision": "",
+        "reviewRequests": [],
+        "statusCheckRollup": [],
+        "url": "https://github.com/acme/widgets/pull/5",
+    }
+    assert _parse_status(data, open_comments=4).open_comments == 4

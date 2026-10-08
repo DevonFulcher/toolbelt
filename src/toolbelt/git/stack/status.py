@@ -8,12 +8,31 @@ testable without shelling out.
 
 import asyncio
 import json
+import re
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import AsyncIterator
 
 _FIELDS = "state,isDraft,reviewDecision,reviewRequests,statusCheckRollup,url"
+
+# `gh pr view --json` has no field for review-thread resolution, so the
+# unresolved-comment count needs a raw GraphQL call instead; this pulls
+# owner/repo/number out of the PR url already fetched above, rather than
+# paying for a separate `gh repo view` just to learn the owner/repo.
+_PR_URL_RE = re.compile(r"github\.com/([^/]+)/([^/]+)/pull/(\d+)")
+
+_REVIEW_THREADS_QUERY = """
+query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100) {
+        nodes { isResolved }
+      }
+    }
+  }
+}
+"""
 
 # Check-run/status-context outcomes that mean the run did not pass. Anything
 # else completed (SUCCESS, NEUTRAL, SKIPPED, STALE) counts as passing for our
@@ -50,6 +69,7 @@ class BranchStatus:
     ci: CiState
     review: ReviewState
     url: str | None
+    open_comments: int = 0
 
 
 NO_PR = BranchStatus(
@@ -81,7 +101,10 @@ def format_status(status: BranchStatus) -> str:
         f"{label} {value}" if i == last else f"{label} {value.ljust(width)}"
         for i, (label, value, width) in enumerate(fields)
     ]
-    return "  ".join(parts)
+    suffix = "  ".join(parts)
+    if status.open_comments > 0:
+        suffix += f"  open comments: {status.open_comments}"
+    return suffix
 
 
 def _ci_state(rollup: list[dict]) -> CiState:
@@ -98,7 +121,7 @@ def _ci_state(rollup: list[dict]) -> CiState:
     return CiState.SUCCESS
 
 
-def _parse_status(data: dict) -> BranchStatus:
+def _parse_status(data: dict, *, open_comments: int = 0) -> BranchStatus:
     """Parse a `gh pr view --json {_FIELDS}` payload into a `BranchStatus`."""
     if data["state"] == "MERGED":
         pr_state = PrState.MERGED
@@ -124,7 +147,44 @@ def _parse_status(data: dict) -> BranchStatus:
         ci=_ci_state(data.get("statusCheckRollup") or []),
         review=review_state,
         url=data["url"],
+        open_comments=open_comments,
     )
+
+
+def _count_unresolved(payload: dict) -> int:
+    """Count unresolved review threads in a `reviewThreads` GraphQL payload."""
+    nodes = payload["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]
+    return sum(1 for node in nodes if not node["isResolved"])
+
+
+async def _fetch_open_comment_count(url: str, *, root: Path) -> int:
+    """Unresolved review-thread count for the PR at `url`. Best-effort: this
+    is cosmetic `tree` display, not something worth failing the whole lookup
+    over, so any `gh` failure (or an unparseable url) just counts as 0."""
+    match = _PR_URL_RE.search(url)
+    if match is None:
+        return 0
+    owner, repo, number = match.groups()
+    process = await asyncio.create_subprocess_exec(
+        "gh",
+        "api",
+        "graphql",
+        "-f",
+        f"query={_REVIEW_THREADS_QUERY}",
+        "-f",
+        f"owner={owner}",
+        "-f",
+        f"repo={repo}",
+        "-F",
+        f"number={number}",
+        cwd=root,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, _ = await process.communicate()
+    if process.returncode != 0:
+        return 0
+    return _count_unresolved(json.loads(stdout))
 
 
 async def fetch_branch_status(branch: str, *, root: Path) -> BranchStatus:
@@ -145,7 +205,9 @@ async def fetch_branch_status(branch: str, *, root: Path) -> BranchStatus:
         # `gh pr view` exits non-zero when the branch has no PR — that's the
         # expected, common case here, not an infra failure to guard against.
         return NO_PR
-    return _parse_status(json.loads(stdout))
+    data = json.loads(stdout)
+    open_comments = await _fetch_open_comment_count(data["url"], root=root)
+    return _parse_status(data, open_comments=open_comments)
 
 
 async def stream_branch_statuses(
