@@ -1,3 +1,4 @@
+import os
 import subprocess
 from pathlib import Path
 
@@ -91,6 +92,58 @@ def _worktree_paths_for_branch(branch_name: str, root: Path) -> list[Path]:
     return unique_paths
 
 
+def _is_worktree_dirty(path: Path) -> bool:
+    """True if ``path``'s worktree has uncommitted or untracked changes."""
+    result = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=path,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return bool(result.stdout.strip())
+
+
+def _remove_worktree(path: Path, *, force: bool) -> None:
+    """Make ``path`` disappear as a worktree, deleting its files in the
+    background rather than blocking on it.
+
+    A worktree's files can number in the tens of thousands (a Python venv,
+    `node_modules`, ...), and deleting that many small files can take upward
+    of ten seconds — git-specific bookkeeping (checking cleanliness,
+    unregistering) is comparatively instant. So instead of ``git worktree
+    remove`` (one call that does both, blocking on the slow part), this
+    replicates its cleanliness check (unless ``force``), then renames the
+    directory out of the way — an instant same-filesystem rename regardless
+    of file count — and deletes the renamed copy in a detached background
+    process. The caller's ``git worktree prune`` right after this picks up
+    the now-missing directory and drops its registration immediately.
+
+    This doesn't honor `git worktree lock` the way `git worktree remove`
+    does — not a concern today, since nothing in this codebase locks a
+    worktree.
+    """
+    if not force and _is_worktree_dirty(path):
+        message = (
+            f"fatal: '{path}' contains modified or untracked files, use "
+            "--force to delete it"
+        )
+        logger.error(message)
+        raise subprocess.CalledProcessError(
+            1, ["git", "worktree", "remove", str(path)], stderr=message
+        )
+
+    trash_path = path.with_name(f".toolbelt-trash-{path.name}-{os.getpid()}")
+    path.rename(trash_path)
+    logger.info(f"Removing {path} in the background...")
+    subprocess.Popen(
+        ["rm", "-rf", str(trash_path)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
 def delete_branch_and_worktree(
     branch_name: str,
     *,
@@ -109,7 +162,7 @@ def delete_branch_and_worktree(
     repo_root:
         Path to the repository root.
     force:
-        If True, pass ``--force`` to ``git worktree remove``.
+        If True, skip the check for uncommitted/untracked changes.
 
     Returns
     -------
@@ -144,30 +197,7 @@ def delete_branch_and_worktree(
     worktree_paths = _worktree_paths_for_branch(branch_to_delete, root)
 
     for path in worktree_paths:
-        cmd = ["git", "worktree", "remove"]
-        if force:
-            cmd.append("--force")
-        cmd.append(str(path))
-        logger.info(" ".join(cmd))
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            cwd=root,
-            check=False,
-        )
-        if result.stdout:
-            logger.info(result.stdout.rstrip())
-        if result.returncode != 0:
-            if result.stderr:
-                logger.error(result.stderr.rstrip())
-            raise subprocess.CalledProcessError(
-                result.returncode,
-                result.args,
-                output=result.stdout,
-                stderr=result.stderr,
-            )
-        logger.info(f"Removed {path}")
+        _remove_worktree(path, force=force)
 
     # Clean up any stale worktree references so branch deletion succeeds.
     subprocess.run(["git", "worktree", "prune"], check=True, cwd=root)
