@@ -24,7 +24,7 @@ from toolbelt.git.stack.lineage import (
     resolve_stack,
     set_parent,
 )
-from toolbelt.git.stack.ops import collapse_trailing_merges, has_unpushed_real_work
+from toolbelt.git.stack.ops import has_unpushed_real_work
 from toolbelt.git.stack.worktree import worktree_paths
 from toolbelt.git.worktrees import current_branch
 from toolbelt.git.worktrees_ops import delete_branch_and_worktree, main_worktree
@@ -241,45 +241,30 @@ def sync_stack(*, root: Path, forge: Forge) -> None:
                     )
                     raise typer.Exit(1)
 
-            # Collapse a trailing run of merge commits just extended by the
-            # merge(s) above, for every branch regardless of PR state — this
-            # never touches the branch's own authored commits (see
-            # collapse_trailing_merges), so it doesn't disrupt a reviewer any
-            # more than the merge commit it replaces would have. A branch
-            # with children is still left alone: its children already contain
-            # the commits being collapsed, so git would see the rewritten
-            # branch and its children as unrelated and report false conflicts
-            # the next time it's merged into them.
+            # A branch with children is always pushed: they track it. A leaf
+            # is pushed only when there's an open PR to show it to *and* new
+            # work of its own — otherwise this sync merely absorbed upstream
+            # movement, and pushing it would re-trigger CI and review for
+            # nothing new.
             has_children = any(
                 parent == child and other not in landed
                 for other, parent in parents.items()
             )
-            if has_children:
+            if (
+                has_children
+                or child in has_open_pr
+                and has_unpushed_real_work(child, root=worktree)
+            ):
                 run(
                     ["git", "push", "-u", "origin", child],
                     cwd=worktree,
                     exit_on_error=True,
                 )
             else:
-                # Always collapsed locally — cheap, and keeps history clean
-                # for whenever this does get pushed — but only actually
-                # pushed when there's an open PR *and* real work waiting:
-                # otherwise this was purely absorbing upstream movement, and
-                # pushing it would just re-trigger CI/review for nothing new.
-                collapse_trailing_merges(root=worktree, push=False)
-                if child in has_open_pr and has_unpushed_real_work(
-                    child, root=worktree
-                ):
-                    run(
-                        ["git", "push", "--force-with-lease", "origin", child],
-                        cwd=worktree,
-                        exit_on_error=True,
-                    )
-                else:
-                    logger.info(
-                        f"'{child}' is up to date locally; not pushing "
-                        "(nothing new worth sharing yet)."
-                    )
+                logger.info(
+                    f"'{child}' is up to date locally; not pushing "
+                    "(nothing new worth sharing yet)."
+                )
 
     # Every landed branch has had its children restacked away, so each is now a
     # leaf in the lineage and safe to remove (branch, worktree, and config key).

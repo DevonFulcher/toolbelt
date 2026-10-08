@@ -111,51 +111,30 @@ def test_sync_reconciles_branch_with_its_own_remote(
     assert (tests_wt / "local.txt").read_text() == "from local\n"
 
 
-def test_sync_collapses_a_trailing_merge_commit(repo: Path, tmp_path: Path):
-    api_wt, tests_wt = _build_stack(repo, tmp_path)
-
-    (api_wt / "api.txt").write_text("api change\n")
-    git("add", "-A", cwd=api_wt)
-    git("commit", "-m", "api work", cwd=api_wt)
-    # api_tests has its own unique commit too, so merging api in is a real
-    # (non-fast-forward) merge, not just a fast-forward.
-    (tests_wt / "own.txt").write_text("own work\n")
-    git("add", "-A", cwd=tests_wt)
-    git("commit", "-m", "own work", cwd=tests_wt)
-
-    sync_stack(root=tests_wt, forge=FakeForge())
-
-    subjects = git("log", "--format=%s", cwd=tests_wt).splitlines()
-    assert subjects.count("own work") == 1, "the branch's own commit stays distinct"
-    assert subjects.count("Sync") == 1, "the merge collapses into one sync commit"
-    assert (tests_wt / "api.txt").read_text() == "api change\n"
-    assert (tests_wt / "own.txt").read_text() == "own work\n"
-
-
-def test_sync_collapses_trailing_merges_across_multiple_syncs(
+def test_sync_keeps_the_parent_an_ancestor_so_the_pr_diff_stays_clean(
     repo: Path, tmp_path: Path
 ):
-    """Sync noise never piles up beyond one commit, no matter how many times a
-    branch is synced without adding any new work of its own — a later
-    collapse sees past an earlier one (see _SYNC_COLLAPSE_TRAILER)."""
+    """GitHub diffs a PR from merge-base(base, head). Sync must leave the
+    parent reachable from the branch, or every file the parent changed since
+    the fork shows up as part of the branch's own diff."""
     api_wt, tests_wt = _build_stack(repo, tmp_path)
     (tests_wt / "own.txt").write_text("own work\n")
     git("add", "-A", cwd=tests_wt)
     git("commit", "-m", "own work", cwd=tests_wt)
 
-    for i in range(3):
+    for i in range(2):
         (api_wt / f"api{i}.txt").write_text(f"{i}\n")
         git("add", "-A", cwd=api_wt)
         git("commit", "-m", f"api work {i}", cwd=api_wt)
         sync_stack(root=tests_wt, forge=FakeForge())
 
-        subjects = git("log", "--format=%s", cwd=tests_wt).splitlines()
-        assert subjects.count("own work") == 1
-        assert (
-            subjects.count("Sync") == 1
-        ), f"sync noise accumulated past one commit after round {i}"
-        for j in range(i + 1):
-            assert (tests_wt / f"api{j}.txt").read_text() == f"{j}\n"
+        assert git("merge-base", "devon/api", "HEAD", cwd=tests_wt) == git(
+            "rev-parse", "devon/api", cwd=tests_wt
+        )
+        own_diff = git(
+            "diff", "--name-only", "devon/api...HEAD", cwd=tests_wt
+        ).splitlines()
+        assert own_diff == ["own.txt"]
 
 
 def test_sync_does_not_push_a_leaf_with_no_pr(repo: Path, tmp_path: Path):
@@ -169,10 +148,7 @@ def test_sync_does_not_push_a_leaf_with_no_pr(repo: Path, tmp_path: Path):
 
     sync_stack(root=tests_wt, forge=FakeForge(no_pr=["devon/api_tests"]))
 
-    # Collapsed locally (history stays clean for whenever it is pushed)...
-    subjects = git("log", "--format=%s", cwd=tests_wt).splitlines()
-    assert subjects.count("Sync") == 1
-    # ...but never pushed, since nothing has a PR to watch it yet.
+    # Merged locally, but never pushed, since nothing has a PR to watch it yet.
     remote_refs = git("ls-remote", "--heads", "origin", cwd=repo)
     assert "devon/api_tests" not in remote_refs
 
@@ -198,9 +174,9 @@ def test_sync_does_not_repush_when_nothing_new_since_last_push(
 
 
 def test_sync_pushes_once_new_work_and_a_pr_both_show_up(repo: Path, tmp_path: Path):
-    """Quiet syncs (no PR yet) accumulate collapsed sync commits locally with
-    no push; once there's both a PR to watch it *and* new work of your own,
-    the next sync pushes everything accumulated so far in one go."""
+    """Quiet syncs (no PR yet) accumulate merges locally with no push; once
+    there's both a PR to watch it *and* new work of your own, the next sync
+    pushes everything accumulated so far in one go."""
     api_wt, tests_wt = _build_stack(repo, tmp_path)
     (tests_wt / "own.txt").write_text("own work\n")
     git("add", "-A", cwd=tests_wt)
@@ -228,31 +204,6 @@ def test_sync_pushes_once_new_work_and_a_pr_both_show_up(repo: Path, tmp_path: P
     assert (tests_wt / "api0.txt").read_text() == "0\n"
     assert (tests_wt / "api1.txt").read_text() == "1\n"
     assert (tests_wt / "mine.txt").read_text() == "mine\n"
-
-
-def test_sync_does_not_compress_a_branch_with_children(repo: Path, tmp_path: Path):
-    api_wt, tests_wt = _build_stack(repo, tmp_path)
-
-    (api_wt / "api.txt").write_text("api change\n")
-    git("add", "-A", cwd=api_wt)
-    git("commit", "-m", "api work", cwd=api_wt)
-    (tests_wt / "own.txt").write_text("own work\n")
-    git("add", "-A", cwd=tests_wt)
-    git("commit", "-m", "own work", cwd=tests_wt)
-    # Work landing on main makes syncing devon/api a real merge.
-    (repo / "landed.txt").write_text("landed\n")
-    git("add", "-A", cwd=repo)
-    git("commit", "-m", "landed on main", cwd=repo)
-    git("push", "origin", "main", cwd=repo)
-
-    sync_stack(root=tests_wt, forge=FakeForge())
-
-    api_count = int(git("rev-list", "--count", "origin/main..HEAD", cwd=api_wt))
-    assert api_count > 1, "devon/api has a child, so its merge must be kept"
-    subjects = git("log", "--format=%s", cwd=tests_wt).splitlines()
-    assert subjects.count("own work") == 1, "the leaf's own commit stays distinct"
-    assert (tests_wt / "landed.txt").read_text() == "landed\n"
-    assert (tests_wt / "own.txt").read_text() == "own work\n"
 
 
 def test_sync_keeps_child_subject_after_parent_is_compressed(

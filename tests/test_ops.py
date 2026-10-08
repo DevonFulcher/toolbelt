@@ -10,7 +10,6 @@ from conftest import git
 from toolbelt.git.stack import lineage
 from toolbelt.git.stack.append import create_stacked_branch
 from toolbelt.git.stack.ops import (
-    collapse_trailing_merges,
     compress_branch,
     diff_parent_command,
     set_branch_parent,
@@ -281,105 +280,6 @@ def test_compress_errors_on_untracked_branch(repo: Path):
     git("checkout", "-b", "loose", cwd=repo)
     with pytest.raises(typer.Exit):
         compress_branch(root=repo, message="x")
-
-
-# --- collapse_trailing_merges -----------------------------------------------
-
-
-def test_collapse_is_a_noop_when_head_is_not_a_fresh_merge(repo: Path, tmp_path: Path):
-    api_wt = tmp_path / "wt-api"
-    create_stacked_branch("api", root=repo, wt_path=api_wt)
-    _commit_file(api_wt, "own.txt", "own work")
-    (repo / "main.txt").write_text("x\n")
-    git("add", "-A", cwd=repo)
-    git("commit", "-m", "main work", cwd=repo)
-    git("merge", "--no-edit", "main", cwd=api_wt)
-    collapse_trailing_merges(root=api_wt, push=False)  # settles into one commit
-    before = git("rev-parse", "HEAD", cwd=api_wt)
-
-    collapse_trailing_merges(root=api_wt, push=False)  # nothing new since then
-
-    assert git("rev-parse", "HEAD", cwd=api_wt) == before
-
-
-def test_collapse_combines_a_single_merge_into_one_commit(repo: Path, tmp_path: Path):
-    api_wt = tmp_path / "wt-api"
-    create_stacked_branch("api", root=repo, wt_path=api_wt)
-    _commit_file(api_wt, "own.txt", "own work")
-    (repo / "main.txt").write_text("x\n")
-    git("add", "-A", cwd=repo)
-    git("commit", "-m", "main work", cwd=repo)
-    git("merge", "--no-edit", "main", cwd=api_wt)
-
-    collapse_trailing_merges(root=api_wt, push=False)
-
-    subjects = git("log", "--format=%s", cwd=api_wt).splitlines()
-    assert subjects.count("own work") == 1
-    assert subjects.count("Sync") == 1
-    assert (api_wt / "main.txt").exists()
-
-
-def test_collapse_combines_two_trailing_merges(repo: Path, tmp_path: Path):
-    api_wt = tmp_path / "wt-api"
-    create_stacked_branch("api", root=repo, wt_path=api_wt)
-    _commit_file(api_wt, "own.txt", "own work")
-
-    for name in ("one", "two"):
-        (repo / f"{name}.txt").write_text("x\n")
-        git("add", "-A", cwd=repo)
-        git("commit", "-m", f"main {name}", cwd=repo)
-        git("merge", "--no-edit", "main", cwd=api_wt)
-
-    collapse_trailing_merges(root=api_wt, push=False)
-
-    subjects = git("log", "--format=%s", cwd=api_wt).splitlines()
-    assert subjects.count("own work") == 1
-    assert subjects.count("Sync") == 1
-    assert (api_wt / "one.txt").exists()
-    assert (api_wt / "two.txt").exists()
-
-
-def test_collapse_sees_past_a_prior_collapse(repo: Path, tmp_path: Path):
-    api_wt = tmp_path / "wt-api"
-    create_stacked_branch("api", root=repo, wt_path=api_wt)
-    _commit_file(api_wt, "own.txt", "own work")
-
-    for name in ("one", "two", "three"):
-        (repo / f"{name}.txt").write_text("x\n")
-        git("add", "-A", cwd=repo)
-        git("commit", "-m", f"main {name}", cwd=repo)
-        git("merge", "--no-edit", "main", cwd=api_wt)
-        collapse_trailing_merges(root=api_wt, push=False)
-
-    # Each round re-collapses into the same single "Sync" commit — it never
-    # accumulates one per round — because a collapse is tagged so a later
-    # collapse recognizes it and sees past it instead of stopping there.
-    subjects = git("log", "--format=%s", cwd=api_wt).splitlines()
-    assert subjects.count("own work") == 1
-    assert subjects.count("Sync") == 1
-    for name in ("one", "two", "three"):
-        assert (api_wt / f"{name}.txt").exists()
-
-
-def test_collapse_tags_the_result_commit(repo: Path, tmp_path: Path):
-    api_wt = tmp_path / "wt-api"
-    create_stacked_branch("api", root=repo, wt_path=api_wt)
-    _commit_file(api_wt, "own.txt", "own work")
-    for name in ("one", "two"):
-        (repo / f"{name}.txt").write_text("x\n")
-        git("add", "-A", cwd=repo)
-        git("commit", "-m", f"main {name}", cwd=repo)
-        git("merge", "--no-edit", "main", cwd=api_wt)
-
-    collapse_trailing_merges(root=api_wt, push=False)
-
-    trailer = git(
-        "log",
-        "-1",
-        "--format=%(trailers:key=Toolbelt-Sync-Collapse,valueonly,unfold)",
-        cwd=api_wt,
-    )
-    assert trailer == "true"
 
 
 # --- diff-parent ------------------------------------------------------------
