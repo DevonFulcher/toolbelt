@@ -24,7 +24,7 @@ from toolbelt.git.stack.lineage import (
     resolve_stack,
     set_parent,
 )
-from toolbelt.git.stack.ops import collapse_trailing_merges
+from toolbelt.git.stack.ops import collapse_trailing_merges, has_unpushed_real_work
 from toolbelt.git.stack.worktree import worktree_paths
 from toolbelt.git.worktrees import current_branch
 from toolbelt.git.worktrees_ops import delete_branch_and_worktree, main_worktree
@@ -95,10 +95,19 @@ def _remote_branch_exists(branch: str, *, root: Path) -> bool:
     return result.returncode == 0
 
 
-async def _resolve_landed(stack: list[str], forge: Forge) -> set[str]:
-    """Ask `forge` which of `stack`'s branches have merged, concurrently."""
-    results = await asyncio.gather(*(forge.pr_is_merged(b) for b in stack))
-    return {branch for branch, is_landed in zip(stack, results) if is_landed}
+async def _resolve_stack_status(
+    stack: list[str], forge: Forge
+) -> tuple[set[str], set[str]]:
+    """Ask `forge` which of `stack`'s branches have landed, and which have an
+    open PR (draft or not) — both concurrently, across the whole stack in
+    one round trip."""
+    merged, is_open = await asyncio.gather(
+        asyncio.gather(*(forge.pr_is_merged(b) for b in stack)),
+        asyncio.gather(*(forge.pr_is_open(b) for b in stack)),
+    )
+    landed = {branch for branch, m in zip(stack, merged) if m}
+    has_open_pr = {branch for branch, o in zip(stack, is_open) if o}
+    return landed, has_open_pr
 
 
 def _restack(child: str, *, worktree: Path, onto: str, upstream: str) -> bool:
@@ -151,7 +160,7 @@ def sync_stack(*, root: Path, forge: Forge) -> None:
 
     # Authoritative, queried once per branch (concurrently — each is an
     # independent `gh` network round-trip).
-    landed = asyncio.run(_resolve_landed(stack, forge))
+    landed, has_open_pr = asyncio.run(_resolve_stack_status(stack, forge))
 
     def surviving_base(child: str) -> str:
         """Nearest ancestor of ``child`` that has not landed (collapses chains
@@ -240,10 +249,7 @@ def sync_stack(*, root: Path, forge: Forge) -> None:
             # with children is still left alone: its children already contain
             # the commits being collapsed, so git would see the rewritten
             # branch and its children as unrelated and report false conflicts
-            # the next time it's merged into them. Its own no-op guards mean
-            # this is silently a no-op when there's at most one trailing
-            # merge commit. Rewrites history when it does anything, so that
-            # push must be a force-with-lease regardless of whether it did.
+            # the next time it's merged into them.
             has_children = any(
                 parent == child and other not in landed
                 for other, parent in parents.items()
@@ -255,12 +261,25 @@ def sync_stack(*, root: Path, forge: Forge) -> None:
                     exit_on_error=True,
                 )
             else:
+                # Always collapsed locally — cheap, and keeps history clean
+                # for whenever this does get pushed — but only actually
+                # pushed when there's an open PR *and* real work waiting:
+                # otherwise this was purely absorbing upstream movement, and
+                # pushing it would just re-trigger CI/review for nothing new.
                 collapse_trailing_merges(root=worktree, push=False)
-                run(
-                    ["git", "push", "--force-with-lease", "origin", child],
-                    cwd=worktree,
-                    exit_on_error=True,
-                )
+                if child in has_open_pr and has_unpushed_real_work(
+                    child, root=worktree
+                ):
+                    run(
+                        ["git", "push", "--force-with-lease", "origin", child],
+                        cwd=worktree,
+                        exit_on_error=True,
+                    )
+                else:
+                    logger.info(
+                        f"'{child}' is up to date locally; not pushing "
+                        "(nothing new worth sharing yet)."
+                    )
 
     # Every landed branch has had its children restacked away, so each is now a
     # leaf in the lineage and safe to remove (branch, worktree, and config key).

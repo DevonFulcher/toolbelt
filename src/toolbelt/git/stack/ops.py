@@ -183,6 +183,7 @@ def compress_branch(
     message: str | None = None,
     push: bool = True,
     since: str | None = None,
+    compare_ref: str | None = None,
 ) -> None:
     """Squash the current branch's own commits (those after its parent) into one.
 
@@ -196,7 +197,11 @@ def compress_branch(
     ``since`` overrides the squash boundary (normally the branch's merge-base
     with its parent) with an arbitrary commit — see ``collapse_trailing_merges``,
     which uses this to squash only a trailing run of merge commits rather than
-    the whole branch.
+    the whole branch. ``compare_ref`` (default: ``since``, or the computed
+    boundary) is what HEAD's tree is checked against to detect a no-op merge
+    (see below) — ``collapse_trailing_merges`` passes a nearer commit than its
+    squash boundary, since that boundary can reach back through a prior
+    collapse to well before this round's own (possibly redundant) merge.
     """
     branch = current_branch(root)
     parent = _parent_or_exit(branch, root=root)
@@ -209,6 +214,7 @@ def compress_branch(
             capture_output=True,
         ).stdout.strip()
     )
+    compare_ref = compare_ref or base
 
     count = int(
         run(
@@ -226,24 +232,50 @@ def compress_branch(
     if count == 1 and message is None:
         logger.info(f"'{branch}' already has a single commit; nothing to compress.")
         return
-
-    if message is None:
-        # Default to the branch's first (oldest) commit message, like git-town.
-        message = _default_message(parent=parent, base=base, root=root)
-
-    # Soft reset keeps the working tree and index, so the commit captures every
-    # change since the fork point as one commit; unstaged work is left alone.
-    run(["git", "reset", "--soft", base], cwd=root, exit_on_error=True)
-    # The message goes over stdin so a multi-line body survives intact; the
-    # explicit cleanup mode keeps a body line starting with ``#`` from being
-    # treated as a comment.
-    run(
-        ["git", "commit", "--cleanup=whitespace", "-F", "-"],
-        cwd=root,
-        exit_on_error=True,
-        input=message.strip() + "\n",
+    # A merge can re-integrate a parent that's already fully incorporated
+    # (e.g. after collapse_trailing_merges flattens history, the parent's
+    # tip is no longer an ancestor, so a later sync re-merges it even though
+    # nothing changed) — commit count alone doesn't catch that, since the
+    # tree can be identical to `compare_ref` despite `count` commits sitting
+    # on top of `base`. Recommitting that would fail outright (git refuses an
+    # empty commit), so check the actual tree first.
+    no_tree_change = (
+        run(
+            ["git", "diff", "--quiet", compare_ref, "HEAD"], cwd=root, check=False
+        ).returncode
+        == 0
     )
-    logger.info(f"Compressed {count} commits on '{branch}' into one.")
+    if no_tree_change:
+        # Discard the redundant merge back to `compare_ref` rather than
+        # leaving it in place: `compare_ref` is already either a real commit
+        # or an earlier, correctly tagged collapse, so resetting onto it (not
+        # committing anything new) keeps that status intact for the next
+        # sync to see, instead of leaving an untagged merge that looks like
+        # new work.
+        logger.info(
+            f"'{branch}' re-merged '{parent}' with no new content; discarding "
+            f"the redundant merge back to '{compare_ref}'."
+        )
+        run(["git", "reset", "--hard", compare_ref], cwd=root, exit_on_error=True)
+    else:
+        if message is None:
+            # Default to the branch's first (oldest) commit message, like git-town.
+            message = _default_message(parent=parent, base=base, root=root)
+
+        # Soft reset keeps the working tree and index, so the commit captures
+        # every change since the fork point as one commit; unstaged work is
+        # left alone.
+        run(["git", "reset", "--soft", base], cwd=root, exit_on_error=True)
+        # The message goes over stdin so a multi-line body survives intact;
+        # the explicit cleanup mode keeps a body line starting with ``#``
+        # from being treated as a comment.
+        run(
+            ["git", "commit", "--cleanup=whitespace", "-F", "-"],
+            cwd=root,
+            exit_on_error=True,
+            input=message.strip() + "\n",
+        )
+        logger.info(f"Compressed {count} commits on '{branch}' into one.")
 
     if push and _remote_branch_exists(branch, root=root):
         run(
@@ -269,24 +301,31 @@ def _is_sync_collapse_commit(commit: str, *, root: Path) -> bool:
     return value == "true"
 
 
-def _trailing_merge_anchor(*, base: str, root: Path) -> str:
-    """The newest commit in ``base..HEAD`` that is neither a merge nor a prior
-    collapse (see ``_SYNC_COLLAPSE_TRAILER``), walking HEAD's first-parent
-    chain — i.e. the boundary right before any trailing run of sync noise.
-    ``base`` itself if every commit since is sync noise.
+def _trailing_merge_anchor(*, base: str, root: Path) -> tuple[str, str]:
+    """Returns ``(anchor, last_settled)``, walking HEAD's first-parent chain
+    back from ``base..HEAD``.
 
-    If HEAD itself isn't a merge, there's nothing new to fold in since
-    whatever's at the tip (a real commit, or a prior collapse nothing has
-    been synced on top of yet) — return it immediately rather than walking
-    further back, which would otherwise needlessly re-collapse a prior,
-    already-settled collapse on every sync even when nothing changed.
+    ``anchor`` is the newest commit that is neither a merge nor a prior
+    collapse (see ``_SYNC_COLLAPSE_TRAILER``) — the squash boundary. Seeing
+    past a prior collapse, not just literal merges, is what keeps sync noise
+    to at most one commit no matter how many times a branch gets synced: a
+    collapse flattens a merge to one parent, so without this a later collapse
+    couldn't tell it apart from a real commit and would stop there, leaving
+    one more noise commit behind every single sync.
 
-    Once HEAD is a fresh merge, the walk back *does* see past a prior
-    collapse, not just literal merges — that's what keeps sync noise to at
-    most one commit no matter how many times a branch gets synced: a
-    collapse flattens a merge to one parent, so without this a later
-    collapse couldn't tell it apart from a real commit and would stop there,
-    leaving one more noise commit behind every single sync.
+    ``last_settled`` is the newest commit that merely isn't a merge, tagged
+    or not — i.e. whatever HEAD was immediately before its current run of
+    fresh merges. Comparing HEAD's tree against *this* (not ``anchor``, which
+    can reach further back through a prior collapse) is how
+    ``collapse_trailing_merges`` tells whether this round actually changed
+    anything, since a once-flattened branch's ancestry no longer proves it to
+    git — so re-merging an unchanged parent still produces a real, if
+    content-empty, merge commit.
+
+    Both equal ``base`` if every commit since is sync noise; both equal HEAD
+    itself if HEAD isn't currently a merge (nothing new to fold in — this
+    also sidesteps needlessly re-collapsing an already-settled prior collapse
+    on every sync even when nothing changed).
     """
     log = run(
         ["git", "log", "--first-parent", "--format=%H %P", f"{base}..HEAD"],
@@ -294,16 +333,21 @@ def _trailing_merge_anchor(*, base: str, root: Path) -> str:
         capture_output=True,
     ).stdout.splitlines()
     if not log:
-        return base
+        return base, base
     head_commit, *head_parents = log[0].split()
     if len(head_parents) < 2:
-        return head_commit
+        return head_commit, head_commit
+    last_settled: str | None = None
     for line in log:
         commit, *parents = line.split()
-        if len(parents) >= 2 or _is_sync_collapse_commit(commit, root=root):
+        if len(parents) >= 2:
             continue
-        return commit
-    return base
+        if last_settled is None:
+            last_settled = commit
+        if _is_sync_collapse_commit(commit, root=root):
+            continue
+        return commit, last_settled
+    return base, (last_settled or base)
 
 
 def collapse_trailing_merges(*, root: Path, push: bool = True) -> None:
@@ -313,11 +357,11 @@ def collapse_trailing_merges(*, root: Path, push: bool = True) -> None:
 
     Unlike a plain ``compress_branch`` call, this never touches the branch's
     own authored commits — only sync noise sitting at the tip gets combined —
-    so it's safe to run after every sync regardless of whether the branch has
-    a published PR: a reviewer's "Files changed" tab diffs the PR's base
-    against its current tip either way, unaffected by how many commits sit in
-    between. A no-op (via ``compress_branch``'s own guard) when HEAD isn't
-    currently a fresh merge.
+    so it's safe to run after every sync no matter who's watching the PR: a
+    reviewer's "Files changed" tab diffs the PR's base against its current
+    tip either way, unaffected by how many commits sit in between. A no-op
+    (via ``compress_branch``'s own guard) when HEAD isn't currently a fresh
+    merge.
     """
     branch = current_branch(root)
     parent = _parent_or_exit(branch, root=root)
@@ -326,9 +370,35 @@ def collapse_trailing_merges(*, root: Path, push: bool = True) -> None:
         cwd=root,
         capture_output=True,
     ).stdout.strip()
-    anchor = _trailing_merge_anchor(base=base, root=root)
+    anchor, last_settled = _trailing_merge_anchor(base=base, root=root)
     message = f"Sync\n\n{_SYNC_COLLAPSE_TRAILER}: true"
-    compress_branch(root=root, since=anchor, message=message, push=push)
+    compress_branch(
+        root=root,
+        since=anchor,
+        compare_ref=last_settled,
+        message=message,
+        push=push,
+    )
+
+
+def has_unpushed_real_work(branch: str, *, root: Path) -> bool:
+    """True if ``branch`` has a commit, reachable from its local HEAD but not
+    its own remote, that isn't a prior sync collapse — i.e. genuinely new
+    work waiting to be shared, not just absorbed upstream noise. Vacuously
+    true if the branch has no remote yet at all (nothing to compare against).
+
+    Lets ``sync`` push only when there's actually something worth a fresh CI
+    run or reviewer look, rather than on every sync that merely kept a
+    branch current with its parent.
+    """
+    if not _remote_branch_exists(branch, root=root):
+        return True
+    commits = run(
+        ["git", "rev-list", f"origin/{branch}..HEAD"],
+        cwd=root,
+        capture_output=True,
+    ).stdout.split()
+    return any(not _is_sync_collapse_commit(c, root=root) for c in commits)
 
 
 def diff_parent_command(

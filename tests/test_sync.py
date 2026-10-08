@@ -158,6 +158,78 @@ def test_sync_collapses_trailing_merges_across_multiple_syncs(
             assert (tests_wt / f"api{j}.txt").read_text() == f"{j}\n"
 
 
+def test_sync_does_not_push_a_leaf_with_no_pr(repo: Path, tmp_path: Path):
+    api_wt, tests_wt = _build_stack(repo, tmp_path)
+    (tests_wt / "own.txt").write_text("own work\n")
+    git("add", "-A", cwd=tests_wt)
+    git("commit", "-m", "own work", cwd=tests_wt)
+    (api_wt / "api.txt").write_text("api change\n")
+    git("add", "-A", cwd=api_wt)
+    git("commit", "-m", "api work", cwd=api_wt)
+
+    sync_stack(root=tests_wt, forge=FakeForge(no_pr=["devon/api_tests"]))
+
+    # Collapsed locally (history stays clean for whenever it is pushed)...
+    subjects = git("log", "--format=%s", cwd=tests_wt).splitlines()
+    assert subjects.count("Sync") == 1
+    # ...but never pushed, since nothing has a PR to watch it yet.
+    remote_refs = git("ls-remote", "--heads", "origin", cwd=repo)
+    assert "devon/api_tests" not in remote_refs
+
+
+def test_sync_does_not_repush_when_nothing_new_since_last_push(
+    repo: Path, tmp_path: Path
+):
+    api_wt, tests_wt = _build_stack(repo, tmp_path)
+    (tests_wt / "own.txt").write_text("own work\n")
+    git("add", "-A", cwd=tests_wt)
+    git("commit", "-m", "own work", cwd=tests_wt)
+    (api_wt / "api.txt").write_text("api change\n")
+    git("add", "-A", cwd=api_wt)
+    git("commit", "-m", "api work", cwd=api_wt)
+
+    sync_stack(root=tests_wt, forge=FakeForge())
+    pushed = git("rev-parse", "origin/devon/api_tests", cwd=tests_wt)
+
+    sync_stack(root=tests_wt, forge=FakeForge())  # nothing new since the push
+
+    assert git("rev-parse", "origin/devon/api_tests", cwd=tests_wt) == pushed
+    assert git("rev-parse", "HEAD", cwd=tests_wt) == pushed
+
+
+def test_sync_pushes_once_new_work_and_a_pr_both_show_up(repo: Path, tmp_path: Path):
+    """Quiet syncs (no PR yet) accumulate collapsed sync commits locally with
+    no push; once there's both a PR to watch it *and* new work of your own,
+    the next sync pushes everything accumulated so far in one go."""
+    api_wt, tests_wt = _build_stack(repo, tmp_path)
+    (tests_wt / "own.txt").write_text("own work\n")
+    git("add", "-A", cwd=tests_wt)
+    git("commit", "-m", "own work", cwd=tests_wt)
+
+    for i in range(2):
+        (api_wt / f"api{i}.txt").write_text(f"{i}\n")
+        git("add", "-A", cwd=api_wt)
+        git("commit", "-m", f"api work {i}", cwd=api_wt)
+        sync_stack(root=tests_wt, forge=FakeForge(no_pr=["devon/api_tests"]))
+
+    remote_refs = git("ls-remote", "--heads", "origin", cwd=repo)
+    assert "devon/api_tests" not in remote_refs
+
+    (tests_wt / "mine.txt").write_text("mine\n")
+    git("add", "-A", cwd=tests_wt)
+    git("commit", "-m", "my own new work", cwd=tests_wt)
+    sync_stack(root=tests_wt, forge=FakeForge())  # PR now open, elsewhere
+
+    remote_refs = git("ls-remote", "--heads", "origin", cwd=repo)
+    assert "devon/api_tests" in remote_refs
+    assert git("rev-parse", "origin/devon/api_tests", cwd=tests_wt) == git(
+        "rev-parse", "HEAD", cwd=tests_wt
+    )
+    assert (tests_wt / "api0.txt").read_text() == "0\n"
+    assert (tests_wt / "api1.txt").read_text() == "1\n"
+    assert (tests_wt / "mine.txt").read_text() == "mine\n"
+
+
 def test_sync_does_not_compress_a_branch_with_children(repo: Path, tmp_path: Path):
     api_wt, tests_wt = _build_stack(repo, tmp_path)
 

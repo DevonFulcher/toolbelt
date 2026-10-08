@@ -32,13 +32,21 @@ def _isolate_git_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class FakeForge:
-    """Test `Forge`: reports a branch merged iff it was seeded as merged."""
+    """Test `Forge`: a branch is merged iff seeded as such; every branch has
+    an open PR by default unless seeded via `no_pr` — most tests don't care
+    about this dimension and just want sync's normal "push automatically"
+    behavior.
+    """
 
-    def __init__(self, merged: Iterable[str] = ()) -> None:
+    def __init__(self, merged: Iterable[str] = (), no_pr: Iterable[str] = ()) -> None:
         self.merged = set(merged)
+        self.no_pr = set(no_pr)
 
     async def pr_is_merged(self, branch: str) -> bool:
         return branch in self.merged
+
+    async def pr_is_open(self, branch: str) -> bool:
+        return branch not in self.no_pr
 
 
 def git(*args: str, cwd: Path) -> str:
