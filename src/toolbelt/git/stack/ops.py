@@ -16,6 +16,11 @@ from toolbelt.logger import logger
 
 
 _ATTRIBUTION_TRAILER = "Co-Authored-By"
+# Marks a commit made by collapse_trailing_merges, so a later collapse can
+# see past it (it's flattened to one parent, indistinguishable from a real
+# commit otherwise) instead of stopping there and leaving sync noise to
+# accumulate one commit per sync.
+_SYNC_COLLAPSE_TRAILER = "Toolbelt-Sync-Collapse"
 
 
 def _parent_or_exit(branch: str, *, root: Path) -> str:
@@ -173,7 +178,11 @@ def _with_attribution_trailers(message: str, *, base: str, root: Path) -> str:
 
 
 def compress_branch(
-    *, root: Path, message: str | None = None, push: bool = True
+    *,
+    root: Path,
+    message: str | None = None,
+    push: bool = True,
+    since: str | None = None,
 ) -> None:
     """Squash the current branch's own commits (those after its parent) into one.
 
@@ -183,15 +192,23 @@ def compress_branch(
     but they still contain the commits that were squashed, so merging this
     branch into them afterwards can report false conflicts. ``sync`` only
     compresses leaves for that reason.
+
+    ``since`` overrides the squash boundary (normally the branch's merge-base
+    with its parent) with an arbitrary commit — see ``collapse_trailing_merges``,
+    which uses this to squash only a trailing run of merge commits rather than
+    the whole branch.
     """
     branch = current_branch(root)
     parent = _parent_or_exit(branch, root=root)
 
-    base = run(
-        ["git", "merge-base", _parent_ref(parent, root=root), "HEAD"],
-        cwd=root,
-        capture_output=True,
-    ).stdout.strip()
+    base = (
+        since
+        or run(
+            ["git", "merge-base", _parent_ref(parent, root=root), "HEAD"],
+            cwd=root,
+            capture_output=True,
+        ).stdout.strip()
+    )
 
     count = int(
         run(
@@ -235,6 +252,83 @@ def compress_branch(
             exit_on_error=True,
         )
         logger.info(f"Force-pushed '{branch}'.")
+
+
+def _is_sync_collapse_commit(commit: str, *, root: Path) -> bool:
+    value = run(
+        [
+            "git",
+            "log",
+            "-1",
+            f"--format=%(trailers:key={_SYNC_COLLAPSE_TRAILER},valueonly,unfold)",
+            commit,
+        ],
+        cwd=root,
+        capture_output=True,
+    ).stdout.strip()
+    return value == "true"
+
+
+def _trailing_merge_anchor(*, base: str, root: Path) -> str:
+    """The newest commit in ``base..HEAD`` that is neither a merge nor a prior
+    collapse (see ``_SYNC_COLLAPSE_TRAILER``), walking HEAD's first-parent
+    chain — i.e. the boundary right before any trailing run of sync noise.
+    ``base`` itself if every commit since is sync noise.
+
+    If HEAD itself isn't a merge, there's nothing new to fold in since
+    whatever's at the tip (a real commit, or a prior collapse nothing has
+    been synced on top of yet) — return it immediately rather than walking
+    further back, which would otherwise needlessly re-collapse a prior,
+    already-settled collapse on every sync even when nothing changed.
+
+    Once HEAD is a fresh merge, the walk back *does* see past a prior
+    collapse, not just literal merges — that's what keeps sync noise to at
+    most one commit no matter how many times a branch gets synced: a
+    collapse flattens a merge to one parent, so without this a later
+    collapse couldn't tell it apart from a real commit and would stop there,
+    leaving one more noise commit behind every single sync.
+    """
+    log = run(
+        ["git", "log", "--first-parent", "--format=%H %P", f"{base}..HEAD"],
+        cwd=root,
+        capture_output=True,
+    ).stdout.splitlines()
+    if not log:
+        return base
+    head_commit, *head_parents = log[0].split()
+    if len(head_parents) < 2:
+        return head_commit
+    for line in log:
+        commit, *parents = line.split()
+        if len(parents) >= 2 or _is_sync_collapse_commit(commit, root=root):
+            continue
+        return commit
+    return base
+
+
+def collapse_trailing_merges(*, root: Path, push: bool = True) -> None:
+    """Collapse the current branch's trailing run of sync noise (merge
+    commits, and prior collapses of them) since its last real commit into
+    one, via ``compress_branch``.
+
+    Unlike a plain ``compress_branch`` call, this never touches the branch's
+    own authored commits — only sync noise sitting at the tip gets combined —
+    so it's safe to run after every sync regardless of whether the branch has
+    a published PR: a reviewer's "Files changed" tab diffs the PR's base
+    against its current tip either way, unaffected by how many commits sit in
+    between. A no-op (via ``compress_branch``'s own guard) when HEAD isn't
+    currently a fresh merge.
+    """
+    branch = current_branch(root)
+    parent = _parent_or_exit(branch, root=root)
+    base = run(
+        ["git", "merge-base", _parent_ref(parent, root=root), "HEAD"],
+        cwd=root,
+        capture_output=True,
+    ).stdout.strip()
+    anchor = _trailing_merge_anchor(base=base, root=root)
+    message = f"Sync\n\n{_SYNC_COLLAPSE_TRAILER}: true"
+    compress_branch(root=root, since=anchor, message=message, push=push)
 
 
 def diff_parent_command(

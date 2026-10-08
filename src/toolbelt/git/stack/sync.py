@@ -24,7 +24,7 @@ from toolbelt.git.stack.lineage import (
     resolve_stack,
     set_parent,
 )
-from toolbelt.git.stack.ops import compress_branch
+from toolbelt.git.stack.ops import collapse_trailing_merges
 from toolbelt.git.stack.worktree import worktree_paths
 from toolbelt.git.worktrees import current_branch
 from toolbelt.git.worktrees_ops import delete_branch_and_worktree, main_worktree
@@ -95,19 +95,10 @@ def _remote_branch_exists(branch: str, *, root: Path) -> bool:
     return result.returncode == 0
 
 
-async def _resolve_stack_status(
-    stack: list[str], forge: Forge
-) -> tuple[set[str], set[str]]:
-    """Ask `forge` which of `stack`'s branches have landed, and which have a
-    published (open, non-draft) PR — both concurrently, across the whole
-    stack in one round trip."""
-    merged, published = await asyncio.gather(
-        asyncio.gather(*(forge.pr_is_merged(b) for b in stack)),
-        asyncio.gather(*(forge.pr_is_published(b) for b in stack)),
-    )
-    landed = {branch for branch, is_landed in zip(stack, merged) if is_landed}
-    is_published = {branch for branch, pub in zip(stack, published) if pub}
-    return landed, is_published
+async def _resolve_landed(stack: list[str], forge: Forge) -> set[str]:
+    """Ask `forge` which of `stack`'s branches have merged, concurrently."""
+    results = await asyncio.gather(*(forge.pr_is_merged(b) for b in stack))
+    return {branch for branch, is_landed in zip(stack, results) if is_landed}
 
 
 def _restack(child: str, *, worktree: Path, onto: str, upstream: str) -> bool:
@@ -160,7 +151,7 @@ def sync_stack(*, root: Path, forge: Forge) -> None:
 
     # Authoritative, queried once per branch (concurrently — each is an
     # independent `gh` network round-trip).
-    landed, published = asyncio.run(_resolve_stack_status(stack, forge))
+    landed = asyncio.run(_resolve_landed(stack, forge))
 
     def surviving_base(child: str) -> str:
         """Nearest ancestor of ``child`` that has not landed (collapses chains
@@ -241,29 +232,30 @@ def sync_stack(*, root: Path, forge: Forge) -> None:
                     )
                     raise typer.Exit(1)
 
-            # Squash away the merge commit(s) just created (and any prior
-            # ones), but only for a leaf with no published PR. A published
-            # branch is left alone — compressing it would force-push over what
-            # a reviewer is looking at. A branch with children is left alone
-            # too: its children still contain the commits being squashed, so
-            # git sees the squashed branch and its children as unrelated and
-            # reports false conflicts the next time the squashed branch is
-            # merged into them. A leaf with no PR yet, or still a draft, is
-            # fair game; its own no-op guards mean this is silently a no-op when
-            # there's nothing to squash. Squashing rewrites history, so that push
-            # must be a force-with-lease regardless of whether it did anything.
+            # Collapse a trailing run of merge commits just extended by the
+            # merge(s) above, for every branch regardless of PR state — this
+            # never touches the branch's own authored commits (see
+            # collapse_trailing_merges), so it doesn't disrupt a reviewer any
+            # more than the merge commit it replaces would have. A branch
+            # with children is still left alone: its children already contain
+            # the commits being collapsed, so git would see the rewritten
+            # branch and its children as unrelated and report false conflicts
+            # the next time it's merged into them. Its own no-op guards mean
+            # this is silently a no-op when there's at most one trailing
+            # merge commit. Rewrites history when it does anything, so that
+            # push must be a force-with-lease regardless of whether it did.
             has_children = any(
                 parent == child and other not in landed
                 for other, parent in parents.items()
             )
-            if child in published or has_children:
+            if has_children:
                 run(
                     ["git", "push", "-u", "origin", child],
                     cwd=worktree,
                     exit_on_error=True,
                 )
             else:
-                compress_branch(root=worktree, push=False)
+                collapse_trailing_merges(root=worktree, push=False)
                 run(
                     ["git", "push", "--force-with-lease", "origin", child],
                     cwd=worktree,

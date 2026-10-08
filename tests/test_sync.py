@@ -111,7 +111,7 @@ def test_sync_reconciles_branch_with_its_own_remote(
     assert (tests_wt / "local.txt").read_text() == "from local\n"
 
 
-def test_sync_compresses_merge_commit_when_pr_not_published(repo: Path, tmp_path: Path):
+def test_sync_collapses_a_trailing_merge_commit(repo: Path, tmp_path: Path):
     api_wt, tests_wt = _build_stack(repo, tmp_path)
 
     (api_wt / "api.txt").write_text("api change\n")
@@ -123,57 +123,39 @@ def test_sync_compresses_merge_commit_when_pr_not_published(repo: Path, tmp_path
     git("add", "-A", cwd=tests_wt)
     git("commit", "-m", "own work", cwd=tests_wt)
 
-    sync_stack(root=tests_wt, forge=FakeForge())  # nothing published by default
+    sync_stack(root=tests_wt, forge=FakeForge())
 
-    base = git("merge-base", "devon/api", "HEAD", cwd=tests_wt)
-    count = int(git("rev-list", "--count", f"{base}..HEAD", cwd=tests_wt))
-    assert count == 1, "the merge commit + own commit should collapse into one"
+    subjects = git("log", "--format=%s", cwd=tests_wt).splitlines()
+    assert subjects.count("own work") == 1, "the branch's own commit stays distinct"
+    assert subjects.count("Sync") == 1, "the merge collapses into one sync commit"
     assert (tests_wt / "api.txt").read_text() == "api change\n"
     assert (tests_wt / "own.txt").read_text() == "own work\n"
 
 
-def test_sync_squash_keeps_body_and_trailer(repo: Path, tmp_path: Path):
-    api_wt = tmp_path / "wt-api"
-    create_stacked_branch("api", root=repo, wt_path=api_wt)
-    message = (
-        "Declare every third-party package imported directly\n\n"
-        "Body paragraph.\n\n"
-        "Co-Authored-By: AI Assistant <noreply@ai>"
-    )
-    (api_wt / "one.txt").write_text("one\n")
-    git("add", "-A", cwd=api_wt)
-    git("commit", "-m", message, cwd=api_wt)
-    (api_wt / "two.txt").write_text("two\n")
-    git("add", "-A", cwd=api_wt)
-    git("commit", "-m", "follow-up", cwd=api_wt)
+def test_sync_collapses_trailing_merges_across_multiple_syncs(
+    repo: Path, tmp_path: Path
+):
+    """Sync noise never piles up beyond one commit, no matter how many times a
+    branch is synced without adding any new work of its own — a later
+    collapse sees past an earlier one (see _SYNC_COLLAPSE_TRAILER)."""
+    api_wt, tests_wt = _build_stack(repo, tmp_path)
+    (tests_wt / "own.txt").write_text("own work\n")
+    git("add", "-A", cwd=tests_wt)
+    git("commit", "-m", "own work", cwd=tests_wt)
 
-    sync_stack(root=api_wt, forge=FakeForge())  # leaf, nothing published
+    for i in range(3):
+        (api_wt / f"api{i}.txt").write_text(f"{i}\n")
+        git("add", "-A", cwd=api_wt)
+        git("commit", "-m", f"api work {i}", cwd=api_wt)
+        sync_stack(root=tests_wt, forge=FakeForge())
 
-    assert git("rev-list", "--count", "main..HEAD", cwd=api_wt) == "1"
-    assert git("log", "-1", "--format=%B", cwd=api_wt) == message
-
-
-def test_sync_compress_ignores_a_stale_local_base(repo: Path, tmp_path: Path):
-    api_wt = tmp_path / "wt-api"
-    create_stacked_branch("api", root=repo, wt_path=api_wt)
-    (api_wt / "own.txt").write_text("own work\n")
-    git("add", "-A", cwd=api_wt)
-    git("commit", "-m", "own work", cwd=api_wt)
-    # Work lands on origin/main, but the local main branch never moves.
-    old = git("rev-parse", "main", cwd=repo)
-    (repo / "landed.txt").write_text("landed\n")
-    git("add", "-A", cwd=repo)
-    git("commit", "-m", "landed on main", cwd=repo)
-    git("push", "origin", "main", cwd=repo)
-    landed = git("rev-parse", "main", cwd=repo)
-    git("reset", "--hard", old, cwd=repo)
-
-    sync_stack(root=api_wt, forge=FakeForge())  # leaf, nothing published
-
-    # The squash sits on the current origin/main and holds only the branch's work.
-    assert git("rev-parse", "HEAD^", cwd=api_wt) == landed
-    changed = git("diff", "--name-only", "HEAD^", "HEAD", cwd=api_wt).splitlines()
-    assert changed == ["own.txt"]
+        subjects = git("log", "--format=%s", cwd=tests_wt).splitlines()
+        assert subjects.count("own work") == 1
+        assert (
+            subjects.count("Sync") == 1
+        ), f"sync noise accumulated past one commit after round {i}"
+        for j in range(i + 1):
+            assert (tests_wt / f"api{j}.txt").read_text() == f"{j}\n"
 
 
 def test_sync_does_not_compress_a_branch_with_children(repo: Path, tmp_path: Path):
@@ -191,33 +173,13 @@ def test_sync_does_not_compress_a_branch_with_children(repo: Path, tmp_path: Pat
     git("commit", "-m", "landed on main", cwd=repo)
     git("push", "origin", "main", cwd=repo)
 
-    sync_stack(root=tests_wt, forge=FakeForge())  # nothing published by default
+    sync_stack(root=tests_wt, forge=FakeForge())
 
     api_count = int(git("rev-list", "--count", "origin/main..HEAD", cwd=api_wt))
     assert api_count > 1, "devon/api has a child, so its merge must be kept"
-    base = git("merge-base", "devon/api", "HEAD", cwd=tests_wt)
-    leaf_count = int(git("rev-list", "--count", f"{base}..HEAD", cwd=tests_wt))
-    assert leaf_count == 1, "the leaf is still squashed"
+    subjects = git("log", "--format=%s", cwd=tests_wt).splitlines()
+    assert subjects.count("own work") == 1, "the leaf's own commit stays distinct"
     assert (tests_wt / "landed.txt").read_text() == "landed\n"
-    assert (tests_wt / "own.txt").read_text() == "own work\n"
-
-
-def test_sync_leaves_merge_commit_when_pr_is_published(repo: Path, tmp_path: Path):
-    api_wt, tests_wt = _build_stack(repo, tmp_path)
-
-    (api_wt / "api.txt").write_text("api change\n")
-    git("add", "-A", cwd=api_wt)
-    git("commit", "-m", "api work", cwd=api_wt)
-    (tests_wt / "own.txt").write_text("own work\n")
-    git("add", "-A", cwd=tests_wt)
-    git("commit", "-m", "own work", cwd=tests_wt)
-
-    sync_stack(root=tests_wt, forge=FakeForge(published=["devon/api_tests"]))
-
-    base = git("merge-base", "devon/api", "HEAD", cwd=tests_wt)
-    count = int(git("rev-list", "--count", f"{base}..HEAD", cwd=tests_wt))
-    assert count > 1, "a published PR's branch must not be squashed"
-    assert (tests_wt / "api.txt").read_text() == "api change\n"
     assert (tests_wt / "own.txt").read_text() == "own work\n"
 
 
@@ -246,9 +208,10 @@ def test_sync_keeps_child_subject_after_parent_is_compressed(
         sync_stack(root=tests_wt, forge=FakeForge())
 
         assert git("log", "-1", "--format=%s", cwd=api_wt) == "parent work"
-        base = git("merge-base", "devon/api", "HEAD", cwd=tests_wt)
-        assert git("log", "--format=%s", f"{base}..HEAD", cwd=tests_wt) == (
-            "child work"
+        subjects = git("log", "--format=%s", cwd=tests_wt).splitlines()
+        assert subjects.count("child work") == 1, (
+            "the child's own commit must stay distinct, even once the "
+            "parent it forked from has been rewritten away"
         )
         assert (tests_wt / f"api{i}.txt").read_text() == f"{i}\n"
 
