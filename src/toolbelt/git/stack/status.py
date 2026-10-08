@@ -14,6 +14,8 @@ from enum import Enum
 from pathlib import Path
 from typing import AsyncIterator
 
+from toolbelt.git.stack.published import is_published
+
 _FIELDS = "state,isDraft,reviewDecision,reviewRequests,statusCheckRollup,url"
 
 # `gh pr view --json` has no field for review-thread resolution, so the
@@ -70,6 +72,7 @@ class BranchStatus:
     review: ReviewState
     url: str | None
     open_comments: int = 0
+    published: bool | None = None
 
 
 NO_PR = BranchStatus(
@@ -104,6 +107,12 @@ def format_status(status: BranchStatus) -> str:
     suffix = "  ".join(parts)
     if status.open_comments > 0:
         suffix += f"  open comments: {status.open_comments}"
+    # None means "couldn't check" (not configured, or the Slack call
+    # failed) — shown as neither published nor unpublished, just omitted.
+    if status.published is True:
+        suffix += "  published"
+    elif status.published is False:
+        suffix += "  not published"
     return suffix
 
 
@@ -121,7 +130,9 @@ def _ci_state(rollup: list[dict]) -> CiState:
     return CiState.SUCCESS
 
 
-def _parse_status(data: dict, *, open_comments: int = 0) -> BranchStatus:
+def _parse_status(
+    data: dict, *, open_comments: int = 0, published: bool | None = None
+) -> BranchStatus:
     """Parse a `gh pr view --json {_FIELDS}` payload into a `BranchStatus`."""
     if data["state"] == "MERGED":
         pr_state = PrState.MERGED
@@ -148,6 +159,7 @@ def _parse_status(data: dict, *, open_comments: int = 0) -> BranchStatus:
         review=review_state,
         url=data["url"],
         open_comments=open_comments,
+        published=published,
     )
 
 
@@ -206,8 +218,11 @@ async def fetch_branch_status(branch: str, *, root: Path) -> BranchStatus:
         # expected, common case here, not an infra failure to guard against.
         return NO_PR
     data = json.loads(stdout)
-    open_comments = await _fetch_open_comment_count(data["url"], root=root)
-    return _parse_status(data, open_comments=open_comments)
+    open_comments, published = await asyncio.gather(
+        _fetch_open_comment_count(data["url"], root=root),
+        is_published(data["url"]),
+    )
+    return _parse_status(data, open_comments=open_comments, published=published)
 
 
 async def stream_branch_statuses(

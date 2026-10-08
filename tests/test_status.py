@@ -199,3 +199,52 @@ def test_parse_status_carries_through_open_comments():
         "url": "https://github.com/acme/widgets/pull/5",
     }
     assert _parse_status(data, open_comments=4).open_comments == 4
+
+
+def test_format_status_shows_published_when_true():
+    status = BranchStatus(
+        pr=PrState.OPEN,
+        ci=CiState.NONE,
+        review=ReviewState.NONE,
+        url=None,
+        published=True,
+    )
+    assert format_status(status).endswith("published")
+    assert "not published" not in format_status(status)
+
+
+def test_format_status_shows_not_published_when_false():
+    status = BranchStatus(
+        pr=PrState.OPEN,
+        ci=CiState.NONE,
+        review=ReviewState.NONE,
+        url=None,
+        published=False,
+    )
+    assert format_status(status).endswith("not published")
+
+
+def test_format_status_omits_published_when_unknown():
+    status = BranchStatus(
+        pr=PrState.OPEN,
+        ci=CiState.NONE,
+        review=ReviewState.NONE,
+        url=None,
+        published=None,
+    )
+    rendered = format_status(status)
+    assert "published" not in rendered
+
+
+def test_parse_status_carries_through_published():
+    data = {
+        "state": "OPEN",
+        "isDraft": False,
+        "reviewDecision": "",
+        "reviewRequests": [],
+        "statusCheckRollup": [],
+        "url": "https://github.com/acme/widgets/pull/6",
+    }
+    assert _parse_status(data, published=True).published is True
+    assert _parse_status(data, published=False).published is False
+    assert _parse_status(data).published is None
