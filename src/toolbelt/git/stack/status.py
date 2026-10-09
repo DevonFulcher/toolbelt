@@ -79,35 +79,36 @@ NO_PR = BranchStatus(
 
 
 # Widths of the longest value each field can take (excluding NONE, which is
-# never shown alongside other fields — see `format_status`). Padding to these
-# fixed widths, rather than each row's own longest value, keeps a field
-# (e.g. "CI") starting at the same column on every row, including as more
-# rows stream in with values `tree` hasn't seen yet.
+# never shown alongside other fields — see `format_status`). Every field has a
+# fixed-width slot, blank when it doesn't apply, so a field starts at the same
+# column on every row no matter which other fields that row happens to have,
+# including as more rows stream in with values `tree` hasn't seen yet.
 _PR_WIDTH = max(len(s.value) for s in PrState if s is not PrState.NONE)
 _CI_WIDTH = max(len(s.value) for s in CiState if s is not CiState.NONE)
 _REVIEW_WIDTH = max(len(s.value) for s in ReviewState if s is not ReviewState.NONE)
+_CONFLICTS_LABEL = "merge conflicts"
+# Room for the cap of 100 threads `_REVIEW_THREADS_QUERY` fetches.
+_COMMENTS_WIDTH = len("open comments: 100")
 
 
 def format_status(status: BranchStatus) -> str:
     """Render a status as the `tree` suffix, e.g. "PR open    CI failed"."""
     if status.pr is PrState.NONE:
         return "PR none"
-    fields = [("PR", status.pr.value, _PR_WIDTH)]
-    if status.ci is not CiState.NONE:
-        fields.append(("CI", status.ci.value, _CI_WIDTH))
-    if status.review is not ReviewState.NONE:
-        fields.append(("review", status.review.value, _REVIEW_WIDTH))
-    last = len(fields) - 1
-    parts = [
-        f"{label} {value}" if i == last else f"{label} {value.ljust(width)}"
-        for i, (label, value, width) in enumerate(fields)
+    slots = [
+        f"PR {status.pr.value}".ljust(len("PR ") + _PR_WIDTH),
+        f"CI {status.ci.value}".ljust(len("CI ") + _CI_WIDTH)
+        if status.ci is not CiState.NONE
+        else " " * (len("CI ") + _CI_WIDTH),
+        f"review {status.review.value}".ljust(len("review ") + _REVIEW_WIDTH)
+        if status.review is not ReviewState.NONE
+        else " " * (len("review ") + _REVIEW_WIDTH),
+        _CONFLICTS_LABEL if status.has_conflicts else " " * len(_CONFLICTS_LABEL),
+        f"open comments: {status.open_comments}".ljust(_COMMENTS_WIDTH)
+        if status.open_comments > 0
+        else " " * _COMMENTS_WIDTH,
     ]
-    suffix = "  ".join(parts)
-    if status.open_comments > 0:
-        suffix += f"  open comments: {status.open_comments}"
-    if status.has_conflicts:
-        suffix += "  merge conflicts"
-    return suffix
+    return "  ".join(slots).rstrip()
 
 
 def _ci_state(rollup: list[dict]) -> CiState:

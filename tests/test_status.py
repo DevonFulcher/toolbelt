@@ -240,3 +240,27 @@ def test_format_status_shows_merge_conflicts_only_when_present():
         has_conflicts=True,
     )
     assert format_status(conflicted).endswith("merge conflicts")
+
+
+def test_format_status_columns_are_stable_regardless_of_which_are_present():
+    sparse = format_status(
+        BranchStatus(
+            pr=PrState.DRAFT,
+            ci=CiState.SUCCESS,
+            review=ReviewState.NONE,
+            url=None,
+            has_conflicts=True,
+        )
+    )
+    full = format_status(
+        BranchStatus(
+            pr=PrState.OPEN,
+            ci=CiState.SUCCESS,
+            review=ReviewState.REQUESTED,
+            url=None,
+            open_comments=2,
+            has_conflicts=True,
+        )
+    )
+    assert sparse.index("merge conflicts") == full.index("merge conflicts")
+    assert sparse.index("CI") == full.index("CI")
