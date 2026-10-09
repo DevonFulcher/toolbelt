@@ -1,5 +1,11 @@
 """Unit tests for parsing/formatting `gh pr view` payloads (pure functions)."""
 
+import asyncio
+from pathlib import Path
+
+import pytest
+
+from toolbelt.git.stack import status as status_module
 from toolbelt.git.stack.status import (
     NO_PR,
     BranchStatus,
@@ -264,3 +270,47 @@ def test_format_status_columns_are_stable_regardless_of_which_are_present():
     )
     assert sparse.index("merge conflicts") == full.index("merge conflicts")
     assert sparse.index("CI") == full.index("CI")
+
+
+def test_fetch_retries_until_github_settles_mergeable(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    payloads = iter(
+        [_open_pr_payload("UNKNOWN"), _open_pr_payload("UNKNOWN")]
+        + [_open_pr_payload("CONFLICTING")]
+    )
+
+    async def fake_view(branch: str, *, root: Path) -> dict:
+        return next(payloads)
+
+    async def no_comments(url: str, *, root: Path) -> int:
+        return 0
+
+    monkeypatch.setattr(status_module, "_gh_pr_view", fake_view)
+    monkeypatch.setattr(status_module, "_fetch_open_comment_count", no_comments)
+    monkeypatch.setattr(status_module, "_MERGEABLE_RETRY_DELAY_SECONDS", 0)
+
+    result = asyncio.run(status_module.fetch_branch_status("b", root=Path(".")))
+
+    assert result.has_conflicts
+
+
+def test_fetch_gives_up_after_bounded_retries(monkeypatch: pytest.MonkeyPatch):
+    calls = 0
+
+    async def always_unknown(branch: str, *, root: Path) -> dict:
+        nonlocal calls
+        calls += 1
+        return _open_pr_payload("UNKNOWN")
+
+    async def no_comments(url: str, *, root: Path) -> int:
+        return 0
+
+    monkeypatch.setattr(status_module, "_gh_pr_view", always_unknown)
+    monkeypatch.setattr(status_module, "_fetch_open_comment_count", no_comments)
+    monkeypatch.setattr(status_module, "_MERGEABLE_RETRY_DELAY_SECONDS", 0)
+
+    result = asyncio.run(status_module.fetch_branch_status("b", root=Path(".")))
+
+    assert not result.has_conflicts
+    assert calls == 1 + status_module._MERGEABLE_RETRIES

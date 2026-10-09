@@ -195,8 +195,14 @@ async def _fetch_open_comment_count(url: str, *, root: Path) -> int:
     return _count_unresolved(json.loads(stdout))
 
 
-async def fetch_branch_status(branch: str, *, root: Path) -> BranchStatus:
-    """Look up `branch`'s PR/CI/review status. No PR at all is `NO_PR`."""
+# GitHub reports `mergeable: UNKNOWN` while it recomputes after the base or
+# head moves, and settles within a few seconds.
+_MERGEABLE_RETRIES = 4
+_MERGEABLE_RETRY_DELAY_SECONDS = 1.5
+
+
+async def _gh_pr_view(branch: str, *, root: Path) -> dict | None:
+    """`gh pr view` payload for `branch`, or None when it has no PR."""
     process = await asyncio.create_subprocess_exec(
         "gh",
         "pr",
@@ -212,8 +218,20 @@ async def fetch_branch_status(branch: str, *, root: Path) -> BranchStatus:
     if process.returncode != 0:
         # `gh pr view` exits non-zero when the branch has no PR — that's the
         # expected, common case here, not an infra failure to guard against.
+        return None
+    return json.loads(stdout)
+
+
+async def fetch_branch_status(branch: str, *, root: Path) -> BranchStatus:
+    """Look up `branch`'s PR/CI/review status. No PR at all is `NO_PR`."""
+    data = await _gh_pr_view(branch, root=root)
+    for _ in range(_MERGEABLE_RETRIES):
+        if data is None or data.get("mergeable") != "UNKNOWN":
+            break
+        await asyncio.sleep(_MERGEABLE_RETRY_DELAY_SECONDS)
+        data = await _gh_pr_view(branch, root=root)
+    if data is None:
         return NO_PR
-    data = json.loads(stdout)
     open_comments = await _fetch_open_comment_count(data["url"], root=root)
     return _parse_status(data, open_comments=open_comments)
 
