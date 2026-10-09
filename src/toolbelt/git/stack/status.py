@@ -14,7 +14,7 @@ from enum import Enum
 from pathlib import Path
 from typing import AsyncIterator
 
-_FIELDS = "state,isDraft,reviewDecision,reviewRequests,statusCheckRollup,url"
+_FIELDS = "state,isDraft,reviewDecision,reviewRequests,statusCheckRollup,url,mergeable"
 
 # `gh pr view --json` has no field for review-thread resolution, so the
 # unresolved-comment count needs a raw GraphQL call instead; this pulls
@@ -70,6 +70,7 @@ class BranchStatus:
     review: ReviewState
     url: str | None
     open_comments: int = 0
+    has_conflicts: bool = False
 
 
 NO_PR = BranchStatus(
@@ -104,6 +105,8 @@ def format_status(status: BranchStatus) -> str:
     suffix = "  ".join(parts)
     if status.open_comments > 0:
         suffix += f"  open comments: {status.open_comments}"
+    if status.has_conflicts:
+        suffix += "  merge conflicts"
     return suffix
 
 
@@ -148,6 +151,10 @@ def _parse_status(data: dict, *, open_comments: int = 0) -> BranchStatus:
         review=review_state,
         url=data["url"],
         open_comments=open_comments,
+        # `mergeable` is UNKNOWN while GitHub is still computing it; only a
+        # definite CONFLICTING counts, and only for a PR still in play.
+        has_conflicts=data.get("mergeable") == "CONFLICTING"
+        and pr_state in (PrState.OPEN, PrState.DRAFT),
     )
 
 

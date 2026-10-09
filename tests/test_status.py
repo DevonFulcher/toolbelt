@@ -199,3 +199,44 @@ def test_parse_status_carries_through_open_comments():
         "url": "https://github.com/acme/widgets/pull/5",
     }
     assert _parse_status(data, open_comments=4).open_comments == 4
+
+
+def _open_pr_payload(mergeable: str, state: str = "OPEN") -> dict:
+    return {
+        "state": state,
+        "isDraft": False,
+        "reviewDecision": "",
+        "reviewRequests": [],
+        "statusCheckRollup": [],
+        "url": "https://github.com/acme/widgets/pull/6",
+        "mergeable": mergeable,
+    }
+
+
+def test_parse_status_flags_conflicting_open_pr():
+    assert _parse_status(_open_pr_payload("CONFLICTING")).has_conflicts
+
+
+def test_parse_status_does_not_flag_mergeable_or_unknown():
+    assert not _parse_status(_open_pr_payload("MERGEABLE")).has_conflicts
+    assert not _parse_status(_open_pr_payload("UNKNOWN")).has_conflicts
+
+
+def test_parse_status_ignores_conflicts_on_a_merged_pr():
+    assert not _parse_status(_open_pr_payload("CONFLICTING", "MERGED")).has_conflicts
+
+
+def test_format_status_shows_merge_conflicts_only_when_present():
+    clean = BranchStatus(
+        pr=PrState.OPEN, ci=CiState.NONE, review=ReviewState.NONE, url=None
+    )
+    assert "merge conflicts" not in format_status(clean)
+
+    conflicted = BranchStatus(
+        pr=PrState.OPEN,
+        ci=CiState.NONE,
+        review=ReviewState.NONE,
+        url=None,
+        has_conflicts=True,
+    )
+    assert format_status(conflicted).endswith("merge conflicts")
