@@ -4,6 +4,7 @@ import subprocess
 
 import typer
 
+from toolbelt import invocation_log
 from toolbelt.git.cli import git_typer
 from toolbelt.github.status import display_status
 from toolbelt.logger import logger
@@ -41,6 +42,25 @@ def unit():
         repo.unit()
     else:
         logger.info("No unit tests configured for this repo")
+
+
+@app.command(name="logs")
+def logs(
+    lines: int = typer.Option(50, "--lines", "-n", help="Number of records to show."),
+    invocation: str | None = typer.Option(
+        None,
+        "--invocation",
+        "-i",
+        help="Only records whose inv or parent_inv matches this invocation id.",
+    ),
+    path: bool = typer.Option(False, "--path", help="Print the log file path only."),
+):
+    """Show the tail of the persistent JSON-lines invocation log"""
+    if path:
+        typer.echo(invocation_log.log_path())
+        return
+    for line in invocation_log.read_records(invocation=invocation)[-lines:]:
+        typer.echo(line)
 
 
 @app.command(name="standup", help="Prepare notes for standup")
