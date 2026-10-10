@@ -1,10 +1,11 @@
-import subprocess
 from pathlib import Path
+
+from toolbelt import logged_process
 
 
 def get_current_repo_root_path() -> Path:
     return Path(
-        subprocess.run(
+        logged_process.run(
             ["git", "rev-parse", "--show-toplevel"],
             check=True,
             capture_output=True,
@@ -21,7 +22,7 @@ def current_repo_org() -> str:
     uses this for best-effort bookkeeping, not to gate real behavior, so a
     missing org shouldn't crash the command that triggered it.
     """
-    result = subprocess.run(
+    result = logged_process.run(
         ["git", "config", "--get", "remote.origin.url"],
         check=False,
         capture_output=True,

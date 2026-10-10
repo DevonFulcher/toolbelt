@@ -1,11 +1,12 @@
 """Tests for the persistent invocation log.
 
-`install()` swaps `subprocess.Popen` process-wide, so tests that use it
-restore it afterwards.
+`install()` sets the module-level active log, so tests that use it restore it
+afterwards.
 """
 
 import json
 import logging
+import asyncio
 import subprocess
 import sys
 import threading
@@ -15,7 +16,7 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-from toolbelt import invocation_log
+from toolbelt import invocation_log, logged_process
 from toolbelt.cli import app
 from toolbelt.invocation_log import InvocationLog, JsonlWriter
 
@@ -30,7 +31,7 @@ def _make_log(tmp_path: Path, **env: str) -> InvocationLog:
 
 @pytest.fixture
 def restore_process_state(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(subprocess, "Popen", subprocess.Popen)
+    monkeypatch.setattr(invocation_log, "active", None)
     monkeypatch.delenv(invocation_log.INVOCATION_ID_ENV, raising=False)
     handlers = list(logging.getLogger("toolbelt").handlers)
     yield
@@ -90,13 +91,73 @@ def test_subprocess_exec_and_exit_are_logged(
 ) -> None:
     log = _make_log(tmp_path)
     invocation_log.install(log)
-    subprocess.run([sys.executable, "-c", "raise SystemExit(3)"])
+    logged_process.run([sys.executable, "-c", "raise SystemExit(3)"])
     logging.getLogger("toolbelt").info("hello")
     by_event = {r["event"]: r for r in _records(log.writer.path)}
     assert by_event["exec"]["cmd"][0] == sys.executable
     assert by_event["exec_exit"]["returncode"] == 3
     assert by_event["exec_exit"]["child_pid"] == by_event["exec"]["child_pid"]
     assert by_event["log"]["message"] == "hello"
+
+
+def test_run_behaves_like_subprocess_run(
+    tmp_path: Path, restore_process_state: None
+) -> None:
+    invocation_log.install(_make_log(tmp_path))
+    result = logged_process.run(
+        [sys.executable, "-c", "import sys; print(sys.stdin.read().upper())"],
+        input="hi",
+        capture_output=True,
+        text=True,
+    )
+    assert result.stdout.strip() == "HI"
+    with pytest.raises(subprocess.CalledProcessError):
+        logged_process.run([sys.executable, "-c", "raise SystemExit(1)"], check=True)
+    assert (
+        logged_process.check_output(
+            [sys.executable, "-c", "print('x')"], text=True
+        ).strip()
+        == "x"
+    )
+
+
+def test_failed_exec_is_logged(tmp_path: Path, restore_process_state: None) -> None:
+    log = _make_log(tmp_path)
+    invocation_log.install(log)
+    with pytest.raises(FileNotFoundError):
+        logged_process.run(["definitely-not-a-real-command-xyz"])
+    assert [r["event"] for r in _records(log.writer.path)] == ["exec_failed"]
+
+
+def test_asyncio_exec_and_exit_are_logged(
+    tmp_path: Path, restore_process_state: None
+) -> None:
+    log = _make_log(tmp_path)
+    invocation_log.install(log)
+
+    async def go() -> bytes:
+        process = await logged_process.create_subprocess_exec(
+            sys.executable,
+            "-c",
+            "print('out'); raise SystemExit(4)",
+            stdout=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await process.communicate()
+        assert process.returncode == 4
+        return stdout
+
+    assert asyncio.run(go()).strip() == b"out"
+    by_event = {r["event"]: r for r in _records(log.writer.path)}
+    assert by_event["exec_exit"]["returncode"] == 4
+    assert by_event["exec_exit"]["child_pid"] == by_event["exec"]["child_pid"]
+
+
+def test_unlogged_when_no_active_log() -> None:
+    assert invocation_log.active is None
+    result = logged_process.run(
+        [sys.executable, "-c", "print(1)"], capture_output=True, text=True
+    )
+    assert result.stdout.strip() == "1"
 
 
 def test_run_logged_records_exit_and_crash(tmp_path: Path) -> None:

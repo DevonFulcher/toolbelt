@@ -1,9 +1,10 @@
 import json
-import subprocess
 from pathlib import Path
 
 import boto3
 import yaml
+
+from toolbelt import logged_process
 
 
 def get_aws_secret(secret_name: str, region: str = "us-east-1") -> dict:
@@ -88,7 +89,7 @@ def render_helm_yaml(
         helm_params.append(str(service_devspace_values))
     if not helm_params:
         return {}
-    process = subprocess.run(
+    process = logged_process.run(
         [
             "helm",
             "template",

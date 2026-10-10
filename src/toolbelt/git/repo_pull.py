@@ -28,6 +28,8 @@ from pathlib import Path
 
 import yaml
 
+from toolbelt import logged_process
+
 _FALLBACK_DEFAULT_BRANCHES = ("main", "master")
 
 
@@ -66,7 +68,7 @@ class PullResult:
 
 
 def _git(args: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    return logged_process.run(
         ["git", *args], cwd=cwd, capture_output=True, text=True, check=False
     )
 
@@ -140,7 +142,7 @@ def start_background_pull(*, state_dir: Path, config_path: Path) -> bool:
         return False
     state_dir.mkdir(parents=True, exist_ok=True)
     with open(state_dir / "sync-pull.log", "a") as log:
-        subprocess.Popen(
+        logged_process.Popen(
             [sys.executable, "-m", "toolbelt.git.repo_pull"],
             stdin=subprocess.DEVNULL,
             stdout=log,

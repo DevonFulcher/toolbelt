@@ -14,6 +14,8 @@ from enum import Enum
 from pathlib import Path
 from typing import AsyncIterator
 
+from toolbelt import logged_process
+
 _FIELDS = "state,isDraft,reviewDecision,reviewRequests,statusCheckRollup,url,mergeable"
 
 # `gh pr view --json` has no field for review-thread resolution, so the
@@ -173,7 +175,7 @@ async def _fetch_open_comment_count(url: str, *, root: Path) -> int:
     if match is None:
         return 0
     owner, repo, number = match.groups()
-    process = await asyncio.create_subprocess_exec(
+    process = await logged_process.create_subprocess_exec(
         "gh",
         "api",
         "graphql",
@@ -203,7 +205,7 @@ _MERGEABLE_RETRY_DELAY_SECONDS = 1.5
 
 async def _gh_pr_view(branch: str, *, root: Path) -> dict | None:
     """`gh pr view` payload for `branch`, or None when it has no PR."""
-    process = await asyncio.create_subprocess_exec(
+    process = await logged_process.create_subprocess_exec(
         "gh",
         "pr",
         "view",

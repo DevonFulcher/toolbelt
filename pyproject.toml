@@ -49,3 +49,22 @@ module = [
     "langgraph.*",
 ]
 ignore_missing_imports = true
+
+# Child processes must go through `toolbelt.logged_process` so the invocation
+# log sees them; TID251 flags any direct use elsewhere.
+[tool.ruff.lint]
+extend-select = ["TID251"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"subprocess.run".msg = "Use toolbelt.logged_process.run"
+"subprocess.Popen".msg = "Use toolbelt.logged_process.Popen"
+"subprocess.check_output".msg = "Use toolbelt.logged_process.check_output"
+"subprocess.check_call".msg = "Use toolbelt.logged_process.run(check=True)"
+"subprocess.call".msg = "Use toolbelt.logged_process.run"
+"asyncio.create_subprocess_exec".msg = "Use toolbelt.logged_process.create_subprocess_exec"
+"asyncio.create_subprocess_shell".msg = "Use toolbelt.logged_process.create_subprocess_exec"
+"os.system".msg = "Use toolbelt.logged_process.run"
+
+[tool.ruff.lint.per-file-ignores]
+"src/toolbelt/logged_process.py" = ["TID251"]
+"tests/**" = ["TID251"]

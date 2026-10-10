@@ -4,6 +4,7 @@ from typing import Sequence
 
 import typer
 
+from toolbelt import logged_process
 from toolbelt.logger import logger
 
 
@@ -42,7 +43,7 @@ def run(
     logger.info(" ".join(cmd))
 
     try:
-        result = subprocess.run(
+        result = logged_process.run(
             list(cmd),
             cwd=str(cwd) if cwd else None,
             check=check,
@@ -74,7 +75,7 @@ def capture(
     cwd: Path | None = None,
 ) -> str:
     """Run a command and return stdout with surrounding whitespace removed."""
-    return subprocess.check_output(
+    return logged_process.check_output(
         list(cmd),
         cwd=str(cwd) if cwd else None,
         text=True,

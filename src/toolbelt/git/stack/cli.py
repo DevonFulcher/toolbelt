@@ -17,6 +17,7 @@ from pathlib import Path
 import typer
 from rich.live import Live
 
+from toolbelt import logged_process
 from toolbelt.git.exec import run
 from toolbelt.git.repo_lock import repo_lock
 from toolbelt.git.stack import lineage
@@ -121,7 +122,7 @@ def set_parent(
 
 
 def _repo_root_or_none() -> Path | None:
-    result = subprocess.run(
+    result = logged_process.run(
         ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True
     )
     return Path(result.stdout.strip()) if result.returncode == 0 else None
@@ -247,7 +248,7 @@ def switch(
         typer.echo(render(parents, current=current_branch(root)))
         branches = sorted(parents.keys())
         try:
-            proc = subprocess.run(
+            proc = logged_process.run(
                 ["fzf"],
                 input="\n".join(branches).encode(),
                 capture_output=True,
@@ -295,7 +296,7 @@ def remove(
         typer.echo(render(parents, current=current_branch(root)))
         branches = sorted(parents.keys())
         try:
-            proc = subprocess.run(
+            proc = logged_process.run(
                 ["fzf"],
                 input="\n".join(branches).encode(),
                 capture_output=True,

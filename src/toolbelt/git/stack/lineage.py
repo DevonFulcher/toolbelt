@@ -11,11 +11,11 @@ repo.
 import contextlib
 import functools
 import re
-import subprocess
 from collections import defaultdict
 from collections.abc import Iterator
 from pathlib import Path
 
+from toolbelt import logged_process
 from toolbelt.git.exec import capture, run
 from toolbelt.git.stack.store import (
     Parents,
@@ -64,7 +64,7 @@ def repo_identity(root: Path) -> RepoIdentity:
     if not common.is_absolute():
         common = root / common
     common = common.resolve()
-    remote = subprocess.run(
+    remote = logged_process.run(
         ["git", "config", "--get", "remote.origin.url"],
         cwd=root,
         check=False,

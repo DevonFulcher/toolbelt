@@ -2,6 +2,7 @@ import os
 import subprocess
 from pathlib import Path
 
+from toolbelt import logged_process
 from toolbelt.git.constants import GIT_BRANCH_PREFIX
 from toolbelt.logger import logger
 
@@ -15,7 +16,7 @@ def main_worktree(root: Path) -> Path:
     long-running process whose cwd is deleted out from under it can break in
     stranger ways than that on top.
     """
-    result = subprocess.run(
+    result = logged_process.run(
         ["git", "worktree", "list", "--porcelain"],
         check=True,
         capture_output=True,
@@ -37,7 +38,7 @@ def _worktree_entries(root: Path) -> list[tuple[Path, str | None]]:
     root:
         Path to the repository root.
     """
-    result = subprocess.run(
+    result = logged_process.run(
         ["git", "worktree", "list", "--porcelain"],
         check=True,
         capture_output=True,
@@ -94,7 +95,7 @@ def _worktree_paths_for_branch(branch_name: str, root: Path) -> list[Path]:
 
 def _is_worktree_dirty(path: Path) -> bool:
     """True if ``path``'s worktree has uncommitted or untracked changes."""
-    result = subprocess.run(
+    result = logged_process.run(
         ["git", "status", "--porcelain"],
         cwd=path,
         capture_output=True,
@@ -136,7 +137,7 @@ def _remove_worktree(path: Path, *, force: bool) -> None:
     trash_path = path.with_name(f".toolbelt-trash-{path.name}-{os.getpid()}")
     path.rename(trash_path)
     logger.info(f"Removing {path} in the background...")
-    subprocess.Popen(
+    logged_process.Popen(
         ["rm", "-rf", str(trash_path)],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -174,7 +175,7 @@ def delete_branch_and_worktree(
     branch_to_delete = branch_name
 
     def branch_exists(name: str) -> bool:
-        result = subprocess.run(
+        result = logged_process.run(
             ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{name}"],
             cwd=root,
             check=False,
@@ -200,10 +201,10 @@ def delete_branch_and_worktree(
         _remove_worktree(path, force=force)
 
     # Clean up any stale worktree references so branch deletion succeeds.
-    subprocess.run(["git", "worktree", "prune"], check=True, cwd=root)
+    logged_process.run(["git", "worktree", "prune"], check=True, cwd=root)
 
     logger.info(f"git branch -D {branch_to_delete}")
-    branch_delete = subprocess.run(
+    branch_delete = logged_process.run(
         ["git", "branch", "-D", branch_to_delete],
         capture_output=True,
         text=True,

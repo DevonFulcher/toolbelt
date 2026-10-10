@@ -1,10 +1,9 @@
 import asyncio
 import os
-import subprocess
 
 import typer
 
-from toolbelt import invocation_log
+from toolbelt import invocation_log, logged_process
 from toolbelt.dotfiles.cli import dotfiles_typer
 from toolbelt.git.cli import git_typer
 from toolbelt.github.status import display_status
@@ -24,7 +23,7 @@ app.add_typer(dotfiles_typer, name="dotfiles")
 @app.command()
 def upgrade():
     """Upgrade toolbelt"""
-    subprocess.run(
+    logged_process.run(
         [
             "uv",
             "tool",

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import typer
 
+from toolbelt import logged_process
 from toolbelt.git.commits import store_commit
 from toolbelt.git.constants import GIT_BRANCH_PREFIX
 from toolbelt.git.exec import capture, run
@@ -32,9 +33,9 @@ from .worktrees_ops import (
 def update_repo(target_path: Path):
     if (target_path / ".tool-versions").exists():
         # This may fail if the plugins in .tool-versions are not installed
-        subprocess.run(["asdf", "install"], check=True, cwd=target_path)
+        logged_process.run(["asdf", "install"], check=True, cwd=target_path)
     if (target_path / "uv.lock").exists():
-        subprocess.run(["uv", "sync", "--all-groups"], check=True, cwd=target_path)
+        logged_process.run(["uv", "sync", "--all-groups"], check=True, cwd=target_path)
 
 
 def sync_repo(root: Path | None = None) -> None:
@@ -95,7 +96,7 @@ def git_merge(pr: str) -> None:
     branch = capture(
         ["gh", "pr", "view", pr, "--json", "headRefName", "--jq", ".headRefName"]
     )
-    subprocess.run(["gh", "pr", "merge", "--squash", pr], check=True)
+    logged_process.run(["gh", "pr", "merge", "--squash", pr], check=True)
 
     root = get_current_repo_root_path()
     worktree = worktree_paths(root=root).get(branch)
@@ -113,7 +114,7 @@ def git_pr(skip_tests: bool, cwd: Path | None = None) -> None:
     # ``cwd`` targets the branch's worktree: when `git save` starts a new stacked
     # branch it lands in its own worktree, so the PR must be opened from there
     # rather than the (default-branch) directory the command was invoked in.
-    view_pr = subprocess.run(["gh", "pr", "view", "--web"], check=False, cwd=cwd)
+    view_pr = logged_process.run(["gh", "pr", "view", "--web"], check=False, cwd=cwd)
     if view_pr.returncode == 0:
         return
     repo = current_repo()
@@ -132,7 +133,7 @@ def git_pr(skip_tests: bool, cwd: Path | None = None) -> None:
     root = cwd or repo_root()
     branch = current_branch(root)
     base = get_parent(branch, root=root) or get_default_branch()
-    subprocess.run(
+    logged_process.run(
         ["gh", "pr", "create", "--web", "--base", base],
         check=False,
         cwd=cwd,
@@ -159,7 +160,7 @@ def _drop_lineage_entry(branch: str, *, root: Path) -> None:
 def _branch_exists(branch: str, *, root: Path, remote: bool = False) -> bool:
     prefix = "refs/remotes" if remote else "refs/heads"
     return (
-        subprocess.run(
+        logged_process.run(
             ["git", "show-ref", "--verify", "--quiet", f"{prefix}/{branch}"],
             cwd=root,
         ).returncode
@@ -196,7 +197,7 @@ def _unsafe_to_delete_reason(branch: str, *, root: Path) -> str | None:
     )
     if base is None:
         return "no origin/main or origin/master to compare against"
-    merged = subprocess.run(
+    merged = logged_process.run(
         ["git", "merge-tree", "--write-tree", base, branch],
         cwd=root,
         capture_output=True,
@@ -234,8 +235,8 @@ def git_branch_clean(root: Path | None = None) -> None:
     from toolbelt.git.stack import lineage
 
     root = main_worktree(root or get_current_repo_root_path())
-    subprocess.run(["git", "fetch", "-p"], check=True, cwd=root)
-    branch_list = subprocess.run(
+    logged_process.run(["git", "fetch", "-p"], check=True, cwd=root)
+    branch_list = logged_process.run(
         ["git", "branch", "-vv"],
         check=True,
         capture_output=True,
@@ -313,7 +314,7 @@ def check_for_parent_branch_merge_conflicts(
         )
         return
 
-    merge_tree_result = subprocess.run(
+    merge_tree_result = logged_process.run(
         ["git", "merge-tree", "--write-tree", parent_branch, current_branch],
         cwd=root,
         capture_output=True,
@@ -341,7 +342,7 @@ def check_for_parent_branch_merge_conflicts(
     proceed = input("Do you want to continue anyway? (y/n): ")
     if proceed.lower() != "y":
         # Unstage changes if the user aborts.
-        subprocess.run(["git", "reset"], check=True, cwd=root)
+        logged_process.run(["git", "reset"], check=True, cwd=root)
         logger.info("Changes unstaged. Aborting commit.")
         raise typer.Exit(1)
 
@@ -349,7 +350,7 @@ def check_for_parent_branch_merge_conflicts(
 def _stage(*, root: Path, pathspec: list[str] | None) -> None:
     git_add_command = ["git", "add"]
     git_add_command.extend(pathspec if pathspec else ["-A"])
-    subprocess.run(git_add_command, check=True, cwd=root)
+    logged_process.run(git_add_command, check=True, cwd=root)
 
 
 def _commit(*, root: Path, message: str | None, amend: bool, no_verify: bool) -> None:
@@ -360,7 +361,7 @@ def _commit(*, root: Path, message: str | None, amend: bool, no_verify: bool) ->
         git_commit_command.append("--amend")
     if no_verify:
         git_commit_command.append("--no-verify")
-    subprocess.run(git_commit_command, check=True, text=True, cwd=root)
+    logged_process.run(git_commit_command, check=True, text=True, cwd=root)
 
 
 def _should_start_new_branch(
@@ -374,7 +375,7 @@ def _should_start_new_branch(
     current_org = os.getenv("CURRENT_ORG")
     if not current_org or current_branch != default_branch:
         return False
-    remote_url = subprocess.run(
+    remote_url = logged_process.run(
         ["git", "remote", "get-url", "origin"],
         check=True,
         capture_output=True,
@@ -519,7 +520,7 @@ def git_safe_pull() -> None:
     ensuring the pull can be done without conflicts.
     """
     # Check for uncommitted changes first
-    uncommitted_check = subprocess.run(
+    uncommitted_check = logged_process.run(
         ["git", "diff-index", "--quiet", "HEAD", "--"],
         capture_output=True,
         text=True,
@@ -535,11 +536,11 @@ def git_safe_pull() -> None:
 
     # Fetch latest changes
     logger.info("Fetching latest changes...")
-    subprocess.run(["git", "fetch"], check=True)
+    logged_process.run(["git", "fetch"], check=True)
 
     # Check if current branch has diverged from remote
     try:
-        subprocess.run(
+        logged_process.run(
             ["git", "merge-base", "--is-ancestor", "HEAD", f"origin/{current_branch}"],
             check=True,
             capture_output=True,
@@ -548,7 +549,7 @@ def git_safe_pull() -> None:
 
         # If we get here, it's safe to pull
         logger.info("Branch can be fast-forwarded. Pulling changes...")
-        subprocess.run(["git", "pull"], check=True)
+        logged_process.run(["git", "pull"], check=True)
         logger.info("Successfully pulled changes!")
 
     except subprocess.CalledProcessError:

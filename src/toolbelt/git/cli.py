@@ -1,11 +1,11 @@
 import os
 import re
-import subprocess
 from pathlib import Path
 from typing import Annotated, Optional
 
 import typer
 
+from toolbelt import logged_process
 from toolbelt.bootstrap.repo_setup import git_setup
 from toolbelt.editor import open_in_editor
 from toolbelt.env_var import get_git_projects_workdir
@@ -13,6 +13,7 @@ from toolbelt.git.branches import get_branch_name
 from toolbelt.git.commands import is_git_repo
 from toolbelt.git.repo import get_current_repo_root_path
 from toolbelt.git.repo_lock import repo_lock
+from toolbelt.git.stack.cli import stack_typer
 from toolbelt.git.workflow import (
     git_branch_clean,
     git_merge,
@@ -22,7 +23,6 @@ from toolbelt.git.workflow import (
     sync_repo,
     update_repo,
 )
-from toolbelt.git.stack.cli import stack_typer
 from toolbelt.git.worktrees import repo_root
 
 git_typer = typer.Typer(help="Git workflow commands")
@@ -86,7 +86,7 @@ def get(
     )
     clone_path = git_projects_workdir / repo_name
     if not is_git_repo(clone_path):
-        subprocess.run(
+        logged_process.run(
             ["git", "clone", repo_url, str(clone_path)],
             check=True,
         )
@@ -168,9 +168,9 @@ def change(
     ] = None,
 ):
     if new_branch:
-        subprocess.run(["git", "checkout", "-b", new_branch], check=True)
+        logged_process.run(["git", "checkout", "-b", new_branch], check=True)
     else:
-        subprocess.run(
+        logged_process.run(
             ["git", "checkout", get_branch_name(branch, "change")], check=True
         )
         git_safe_pull()
@@ -225,7 +225,7 @@ def compare(
     git_config_args = [] if line else ["-c", "diff.external=difft"]
     revisions, paths = _split_revisions_and_paths(compare_args or [], cwd=Path.cwd())
     # Exclude files from diff that I rarely care about. Reference: https://stackoverflow.com/a/48259275/8925314
-    subprocess.run(
+    logged_process.run(
         ["git"]
         + git_config_args
         + ["diff", "--ignore-all-space"]  # Ignore all whitespace differences
@@ -248,7 +248,7 @@ def compare(
 def combine(
     branch: Annotated[str, typer.Argument(help="Branch to combine")],
 ):
-    subprocess.run(["git", "merge", get_branch_name(branch)], check=True)
+    logged_process.run(["git", "merge", get_branch_name(branch)], check=True)
 
 
 @git_typer.command(help="Set up a repository with common config")
@@ -276,7 +276,7 @@ def safe_pull():
 @git_typer.command(name="list", help="List all repos")
 def git_list():
     git_projects_workdir = get_git_projects_workdir()
-    subprocess.run(
+    logged_process.run(
         [
             "eza",
             "--classify",

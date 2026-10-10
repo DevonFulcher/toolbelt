@@ -13,6 +13,7 @@ from typing import Protocol
 
 import typer
 
+from toolbelt import logged_process
 from toolbelt.logger import logger
 
 
@@ -35,7 +36,7 @@ class GhForge:
         # branch is deleted on merge. A non-empty merged list means it landed.
         # Async so `sync_stack` can check every branch in the stack concurrently
         # instead of paying one network round-trip per branch, serially.
-        process = await asyncio.create_subprocess_exec(
+        process = await logged_process.create_subprocess_exec(
             "gh",
             "pr",
             "list",
@@ -65,7 +66,7 @@ class GhForge:
     async def pr_is_open(self, branch: str) -> bool:
         # Draft or not — just "does anyone have a reason to look at a push
         # to this branch", which decides whether `sync` pushes automatically.
-        process = await asyncio.create_subprocess_exec(
+        process = await logged_process.create_subprocess_exec(
             "gh",
             "pr",
             "list",

@@ -23,10 +23,10 @@ are single ``write`` calls in append mode. Logging is strictly best-effort:
 the first ``OSError`` (unwritable dir, full disk) disables the writer for
 the rest of the process and is otherwise swallowed.
 
-Limitation: ``exec_exit`` is emitted when ``wait()``/``poll()`` on the
-``Popen`` observes the exit, which covers ``subprocess.run`` and friends;
-asyncio subprocesses reap children themselves, so only their ``exec`` is
-recorded.
+``exec``/``exec_exit``/``exec_failed`` are emitted by ``toolbelt.logged_process``,
+the single place toolbelt starts child processes; it reads the log installed
+here from ``active``. ``exec_exit`` is emitted when the exit is observed
+(``wait``/``poll``/``communicate``), which covers every call site.
 """
 
 import fcntl
@@ -34,7 +34,6 @@ import json
 import logging
 import os
 import secrets
-import subprocess
 import time
 import traceback
 from collections.abc import Callable, Mapping, Sequence
@@ -51,6 +50,11 @@ LOG_FILENAME = "toolbelt.log.jsonl"
 DEFAULT_MAX_BYTES = 5 * 1024 * 1024
 DEFAULT_BACKUPS = 3
 _MAX_ARG_CHARS = 500
+
+
+# The log child-process helpers report to; set by ``install``. ``None`` (library
+# use, tests) means child processes run unlogged.
+active: "InvocationLog | None" = None
 
 
 def log_dir(env: Mapping[str, str] = os.environ) -> Path:
@@ -119,7 +123,7 @@ def _find_repo_root(cwd: Path) -> str | None:
     return None
 
 
-def _truncate(args: Sequence[Any]) -> list[str]:
+def truncate_args(args: Sequence[Any]) -> list[str]:
     return [
         a if len(a) <= _MAX_ARG_CHARS else a[:_MAX_ARG_CHARS] + "..."
         for a in (str(x) for x in args)
@@ -175,51 +179,12 @@ class _ForwardingHandler(logging.Handler):
         self.log.event("log", level=record.levelname, message=record.getMessage())
 
 
-def _logged_popen(log: InvocationLog) -> type[subprocess.Popen[Any]]:
-    class LoggedPopen(subprocess.Popen):  # type: ignore[type-arg]
-        def __init__(self, args: Any, *a: Any, **kw: Any) -> None:
-            self._tt_started = time.monotonic()
-            self._tt_exit_logged = False
-            argv = args if isinstance(args, (list, tuple)) else [args]
-            cmd = _truncate(argv)
-            cwd = kw.get("cwd")
-            try:
-                super().__init__(args, *a, **kw)
-            except OSError as err:
-                log.event("exec_failed", cmd=cmd, cwd=cwd, error=repr(err))
-                raise
-            log.event("exec", cmd=cmd, cwd=cwd, child_pid=self.pid)
-
-        def _tt_log_exit(self) -> None:
-            if self.returncode is not None and not self._tt_exit_logged:
-                self._tt_exit_logged = True
-                log.event(
-                    "exec_exit",
-                    child_pid=self.pid,
-                    returncode=self.returncode,
-                    duration_ms=round((time.monotonic() - self._tt_started) * 1000),
-                )
-
-        def wait(self, timeout: float | None = None) -> int:
-            try:
-                return super().wait(timeout)
-            finally:
-                self._tt_log_exit()
-
-        def poll(self) -> int | None:
-            try:
-                return super().poll()
-            finally:
-                self._tt_log_exit()
-
-    return LoggedPopen
-
-
 def install(log: InvocationLog) -> None:
-    """Route subprocess and ``toolbelt`` logger activity into ``log``, and
-    export the invocation id so child processes record it as their parent."""
+    """Route child-process (via ``toolbelt.logged_process``) and ``toolbelt``
+    logger activity into ``log``, and export the invocation id so child processes record it as their parent."""
     os.environ[INVOCATION_ID_ENV] = log.invocation_id
-    subprocess.Popen = _logged_popen(log)  # type: ignore[misc,assignment]
+    global active
+    active = log
     logging.getLogger("toolbelt").addHandler(_ForwardingHandler(log))
 
 
@@ -228,7 +193,9 @@ def run_logged(
 ) -> None:
     """Run ``entry`` bracketed by ``start`` and ``exit``/``crash`` records."""
     cwd = Path.cwd()
-    log.event("start", argv=_truncate(argv), cwd=str(cwd), repo=_find_repo_root(cwd))
+    log.event(
+        "start", argv=truncate_args(argv), cwd=str(cwd), repo=_find_repo_root(cwd)
+    )
     try:
         entry()
     except SystemExit as err:

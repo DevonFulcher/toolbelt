@@ -1,12 +1,14 @@
 import subprocess
 from pathlib import Path
 
+from toolbelt import logged_process
+
 
 def is_git_repo(path: Path) -> bool:
     if not path.exists():
         return False
     try:
-        subprocess.run(
+        logged_process.run(
             ["git", "rev-parse", "--git-dir"],
             check=True,
             capture_output=True,
