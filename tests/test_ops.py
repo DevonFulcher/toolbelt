@@ -363,3 +363,19 @@ def test_set_parent_rejects_missing_branch(repo: Path, tmp_path: Path):
     create_stacked_branch("api", root=repo, wt_path=api)
     with pytest.raises(typer.Exit):
         set_branch_parent(root=api, new_parent="does/not/exist")
+
+
+def test_diff_parent_command_compares_with_origin_when_local_base_diverged(
+    repo: Path, tmp_path: Path, commit
+):
+    wt = tmp_path / "wt-api"
+    create_stacked_branch("api", root=repo, wt_path=wt)
+    _stale_local_main(repo, commit)  # origin/main moves on; local main is rewound
+    # Diverge: local main gets its own commit that origin/main never sees.
+    commit("local-only.txt", "x\n", "unpushed main work")
+    git("merge", "--no-edit", "origin/main", cwd=wt)
+
+    cmd = diff_parent_command(root=wt, line=True)
+
+    # sync merges origin/<base> into the branch, so that is what to measure from.
+    assert cmd == ["git", "diff", "origin/main...HEAD"]

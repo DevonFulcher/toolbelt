@@ -62,8 +62,9 @@ def _parent_ref(parent: str, *, root: Path) -> str:
     root, and nothing updates the local base branch, so it is often behind the
     remote. Measuring against that stale branch treats every newer base commit
     already merged into the branch as the branch's own work, and a squash then
-    folds them in. Use ``origin/<base>`` when the local base is behind it; keep
-    the local base when it is ahead of, or has diverged from, the remote.
+    folds them in. Use ``origin/<base>`` when the local base is behind it or has
+    diverged from it (``sync`` only ever merges the remote's side); keep the
+    local base when it is strictly ahead of the remote.
     """
     if parent in all_parents(root=root):
         return parent
@@ -72,7 +73,7 @@ def _parent_ref(parent: str, *, root: Path) -> str:
     if (
         _remote_branch_exists(parent, root=root)
         and _rev_parse(parent, root=root) != _rev_parse(remote, root=root)
-        and _is_ancestor(parent, remote, root=root)
+        and not _is_ancestor(remote, parent, root=root)
     ):
         return remote
     return parent
