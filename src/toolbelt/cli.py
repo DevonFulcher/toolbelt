@@ -20,6 +20,25 @@ app.add_typer(zsh_typer, name="zsh")
 app.add_typer(dotfiles_typer, name="dotfiles")
 
 
+@app.command(name="ui")
+def ui(
+    port: int = typer.Option(
+        8765, "--port", "-p", help="Port to listen on (0 picks a free one)."
+    ),
+):
+    """Serve a read-only web view of every known repo's stacks on 127.0.0.1"""
+    # Imported here so the web stack doesn't slow down every other command.
+    from toolbelt.git.stack import lineage
+    from toolbelt.git.stack.cli import _repo_root_or_none
+    from toolbelt.ui.server import serve
+
+    cwd_root = _repo_root_or_none()
+    if cwd_root is not None:
+        # Same as `tt g tree`: make sure the current repo is registered.
+        lineage.all_parents(root=cwd_root)
+    serve(port=port, cwd_root=cwd_root)
+
+
 @app.command()
 def upgrade():
     """Upgrade toolbelt"""

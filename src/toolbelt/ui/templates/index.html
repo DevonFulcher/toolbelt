@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>toolbelt stacks</title>
+<script src="/static/htmx.min.js"></script>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fafafa; --fg: #1f2328; --muted: #6a737d; --line: #d8dee4; --card: #fff;
+    --accent: #0969da;
+    --green: #1a7f37; --red: #cf222e; --amber: #9a6700; --purple: #8250df; --gray: #6a737d;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117; --fg: #e6edf3; --muted: #8b949e; --line: #30363d; --card: #161b22;
+      --accent: #58a6ff;
+      --green: #3fb950; --red: #f85149; --amber: #d29922; --purple: #a371f7; --gray: #8b949e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  header { display: flex; align-items: center; justify-content: space-between;
+           padding: 10px 20px; border-bottom: 1px solid var(--line); }
+  h1 { font-size: 15px; margin: 0; }
+  button { font: inherit; color: var(--fg); background: var(--card); cursor: pointer;
+           border: 1px solid var(--line); border-radius: 6px; padding: 3px 10px; }
+  button:hover { border-color: var(--accent); }
+  main { padding: 16px 20px; display: grid; gap: 16px; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+            overflow-x: auto; }
+  h2 { font-size: 13px; margin: 0; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+  h2 small { color: var(--muted); font-weight: normal; margin-left: 8px; }
+  .row { display: grid; grid-template-columns: minmax(16rem, 1.4fr) minmax(12rem, 2fr) minmax(6rem, .6fr) minmax(6rem, .6fr);
+         gap: 12px; align-items: center; padding: 3px 12px; min-width: 52rem; }
+  .row:nth-child(even) { background: color-mix(in srgb, var(--line) 25%, transparent); }
+  .row.head { color: var(--muted); font-size: 12px; border-bottom: 1px solid var(--line); }
+  .branch { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px;
+            white-space: nowrap; }
+  .branch.base { color: var(--muted); }
+  .current { font-weight: 600; }
+  .current::after { content: " ●"; color: var(--accent); }
+  .muted { color: var(--muted); }
+  .status { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+  .htmx-request.status { opacity: .55; }
+  .pill { display: inline-block; padding: 0 7px; border: 1px solid currentColor;
+          border-radius: 10px; font-size: 12px; white-space: nowrap; }
+  a.pill:hover { text-decoration: none; background: color-mix(in srgb, currentColor 12%, transparent); }
+  .pr-open, .ci-success, .review-approved { color: var(--green); }
+  .pr-merged { color: var(--purple); }
+  .pr-closed, .ci-failed, .conflicts, .error { color: var(--red); }
+  .pr-draft { color: var(--gray); }
+  .ci-running, .review-requested, .review-reviewed, .comments { color: var(--amber); }
+  .notice { padding: 6px 12px; color: var(--amber); font-size: 12px; }
+  .empty { padding: 24px; text-align: center; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>toolbelt stacks</h1>
+  <button type="button" hx-on:click="htmx.trigger(document.body, 'refresh')">Refresh statuses</button>
+</header>
+<main>
+{% for repo in repos %}
+  <section>
+    <h2>{{ repo.name }}<small>{{ repo.path }}</small></h2>
+    {% if repo.path_missing %}<div class="notice">Checkout no longer exists at this path; PR status unavailable.</div>{% endif %}
+    <div class="row head"><span>Branch</span><span>PR / CI / review</span><span>Jira</span><span>Session</span></div>
+    {% for row in repo.rows %}
+    <div class="row">
+      <span class="branch{% if not row.tracked %} base{% endif %}{% if row.current %} current{% endif %}"
+            style="padding-left: {{ row.depth * 1.25 }}rem">{{ row.name }}</span>
+      {% if row.tracked %}
+        {% with repo_id=repo.id, branch=row.name, status=none, path_missing=repo.path_missing %}{% include "status.html" %}{% endwith %}
+        <span>{% if row.jira %}{% if row.jira.href %}<a href="{{ row.jira.href }}" target="_blank" rel="noopener">{{ row.jira.label }}</a>{% else %}{{ row.jira.label }}{% endif %}{% else %}<span class="muted">—</span>{% endif %}</span>
+        <span>{% if row.agent %}{% if row.agent.href %}<a href="{{ row.agent.href }}">{{ row.agent.label }}</a>{% else %}{{ row.agent.label }}{% endif %}{% else %}<span class="muted">—</span>{% endif %}</span>
+      {% else %}
+        <span></span><span></span><span></span>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </section>
+{% else %}
+  <div class="empty">No tracked stacks. Use <code>tt g append</code> to start one.</div>
+{% endfor %}
+</main>
+</body>
+</html>
