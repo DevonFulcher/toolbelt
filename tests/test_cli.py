@@ -241,17 +241,40 @@ def test_change_creates_new_branch(repo: Path, capfd: pytest.CaptureFixture):
 # --- append / switch / tree ------------------------------------------------
 
 
+_LINKS = ["--jira", "ABC-1", "--agent-link", "claude://session/1"]
+
+
 def test_append_creates_worktree_via_cli(repo: Path, capfd: pytest.CaptureFixture):
-    result = _invoke(["append", "feature"], cwd=repo, capfd=capfd)
+    result = _invoke(["append", "feature", *_LINKS], cwd=repo, capfd=capfd)
 
     assert result.exit_code == 0, result.output
     assert lineage.get_parent("devon/feature", root=repo) == "main"
+    links = lineage.get_links("devon/feature", root=repo)
+    assert links is not None
+    assert (links.jira, links.agent_link) == ("ABC-1", "claude://session/1")
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--agent-link", "claude://session/1"],
+        ["--jira", "ABC-1"],
+        [],
+    ],
+)
+def test_append_requires_jira_and_agent_link(
+    repo: Path, capfd: pytest.CaptureFixture, args: list[str]
+):
+    result = _invoke(["append", "feature", *args], cwd=repo, capfd=capfd)
+
+    assert result.exit_code != 0
+    assert lineage.get_parent("devon/feature", root=repo) is None
 
 
 def test_remove_deletes_branch_worktree_and_lineage_via_cli(
     repo: Path, capfd: pytest.CaptureFixture
 ):
-    _invoke(["append", "feature"], cwd=repo, capfd=capfd)
+    _invoke(["append", "feature", *_LINKS], cwd=repo, capfd=capfd)
     assert lineage.get_parent("devon/feature", root=repo) == "main"
 
     result = _invoke(["remove", "devon/feature", "--force"], cwd=repo, capfd=capfd)

@@ -60,6 +60,13 @@ _MIGRATIONS: list[tuple[str, ...]] = [
         )
         """,
     ),
+    (
+        # Links to the work a branch is for: a Jira ticket (key or URL) and a
+        # deep link to the Claude Desktop session/chat. Nullable, since
+        # branches created before this had none.
+        "ALTER TABLE branches ADD COLUMN jira TEXT",
+        "ALTER TABLE branches ADD COLUMN agent_link TEXT",
+    ),
 ]
 
 
@@ -68,6 +75,12 @@ class RepoIdentity:
     git_common_dir: Path
     path: Path
     remote_url: str | None
+
+
+@dataclass(frozen=True)
+class BranchLinks:
+    jira: str | None
+    agent_link: str | None
 
 
 @dataclass(frozen=True)
@@ -178,17 +191,57 @@ class StackStore:
         ).fetchone()
         return row[0] if row else None
 
-    def set_parent(self, repo_id: int, branch: str, parent: str) -> None:
+    def set_parent(
+        self,
+        repo_id: int,
+        branch: str,
+        parent: str,
+        *,
+        jira: str | None = None,
+        agent_link: str | None = None,
+    ) -> None:
+        """Record ``parent``; ``jira``/``agent_link`` are only written when
+        given, so repointing a branch never clears its links."""
         now = _now()
         with self._write() as conn:
             conn.execute(
                 "INSERT INTO branches "
-                "(repo_id, name, parent, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?) "
+                "(repo_id, name, parent, jira, agent_link, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT (repo_id, name) DO UPDATE SET "
-                "parent = excluded.parent, updated_at = excluded.updated_at",
-                (repo_id, branch, parent, now, now),
+                "parent = excluded.parent, "
+                "jira = COALESCE(excluded.jira, jira), "
+                "agent_link = COALESCE(excluded.agent_link, agent_link), "
+                "updated_at = excluded.updated_at",
+                (repo_id, branch, parent, jira, agent_link, now, now),
             )
+
+    def get_links(self, repo_id: int, branch: str) -> BranchLinks | None:
+        """``branch``'s links, or ``None`` if the branch is not tracked."""
+        row = self._conn.execute(
+            "SELECT jira, agent_link FROM branches WHERE repo_id = ? AND name = ?",
+            (repo_id, branch),
+        ).fetchone()
+        return BranchLinks(jira=row[0], agent_link=row[1]) if row else None
+
+    def set_links(
+        self,
+        repo_id: int,
+        branch: str,
+        *,
+        jira: str | None = None,
+        agent_link: str | None = None,
+    ) -> bool:
+        """Update the given links on a tracked branch (omitted ones are left
+        alone). Returns ``False`` if the branch is not tracked."""
+        with self._write() as conn:
+            cursor = conn.execute(
+                "UPDATE branches SET jira = COALESCE(?, jira), "
+                "agent_link = COALESCE(?, agent_link), updated_at = ? "
+                "WHERE repo_id = ? AND name = ?",
+                (jira, agent_link, _now(), repo_id, branch),
+            )
+            return cursor.rowcount > 0
 
     def remove_branch(self, repo_id: int, branch: str) -> None:
         with self._write() as conn:

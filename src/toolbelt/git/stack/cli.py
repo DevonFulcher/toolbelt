@@ -52,6 +52,14 @@ def append(
         help="Name of the new stacked branch, without the devon/ prefix "
         "(it is added for you).",
     ),
+    jira: str = typer.Option(
+        ..., "--jira", help="Jira ticket this branch is for (key or URL)."
+    ),
+    agent_link: str = typer.Option(
+        ...,
+        "--agent-link",
+        help="Deep link to the Claude Desktop session/chat working on this.",
+    ),
 ) -> None:
     """Create a new branch stacked on the current one, in its own worktree.
 
@@ -66,11 +74,15 @@ def append(
     NAME is prefixed with "devon/" and normalized for use as a branch and
     directory name: "/" and spaces become "_". So pass a bare name — an
     already-prefixed "devon/foo" would become "devon/devon_foo".
+
+    --jira and --agent-link are stored as given with the branch.
     """
     root = repo_root()
     with repo_lock(root):
         wt_path = _worktree_path_for_name(name=name, repo_root=root)
-        create_stacked_branch(name, root=root, wt_path=wt_path)
+        create_stacked_branch(
+            name, root=root, wt_path=wt_path, jira=jira, agent_link=agent_link
+        )
         # Copy dotfiles, then install deps so the worktree is runnable.
         copy_dotfiles(root=root, wt_path=wt_path)
         update_repo(wt_path)

@@ -6,6 +6,8 @@ helpers are pure and tested directly.
 
 from pathlib import Path
 
+import pytest
+
 from toolbelt.git.stack import lineage
 
 
@@ -81,3 +83,24 @@ def test_stack_root_and_resolve_stack(repo: Path):
     stack = lineage.resolve_stack("devon/api_tests", root=repo)
     assert stack[0] == "devon/api"
     assert set(stack) == {"devon/api", "devon/api_tests", "devon/api_docs"}
+
+
+def test_links_default_to_none_and_roundtrip(repo: Path):
+    assert lineage.get_links("devon/api", root=repo) is None
+
+    lineage.set_parent("devon/api", "main", root=repo)
+    links = lineage.get_links("devon/api", root=repo)
+    assert links is not None and (links.jira, links.agent_link) == (None, None)
+
+    lineage.set_links("devon/api", root=repo, jira="ABC-1")
+    lineage.set_links("devon/api", root=repo, agent_link="claude://session/1")
+    # Reparenting leaves the links alone.
+    lineage.set_parent("devon/api", "develop", root=repo)
+    links = lineage.get_links("devon/api", root=repo)
+    assert links is not None
+    assert (links.jira, links.agent_link) == ("ABC-1", "claude://session/1")
+
+
+def test_set_links_on_untracked_branch_raises(repo: Path):
+    with pytest.raises(LookupError):
+        lineage.set_links("devon/nope", root=repo, jira="ABC-1")

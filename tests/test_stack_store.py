@@ -11,7 +11,7 @@ import pytest
 from conftest import git
 from test_cli import _invoke
 from toolbelt.git.stack import lineage, store
-from toolbelt.git.stack.store import RepoIdentity, StackStore
+from toolbelt.git.stack.store import BranchLinks, RepoIdentity, StackStore
 
 
 def _identity(tmp_path: Path, name: str = "repo") -> RepoIdentity:
@@ -41,6 +41,39 @@ def test_migrations_apply_on_top_of_an_older_version(
         row[1] for row in s._conn.execute("PRAGMA table_info(branches)").fetchall()
     ]
     assert "jira_key" in columns
+
+
+def test_links_are_nullable_kept_on_reparent_and_scoped_to_the_branch(tmp_path: Path):
+    s = StackStore(tmp_path / "stacks.db")
+    repo_id = s.ensure_repo(_identity(tmp_path))
+    s.set_parent(repo_id, "feat", "main")
+    assert s.get_links(repo_id, "feat") == BranchLinks(None, None)
+    assert s.get_links(repo_id, "nope") is None
+
+    assert s.set_links(repo_id, "feat", jira="ABC-1")
+    assert s.set_links(repo_id, "feat", agent_link="claude://s/1")
+    s.set_parent(repo_id, "feat", "develop")  # reparent keeps links
+    assert s.get_links(repo_id, "feat") == BranchLinks("ABC-1", "claude://s/1")
+    assert not s.set_links(repo_id, "nope", jira="X-1")
+
+
+def test_links_migration_applies_to_a_v1_database(tmp_path: Path):
+    db = tmp_path / "stacks.db"
+    with sqlite3.connect(db) as conn:
+        for statement in store._MIGRATIONS[0]:
+            conn.execute(statement)
+        conn.execute("PRAGMA user_version = 1")
+        conn.execute(
+            "INSERT INTO repos (git_common_dir, path, name, created_at) "
+            "VALUES ('/r/.git', '/r', 'r', 'now')"
+        )
+        conn.execute(
+            "INSERT INTO branches (repo_id, name, parent, created_at, updated_at) "
+            "VALUES (1, 'old', 'main', 'now', 'now')"
+        )
+    s = StackStore(db)
+    assert s.schema_version() == len(store._MIGRATIONS)
+    assert s.get_links(1, "old") == BranchLinks(None, None)
 
 
 def test_wal_mode_enabled(tmp_path: Path):
