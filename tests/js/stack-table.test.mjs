@@ -10,12 +10,17 @@ const table = require("../../src/toolbelt/ui/static/stack-table.js");
 const state = (overrides = {}) => ({ ...table.DEFAULT_STATE, ...overrides });
 
 // A row as the DOM layer reads it: only the values the tests care about.
-function row(id, parent, order, { tracked = true, search = id, ...cells } = {}) {
+function row(
+  id,
+  parent,
+  order,
+  { tracked = true, search = id, repo = "1", ...cells } = {},
+) {
   const out = {};
   for (const [col, value] of Object.entries(cells)) {
     out[col] = typeof value === "string" ? { value, sort: value } : value;
   }
-  return { id, parent, order, tracked, search, cells: out };
+  return { id, repo, parent, order, tracked, search, cells: out };
 }
 
 const ids = (entries) => entries.map((e) => e.id);
@@ -31,12 +36,29 @@ test("state round-trips through the query string and omits defaults", () => {
     pr: "open",
     ci: "failed",
     review: "approved",
+    comments: "has comments",
     merge: "conflicts",
   });
   const query = table.serializeState(full);
   assert.deepEqual(table.parseState(query), full);
   // Direction is only meaningful with a sort column.
   assert.equal(table.serializeState(state({ dir: "desc" })), "");
+});
+
+test("the comments column is sortable and filterable", () => {
+  assert.ok(table.COLUMNS.includes("comments"));
+  assert.ok(table.VALUE_FILTERS.includes("comments"));
+  assert.ok(table.COLUMNS.includes("repo"));
+  const rows = [
+    row("a", "main", 1, { comments: { value: "has comments", sort: "3" } }),
+    row("b", "main", 2, { comments: { value: "none", sort: "0" } }),
+    row("c", "main", 3, { comments: { value: "has comments", sort: "12" } }),
+    row("d", "main", 4, { comments: { value: "none", sort: "" } }),
+  ];
+  const view = (o) => ids(table.layout(rows, state({ view: "flat", ...o })));
+  assert.deepEqual(view({ sort: "comments", dir: "desc" }), ["c", "a", "b", "d"]);
+  assert.deepEqual(view({ comments: "has comments" }), ["a", "c"]);
+  assert.deepEqual(view({ comments: "none" }), ["b", "d"]);
 });
 
 test("parseState ignores unknown sort columns and view names", () => {
@@ -156,4 +178,49 @@ test("rows whose parent is missing become roots; cycles do not hang", () => {
   ];
   const out = table.layout(rows, state());
   assert.deepEqual(ids(out), ["x"]);
+});
+
+// Two repos in one table: ids are unique across repos, so a branch name can
+// repeat (here "main" and "x").
+const multi = [
+  row("1:main", null, 0, { tracked: false, repo: "1", pr: "" }),
+  row("1:x", "1:main", 1, { repo: "1", pr: { value: "open", sort: "9" } }),
+  row("1:y", "1:main", 2, { repo: "1", pr: { value: "open", sort: "3" } }),
+  row("2:main", null, 3, { tracked: false, repo: "2", pr: "" }),
+  row("2:x", "2:main", 4, { repo: "2", pr: { value: "merged", sort: "1" } }),
+];
+multi[0].cells.repo = { value: "1", sort: "alpha" };
+for (const r of multi) r.cells.repo = { value: r.repo, sort: r.repo === "1" ? "alpha" : "beta" };
+
+test("tree view keeps each repo's rows together in server order", () => {
+  const out = table.layout(multi, state());
+  assert.deepEqual(ids(out), ["1:main", "1:x", "1:y", "2:main", "2:x"]);
+  assert.deepEqual(out.map((e) => e.depth), [0, 1, 1, 0, 1]);
+});
+
+test("sorting a column never interleaves repos in tree view", () => {
+  const out = table.layout(multi, state({ sort: "pr" }));
+  assert.deepEqual(ids(out), ["1:main", "1:y", "1:x", "2:main", "2:x"]);
+});
+
+test("sorting by repo orders the repo groups; flat view sorts across repos", () => {
+  const desc = table.layout(multi, state({ sort: "repo", dir: "desc" }));
+  assert.deepEqual(ids(desc), ["2:main", "2:x", "1:main", "1:x", "1:y"]);
+  const flatByRepo = table.layout(multi, state({ view: "flat", sort: "repo", dir: "desc" }));
+  assert.deepEqual(ids(flatByRepo), ["2:x", "1:x", "1:y"]);
+  const flatByPr = table.layout(multi, state({ view: "flat", sort: "pr" }));
+  assert.deepEqual(ids(flatByPr), ["2:x", "1:y", "1:x"]);
+});
+
+test("the repo filter scopes the table to one repo, bases included in tree view", () => {
+  const tree = table.layout(multi, state({ repo: "2" }));
+  assert.deepEqual(ids(tree), ["2:main", "2:x"]);
+  const flat = table.layout(multi, state({ view: "flat", repo: "1" }));
+  assert.deepEqual(ids(flat), ["1:x", "1:y"]);
+});
+
+test("repo filter combines with value filters and keeps ancestors", () => {
+  const out = table.layout(multi, state({ repo: "1", pr: "open" }));
+  assert.deepEqual(ids(out), ["1:main", "1:x", "1:y"]);
+  assert.deepEqual(table.layout(multi, state({ repo: "2", pr: "open" })), []);
 });

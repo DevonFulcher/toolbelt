@@ -1,10 +1,13 @@
 """`tt ui`: the read-only web app, driven through FastAPI's TestClient.
 
-The status fetcher and task tracker are injected via dependency overrides, so
-no test touches `gh`, Jira or the real config. The last test starts the real CLI
+The status fetcher is injected into `create_app` and the task tracker via a
+dependency override, so no test touches `gh`, Jira or the real config. Polling
+is driven a pass at a time (`refresh`), never by the background loop; the live
+event stream is tested in test_ui_live.py. The last test starts the real CLI
 command under uvicorn.
 """
 
+import asyncio
 import re
 import subprocess
 import sys
@@ -42,9 +45,12 @@ class FakeStatuses:
     def __init__(self) -> None:
         self.statuses: dict[str, BranchStatus] = {}
         self.calls: list[tuple[str, Path]] = []
+        self.fail = False
 
     async def __call__(self, branch: str, root: Path) -> BranchStatus:
         self.calls.append((branch, root))
+        if self.fail:
+            raise FileNotFoundError("gh")
         return self.statuses.get(branch, NO_PR)
 
 
@@ -175,20 +181,22 @@ def make_client(fetcher: FakeStatuses, tracker: FakeTracker):
         cwd_root: Path | None = None,
         **app_kwargs,
     ) -> TestClient:
-        app = create_app(cwd_root, **app_kwargs)
-        app.dependency_overrides[ui_app.status_fetcher] = lambda: fetcher
+        app = create_app(cwd_root, fetch=fetcher, **app_kwargs)
         app.dependency_overrides[ui_app.task_tracker] = lambda: task_tracker
         return TestClient(app)
 
     return make
 
 
-def status_url(repo_id: int) -> str:
-    return f"/repos/{repo_id}/status"
+def refresh(client: TestClient) -> int:
+    """Run one polling pass, as the background loop would."""
+    return asyncio.run(client.app.state.refresher.run_once())  # type: ignore[attr-defined]
 
 
-def test_index_renders_tree_without_fetching_status(tmp_path, make_client, fetcher):
-    repo_id = seed_repo(
+def test_index_renders_one_table_without_fetching_status(
+    tmp_path, make_client, fetcher
+):
+    seed_repo(
         tmp_path,
         "api",
         {"devon/a": "main", "devon/b": "devon/a", "devon/c": "devon/a"},
@@ -199,11 +207,17 @@ def test_index_renders_tree_without_fetching_status(tmp_path, make_client, fetch
     assert response.status_code == 200
     html = response.text
     assert html.index("devon/a<") < html.index("devon/b<") < html.index("devon/c<")
-    # One lazy placeholder per tracked branch; the untracked base has none.
-    assert html.count('hx-trigger="load, refresh from:body') == 3
-    assert f"{status_url(repo_id)}?branch=devon/b" in html
+    assert html.count("<table") == 1
+    assert "<section" not in html
+    # Rendering never waits on `gh`; the cells are placeholders until the
+    # background refresher has an answer.
     assert fetcher.calls == []
+    assert html.count("loading…") == 3
+    assert "hx-get" not in html
     assert "/static/htmx.min.js" in html
+    assert "/static/live-updates.js" in html
+    assert "Refresh" not in html
+    assert 'id="live"' in html
 
 
 def test_columns_are_separate_and_labelled(tmp_path, make_client):
@@ -213,10 +227,12 @@ def test_columns_are_separate_and_labelled(tmp_path, make_client):
 
     headers = re.findall(r'<th data-col="(\w+)"[^>]*><button[^>]*>(\w+)', html)
     assert headers == [
+        ("repo", "Repo"),
         ("branch", "Branch"),
         ("pr", "PR"),
         ("ci", "CI"),
         ("review", "Review"),
+        ("comments", "Comments"),
         ("merge", "Merge"),
         ("task", "Task"),
         ("session", "Session"),
@@ -228,7 +244,7 @@ def test_columns_are_separate_and_labelled(tmp_path, make_client):
 
 
 def test_rows_carry_tree_data_for_the_sort_script(tmp_path, make_client):
-    seed_repo(
+    repo_id = seed_repo(
         tmp_path,
         "api",
         {"devon/a": "main", "devon/b": "devon/a", "devon/c": "main"},
@@ -237,15 +253,17 @@ def test_rows_carry_tree_data_for_the_sort_script(tmp_path, make_client):
     html = make_client().get("/").text
 
     rows = re.findall(
-        r'<tr data-branch="([^"]*)" data-parent="([^"]*)"\s+'
-        r'data-order="(\d+)" data-tracked="(\d)"\s+style="--depth: (\d+)"',
+        r'<tr data-id="([^"]*)" data-repo="(\d+)" data-branch="([^"]*)"\s+'
+        r'data-parent="([^"]*)" data-order="(\d+)"\s+'
+        r'data-tracked="(\d)" style="--depth: (\d+)"',
         html,
     )
+    r = str(repo_id)
     assert rows == [
-        ("main", "", "0", "0", "0"),
-        ("devon/a", "main", "1", "1", "1"),
-        ("devon/b", "devon/a", "2", "1", "2"),
-        ("devon/c", "main", "3", "1", "1"),
+        (f"{r}:main", r, "main", "", "0", "0", "0"),
+        (f"{r}:devon/a", r, "devon/a", f"{r}:main", "1", "1", "1"),
+        (f"{r}:devon/b", r, "devon/b", f"{r}:devon/a", "2", "1", "2"),
+        (f"{r}:devon/c", r, "devon/c", f"{r}:main", "3", "1", "1"),
     ]
 
 
@@ -260,21 +278,26 @@ def test_filter_controls_are_rendered(tmp_path, make_client):
         "pr": ["none", "draft", "open", "merged", "closed"],
         "ci": ["none", "running", "failed", "success"],
         "review": ["none", "requested", "approved", "reviewed"],
+        "comments": ["has comments", "none"],
         "merge": ["conflicts", "clean", "none"],
     }.items():
         select = html.split(f'<select name="{column}">')[1].split("</select>")[0]
         options = re.findall(r'<option value="([^"]*)"', select)
         assert options == ["", *values]
-    repo_select = html.split('<select name="repo">')[1].split("</select>")[0]
+    repo_select = html.split('name="repo"')[1].split("</select>")[0]
     assert ">alpha<" in repo_select and ">beta<" in repo_select
     assert 'data-view="tree"' in html and 'data-view="flat"' in html
     assert "/static/stack-table.js" in html
 
 
-def test_static_sort_script_is_served(make_client):
-    response = make_client().get("/static/stack-table.js")
-    assert response.status_code == 200
-    assert "layout" in response.text
+def test_static_scripts_are_served(make_client):
+    client = make_client()
+    table = client.get("/static/stack-table.js")
+    assert table.status_code == 200
+    assert "layout" in table.text
+    live = client.get("/static/live-updates.js")
+    assert live.status_code == 200
+    assert "EventSource" in live.text
 
 
 def test_static_htmx_is_served(make_client):
@@ -283,40 +306,58 @@ def test_static_htmx_is_served(make_client):
     assert "2.0.4" in response.text[:100_000]
 
 
-def test_multi_repo_each_gets_a_section(tmp_path, make_client):
-    seed_repo(tmp_path, "alpha", {"devon/one": "main"})
+def test_multi_repo_is_one_table_grouped_by_repo_name(tmp_path, make_client):
+    # Seeded out of name order: rows still group by repo, sorted by name.
     seed_repo(tmp_path, "beta", {"devon/two": "develop"})
+    seed_repo(tmp_path, "alpha", {"devon/one": "main", "devon/uno": "devon/one"})
 
     html = make_client().get("/").text
 
-    assert html.index("alpha") < html.index("devon/one")
-    assert html.index("beta") < html.index("devon/two")
-    assert "develop" in html
+    assert html.count("<table") == 1
+    tbody = html.split("<tbody>")[1]
+    order = [
+        m.group(1) for m in re.finditer(r'class="branch(?: [a-z ]+)?">([^<]+)<', tbody)
+    ]
+    assert order == ["main", "devon/one", "devon/uno", "develop", "devon/two"]
+    # The repo is a column of every row, bases included.
+    repo_cells = re.findall(
+        r'data-col="repo" data-value="\d+" data-sort="(\w+)"', tbody
+    )
+    assert repo_cells == ["alpha"] * 3 + ["beta"] * 2
+
+
+def test_same_branch_name_in_two_repos_has_distinct_row_ids(tmp_path, make_client):
+    seed_repo(tmp_path, "alpha", {"devon/x": "main"})
+    seed_repo(tmp_path, "beta", {"devon/x": "main"})
+
+    html = make_client().get("/").text
+
+    ids = re.findall(r'<tr data-id="([^"]*)"', html)
+    assert len(ids) == len(set(ids)) == 4
+    cell_ids = [i for i in Cells(html).ids if i]
+    assert len(cell_ids) == len(set(cell_ids))
 
 
 def test_no_repos(make_client):
     assert "No tracked stacks" in make_client().get("/").text
 
 
-def test_missing_repo_path_is_flagged_and_not_fetched(tmp_path, make_client, fetcher):
-    repo_id = seed_repo(tmp_path, "gone", {"devon/x": "main"}, exists=False)
+def test_missing_repo_path_is_flagged_and_never_polled(tmp_path, make_client, fetcher):
+    seed_repo(tmp_path, "gone", {"devon/x": "main"}, exists=False)
     client = make_client()
 
     html = client.get("/").text
     assert "no longer exists" in html
     assert "repo path missing" in html
-    assert 'hx-trigger="load' not in html
 
-    partial = client.get(status_url(repo_id), params={"branch": "devon/x"})
-    assert partial.status_code == 200
-    assert "repo path missing" in partial.text
+    assert refresh(client) == 0
     assert fetcher.calls == []
 
 
-def test_status_partial_shows_pr_ci_review_conflicts_comments(
+def test_status_cells_show_pr_ci_review_comments_conflicts(
     tmp_path, make_client, fetcher
 ):
-    repo_id = seed_repo(tmp_path, "api", {"devon/a": "main"})
+    seed_repo(tmp_path, "api", {"devon/a": "main"})
     fetcher.statuses["devon/a"] = BranchStatus(
         pr=PrState.OPEN,
         ci=CiState.FAILED,
@@ -325,21 +366,18 @@ def test_status_partial_shows_pr_ci_review_conflicts_comments(
         open_comments=2,
         has_conflicts=True,
     )
+    client = make_client()
 
-    response = make_client().get(status_url(repo_id), params={"branch": "devon/a"})
+    assert refresh(client) == 1
+    html = client.get("/").text
 
-    html = response.text
+    assert fetcher.calls == [("devon/a", tmp_path / "api")]
     assert "#42 open" in html
     assert 'href="https://github.com/o/r/pull/42"' in html
-    assert "2 open comments" in html
-    assert fetcher.calls == [("devon/a", tmp_path / "api")]
-    # A loaded cell must not re-fire "load", or it would refetch forever.
-    assert 'hx-trigger="refresh from:body' in html
-    assert 'hx-trigger="load' not in html
-
-    # PR, CI, review and merge are separate cells carrying their own
+    # PR, CI, review, comments and merge are separate cells carrying their own
     # filter value and sort key.
-    cells = Cells(html)
+    row = html[html.index('data-branch="devon/a"') :].split("</tr>")[0]
+    cells = Cells(row)
     assert cells.by_col["pr"]["data-value"] == "open"
     assert cells.by_col["pr"]["data-sort"] == "42"
     assert cells.by_col["pr"]["data-search"] == "42"
@@ -348,35 +386,20 @@ def test_status_partial_shows_pr_ci_review_conflicts_comments(
         "1",
     )
     assert cells.by_col["review"]["data-value"] == "approved"
+    assert (
+        cells.by_col["comments"]["data-value"],
+        cells.by_col["comments"]["data-sort"],
+    ) == ("has comments", "2")
     assert cells.by_col["merge"]["data-value"] == "conflicts"
-    assert "CI" not in cells.text["pr"] and "failed" in cells.text["ci"]
+    assert "failed" in cells.text["ci"]
     assert "approved" in cells.text["review"]
-    assert "2 open comments" in cells.text["review"]
+    assert "comment" not in cells.text["review"]
+    assert cells.text["comments"].strip() == "2"
     assert "conflicts" in cells.text["merge"]
-    # One request fills the whole row: the PR cell is the swap target, the
-    # others are out-of-band swaps matched by id.
-    assert "hx-swap-oob" not in cells.attrs_of("pr")
-    for column in ("ci", "review", "merge"):
-        assert cells.by_col[column]["hx-swap-oob"] == "true"
-        assert cells.by_col[column]["id"].endswith(f"-{column}")
 
 
-def test_index_placeholders_match_the_partial_cell_ids(tmp_path, make_client, fetcher):
-    repo_id = seed_repo(tmp_path, "api", {"devon/a": "main"})
-    client = make_client()
-
-    index_ids = Cells(client.get("/").text).ids
-    partial_ids = Cells(
-        client.get(status_url(repo_id), params={"branch": "devon/a"}).text
-    ).ids
-
-    for column in ("pr", "ci", "review", "merge"):
-        assert [i for i in partial_ids if i.endswith(f"-{column}")]
-        assert set(partial_ids) >= {i for i in index_ids if i.endswith(f"-{column}")}
-
-
-def test_status_partial_draft_and_no_pr(tmp_path, make_client, fetcher):
-    repo_id = seed_repo(tmp_path, "api", {"devon/a": "main", "devon/b": "devon/a"})
+def test_draft_and_no_pr_cells(tmp_path, make_client, fetcher):
+    seed_repo(tmp_path, "api", {"devon/a": "main", "devon/b": "devon/a"})
     fetcher.statuses["devon/a"] = BranchStatus(
         pr=PrState.DRAFT,
         ci=CiState.NONE,
@@ -384,37 +407,57 @@ def test_status_partial_draft_and_no_pr(tmp_path, make_client, fetcher):
         url="https://github.com/o/r/pull/7",
     )
     client = make_client()
+    refresh(client)
 
-    draft = client.get(status_url(repo_id), params={"branch": "devon/a"})
-    none = client.get(status_url(repo_id), params={"branch": "devon/b"})
+    html = client.get("/").text
 
-    assert "#7 draft" in draft.text
-    assert Cells(draft.text).by_col["ci"]["data-value"] == "none"
+    def row(branch: str) -> Cells:
+        part = html[html.index(f'data-branch="{branch}"') :].split("</tr>")[0]
+        return Cells(part)
+
+    draft, none = row("devon/a"), row("devon/b")
+    assert "#7 draft" in draft.text["pr"]
+    assert draft.by_col["ci"]["data-value"] == "none"
     # A draft PR with no conflicts is mergeable.
-    assert Cells(draft.text).by_col["merge"]["data-value"] == "clean"
-    assert "no PR" in none.text
-    no_pr = Cells(none.text)
-    assert no_pr.by_col["pr"]["data-value"] == "none"
-    assert no_pr.by_col["pr"]["data-sort"] == ""
-    assert no_pr.by_col["merge"]["data-value"] == "none"
+    assert draft.by_col["merge"]["data-value"] == "clean"
+    assert (
+        draft.by_col["comments"]["data-value"],
+        draft.by_col["comments"]["data-sort"],
+    ) == ("none", "0")
+    assert "no PR" in none.text["pr"]
+    assert none.by_col["pr"]["data-value"] == "none"
+    assert none.by_col["pr"]["data-sort"] == ""
+    assert none.by_col["comments"]["data-sort"] == ""
+    assert none.by_col["merge"]["data-value"] == "none"
 
 
-def test_status_unknown_repo_or_untracked_branch_is_404(tmp_path, make_client, fetcher):
-    repo_id = seed_repo(tmp_path, "api", {"devon/a": "main"})
+def test_a_failed_lookup_is_shown_on_the_row(tmp_path, make_client, fetcher):
+    seed_repo(tmp_path, "api", {"devon/a": "main"})
+    fetcher.fail = True
     client = make_client()
 
-    assert client.get(status_url(999), params={"branch": "devon/a"}).status_code == 404
-    # The base is not tracked; nothing arbitrary reaches `gh`.
+    refresh(client)
+
+    assert "status unavailable" in client.get("/").text
+
+
+def test_task_endpoint_404s_for_untracked_branches(tmp_path, make_client, tracker):
+    repo_id = seed_repo(
+        tmp_path, "api", {"devon/a": "main"}, links={"devon/a": ("abc-1", None)}
+    )
+    client = make_client(tracker)
+
+    # The base is not tracked; nothing arbitrary reaches the tracker.
     for branch in ("main", "--web"):
-        response = client.get(status_url(repo_id), params={"branch": branch})
+        response = client.get(f"/repos/{repo_id}/task", params={"branch": branch})
         assert response.status_code == 404
-    assert fetcher.calls == []
+    assert tracker.fetches == []
 
 
 def test_mutating_methods_are_not_allowed(tmp_path, make_client):
     repo_id = seed_repo(tmp_path, "api", {"devon/a": "main"})
     client = make_client()
-    for url in ("/", f"{status_url(repo_id)}?branch=devon/a"):
+    for url in ("/", "/events", f"/repos/{repo_id}/task?branch=devon/a"):
         assert client.post(url).status_code == 405
         assert client.delete(url).status_code == 405
 
@@ -482,8 +525,8 @@ def test_task_partial_shows_title_and_status(tmp_path, make_client, tracker):
     assert Anchors(response.text).hrefs["ABC-1"] == "https://tasks.example/abc-1"
     assert "Fix the &lt;thing&gt;" in response.text
     assert "In Progress" in response.text
-    # A fetched cell refreshes on demand but never re-fires "load".
-    assert 'hx-trigger="refresh from:body"' in response.text
+    # A fetched cell re-polls but never re-fires "load".
+    assert 'hx-trigger="every 60s"' in response.text
 
 
 def test_task_fetch_failure_shows_the_bare_ref(tmp_path, make_client, tracker):
@@ -699,3 +742,30 @@ class TestStatusCells:
         assert merge(PrState.OPEN, False) == "clean"
         assert merge(PrState.MERGED, False) == "none"
         assert merge(PrState.NONE, False) == "none"
+
+    def test_comments_are_their_own_numeric_column(self):
+        def cells(pr, comments):
+            return status_cells(
+                BranchStatus(
+                    pr=pr,
+                    ci=CiState.NONE,
+                    review=ReviewState.NONE,
+                    url="https://github.com/o/r/pull/5",
+                    open_comments=comments,
+                )
+            )
+
+        with_comments = cells(PrState.OPEN, 12)
+        assert (with_comments.comments, with_comments.comments_sort) == (
+            "has comments",
+            "12",
+        )
+        none = cells(PrState.OPEN, 0)
+        assert (none.comments, none.comments_sort) == ("none", "0")
+        # No PR: nothing to order by.
+        assert cells(PrState.NONE, 0).comments_sort == ""
+
+    def test_failed_lookups_are_not_loading(self):
+        cells = status_cells(None, failed=True)
+        assert cells.failed and not cells.loaded
+        assert not status_cells(None).failed

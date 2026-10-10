@@ -165,6 +165,11 @@ class StackStore:
             raise
         self._conn.execute("COMMIT")
 
+    def data_version(self) -> int:
+        """Changes whenever another connection commits to the database, so a
+        long-lived store can tell that something was written."""
+        return self._conn.execute("PRAGMA data_version").fetchone()[0]
+
     def schema_version(self) -> int:
         return self._conn.execute("PRAGMA user_version").fetchone()[0]
 

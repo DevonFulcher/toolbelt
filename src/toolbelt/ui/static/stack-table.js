@@ -1,13 +1,14 @@
 /*
- * Sorting, filtering and tree/flat layout for the `tt ui` stack tables.
+ * Sorting, filtering and tree/flat layout for the `tt ui` stack table.
  *
  * Two layers. The first half is pure (no DOM): it parses/serialises the view
  * state kept in the URL query string and computes which rows show, in what
  * order and at what depth. It is unit-tested with `node --test`
  * (tests/js/stack-table.test.mjs). The second half reads the table's cells
  * (data-value / data-sort / data-search attributes written by the server),
- * applies that layout to the DOM, and re-applies it whenever htmx swaps in
- * freshly loaded statuses.
+ * applies that layout to the DOM, and re-applies it whenever the page is updated
+ * live (static/live-updates.js dispatches "stack-table:changed" after swapping
+ * cells or rows), keeping the user's sort, filters and scroll position.
  */
 (function (root, factory) {
   const api = factory();
@@ -24,9 +25,20 @@
     }
   }
 })(typeof self !== "undefined" ? self : this, function () {
-  const COLUMNS = ["branch", "pr", "ci", "review", "merge", "task", "session"];
-  // Columns with an exact-match value filter.
-  const VALUE_FILTERS = ["pr", "ci", "review", "merge"];
+  const COLUMNS = [
+    "repo",
+    "branch",
+    "pr",
+    "ci",
+    "review",
+    "comments",
+    "merge",
+    "task",
+    "session",
+  ];
+  // Columns with an exact-match value filter (the repo filter is separate:
+  // it scopes the whole table rather than hiding rows).
+  const VALUE_FILTERS = ["pr", "ci", "review", "comments", "merge"];
   const DEFAULT_STATE = {
     view: "tree",
     sort: "",
@@ -36,6 +48,7 @@
     pr: "",
     ci: "",
     review: "",
+    comments: "",
     merge: "",
   };
 
@@ -113,10 +126,15 @@
 
   // ---- filtering ----------------------------------------------------------
 
-  // Whether a tracked row passes the text and per-column filters. Every
+  // Whether a row is in the repo chosen in the repo filter (all, if none).
+  function inScope(row, state) {
+    return !state.repo || row.repo === state.repo;
+  }
+
+  // Whether a tracked row passes the repo, text and per-column filters. Every
   // whitespace-separated term of the text filter must appear.
   function matches(row, state) {
-    if (!row.tracked) return false;
+    if (!row.tracked || !inScope(row, state)) return false;
     for (const key of VALUE_FILTERS) {
       if (state[key] && (row.cells[key] ? row.cells[key].value : "") !== state[key]) {
         return false;
@@ -133,11 +151,13 @@
   /*
    * The rows to show, in order, as [{id, depth}].
    *
-   * rows: [{id, parent, order, tracked, search, cells: {col: {value, sort}}}]
-   * for one table. Flat view: the matching tracked rows, sorted. Tree view:
-   * the same rows plus their ancestors (kept for context), depth-first, with
-   * the sort applied among siblings. With no filter every row (untracked
-   * bases included) shows.
+   * rows: [{id, repo, parent, order, tracked, search, cells: {col: {value,
+   * sort}}}] for the whole table (ids are unique across repos). Flat view:
+   * the matching tracked rows, sorted. Tree view: the same rows plus their
+   * ancestors (kept for context), depth-first, with the sort applied among
+   * siblings; each repo's rows stay together, and the repos themselves are in
+   * server (name) order, or by the Repo column when it is the sort. With no
+   * filter every row of the chosen repos (untracked bases included) shows.
    */
   function layout(rows, state) {
     const compare = rowComparator(state);
@@ -159,20 +179,28 @@
         }
       }
     } else {
-      keep = new Set(rows.map((row) => row.id));
+      keep = new Set(rows.filter((row) => inScope(row, state)).map((row) => row.id));
     }
 
     const children = new Map();
-    const roots = [];
+    const rootsByRepo = new Map();
     for (const row of rows) {
       if (!keep.has(row.id)) continue;
       if (row.parent && row.parent !== row.id && byId.has(row.parent)) {
         if (!children.has(row.parent)) children.set(row.parent, []);
         children.get(row.parent).push(row);
       } else {
-        roots.push(row);
+        if (!rootsByRepo.has(row.repo)) rootsByRepo.set(row.repo, []);
+        rootsByRepo.get(row.repo).push(row);
       }
     }
+
+    // Repos in the server's order (the first row of each), or by the Repo
+    // column when that is the sort.
+    const repoGroups = [...rootsByRepo.values()].sort((a, b) => {
+      if (state.sort === "repo") return compare(a[0], b[0]);
+      return a[0].order - b[0].order;
+    });
 
     const out = [];
     const visit = (row, depth) => {
@@ -181,7 +209,9 @@
         visit(child, depth + 1);
       }
     };
-    for (const row of roots.sort(compare)) visit(row, 0);
+    for (const group of repoGroups) {
+      for (const row of group.sort(compare)) visit(row, 0);
+    }
     return out;
   }
 
@@ -198,7 +228,8 @@
       if (td.dataset.search) search.push(td.dataset.search);
     }
     return {
-      id: tr.dataset.branch,
+      id: tr.dataset.id,
+      repo: tr.dataset.repo,
       parent: tr.dataset.parent || null,
       order: Number(tr.dataset.order),
       tracked: tr.dataset.tracked === "1",
@@ -210,7 +241,7 @@
   function init(document, window) {
     let state = parseState(window.location.search);
     const controls = document.getElementById("controls");
-    const sections = [...document.querySelectorAll("section.repo")];
+    const table = document.getElementById("stacks");
 
     function syncControls() {
       if (!controls) return;
@@ -223,27 +254,28 @@
       }
     }
 
-    function applySection(section) {
-      const tbody = section.querySelector("tbody");
+    function apply() {
+      if (!table) return;
+      const tbody = table.querySelector("tbody");
       const trs = [...tbody.querySelectorAll("tr")];
-      const byId = new Map(trs.map((tr) => [tr.dataset.branch, tr]));
+      const byId = new Map(trs.map((tr) => [tr.dataset.id, tr]));
       const rows = trs.map(readRow);
       const shown = layout(rows, state);
       const shownIds = new Set(shown.map((entry) => entry.id));
 
       const desired = shown.map((entry) => byId.get(entry.id));
-      for (const tr of trs) if (!shownIds.has(tr.dataset.branch)) desired.push(tr);
+      for (const tr of trs) if (!shownIds.has(tr.dataset.id)) desired.push(tr);
       shown.forEach((entry) => {
         const tr = byId.get(entry.id);
         tr.hidden = false;
         tr.style.setProperty("--depth", String(entry.depth));
       });
-      for (const tr of trs) if (!shownIds.has(tr.dataset.branch)) tr.hidden = true;
+      for (const tr of trs) if (!shownIds.has(tr.dataset.id)) tr.hidden = true;
       if (desired.some((tr, index) => tr !== tbody.children[index])) {
         for (const tr of desired) tbody.appendChild(tr);
       }
 
-      for (const th of section.querySelectorAll("thead th[data-col]")) {
+      for (const th of table.querySelectorAll("thead th[data-col]")) {
         const sorted = th.dataset.col === state.sort;
         th.setAttribute(
           "aria-sort",
@@ -252,31 +284,12 @@
       }
       // Counts are of matching branches; tree view also shows non-matching
       // ancestors for context.
-      return {
-        total: rows.filter((row) => row.tracked).length,
-        visible: rows.filter((row) => matches(row, state)).length,
-      };
-    }
-
-    function apply() {
-      let total = 0;
-      let visible = 0;
-      let sectionsShown = 0;
-      for (const section of sections) {
-        const wrongRepo = state.repo && section.dataset.repoId !== state.repo;
-        const counts = applySection(section);
-        const empty = filtersActive(state) && counts.visible === 0;
-        section.hidden = Boolean(wrongRepo) || empty;
-        if (!section.hidden) sectionsShown += 1;
-        if (!wrongRepo) {
-          total += counts.total;
-          visible += counts.visible;
-        }
-      }
+      const inRepo = rows.filter((row) => row.tracked && inScope(row, state));
+      const visible = rows.filter((row) => matches(row, state)).length;
       const count = document.getElementById("count");
-      if (count) count.textContent = `${visible} of ${total} branches`;
+      if (count) count.textContent = `${visible} of ${inRepo.length} branches`;
       const none = document.getElementById("no-match");
-      if (none) none.hidden = sections.length === 0 || sectionsShown > 0;
+      if (none) none.hidden = visible > 0 || inRepo.length === 0;
     }
 
     function commit(next) {
@@ -309,19 +322,21 @@
       if (th) commit(toggleSort(state, th.dataset.col));
     });
 
-    // Statuses and task info swap in asynchronously: re-apply afterwards. A
-    // burst of swaps (one per branch) is coalesced into one pass.
+    // Task info swaps in asynchronously via htmx, and live updates swap in
+    // cells or rows ("stack-table:changed"): re-apply afterwards. A burst of
+    // swaps (one per branch) is coalesced into one pass.
     let pending = false;
     const reapply = () => {
       if (pending) return;
       pending = true;
       window.setTimeout(() => {
         pending = false;
+        syncControls();
         apply();
       }, 0);
     };
     document.body.addEventListener("htmx:afterSettle", reapply);
-    document.body.addEventListener("htmx:oobAfterSwap", reapply);
+    document.addEventListener("stack-table:changed", reapply);
 
     syncControls();
     apply();

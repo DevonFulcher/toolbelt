@@ -1,7 +1,7 @@
 {#- One branch's task cell (a <td>): the stored ref (linked when the tracker
-    can), plus its title/status once fetched. Like status.html it replaces
-    itself (outerHTML) and "load" is only on the placeholder, so a fetched cell
-    never refetches in a loop. A ref with no owning tracker is plain text and
+    can), plus its title/status once fetched. It replaces itself (outerHTML) and "load" is only on the placeholder, so a
+    fetched cell never refetches in a loop; it re-polls every 60s (the server
+    caches lookups for a TTL, so that is at most one tracker call per minute). A ref with no owning tracker is plain text and
     never fetched. -#}
 {%- set url = "/repos/%d/task?branch=%s" % (repo_id, branch | urlencode) -%}
 {%- set label = task.label if task else "" -%}
@@ -11,7 +11,7 @@
     {%- if unavailable %} title="{{ unavailable }}"{% endif %}
     {%- if fetchable %}
     hx-get="{{ url }}"
-    hx-trigger="{% if loading %}load, {% endif %}refresh from:body"
+    hx-trigger="{% if loading %}load, {% endif %}every 60s"
     hx-swap="outerHTML"
     {%- endif %}>
   {%- if task is none -%}

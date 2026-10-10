@@ -19,5 +19,10 @@ def serve(*, port: int, cwd_root: Path | None) -> None:
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind((HOST, port))
     typer.echo(f"http://{HOST}:{sock.getsockname()[1]}/")
-    server = uvicorn.Server(uvicorn.Config(create_app(cwd_root), log_level="warning"))
+    # Open event streams never finish on their own: without a grace period,
+    # Ctrl-C would wait on every connected browser.
+    config = uvicorn.Config(
+        create_app(cwd_root), log_level="warning", timeout_graceful_shutdown=1
+    )
+    server = uvicorn.Server(config)
     server.run(sockets=[sock])

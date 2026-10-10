@@ -6,6 +6,7 @@
 <title>toolbelt stacks</title>
 <script src="/static/htmx.min.js"></script>
 <script src="/static/stack-table.js" defer></script>
+<script src="/static/live-updates.js" defer></script>
 <style>
   :root {
     color-scheme: light dark;
@@ -47,12 +48,9 @@
   .seg button[aria-pressed=true] { background: var(--accent); border-color: var(--accent); color: #fff; }
   #count { color: var(--muted); font-size: 12px; align-self: center; }
 
-  /* One scrolling card per repo: the table scrolls inside, never the page. */
-  section { background: var(--card); border: 1px solid var(--line); border-radius: 8px;
-            min-width: 0; }
-  h2 { font-size: 13px; margin: 0; padding: 8px 12px; border-bottom: 1px solid var(--line); }
-  h2 small { color: var(--muted); font-weight: normal; margin-left: 8px; }
-  .table-wrap { overflow: auto; max-height: calc(100vh - 12rem); }
+  /* One scrolling card: the table scrolls inside, never the page. */
+  .table-wrap { overflow: auto; max-height: calc(100vh - 9rem);
+                background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
   table.stacks { border-collapse: separate; border-spacing: 0; width: 100%; min-width: 56rem; }
   .stacks th, .stacks td { padding: 3px 12px; text-align: left; white-space: nowrap;
                            vertical-align: middle; }
@@ -77,7 +75,7 @@
   .current { font-weight: 600; }
   .current::after { content: " ●"; color: var(--accent); }
   .muted { color: var(--muted); }
-  .htmx-request.col-pr { opacity: .55; }
+  .col-repo { color: var(--muted); }
   .pill { display: inline-block; padding: 0 7px; border: 1px solid currentColor;
           border-radius: 10px; font-size: 12px; white-space: nowrap; }
   a.pill:hover { text-decoration: none; background: color-mix(in srgb, currentColor 12%, transparent); }
@@ -88,6 +86,15 @@
   .ci-running, .review-requested, .review-reviewed, .comments { color: var(--amber); }
   .task-status { color: var(--gray); }
   .task-warn { color: var(--amber); cursor: help; margin-left: 4px; }
+
+  /* Live connection indicator, and a brief highlight of cells that just changed. */
+  #live { font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+  #live::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--gray); }
+  #live[data-state=live]::before { background: var(--green); }
+  #live[data-state=reconnecting]::before { background: var(--amber); }
+  #live[data-state=disconnected]::before { background: var(--red); }
+  @keyframes flash { from { background: color-mix(in srgb, var(--accent) 30%, transparent); } }
+  .flash { animation: flash 1.5s ease-out; }
   .notice { padding: 6px 12px; color: var(--amber); font-size: 12px; }
   .empty { padding: 24px; text-align: center; color: var(--muted); }
   [hidden] { display: none !important; }
@@ -96,16 +103,16 @@
 <body>
 <header>
   <h1>toolbelt stacks</h1>
-  <button type="button" hx-on:click="htmx.trigger(document.body, 'refresh')">Refresh statuses</button>
+  <span id="live" data-state="connecting" data-version="{{ version }}" role="status">connecting…</span>
 </header>
 <main>
-{% if repos %}
+{% if rows %}
   <form id="controls" onsubmit="return false">
     <label>Filter
       <input type="search" id="q" name="q" placeholder="branch, PR #, task…" autocomplete="off">
     </label>
     <label>Repo
-      <select name="repo">
+      <select name="repo" id="repo-select">
         <option value="">All</option>
         {% for repo in repos %}<option value="{{ repo.id }}">{{ repo.name }}</option>{% endfor %}
       </select>
@@ -125,50 +132,50 @@
     <button type="button" id="clear">Clear</button>
     <span id="count" aria-live="polite"></span>
   </form>
-{% endif %}
-{% for repo in repos %}
-  <section class="repo" data-repo-id="{{ repo.id }}">
-    <h2>{{ repo.name }}<small>{{ repo.path }}</small></h2>
-    {% if repo.path_missing %}<div class="notice">Checkout no longer exists at this path; PR status unavailable.</div>{% endif %}
-    <div class="table-wrap">
-    <table class="stacks">
-      <thead>
-        <tr>
-          {% for key, label in columns %}
-          <th data-col="{{ key }}" aria-sort="none"><button type="button">{{ label }}<span class="arrow" aria-hidden="true"></span></button></th>
-          {% endfor %}
-        </tr>
-      </thead>
-      <tbody>
-      {% for row in repo.rows %}
-        <tr data-branch="{{ row.name }}" data-parent="{{ row.parent or '' }}"
-            data-order="{{ row.order }}" data-tracked="{{ 1 if row.tracked else 0 }}"
-            style="--depth: {{ row.depth }}">
-          <td class="col-branch" data-col="branch" data-value="{{ row.name }}" data-sort="{{ row.name }}" data-search="{{ row.name }}">
-            <span class="branch{% if not row.tracked %} base{% endif %}{% if row.current %} current{% endif %}">{{ row.name }}</span>
+  <div id="notices">
+  {% for repo in repos if repo.path_missing %}
+    <div class="notice">{{ repo.name }}: checkout no longer exists at {{ repo.path }}; PR status unavailable.</div>
+  {% endfor %}
+  </div>
+  <div class="table-wrap">
+  <table class="stacks" id="stacks">
+    <thead>
+      <tr>
+        {% for key, label in columns %}
+        <th data-col="{{ key }}" aria-sort="none"><button type="button">{{ label }}<span class="arrow" aria-hidden="true"></span></button></th>
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+    {% for row in rows %}
+      <tr data-id="{{ row.id }}" data-repo="{{ row.repo.id }}" data-branch="{{ row.name }}"
+          data-parent="{{ row.parent_id }}" data-order="{{ row.order }}"
+          data-tracked="{{ 1 if row.tracked else 0 }}" style="--depth: {{ row.depth }}">
+        <td class="col-repo" data-col="repo" data-value="{{ row.repo.id }}" data-sort="{{ row.repo.name }}" data-search="{{ row.repo.name }}" title="{{ row.repo.path }}">{{ row.repo.name }}</td>
+        <td class="col-branch" data-col="branch" data-value="{{ row.name }}" data-sort="{{ row.name }}" data-search="{{ row.name }}">
+          <span class="branch{% if not row.tracked %} base{% endif %}{% if row.current %} current{% endif %}">{{ row.name }}</span>
+        </td>
+        {% if row.tracked %}
+          {% with repo_id=row.repo.id, branch=row.name, c=row.cells, path_missing=row.repo.path_missing %}{% include "status.html" %}{% endwith %}
+          {% with repo_id=row.repo.id, branch=row.name, task=row.task, fetchable=row.task_fetchable, loading=row.task_fetchable, info=none, unavailable=none %}{% include "task.html" %}{% endwith %}
+          <td class="col-session" data-col="session"
+              data-value="{{ 'linked' if row.agent else '' }}" data-sort="{{ row.agent.label if row.agent else '' }}" data-search="">
+            {%- if row.agent -%}{%- if row.agent.href -%}<a href="{{ row.agent.href }}">{{ row.agent.label }}</a>{%- else -%}{{ row.agent.label }}{%- endif -%}
+            {%- else -%}<span class="muted">—</span>{%- endif -%}
           </td>
-          {% if row.tracked %}
-            {% with repo_id=repo.id, branch=row.name, c=UNLOADED, oob=false, path_missing=repo.path_missing %}{% include "status.html" %}{% endwith %}
-            {% with repo_id=repo.id, branch=row.name, task=row.task, fetchable=row.task_fetchable, loading=row.task_fetchable, info=none %}{% include "task.html" %}{% endwith %}
-            <td class="col-session" data-col="session"
-                data-value="{{ 'linked' if row.agent else '' }}" data-sort="{{ row.agent.label if row.agent else '' }}" data-search="">
-              {%- if row.agent -%}{%- if row.agent.href -%}<a href="{{ row.agent.href }}">{{ row.agent.label }}</a>{%- else -%}{{ row.agent.label }}{%- endif -%}
-              {%- else -%}<span class="muted">—</span>{%- endif -%}
-            </td>
-          {% else %}
-            {% for key in ("pr", "ci", "review", "merge", "task", "session") %}
-            <td data-col="{{ key }}" data-value="" data-sort="" data-search=""></td>
-            {% endfor %}
-          {% endif %}
-        </tr>
-      {% endfor %}
-      </tbody>
-    </table>
-    </div>
-  </section>
+        {% else %}
+          {% for key in ("pr", "ci", "review", "comments", "merge", "task", "session") %}
+          <td data-col="{{ key }}" data-value="" data-sort="" data-search=""></td>
+          {% endfor %}
+        {% endif %}
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
 {% else %}
   <div class="empty">No tracked stacks. Use <code>tt g append</code> to start one.</div>
-{% endfor %}
+{% endif %}
   <div id="no-match" class="empty" hidden>No branches match the current filters.</div>
 </main>
 </body>

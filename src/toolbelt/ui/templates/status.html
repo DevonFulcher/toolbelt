@@ -1,25 +1,18 @@
-{#- One branch's four status cells (PR, CI, review, merge), as <td>s.
+{#- One branch's five status cells (PR, CI, review, comments, merge), as <td>s.
 
-    Rendered as loading placeholders from the index (c is UNLOADED, oob is
-    false) and as the result from /repos/{id}/status (oob is true). The PR
-    cell is the htmx target: it replaces itself (outerHTML), so the trigger
-    attributes live on it, and "load" is only on the placeholder, or a loaded
-    cell would re-fetch forever. The other three are out-of-band swaps (matched
-    by id) so one request fills the whole row.
+    Rendered into the index (from the status cache, or as loading placeholders)
+    and, on their own, as the payload of a "status" server-sent event: the page
+    script replaces each cell by id (see static/live-updates.js), so the ids
+    must match between the two.
 
     data-value is what a column's filter matches; data-sort is what sorting
     compares; both are read by static/stack-table.js. -#}
-{%- set url = "/repos/%d/status?branch=%s" % (repo_id, branch | urlencode) -%}
-{%- set oob_attr = ' hx-swap-oob="true"' if oob else "" -%}
-{%- set loading = not c.loaded and not path_missing -%}
-<td id="{{ cell_id(repo_id, branch, 'pr') }}" class="col-pr{% if loading %} loading{% endif %}"
-    data-col="pr" data-value="{{ c.pr }}" data-sort="{{ c.pr_sort }}" data-search="{{ c.pr_number }}"
-    hx-get="{{ url }}"
-    hx-trigger="{% if loading %}load, {% endif %}refresh from:body, every 120s"
-    hx-swap="outerHTML"
-    hx-on::response-error="this.textContent = 'status unavailable'; this.classList.add('error')">
+<td id="{{ cell_id(repo_id, branch, 'pr') }}" class="col-pr"
+    data-col="pr" data-value="{{ c.pr }}" data-sort="{{ c.pr_sort }}" data-search="{{ c.pr_number }}">
   {%- if path_missing -%}
     <span class="muted">repo path missing</span>
+  {%- elif c.failed -%}
+    <span class="error" title="gh could not look up this branch's PR">status unavailable</span>
   {%- elif not c.loaded -%}
     <span class="muted">loading…</span>
   {%- elif c.pr == "none" -%}
@@ -29,36 +22,40 @@
       {%- if c.pr_number %}#{{ c.pr_number }} {% endif %}{{ c.pr }}</a>
   {%- endif -%}
 </td>
-<td id="{{ cell_id(repo_id, branch, 'ci') }}"{{ oob_attr | safe }} class="col-ci"
+<td id="{{ cell_id(repo_id, branch, 'ci') }}" class="col-ci"
     data-col="ci" data-value="{{ c.ci }}" data-sort="{{ c.ci_sort }}" data-search="">
   {%- if not c.loaded -%}
-    <span class="muted">{{ "" if path_missing else "…" }}</span>
+    <span class="muted">{{ "" if (path_missing or c.failed) else "…" }}</span>
   {%- elif c.ci != "none" -%}
     <span class="pill ci-{{ c.ci }}">{{ c.ci }}</span>
   {%- else -%}
     <span class="muted">—</span>
   {%- endif -%}
 </td>
-<td id="{{ cell_id(repo_id, branch, 'review') }}"{{ oob_attr | safe }} class="col-review"
+<td id="{{ cell_id(repo_id, branch, 'review') }}" class="col-review"
     data-col="review" data-value="{{ c.review }}" data-sort="{{ c.review_sort }}" data-search="">
   {%- if not c.loaded -%}
-    <span class="muted">{{ "" if path_missing else "…" }}</span>
-  {%- else -%}
-    {%- if c.review != "none" -%}
+    <span class="muted">{{ "" if (path_missing or c.failed) else "…" }}</span>
+  {%- elif c.review != "none" -%}
     <span class="pill review-{{ c.review }}">{{ c.review }}</span>
-    {%- endif -%}
-    {%- if c.open_comments %}
-    <span class="pill comments">{{ c.open_comments }} open comment{{ "s" if c.open_comments != 1 }}</span>
-    {%- endif -%}
-    {%- if c.review == "none" and not c.open_comments -%}
+  {%- else -%}
     <span class="muted">—</span>
-    {%- endif -%}
   {%- endif -%}
 </td>
-<td id="{{ cell_id(repo_id, branch, 'merge') }}"{{ oob_attr | safe }} class="col-merge"
+<td id="{{ cell_id(repo_id, branch, 'comments') }}" class="col-comments"
+    data-col="comments" data-value="{{ c.comments }}" data-sort="{{ c.comments_sort }}" data-search="">
+  {%- if not c.loaded -%}
+    <span class="muted">{{ "" if (path_missing or c.failed) else "…" }}</span>
+  {%- elif c.open_comments -%}
+    <span class="pill comments" title="{{ c.open_comments }} unresolved review thread{{ "s" if c.open_comments != 1 }}">{{ c.open_comments }}</span>
+  {%- else -%}
+    <span class="muted">—</span>
+  {%- endif -%}
+</td>
+<td id="{{ cell_id(repo_id, branch, 'merge') }}" class="col-merge"
     data-col="merge" data-value="{{ c.merge }}" data-sort="{{ c.merge_sort }}" data-search="">
   {%- if not c.loaded -%}
-    <span class="muted">{{ "" if path_missing else "…" }}</span>
+    <span class="muted">{{ "" if (path_missing or c.failed) else "…" }}</span>
   {%- elif c.merge == "conflicts" -%}
     <span class="pill conflicts">conflicts</span>
   {%- elif c.merge == "clean" -%}
