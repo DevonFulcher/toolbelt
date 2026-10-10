@@ -1278,6 +1278,20 @@ class TestViews:
             if key in ("branch", "task", "session", "parent"):
                 continue
             assert found[key][1:] == ("na", "loading…"), key
+        # Marked so the page can tell, once connected, that it still has
+        # statuses to pick up.
+        assert 'data-loading="1"' in card
+
+    def test_a_loaded_card_is_not_marked_loading(
+        self, tmp_path, make_client, fetcher, tracker
+    ):
+        self.seed(tmp_path, fetcher)
+        client = self.client(make_client, tracker)
+        refresh(client)
+
+        card = self.card(client.get("/").text, "devon/a")
+
+        assert "data-loading" not in card
 
     def test_a_card_carries_the_data_its_timeline_track_is_drawn_from(
         self, tmp_path, make_client, fetcher, tracker

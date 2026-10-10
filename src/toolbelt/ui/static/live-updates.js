@@ -40,6 +40,8 @@
 })(typeof self !== "undefined" ? self : this, function () {
   const RECONNECT_DELAY_MS = 3000;
   const GRACE_MS = 15000;
+  // How often visibility is re-read in case no event announced a change.
+  const VISIBILITY_POLL_MS = 3000;
 
   // "updated 5s ago" / "updated 3m ago" for a whole number of seconds.
   function formatAgo(seconds) {
@@ -78,6 +80,15 @@
     let hiddenSince = null;
     let timer = null;
 
+    // A slow poll of isVisible(), for browsers that never dispatch
+    // "visibilitychange" (the page would stay paused while shown).
+    function schedulePoll() {
+      deps.setTimer(() => {
+        api.visibilityChanged();
+        schedulePoll();
+      }, VISIBILITY_POLL_MS);
+    }
+
     function cancelTimer() {
       if (timer !== null) deps.clearTimer(timer);
       timer = null;
@@ -107,9 +118,10 @@
       }
     }
 
-    return {
+    const api = {
       // Call once at page load.
       start() {
+        schedulePoll();
         if (deps.isVisible()) {
           hiddenSince = null;
         } else {
@@ -120,8 +132,15 @@
         }
         reconcile();
       },
+      // Re-reads the page's visibility. Called on "visibilitychange" and also
+      // as a fallback (window focus, pageshow, a slow timer): some embedded
+      // browsers never dispatch visibilitychange, which used to leave a page
+      // that was opened in the background paused for good. Idempotent: the
+      // time the page went hidden is kept while it stays hidden, so calling
+      // this repeatedly does not restart the grace period.
       visibilityChanged() {
-        hiddenSince = deps.isVisible() ? null : deps.now();
+        if (deps.isVisible()) hiddenSince = null;
+        else if (hiddenSince === null) hiddenSince = deps.now();
         reconcile();
       },
       // The stream died on its own (not by us); reconnect if still wanted.
@@ -130,6 +149,7 @@
         reconcile();
       },
     };
+    return api;
   }
 
   // The label for the connection indicator.
@@ -249,7 +269,10 @@
         updatedAt = data.age === null ? null : Date.now() - data.age * 1000;
         const missed = missedEvents(lastVersion, data.v);
         lastVersion = data.v;
-        if (missed) enqueue("hello", reloadRows);
+        // A page rendered before its statuses were known (opened in a
+        // background tab) is also refreshed: whatever arrived meanwhile.
+        const loading = document.querySelector(".card-live[data-loading]");
+        if (missed || loading) enqueue("hello", reloadRows);
         render();
       });
       stream.onerror = () => {
@@ -286,6 +309,9 @@
       },
     });
     document.addEventListener("visibilitychange", controller.visibilityChanged);
+    // Fallbacks for environments that do not announce visibility changes.
+    window.addEventListener("focus", controller.visibilityChanged);
+    window.addEventListener("pageshow", controller.visibilityChanged);
 
     window.setInterval(render, 1000);
     render();
@@ -294,6 +320,7 @@
 
   return {
     GRACE_MS,
+    VISIBILITY_POLL_MS,
     formatAgo,
     missedEvents,
     connectionAction,

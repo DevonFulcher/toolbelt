@@ -148,3 +148,54 @@ test("a dropped stream is reopened only while the page is visible", () => {
   env.setVisible(true);
   assert.equal(env.opened, 3);
 });
+
+test("loaded hidden, then shown through visibilitychange: connects and resumes", () => {
+  const env = harness({ visible: false });
+  env.controller.start();
+  env.advance(30000);
+  assert.equal(env.opened, 0);
+
+  env.setVisible(true);
+
+  assert.equal(env.opened, 1);
+  assert.deepEqual(env.states, ["paused", "resuming"]);
+});
+
+test("shown with no visibilitychange event: a focus-style re-check connects", () => {
+  const env = harness({ visible: false });
+  env.controller.start();
+  assert.equal(env.opened, 0);
+
+  // The browser never announced it; the page's focus/pageshow handler
+  // simply asks the controller to re-read the visibility.
+  env.visible = true;
+  env.controller.visibilityChanged();
+
+  assert.equal(env.opened, 1);
+  assert.deepEqual(env.states, ["paused", "resuming"]);
+});
+
+test("shown with no event at all: the slow timer notices", () => {
+  const env = harness({ visible: false });
+  env.controller.start();
+  env.advance(10000);
+  assert.equal(env.opened, 0);
+
+  env.visible = true;
+  env.advance(live.VISIBILITY_POLL_MS);
+
+  assert.equal(env.opened, 1);
+  assert.deepEqual(env.states, ["paused", "resuming"]);
+});
+
+test("re-checking while hidden does not restart the grace period", () => {
+  const env = harness();
+  env.controller.start();
+  env.setVisible(false);
+  env.advance(10000);
+  env.controller.visibilityChanged();
+  env.controller.visibilityChanged();
+  env.advance(5000);
+
+  assert.equal(env.closed, 1);
+});

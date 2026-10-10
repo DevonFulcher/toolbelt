@@ -27,7 +27,7 @@
 {%- set d = c.detail -%}
 {%- set has_pr = c.loaded and c.pr != "none" -%}
 <div id="{{ cell_id(repo_id, branch, 'card') }}" class="card-live"
-     data-url="{{ c.pr_url or '' }}">
+     data-url="{{ c.pr_url or '' }}"{% if not c.loaded and not c.failed and not path_missing %} data-loading="1"{% endif %}>
 {%- if not c.loaded -%}
   {%- set note = "repo path missing" if path_missing else ("status unavailable" if c.failed else "loading…") -%}
   {%- for key, label in slots -%}
