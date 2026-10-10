@@ -69,14 +69,14 @@
   <section>
     <h2>{{ repo.name }}<small>{{ repo.path }}</small></h2>
     {% if repo.path_missing %}<div class="notice">Checkout no longer exists at this path; PR status unavailable.</div>{% endif %}
-    <div class="row head"><span>Branch</span><span>PR / CI / review</span><span>Jira</span><span>Session</span></div>
+    <div class="row head"><span>Branch</span><span>PR / CI / review</span><span>Task</span><span>Session</span></div>
     {% for row in repo.rows %}
     <div class="row">
       <span class="branch{% if not row.tracked %} base{% endif %}{% if row.current %} current{% endif %}"
             style="padding-left: {{ row.depth * 1.25 }}rem">{{ row.name }}</span>
       {% if row.tracked %}
         {% with repo_id=repo.id, branch=row.name, status=none, path_missing=repo.path_missing %}{% include "status.html" %}{% endwith %}
-        <span>{% if row.jira %}{% if row.jira.href %}<a href="{{ row.jira.href }}" target="_blank" rel="noopener">{{ row.jira.label }}</a>{% else %}{{ row.jira.label }}{% endif %}{% else %}<span class="muted">—</span>{% endif %}</span>
+        {% with repo_id=repo.id, branch=row.name, task=row.task, fetchable=row.task_fetchable, loading=row.task_fetchable, info=none %}{% include "task.html" %}{% endwith %}
         <span>{% if row.agent %}{% if row.agent.href %}<a href="{{ row.agent.href }}">{{ row.agent.label }}</a>{% else %}{{ row.agent.label }}{% endif %}{% else %}<span class="muted">—</span>{% endif %}</span>
       {% else %}
         <span></span><span></span><span></span>

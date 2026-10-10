@@ -1,7 +1,7 @@
 """`tt ui`: the read-only web app, driven through FastAPI's TestClient.
 
-The status fetcher and Jira base URL are injected via dependency overrides, so
-no test touches `gh` or the real config. The last test starts the real CLI
+The status fetcher and task tracker are injected via dependency overrides, so
+no test touches `gh`, Jira or the real config. The last test starts the real CLI
 command under uvicorn.
 """
 
@@ -25,9 +25,10 @@ from toolbelt.git.stack.status import (
     ReviewState,
 )
 from toolbelt.git.stack.store import RepoIdentity, StackStore, default_db_path
+from toolbelt.tasks.tracker import TaskInfo
 from toolbelt.ui import app as ui_app
 from toolbelt.ui.app import create_app
-from toolbelt.ui.branch_links import agent_link, jira_base_url, jira_link
+from toolbelt.ui.branch_links import agent_link, owning_tracker, task_link
 
 
 class FakeStatuses:
@@ -40,6 +41,26 @@ class FakeStatuses:
     async def __call__(self, branch: str, root: Path) -> BranchStatus:
         self.calls.append((branch, root))
         return self.statuses.get(branch, NO_PR)
+
+
+class FakeTracker:
+    """A `TaskTracker` serving seeded `TaskInfo`; unseeded refs fail to fetch."""
+
+    name = "fake"
+
+    def __init__(self) -> None:
+        self.tasks: dict[str, TaskInfo] = {}
+        self.fetches: list[str] = []
+
+    def url_for(self, ref: str) -> str | None:
+        return f"https://tasks.example/{ref}"
+
+    def display_ref(self, ref: str) -> str:
+        return ref.upper()
+
+    def fetch(self, ref: str) -> TaskInfo | None:
+        self.fetches.append(ref)
+        return self.tasks.get(ref)
 
 
 class Anchors(HTMLParser):
@@ -70,6 +91,7 @@ def seed_repo(
     parents: dict[str, str],
     *,
     links: dict[str, tuple[str | None, str | None]] | None = None,
+    task_tracker: str | None = "fake",
     exists: bool = True,
 ) -> int:
     path = root / name
@@ -81,8 +103,15 @@ def seed_repo(
             RepoIdentity(git_common_dir=path / ".git", path=path, remote_url=None)
         )
         for branch, parent in parents.items():
-            jira, agent = (links or {}).get(branch, (None, None))
-            store.set_parent(repo_id, branch, parent, jira=jira, agent_link=agent)
+            task, agent = (links or {}).get(branch, (None, None))
+            store.set_parent(
+                repo_id,
+                branch,
+                parent,
+                task=task,
+                task_tracker=task_tracker if task else None,
+                agent_link=agent,
+            )
         return repo_id
     finally:
         store.close()
@@ -94,11 +123,20 @@ def fetcher() -> FakeStatuses:
 
 
 @pytest.fixture
-def make_client(fetcher: FakeStatuses):
-    def make(base_url: str | None = None, cwd_root: Path | None = None) -> TestClient:
-        app = create_app(cwd_root)
+def tracker() -> FakeTracker:
+    return FakeTracker()
+
+
+@pytest.fixture
+def make_client(fetcher: FakeStatuses, tracker: FakeTracker):
+    def make(
+        task_tracker: FakeTracker | None = None,
+        cwd_root: Path | None = None,
+        **app_kwargs,
+    ) -> TestClient:
+        app = create_app(cwd_root, **app_kwargs)
         app.dependency_overrides[ui_app.status_fetcher] = lambda: fetcher
-        app.dependency_overrides[ui_app.jira_base_url] = lambda: base_url
+        app.dependency_overrides[ui_app.task_tracker] = lambda: task_tracker
         return TestClient(app)
 
     return make
@@ -229,35 +267,131 @@ def test_mutating_methods_are_not_allowed(tmp_path, make_client):
         assert client.delete(url).status_code == 405
 
 
-def test_link_rendering_in_index(tmp_path, make_client):
-    seed_repo(
+def test_link_rendering_in_index(tmp_path, make_client, tracker):
+    repo_id = seed_repo(
         tmp_path,
         "api",
         {
             "devon/key": "main",
-            "devon/url": "main",
             "devon/deeplink": "main",
             "devon/blank": "main",
         },
         links={
-            "devon/key": ("ABC-1", None),
-            "devon/url": ("https://jira.example.com/browse/XYZ-9", None),
+            "devon/key": ("abc-1", None),
             "devon/deeplink": (None, "claude://claude.ai/local_session?id=a&b=c"),
         },
     )
 
-    with_base = Anchors(make_client(base_url="https://jira.example.com/").get("/").text)
-    assert with_base.hrefs["ABC-1"] == "https://jira.example.com/browse/ABC-1"
-    assert with_base.hrefs["XYZ-9"] == "https://jira.example.com/browse/XYZ-9"
+    with_tracker = make_client(tracker).get("/").text
+    anchors = Anchors(with_tracker)
+    assert anchors.hrefs["ABC-1"] == "https://tasks.example/abc-1"
     # `&` is entity-escaped in the markup and parses back to the original;
     # the custom scheme is untouched.
-    assert (
-        with_base.hrefs["Open session"] == "claude://claude.ai/local_session?id=a&b=c"
+    assert anchors.hrefs["Open session"] == "claude://claude.ai/local_session?id=a&b=c"
+    # The title/status are fetched lazily, never while rendering the index.
+    assert f"/repos/{repo_id}/task?branch=devon/key" in with_tracker
+    assert tracker.fetches == []
+
+    # No tracker configured: plain text, no fetch placeholder.
+    without = make_client().get("/").text
+    assert "abc-1" in without
+    assert "abc-1" not in Anchors(without).hrefs
+    assert "/task?branch" not in without
+
+
+def test_task_of_another_tracker_is_plain_text(tmp_path, make_client, tracker):
+    seed_repo(
+        tmp_path,
+        "api",
+        {"devon/a": "main"},
+        links={"devon/a": ("LIN-5", None)},
+        task_tracker="linear",
     )
 
-    without_base = make_client().get("/").text
-    assert "ABC-1" in without_base
-    assert "ABC-1" not in Anchors(without_base).hrefs
+    html = make_client(tracker).get("/").text
+
+    assert "LIN-5" in html
+    assert "LIN-5" not in Anchors(html).hrefs
+    assert "/task?branch" not in html
+
+
+def test_task_partial_shows_title_and_status(tmp_path, make_client, tracker):
+    repo_id = seed_repo(
+        tmp_path, "api", {"devon/a": "main"}, links={"devon/a": ("abc-1", None)}
+    )
+    tracker.tasks["abc-1"] = TaskInfo(
+        ref="ABC-1", title="Fix the <thing>", status="In Progress", url=None
+    )
+
+    response = make_client(tracker).get(
+        f"/repos/{repo_id}/task", params={"branch": "devon/a"}
+    )
+
+    assert response.status_code == 200
+    assert Anchors(response.text).hrefs["ABC-1"] == "https://tasks.example/abc-1"
+    assert "Fix the &lt;thing&gt;" in response.text
+    assert "In Progress" in response.text
+    # A fetched cell refreshes on demand but never re-fires "load".
+    assert 'hx-trigger="refresh from:body"' in response.text
+
+
+def test_task_fetch_failure_shows_the_bare_ref(tmp_path, make_client, tracker):
+    repo_id = seed_repo(
+        tmp_path, "api", {"devon/a": "main"}, links={"devon/a": ("abc-1", None)}
+    )
+
+    response = make_client(tracker).get(
+        f"/repos/{repo_id}/task", params={"branch": "devon/a"}
+    )
+
+    assert response.status_code == 200
+    assert "ABC-1" in response.text
+    assert "task-title" not in response.text
+
+
+def test_task_fetches_are_cached_with_a_ttl(tmp_path, make_client, tracker):
+    repo_id = seed_repo(
+        tmp_path, "api", {"devon/a": "main"}, links={"devon/a": ("abc-1", None)}
+    )
+    tracker.tasks["abc-1"] = TaskInfo("ABC-1", "T", "Open", None)
+    now = [100.0]
+    client = make_client(tracker, task_ttl_seconds=60, clock=lambda: now[0])
+    url, params = f"/repos/{repo_id}/task", {"branch": "devon/a"}
+
+    client.get(url, params=params)
+    now[0] += 59
+    client.get(url, params=params)
+    assert tracker.fetches == ["abc-1"]
+
+    now[0] += 2
+    client.get(url, params=params)
+    assert tracker.fetches == ["abc-1", "abc-1"]
+
+
+def test_task_partial_404s_without_a_stored_task(tmp_path, make_client, tracker):
+    repo_id = seed_repo(tmp_path, "api", {"devon/a": "main"})
+    client = make_client(tracker)
+
+    assert (
+        client.get(f"/repos/{repo_id}/task", params={"branch": "devon/a"}).status_code
+        == 404
+    )
+    assert (
+        client.get("/repos/999/task", params={"branch": "devon/a"}).status_code == 404
+    )
+    assert tracker.fetches == []
+
+
+def test_task_partial_without_tracker_never_fetches(tmp_path, make_client, tracker):
+    repo_id = seed_repo(
+        tmp_path, "api", {"devon/a": "main"}, links={"devon/a": ("abc-1", None)}
+    )
+
+    response = make_client().get(f"/repos/{repo_id}/task", params={"branch": "devon/a"})
+
+    assert "abc-1" in response.text
+    assert "hx-get" not in response.text
+    assert tracker.fetches == []
 
 
 def test_blank_links_render_dash(tmp_path, make_client):
@@ -290,22 +424,25 @@ def test_detached_head_marks_nothing(repo, make_client):
 
 
 class TestBranchLinks:
-    def test_jira_key_with_and_without_base_url(self):
-        link = jira_link("ABC-1", base_url="https://j.example/")
+    def test_task_link_goes_through_the_tracker(self, tracker):
+        link = task_link("abc-1", tracker=tracker)
         assert link is not None
-        assert link.href == "https://j.example/browse/ABC-1"
-        bare = jira_link("ABC-1", base_url=None)
-        assert bare is not None
-        assert bare.href is None
+        assert (link.label, link.href) == ("ABC-1", "https://tasks.example/abc-1")
 
-    def test_jira_url_is_linked_as_is(self):
-        link = jira_link("https://j.example/browse/ABC-1?x=1", base_url="https://o")
+    def test_task_without_tracker_is_plain_text(self):
+        link = task_link("https://j.example/browse/ABC-1", tracker=None)
         assert link is not None
-        assert link.href == "https://j.example/browse/ABC-1?x=1"
+        assert link.href is None
 
-    def test_blank(self):
-        assert jira_link(None, base_url=None) is None
-        assert jira_link("", base_url=None) is None
+    def test_tracker_ownership(self, tracker):
+        assert owning_tracker("fake", tracker) is tracker
+        assert owning_tracker(None, tracker) is tracker  # stored untagged
+        assert owning_tracker("jira", tracker) is None
+        assert owning_tracker("fake", None) is None
+
+    def test_blank(self, tracker):
+        assert task_link(None, tracker=tracker) is None
+        assert task_link("", tracker=tracker) is None
         assert agent_link(None) is None
 
     def test_agent_link_keeps_custom_scheme(self):
@@ -318,14 +455,6 @@ class TestBranchLinks:
         link = agent_link(value)
         assert link is not None
         assert link.href is None
-
-    def test_jira_base_url_from_config(self, tmp_path):
-        config = tmp_path / "config.yaml"
-        assert jira_base_url(config) is None
-        config.write_text("sync:\n  repos: []\n")
-        assert jira_base_url(config) is None
-        config.write_text("jira:\n  base_url: https://j.example\n")
-        assert jira_base_url(config) == "https://j.example"
 
 
 def test_tt_ui_serves_over_uvicorn(tmp_path):

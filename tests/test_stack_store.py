@@ -47,14 +47,18 @@ def test_links_are_nullable_kept_on_reparent_and_scoped_to_the_branch(tmp_path: 
     s = StackStore(tmp_path / "stacks.db")
     repo_id = s.ensure_repo(_identity(tmp_path))
     s.set_parent(repo_id, "feat", "main")
-    assert s.get_links(repo_id, "feat") == BranchLinks(None, None)
+    assert s.get_links(repo_id, "feat") == BranchLinks(None, None, None)
     assert s.get_links(repo_id, "nope") is None
 
-    assert s.set_links(repo_id, "feat", jira="ABC-1")
+    assert s.set_links(repo_id, "feat", task="ABC-1", task_tracker="jira")
     assert s.set_links(repo_id, "feat", agent_link="claude://s/1")
     s.set_parent(repo_id, "feat", "develop")  # reparent keeps links
-    assert s.get_links(repo_id, "feat") == BranchLinks("ABC-1", "claude://s/1")
-    assert not s.set_links(repo_id, "nope", jira="X-1")
+    assert s.get_links(repo_id, "feat") == BranchLinks("ABC-1", "jira", "claude://s/1")
+    assert not s.set_links(repo_id, "nope", task="X-1")
+
+    # A new task replaces the old one *and* the tracker it was stored under.
+    s.set_parent(repo_id, "feat", "develop", task="URL-ONLY")
+    assert s.get_links(repo_id, "feat") == BranchLinks("URL-ONLY", None, "claude://s/1")
 
 
 def test_links_migration_applies_to_a_v1_database(tmp_path: Path):
@@ -73,7 +77,45 @@ def test_links_migration_applies_to_a_v1_database(tmp_path: Path):
         )
     s = StackStore(db)
     assert s.schema_version() == len(store._MIGRATIONS)
-    assert s.get_links(1, "old") == BranchLinks(None, None)
+    assert s.get_links(1, "old") == BranchLinks(None, None, None)
+
+
+def test_task_migration_renames_jira_keeping_data_and_tags_the_tracker(
+    tmp_path: Path,
+):
+    """A database at the schema that still had a ``jira`` column."""
+    db = tmp_path / "stacks.db"
+    jira_era = store._MIGRATIONS[:3]
+    with sqlite3.connect(db) as conn:
+        for migration in jira_era:
+            for statement in migration:
+                conn.execute(statement)
+        conn.execute(f"PRAGMA user_version = {len(jira_era)}")
+        conn.execute(
+            "INSERT INTO repos (git_common_dir, path, name, created_at) "
+            "VALUES ('/r/.git', '/r', 'r', 'now')"
+        )
+        conn.executemany(
+            "INSERT INTO branches "
+            "(repo_id, name, parent, jira, agent_link, created_at, updated_at) "
+            "VALUES (1, ?, 'main', ?, ?, 'now', 'now')",
+            [
+                ("with-ticket", "ABC-1", "claude://s/1"),
+                ("with-url", "https://j.example/browse/XYZ-9", None),
+                ("without", None, None),
+            ],
+        )
+
+    s = StackStore(db)
+
+    assert s.schema_version() == len(store._MIGRATIONS)
+    assert s.get_links(1, "with-ticket") == BranchLinks("ABC-1", "jira", "claude://s/1")
+    assert s.get_links(1, "with-url") == BranchLinks(
+        "https://j.example/browse/XYZ-9", "jira", None
+    )
+    assert s.get_links(1, "without") == BranchLinks(None, None, None)
+    columns = [r[1] for r in s._conn.execute("PRAGMA table_info(branches)")]
+    assert "jira" not in columns and {"task", "task_tracker"} <= set(columns)
 
 
 def test_wal_mode_enabled(tmp_path: Path):

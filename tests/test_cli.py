@@ -244,7 +244,7 @@ def test_change_creates_new_branch(repo: Path, capfd: pytest.CaptureFixture):
 # --- append / switch / tree ------------------------------------------------
 
 
-_LINKS = ["--jira", "ABC-1", "--agent-link", "claude://session/1"]
+_LINKS = ["--task", "ABC-1", "--agent-link", "claude://session/1"]
 
 
 def test_append_creates_worktree_via_cli(repo: Path, capfd: pytest.CaptureFixture):
@@ -254,18 +254,40 @@ def test_append_creates_worktree_via_cli(repo: Path, capfd: pytest.CaptureFixtur
     assert lineage.get_parent("devon/feature", root=repo) == "main"
     links = lineage.get_links("devon/feature", root=repo)
     assert links is not None
-    assert (links.jira, links.agent_link) == ("ABC-1", "claude://session/1")
+    # No tracker is configured, so the ref is stored untagged.
+    assert (links.task, links.task_tracker, links.agent_link) == (
+        "ABC-1",
+        None,
+        "claude://session/1",
+    )
+
+
+def test_append_tags_the_task_with_the_configured_tracker(
+    repo: Path, capfd: pytest.CaptureFixture, _isolate_config_dir: Path
+):
+    _isolate_config_dir.parent.mkdir(parents=True)
+    _isolate_config_dir.write_text(
+        "tasks:\n  tracker: jira\n  jira:\n    base_url: https://j.example\n"
+    )
+
+    result = _invoke(["append", "feature", *_LINKS], cwd=repo, capfd=capfd)
+
+    assert result.exit_code == 0, result.output
+    links = lineage.get_links("devon/feature", root=repo)
+    assert links is not None
+    assert (links.task, links.task_tracker) == ("ABC-1", "jira")
 
 
 @pytest.mark.parametrize(
     "args",
     [
         ["--agent-link", "claude://session/1"],
-        ["--jira", "ABC-1"],
+        ["--task", "ABC-1"],
+        ["--jira", "ABC-1", "--agent-link", "claude://session/1"],
         [],
     ],
 )
-def test_append_requires_jira_and_agent_link(
+def test_append_requires_task_and_agent_link(
     repo: Path, capfd: pytest.CaptureFixture, args: list[str]
 ):
     result = _invoke(["append", "feature", *args], cwd=repo, capfd=capfd)

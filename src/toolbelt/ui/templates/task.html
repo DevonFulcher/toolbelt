@@ -1,0 +1,27 @@
+{#- One branch's task cell: the stored ref (linked when the tracker can), plus
+    its title/status once fetched. Like status.html it replaces itself
+    (outerHTML) and "load" is only on the placeholder, so a fetched cell never
+    refetches in a loop. A ref with no owning tracker is plain text and never
+    fetched. -#}
+{%- set url = "/repos/%d/task?branch=%s" % (repo_id, branch | urlencode) -%}
+<span class="task"
+      {%- if fetchable %}
+      hx-get="{{ url }}"
+      hx-trigger="{% if loading %}load, {% endif %}refresh from:body"
+      hx-swap="outerHTML"
+      hx-on::response-error="this.classList.remove('loading')"
+      {%- endif %}>
+  {%- if task is none -%}
+    <span class="muted">—</span>
+  {%- else -%}
+    {%- if task.href -%}
+      <a href="{{ task.href }}" target="_blank" rel="noopener">{{ task.label }}</a>
+    {%- else -%}
+      {{ task.label }}
+    {%- endif -%}
+    {%- if info %}
+    <span class="task-title">{{ info.title }}</span>
+    <span class="pill task-status">{{ info.status }}</span>
+    {%- endif -%}
+  {%- endif -%}
+</span>
