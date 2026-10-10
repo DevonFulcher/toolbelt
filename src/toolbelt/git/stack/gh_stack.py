@@ -58,9 +58,10 @@ class StackedPrs(Protocol):
         """True if ``branch`` has an open, non-draft PR."""
         ...
 
-    def link(self, branches: list[str], *, cwd: Path) -> bool:
-        """Link ``branches`` (bottom to top) as one stack. Returns ``False``
-        if stacked PRs are unavailable (not enabled, extension missing)."""
+    def link(self, branches: list[str], *, base: str, cwd: Path) -> bool:
+        """Link ``branches`` (bottom to top) as one stack whose bottom is
+        based on ``base``. Returns ``False`` if stacked PRs are unavailable
+        (not enabled, extension missing)."""
         ...
 
 
@@ -93,9 +94,11 @@ class GhStackedPrs:
             raise typer.Exit(1)
         return stdout.decode().strip() not in ("", "0")
 
-    def link(self, branches: list[str], *, cwd: Path) -> bool:
+    def link(self, branches: list[str], *, base: str, cwd: Path) -> bool:
+        # Without --base, `gh stack link` retargets the bottom PR onto the
+        # repo's default branch, which is wrong for stacks rooted elsewhere.
         result = logged_process.run(
-            ["gh", "stack", "link", *branches],
+            ["gh", "stack", "link", "--base", base, *branches],
             cwd=cwd,
             capture_output=True,
             text=True,
@@ -185,7 +188,7 @@ def mirror_stack(
                     f"'{top}'; remove them there if unwanted."
                 )
 
-        if not stacked_prs.link(publish, cwd=root):
+        if not stacked_prs.link(publish, base=parents[top], cwd=root):
             set_gh_stack_unsupported_at(now(), root=root)
             logger.info(
                 "GitHub stacked PRs are not enabled for this repo (or `gh stack` "

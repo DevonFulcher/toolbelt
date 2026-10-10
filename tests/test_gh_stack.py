@@ -24,13 +24,15 @@ class FakeStackedPrs:
         self.not_ready = set(not_ready)
         self.available = available
         self.links: list[list[str]] = []
+        self.bases: list[str] = []
         self.readiness_checks = 0
 
     async def pr_is_ready(self, branch: str, *, cwd: Path) -> bool:
         self.readiness_checks += 1
         return branch not in self.not_ready
 
-    def link(self, branches: list[str], *, cwd: Path) -> bool:
+    def link(self, branches: list[str], *, base: str, cwd: Path) -> bool:
+        self.bases.append(base)
         self.links.append(list(branches))
         return self.available
 
@@ -55,6 +57,15 @@ def test_links_a_ready_chain_bottom_to_top(repo: Path):
     mirror_stack(["a", "b", "c"], root=repo, stacked_prs=prs, now=Clock())
 
     assert prs.links == [["a", "b", "c"]]
+
+
+def test_links_with_the_stacks_trunk_as_base(repo: Path):
+    _track(repo, a="release/1.0", b="a")
+    prs = FakeStackedPrs()
+
+    mirror_stack(["a", "b"], root=repo, stacked_prs=prs, now=Clock())
+
+    assert prs.bases == ["release/1.0"]
 
 
 def test_unchanged_chain_makes_no_second_link_call(repo: Path):
@@ -191,7 +202,7 @@ def test_record_for_a_landed_bottom_is_pruned(repo: Path):
 
 def test_link_failure_propagates_and_records_nothing(repo: Path):
     class Failing(FakeStackedPrs):
-        def link(self, branches: list[str], *, cwd: Path) -> bool:
+        def link(self, branches: list[str], *, base: str, cwd: Path) -> bool:
             raise typer.Exit(1)
 
     _track(repo, a="main", b="a")
