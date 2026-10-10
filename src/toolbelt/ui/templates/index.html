@@ -102,6 +102,51 @@
   @keyframes flash { from { background: color-mix(in srgb, var(--accent) 30%, transparent); } }
   .flash { animation: flash 1.5s ease-out; }
   .notice { padding: 6px 12px; color: var(--amber); font-size: 12px; }
+  /* Cards view */
+  .cards { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(19rem, 1fr)); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+          padding: 10px 12px; display: grid; gap: 8px; align-content: start; min-width: 0; }
+  .card[hidden] { display: none; }
+  .card-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .card-head .branch { margin-left: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .repo-chip { flex: none; font-size: 11px; color: var(--muted); border: 1px solid var(--line);
+               border-radius: 4px; padding: 0 6px; }
+  .card-live { display: grid; gap: 8px; min-width: 0; }
+  .card-next { font-size: 16px; font-weight: 600; border-left: 3px solid currentColor;
+               padding-left: 8px; }
+  .card-next-who { font-size: 12px; font-weight: 400; opacity: .85; }
+  .card-pr { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .card-title { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  dl.ages { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0; }
+  dl.ages div { display: flex; gap: 6px; align-items: baseline; }
+  dl.ages dt { font-size: 11px; color: var(--muted); }
+  dl.ages dd { margin: 0; font-weight: 600; }
+  .card-facts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .card-foot { display: flex; justify-content: space-between; gap: 8px; font-size: 12px;
+               color: var(--muted); border-top: 1px solid var(--line); padding-top: 6px; min-width: 0; }
+  .card-foot > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .card-task .task-title { margin: 0 4px; }
+
+  /* Timeline view */
+  #timeline-list { list-style: none; margin: 0; padding: 0; background: var(--card);
+                   border: 1px solid var(--line); border-radius: 8px; }
+  .ev { display: grid; grid-template-columns: 5.5rem 11rem minmax(0, 1fr); gap: 2px 12px;
+        padding: 6px 12px; border-top: 1px solid var(--line); align-items: baseline; }
+  .ev:first-child { border-top: 0; }
+  .ev-time { color: var(--muted); font-size: 12px; }
+  .ev-kind { font-size: 12px; white-space: nowrap; }
+  .ev-icon { display: inline-block; width: 1.2em; text-align: center; }
+  .ev-what { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; min-width: 0; }
+  .ev-actor { color: var(--muted); }
+  .ev-detail { overflow: hidden; text-overflow: ellipsis; }
+  .ev-opened .ev-kind, .ev-ready_for_review .ev-kind, .ev-reopened .ev-kind { color: var(--green); }
+  .ev-converted_to_draft .ev-kind, .ev-review_request_removed .ev-kind { color: var(--gray); }
+  .ev-review_requested .ev-kind, .ev-review .ev-kind { color: var(--amber); }
+  .ev-commit .ev-kind, .ev-force_push .ev-kind { color: var(--accent); }
+  .ev-merged .ev-kind { color: var(--purple); }
+  .ev-closed .ev-kind { color: var(--red); }
+  .ev-more { padding: 8px 12px; color: var(--muted); font-size: 12px; }
+  @media (max-width: 40rem) { .ev { grid-template-columns: 1fr; } }
   .empty { padding: 24px; text-align: center; color: var(--muted); }
   [hidden] { display: none !important; }
 </style>
@@ -134,7 +179,22 @@
     <span class="seg" role="group" aria-label="View">
       <button type="button" data-view="tree" aria-pressed="true">Tree</button>
       <button type="button" data-view="flat" aria-pressed="false">Flat</button>
+      <button type="button" data-view="cards" aria-pressed="false">Cards</button>
+      <button type="button" data-view="timeline" aria-pressed="false">Timeline</button>
     </span>
+    <label data-views="cards" hidden>Sort
+      <select name="sort">
+        <option value="">Needs my action first</option>
+        {% for key, label in columns %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+      </select>
+    </label>
+    <label data-views="timeline" hidden>Event
+      <select name="kind">
+        <option value="">Any</option>
+        {% for kind in event_kinds %}<option value="{{ kind }}">{{ kind.replace("_", " ") }}</option>{% endfor %}
+      </select>
+    </label>
+    <button type="button" id="order" data-views="timeline" hidden>Newest first</button>
     <button type="button" id="clear">Clear</button>
     <span id="count" aria-live="polite"></span>
   </form>
@@ -143,7 +203,7 @@
     <div class="notice">{{ repo.name }}: checkout no longer exists at {{ repo.path }}; PR status unavailable.</div>
   {% endfor %}
   </div>
-  <div class="table-wrap">
+  <div class="table-wrap" id="table-wrap">
   <table class="stacks" id="stacks">
     <thead>
       <tr>
@@ -179,6 +239,12 @@
     </tbody>
   </table>
   </div>
+  <div class="cards" id="cards" hidden>
+    {% for row in rows if row.tracked %}{% include "card.html" %}{% endfor %}
+  </div>
+  <section id="timeline" hidden>
+    <ol id="timeline-list"></ol>
+  </section>
 {% else %}
   <div class="empty">No tracked stacks. Use <code>tt g append</code> to start one.</div>
 {% endif %}

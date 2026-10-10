@@ -1,0 +1,21 @@
+{#- One branch's card. The static parts (names, links) live here; the live
+    half is card_status.html. The task slot is filled by the page script from
+    the table's task cell, so there is a single task lookup per branch. -#}
+<article class="card" data-id="{{ row.id }}" data-repo="{{ row.repo.id }}" data-branch="{{ row.name }}">
+  <div class="card-head">
+    <span class="repo-chip" title="{{ row.repo.path }}">{{ row.repo.name }}</span>
+    <span class="branch{% if row.current %} current{% endif %}">{{ row.name }}</span>
+  </div>
+  {% with repo_id=row.repo.id, branch=row.name, c=row.cells, path_missing=row.repo.path_missing %}{% include "card_status.html" %}{% endwith %}
+  <footer class="card-foot">
+    <span class="card-task" title="Task">
+      {%- if row.task -%}
+        {%- if row.task.href -%}<a href="{{ row.task.href }}" target="_blank" rel="noopener">{{ row.task.label }}</a>{%- else -%}{{ row.task.label }}{%- endif -%}
+      {%- else -%}<span class="muted">no task</span>{%- endif -%}
+    </span>
+    <span class="card-session" title="Session">
+      {%- if row.agent -%}{%- if row.agent.href -%}<a href="{{ row.agent.href }}">{{ row.agent.label }}</a>{%- else -%}{{ row.agent.label }}{%- endif -%}
+      {%- endif -%}
+    </span>
+  </footer>
+</article>

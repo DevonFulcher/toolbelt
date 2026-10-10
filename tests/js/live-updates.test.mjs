@@ -130,10 +130,10 @@ test("a page loaded in a background tab connects only when shown", () => {
   env.controller.start();
   env.advance(60000);
   assert.equal(env.opened, 0);
+  assert.deepEqual(env.states, ["paused"]);
   env.setVisible(true);
   assert.equal(env.opened, 1);
-  // It was never paused, so it is not "resuming".
-  assert.deepEqual(env.states, []);
+  assert.deepEqual(env.states, ["paused", "resuming"]);
 });
 
 test("a dropped stream is reopened only while the page is visible", () => {

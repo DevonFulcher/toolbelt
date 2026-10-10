@@ -2,7 +2,8 @@
  * Live updates for the `tt ui` page: listens to the server's /events stream
  * (Server-Sent Events) and patches the page in place.
  *
- *   status     {html, v}  one branch's status cells; replaced by element id
+ *   status     {html, card, v}  one branch's status cells and the live half
+ *                         of its card; each replaced by element id
  *   structure  {v}        the stack DB changed; re-fetch "/" and swap the rows
  *   refreshed  {v}        a polling pass finished ("updated Ns ago")
  *   hello      {v, age}   on (re)connect; if v is not the last version seen,
@@ -109,7 +110,14 @@
     return {
       // Call once at page load.
       start() {
-        hiddenSince = deps.isVisible() ? null : deps.now();
+        if (deps.isVisible()) {
+          hiddenSince = null;
+        } else {
+          // Loaded in a background tab: nothing to poll for until it is shown.
+          hiddenSince = deps.now();
+          paused = true;
+          deps.onState("paused");
+        }
         reconcile();
       },
       visibilityChanged() {
@@ -158,16 +166,21 @@
       document.dispatchEvent(new window.CustomEvent("stack-table:changed"));
     }
 
-    function swapCells(html) {
+    function swapById(html, selector) {
       const template = document.createElement("template");
       template.innerHTML = html;
-      for (const cell of template.content.querySelectorAll("td[id]")) {
-        const old = document.getElementById(cell.id);
-        if (!old || old.outerHTML === cell.outerHTML) continue;
-        old.replaceWith(cell);
-        cell.classList.add("flash");
-        cell.addEventListener("animationend", () => cell.classList.remove("flash"));
+      for (const fresh of template.content.querySelectorAll(selector)) {
+        const old = document.getElementById(fresh.id);
+        if (!old || old.outerHTML === fresh.outerHTML) continue;
+        old.replaceWith(fresh);
+        fresh.classList.add("flash");
+        fresh.addEventListener("animationend", () => fresh.classList.remove("flash"));
       }
+    }
+
+    function swapCells(html, card) {
+      swapById(html, "td[id]");
+      if (card) swapById(card, ".card-live[id]");
       changed();
     }
 
@@ -187,6 +200,13 @@
         return;
       }
       body.replaceChildren(...[...fresh.children].map((tr) => document.adoptNode(tr)));
+      const cards = document.getElementById("cards");
+      const freshCards = doc.getElementById("cards");
+      if (cards && freshCards) {
+        cards.replaceChildren(
+          ...[...freshCards.children].map((card) => document.adoptNode(card)),
+        );
+      }
       for (const id of ["notices", "repo-select"]) {
         const target = document.getElementById(id);
         const source = doc.getElementById(id);
@@ -199,7 +219,7 @@
     function handle(name, data) {
       if (typeof data.v === "number") lastVersion = data.v;
       if (name === "status") {
-        swapCells(data.html);
+        swapCells(data.html, data.card);
         updatedAt = Date.now();
       } else if (name === "refreshed") {
         updatedAt = Date.now();

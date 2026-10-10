@@ -240,3 +240,110 @@ test("the next column floats rows that need the user first and filters by who", 
   assert.deepEqual(view({ next: "you" }), ["b", "d"]);
   assert.equal(table.parseState("?next=you").next, "you");
 });
+
+test("the cards and timeline views live in the URL next to tree and flat", () => {
+  for (const view of ["flat", "cards", "timeline"]) {
+    const query = table.serializeState(state({ view }));
+    assert.equal(query, `?view=${view}`);
+    assert.equal(table.parseState(query).view, view);
+  }
+  assert.equal(table.parseState("?view=tree").view, "tree");
+  const full = state({ view: "timeline", kind: "review", order: "oldest", q: "auth", next: "you" });
+  assert.deepEqual(table.parseState(table.serializeState(full)), full);
+  // The defaults stay out of the URL.
+  assert.equal(table.serializeState(state({ view: "timeline" })), "?view=timeline");
+});
+
+test("cards are flat, filtered, and by default list what needs you first", () => {
+  const rows = [
+    row("a", "main", 1, { next: { value: "others", sort: "3" } }),
+    row("b", "a", 2, { next: { value: "you", sort: "1" } }),
+    row("c", "main", 3, { next: { value: "ci", sort: "2" } }),
+    row("d", "c", 4, { next: { value: "you", sort: "1" } }),
+  ];
+  const cards = (o) => table.layout(rows, state({ view: "cards", ...o }));
+  assert.deepEqual(ids(cards({})), ["b", "d", "c", "a"]);
+  // Never indented: a card grid has no depth.
+  assert.ok(cards({}).every((entry) => entry.depth === 0));
+  // The sort select overrides the default; filters apply as in the table.
+  assert.deepEqual(ids(cards({ sort: "next", dir: "desc" })), ["a", "c", "b", "d"]);
+  assert.deepEqual(ids(cards({ next: "you" })), ["b", "d"]);
+});
+
+function withEvents(r, events, extra = {}) {
+  return { ...r, branch: r.id, repoName: "api", number: "1", url: "", events, ...extra };
+}
+
+test("the timeline merges every branch's events, newest first", () => {
+  const rows = [
+    withEvents(row("a", "main", 1), [
+      { t: "2026-10-01T10:00:00Z", kind: "opened", actor: "devon", detail: "A" },
+      { t: "2026-10-03T10:00:00Z", kind: "commit", actor: "devon", detail: "c1" },
+    ]),
+    withEvents(row("b", "main", 2), [
+      { t: "2026-10-02T10:00:00Z", kind: "review", actor: "sam", detail: "approved" },
+    ]),
+  ];
+
+  const newest = table.timeline(rows, state({ view: "timeline" }));
+  assert.deepEqual(newest.entries.map((e) => `${e.id}:${e.kind}`), [
+    "a:commit",
+    "b:review",
+    "a:opened",
+  ]);
+  assert.equal(newest.total, 3);
+
+  const oldest = table.timeline(rows, state({ view: "timeline", order: "oldest" }));
+  assert.deepEqual(oldest.entries.map((e) => e.kind), ["opened", "review", "commit"]);
+});
+
+test("the timeline filters by event kind, branch text, repo and the other filters", () => {
+  const events = [
+    { t: "2026-10-01T10:00:00Z", kind: "opened", actor: "devon", detail: "" },
+    { t: "2026-10-02T10:00:00Z", kind: "review", actor: "sam", detail: "approved" },
+  ];
+  const rows = [
+    withEvents(row("a", "main", 1, { search: "auth-api", repo: "1", ci: "failed" }), events),
+    withEvents(row("b", "main", 2, { search: "auth-ui", repo: "2", ci: "success" }), events),
+    // An untracked base branch has no events of its own to show.
+    withEvents(row("main", null, 0, { tracked: false }), events),
+  ];
+  const kinds = (o) =>
+    table.timeline(rows, state({ view: "timeline", ...o })).entries.map((e) => `${e.id}:${e.kind}`);
+  assert.deepEqual(kinds({ kind: "review" }), ["b:review", "a:review"]);
+  assert.deepEqual(kinds({ q: "auth-api" }), ["a:review", "a:opened"]);
+  assert.deepEqual(kinds({ repo: "2", kind: "opened" }), ["b:opened"]);
+  assert.deepEqual(kinds({ ci: "failed", kind: "review" }), ["a:review"]);
+});
+
+test("the timeline is cut to the most recent events", () => {
+  const events = [];
+  for (let i = 0; i < 250; i += 1) {
+    const day = String(1 + Math.floor(i / 24)).padStart(2, "0");
+    const hour = String(i % 24).padStart(2, "0");
+    events.push({ t: `2026-10-${day}T${hour}:00:00Z`, kind: "commit", actor: "d", detail: `${i}` });
+  }
+  const rows = [withEvents(row("a", "main", 1), events)];
+
+  const result = table.timeline(rows, state({ view: "timeline" }));
+
+  assert.equal(result.total, 250);
+  assert.equal(result.entries.length, table.TIMELINE_LIMIT);
+  assert.equal(result.entries[0].detail, "249");
+  assert.equal(result.entries[result.entries.length - 1].detail, "50");
+  // Oldest-first reads the same window from its start.
+  const oldest = table.timeline(rows, state({ view: "timeline", order: "oldest" }));
+  assert.equal(oldest.entries[0].detail, "50");
+});
+
+test("formatAge matches the server's compact ages", () => {
+  assert.equal(table.formatAge(30), "<1m");
+  assert.equal(table.formatAge(300), "5m");
+  assert.equal(table.formatAge(3 * 3600), "3h");
+  assert.equal(table.formatAge(23 * 3600), "23h");
+  assert.equal(table.formatAge(86400), "1d");
+  assert.equal(table.formatAge(13 * 86400), "13d");
+  assert.equal(table.formatAge(14 * 86400), "2w");
+  assert.equal(table.formatAge(75 * 86400), "10w");
+  assert.equal(table.formatAge(-5), "<1m");
+});

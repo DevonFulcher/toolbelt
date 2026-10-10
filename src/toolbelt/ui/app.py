@@ -60,6 +60,7 @@ from toolbelt.tasks.tracker import TaskInfo, TaskTracker
 from toolbelt.ui import branch_links
 from toolbelt.ui.branch_links import Link
 from toolbelt.ui.next_action import ParentContext
+from toolbelt.ui.pr_activity import EVENT_KINDS
 from toolbelt.ui.pr_fetch import PrSnapshot, fetch_snapshot
 from toolbelt.ui.live_status import (
     DEFAULT_CONCURRENCY,
@@ -368,6 +369,7 @@ def create_app(
     templates.env.globals["cell_id"] = cell_id
     templates.env.globals["UNLOADED"] = UNLOADED
     status_template = templates.env.get_template("status.html")
+    card_template = templates.env.get_template("card_status.html")
 
     def publish_cells(
         repo_id: int,
@@ -380,6 +382,9 @@ def create_app(
             "status",
             {
                 "html": status_template.render(
+                    repo_id=repo_id, branch=branch, c=c, path_missing=False
+                ),
+                "card": card_template.render(
                     repo_id=repo_id, branch=branch, c=c, path_missing=False
                 ),
             },
@@ -474,6 +479,7 @@ def create_app(
                 "repos": repos,
                 "rows": rows,
                 "columns": COLUMNS,
+                "event_kinds": EVENT_KINDS,
                 "filters": [
                     (key, _FILTER_LABELS[key], options)
                     for key, options in FILTER_OPTIONS.items()

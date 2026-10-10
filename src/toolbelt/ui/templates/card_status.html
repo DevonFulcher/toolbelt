@@ -1,0 +1,56 @@
+{#- The live half of a branch's card: next action, PR, ages and status pills.
+
+    Rendered inside the card (card.html) and, on its own, as the "card"
+    payload of a "status" server-sent event: the page script replaces the
+    element by id (static/live-updates.js). It also carries the branch's event
+    feed (data-events) that the timeline view is built from. -#}
+{%- macro age(a) -%}
+<time{% if a.since %} data-since="{{ a.since }}"{% endif %}>{{ a.text }}</time>
+{%- endmacro -%}
+{%- set who_text = {"you": "needs you", "others": "waiting on others", "ci": "waiting on CI", "none": ""} -%}
+<div id="{{ cell_id(repo_id, branch, 'card') }}" class="card-live"
+     data-url="{{ c.pr_url or '' }}"
+     data-events='{{ (c.detail.events if c.detail else []) | tojson }}'>
+  {%- if path_missing -%}
+    <div class="muted">repo path missing</div>
+  {%- elif c.failed -%}
+    <div class="error" title="gh could not look up this branch's PR">status unavailable</div>
+  {%- elif not c.loaded -%}
+    <div class="muted">loading…</div>
+  {%- else -%}
+    <div class="card-next next-{{ c.next_who }}" title="{{ c.next_kind }}">
+      <span class="card-next-label">{{ c.next_label }}</span>
+      {%- if who_text[c.next_who] %} <span class="card-next-who">{{ who_text[c.next_who] }}</span>{% endif %}
+    </div>
+    <div class="card-pr">
+      {%- if c.pr == "none" -%}
+        <span class="muted">no PR</span>
+      {%- else -%}
+        <a class="pill pr-{{ c.pr }}" href="{{ c.pr_url }}" target="_blank" rel="noopener">
+          {%- if c.pr_number %}#{{ c.pr_number }} {% endif %}{{ c.pr }}</a>
+        {%- if c.detail %} <span class="card-title" title="{{ c.detail.title }}">{{ c.detail.title }}</span>{% endif -%}
+      {%- endif -%}
+    </div>
+    {%- if c.detail %}
+    <dl class="ages">
+      <div><dt>PR age</dt><dd>{{ age(c.detail.pr_age) }}</dd></div>
+      {%- if c.detail.draft_age %}
+      <div><dt>In draft</dt><dd>{{ age(c.detail.draft_age) }}</dd></div>
+      {%- endif %}
+      {%- if c.detail.review_request_age %}
+      <div><dt>Review requested</dt><dd>{{ age(c.detail.review_request_age) }}</dd></div>
+      {%- endif %}
+      <div><dt>CI failures</dt><dd{% if c.detail.ci_failures %} class="ci-failed"{% endif %}>{{ c.detail.ci_failures }}</dd></div>
+    </dl>
+    {%- endif %}
+    {%- if c.pr != "none" %}
+    <div class="card-facts">
+      {%- if c.ci != "none" %}<span class="pill ci-{{ c.ci }}">CI {{ c.ci }}</span>{% endif %}
+      {%- if c.review != "none" %}<span class="pill review-{{ c.review }}">{{ c.review }}</span>{% endif %}
+      {%- if c.open_comments %}<span class="pill comments" title="unresolved review threads">{{ c.open_comments }} comment{{ "s" if c.open_comments != 1 }}</span>{% endif %}
+      {%- if c.merge == "conflicts" %}<span class="pill conflicts">conflicts</span>
+      {%- elif c.merge == "clean" %}<span class="muted">merge clean</span>{% endif %}
+    </div>
+    {%- endif %}
+  {%- endif -%}
+</div>
