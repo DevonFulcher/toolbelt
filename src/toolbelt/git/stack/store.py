@@ -67,6 +67,25 @@ _MIGRATIONS: list[tuple[str, ...]] = [
         "ALTER TABLE branches ADD COLUMN jira TEXT",
         "ALTER TABLE branches ADD COLUMN agent_link TEXT",
     ),
+    (
+        # Mirroring to GitHub's native stacked PRs (see ``gh_stack``).
+        # ``gh_stack_unsupported_at`` is when `gh stack link` last reported the
+        # feature missing for the repo (disabled, or the extension is not
+        # installed); retried after a TTL. ``published_chains`` holds, per
+        # chain bottom, the ordered branch list last linked and its hash, so an
+        # unchanged chain costs no GitHub call.
+        "ALTER TABLE repos ADD COLUMN gh_stack_unsupported_at TEXT",
+        """
+        CREATE TABLE published_chains (
+            repo_id INTEGER NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
+            bottom TEXT NOT NULL,
+            chain_hash TEXT NOT NULL,
+            branches TEXT NOT NULL,
+            published_at TEXT NOT NULL,
+            PRIMARY KEY (repo_id, bottom)
+        )
+        """,
+    ),
 ]
 
 
@@ -81,6 +100,12 @@ class RepoIdentity:
 class BranchLinks:
     jira: str | None
     agent_link: str | None
+
+
+@dataclass(frozen=True)
+class PublishedChain:
+    chain_hash: str
+    branches: list[str]
 
 
 @dataclass(frozen=True)
@@ -255,6 +280,53 @@ class StackStore:
             "SELECT name, parent FROM branches WHERE repo_id = ?", (repo_id,)
         )
         return dict(rows.fetchall())
+
+    def gh_stack_unsupported_at(self, repo_id: int) -> datetime | None:
+        row = self._conn.execute(
+            "SELECT gh_stack_unsupported_at FROM repos WHERE id = ?", (repo_id,)
+        ).fetchone()
+        return datetime.fromisoformat(row[0]) if row[0] else None
+
+    def set_gh_stack_unsupported_at(self, repo_id: int, at: datetime | None) -> None:
+        with self._write() as conn:
+            conn.execute(
+                "UPDATE repos SET gh_stack_unsupported_at = ? WHERE id = ?",
+                (at.isoformat() if at else None, repo_id),
+            )
+
+    def get_published_chain(self, repo_id: int, bottom: str) -> PublishedChain | None:
+        row = self._conn.execute(
+            "SELECT chain_hash, branches FROM published_chains "
+            "WHERE repo_id = ? AND bottom = ?",
+            (repo_id, bottom),
+        ).fetchone()
+        return PublishedChain(row[0], row[1].split("\n")) if row else None
+
+    def set_published_chain(
+        self,
+        repo_id: int,
+        bottom: str,
+        chain_hash: str,
+        branches: list[str],
+        at: datetime,
+    ) -> None:
+        """Record ``branches`` as last published, and drop records whose bottom
+        branch is no longer tracked (landed or removed)."""
+        with self._write() as conn:
+            conn.execute(
+                "INSERT INTO published_chains "
+                "(repo_id, bottom, chain_hash, branches, published_at) "
+                "VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT (repo_id, bottom) DO UPDATE SET "
+                "chain_hash = excluded.chain_hash, branches = excluded.branches, "
+                "published_at = excluded.published_at",
+                (repo_id, bottom, chain_hash, "\n".join(branches), at.isoformat()),
+            )
+            conn.execute(
+                "DELETE FROM published_chains WHERE repo_id = ? AND bottom NOT IN "
+                "(SELECT name FROM branches WHERE repo_id = ?)",
+                (repo_id, repo_id),
+            )
 
     def repos(self) -> list[RepoRecord]:
         rows = self._conn.execute(

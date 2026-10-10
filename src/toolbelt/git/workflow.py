@@ -66,12 +66,13 @@ def sync_repo(root: Path | None = None) -> None:
     # Imported lazily: worktrees -> bootstrap.repo_setup -> workflow would be a
     # circular import at module load time.
     from toolbelt.git.stack.forge import GhForge
+    from toolbelt.git.stack.gh_stack import GhStackedPrs
     from toolbelt.git.stack.sync import sync_stack
     from toolbelt.git.worktrees import repo_root
 
     root = root or repo_root()
     main_wt = main_worktree(root)
-    sync_stack(root=root, forge=GhForge(root))
+    sync_stack(root=root, forge=GhForge(root), stacked_prs=GhStackedPrs())
     git_branch_clean(root)
     update_repo(root if root.exists() else main_wt)
     start_background_pull(state_dir=state_dir, config_path=default_config_path())

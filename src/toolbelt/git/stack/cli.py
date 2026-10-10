@@ -23,6 +23,7 @@ from toolbelt.git.repo_lock import repo_lock
 from toolbelt.git.stack import lineage
 from toolbelt.git.stack.append import create_stacked_branch
 from toolbelt.git.stack.forge import GhForge
+from toolbelt.git.stack.gh_stack import GhStackedPrs
 from toolbelt.git.stack.ops import (
     compress_branch,
     diff_parent_command,
@@ -130,7 +131,7 @@ def set_parent(
     root = repo_root()
     with repo_lock(root):
         set_branch_parent(root=root, new_parent=new_parent)
-        sync_stack(root=root, forge=GhForge(root))
+        sync_stack(root=root, forge=GhForge(root), stacked_prs=GhStackedPrs())
 
 
 def _repo_root_or_none() -> Path | None:

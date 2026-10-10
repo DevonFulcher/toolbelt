@@ -18,6 +18,7 @@ import typer
 
 from toolbelt.git.exec import run
 from toolbelt.git.stack.forge import Forge
+from toolbelt.git.stack.gh_stack import StackedPrs, mirror_stack
 from toolbelt.git.stack.lineage import (
     all_parents,
     remove_parent,
@@ -127,7 +128,9 @@ def _restack(child: str, *, worktree: Path, onto: str, upstream: str) -> bool:
     return result.returncode == 0
 
 
-def sync_stack(*, root: Path, forge: Forge) -> None:
+def sync_stack(
+    *, root: Path, forge: Forge, stacked_prs: StackedPrs | None = None
+) -> None:
     """Merge-sync the whole stack the current branch belongs to.
 
     Processes branches root -> leaf so each parent is up to date before being
@@ -135,6 +138,9 @@ def sync_stack(*, root: Path, forge: Forge) -> None:
     work propagates down. When ``forge`` reports a parent's PR merged, that
     parent's children are rebased onto the nearest surviving ancestor and every
     landed branch is removed.
+
+    When ``stacked_prs`` is given, the synced stack is mirrored to GitHub's
+    native stacked PRs once everything above has succeeded.
     """
     run(["git", "fetch", "-p"], cwd=root, exit_on_error=True)
 
@@ -282,3 +288,7 @@ def sync_stack(*, root: Path, forge: Forge) -> None:
         delete_branch_and_worktree(landed_branch, repo_root=main_wt, force=True)
         remove_parent(landed_branch, root=main_wt)
         logger.info(f"Cleaned up landed branch '{landed_branch}'.")
+
+    if stacked_prs is not None:
+        # `root` may be the worktree of a landed branch that was just removed.
+        mirror_stack(stack, root=main_wt, stacked_prs=stacked_prs)
