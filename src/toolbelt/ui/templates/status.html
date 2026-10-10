@@ -1,4 +1,5 @@
-{#- One branch's five status cells (PR, CI, review, comments, merge), as <td>s.
+{#- One branch's six status cells (next action, PR, CI, review, comments,
+    merge), as <td>s.
 
     Rendered into the index (from the status cache, or as loading placeholders)
     and, on their own, as the payload of a "status" server-sent event: the page
@@ -7,6 +8,14 @@
 
     data-value is what a column's filter matches; data-sort is what sorting
     compares; both are read by static/stack-table.js. -#}
+<td id="{{ cell_id(repo_id, branch, 'next') }}" class="col-next"
+    data-col="next" data-value="{{ c.next_who }}" data-sort="{{ c.next_sort }}" data-search="{{ c.next_label }}">
+  {%- if not c.loaded -%}
+    <span class="muted">{{ "" if (path_missing or c.failed) else "…" }}</span>
+  {%- else -%}
+    <span class="pill next-{{ c.next_who }}" title="{{ c.next_kind }}">{{ c.next_label }}</span>
+  {%- endif -%}
+</td>
 <td id="{{ cell_id(repo_id, branch, 'pr') }}" class="col-pr"
     data-col="pr" data-value="{{ c.pr }}" data-sort="{{ c.pr_sort }}" data-search="{{ c.pr_number }}">
   {%- if path_missing -%}

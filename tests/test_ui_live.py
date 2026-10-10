@@ -20,6 +20,7 @@ from toolbelt.git.stack.status import (
 )
 from toolbelt.git.stack.store import RepoIdentity, StackStore, default_db_path
 from toolbelt.ui.app import create_app
+from toolbelt.ui.pr_fetch import PrSnapshot
 from toolbelt.ui.live_status import (
     EventHub,
     Fetched,
@@ -60,7 +61,7 @@ class Fetcher:
         self.in_flight = 0
         self.peak = 0
 
-    async def __call__(self, branch: str, root: Path) -> BranchStatus:
+    async def __call__(self, branch: str, root: Path) -> PrSnapshot:
         self.calls.append(branch)
         self.in_flight += 1
         self.peak = max(self.peak, self.in_flight)
@@ -68,7 +69,7 @@ class Fetcher:
             await asyncio.sleep(0)  # let the others start, as real I/O would
             if branch in self.failing:
                 raise FileNotFoundError("gh")
-            return self.statuses.get(branch, NO_PR)
+            return PrSnapshot(self.statuses.get(branch, NO_PR), None)
         finally:
             self.in_flight -= 1
 
@@ -511,6 +512,44 @@ def test_events_stream_says_hello_then_relays_status_and_refresh(tmp_path):
         assert app.state.hub.subscribers == 0
 
     run(scenario())
+
+
+def test_a_status_change_also_republishes_the_branches_stacked_on_it(tmp_path):
+    store = StackStore(default_db_path())
+    path = tmp_path / "api"
+    path.mkdir()
+    repo_id = store.ensure_repo(
+        RepoIdentity(git_common_dir=path / ".git", path=path, remote_url=None)
+    )
+    store.set_parent(repo_id, "devon/a", "main")
+    store.set_parent(repo_id, "devon/b", "devon/a")
+    store.close()
+    fetcher = Fetcher()
+    approved = BranchStatus(
+        pr=PrState.OPEN,
+        ci=CiState.SUCCESS,
+        review=ReviewState.APPROVED,
+        url="https://github.com/o/r/pull/2",
+    )
+    fetcher.statuses = {"devon/a": OPEN, "devon/b": approved}
+    app = create_app(fetch=fetcher)
+
+    async def scenario():
+        async with Stream(app) as stream:
+            await stream.next()  # hello
+            await app.state.refresher.run_once()
+            html = ""
+            for _ in range(5):
+                name, data = await stream.next()
+                if name == "status":
+                    html += data["html"]
+                if name == "refreshed":
+                    break
+            return html
+
+    html = run(scenario())
+
+    assert "Blocked on devon/a" in html
 
 
 def test_closing_the_stream_stops_the_polling_after_the_grace_period(tmp_path):

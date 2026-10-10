@@ -32,9 +32,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from toolbelt.git.stack.status import BranchStatus, PrState
+from toolbelt.ui.pr_activity import PrFacts
+from toolbelt.ui.pr_fetch import PrSnapshot
 
-# (branch, repo path) -> that branch's PR status.
-StatusFetcher = Callable[[str, Path], Awaitable[BranchStatus]]
+# (branch, repo path) -> that branch's PR status and history.
+StatusFetcher = Callable[[str, Path], Awaitable[PrSnapshot]]
 
 DEFAULT_INTERVAL_SECONDS = 20.0
 DEFAULT_SETTLED_INTERVAL_SECONDS = 300.0
@@ -58,10 +60,12 @@ class TrackedBranch:
 
 @dataclass(frozen=True)
 class Fetched:
-    """The outcome of one lookup. ``status`` is ``None`` when it failed."""
+    """The outcome of one lookup. ``status`` is ``None`` when it failed;
+    ``facts`` is the PR's history (``None`` too when the branch has no PR)."""
 
     status: BranchStatus | None
     at: float
+    facts: PrFacts | None = None
 
 
 class EventHub:
@@ -201,18 +205,26 @@ class StatusRefresher:
     async def _refresh(self, branch: TrackedBranch) -> None:
         async with self._slots:
             try:
-                status: BranchStatus | None = await self._fetch(
+                snapshot: PrSnapshot | None = await self._fetch(
                     branch.branch, branch.path
                 )
             except Exception:
                 # This is a background poll with nobody to propagate to: one
                 # branch's failure (gh missing, bad output) is shown on its
                 # row and retried, and must not stop the others.
-                status = None
+                snapshot = None
         previous = self._cache.get(branch.key)
-        fetched = Fetched(status=status, at=self._clock())
+        fetched = Fetched(
+            status=snapshot.status if snapshot else None,
+            at=self._clock(),
+            facts=snapshot.facts if snapshot else None,
+        )
         self._cache[branch.key] = fetched
-        if previous is None or previous.status != status:
+        if (
+            previous is None
+            or previous.status != fetched.status
+            or previous.facts != fetched.facts
+        ):
             self._on_change(branch, fetched)
 
     async def _pause(self) -> None:

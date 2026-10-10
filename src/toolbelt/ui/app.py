@@ -3,18 +3,23 @@
 The index renders every tracked branch of every repo as a row of one table,
 straight from the stack DB plus the in-memory status cache (no network on the
 request path). A background ``StatusRefresher`` (``live_status.py``) keeps that
-cache current by polling GitHub through the same lookup `tt g tree` uses
-(``status.fetch_branch_status``) while any browser is connected, and the page
+cache current by polling GitHub (one GraphQL call per branch, see
+``pr_fetch.py``) while any browser is connected, and the page
 receives changes over a Server-Sent Events stream (``/events``):
 
-* ``status``: one branch's five status cells, as HTML, swapped in by id;
+* ``status``: one branch's status cells (and its card), as HTML, swapped in
+  by id;
 * ``structure``: the stack DB was written (new branch, re-parenting, new
   links), so the page re-fetches ``/`` and swaps in the new rows;
 * ``refreshed``: a polling pass finished (drives the "updated Ns ago" label);
 * ``hello``: sent on connect with the current event version, so a browser that
   reconnects knows whether it missed anything.
 
-Each status column (PR, CI, review, comments, merge) is its own cell. Sorting
+Each status column (next action, PR, CI, review, comments, merge) is its own
+cell. The same branches are also rendered as cards and as an event timeline
+(``view=cards`` / ``view=timeline``): the page script lays those out from the
+table's data, so the table stays the one source of truth for filtering and
+sorting. Sorting
 and filtering are client-side (``static/stack-table.js``): cells carry their
 sort/filter values as ``data-*`` attributes, the chosen view lives in the URL
 query string, and the script re-applies it after every live update. Rows are
@@ -37,6 +42,7 @@ import json
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 import typer
@@ -47,13 +53,14 @@ from fastapi.templating import Jinja2Templates
 
 from toolbelt.git.repo_pull import default_config_path
 from toolbelt.git.stack import lineage
-from toolbelt.git.stack.status import BranchStatus, fetch_branch_status
 from toolbelt.git.stack.store import Parents, StackStore, default_db_path
 from toolbelt.git.worktrees import current_branch
 from toolbelt.tasks.config import configured_tracker
 from toolbelt.tasks.tracker import TaskInfo, TaskTracker
 from toolbelt.ui import branch_links
 from toolbelt.ui.branch_links import Link
+from toolbelt.ui.next_action import ParentContext
+from toolbelt.ui.pr_fetch import PrSnapshot, fetch_snapshot
 from toolbelt.ui.live_status import (
     DEFAULT_CONCURRENCY,
     DEFAULT_GRACE_SECONDS,
@@ -81,6 +88,7 @@ _HERE = Path(__file__).parent
 COLUMNS = [
     ("repo", "Repo"),
     ("branch", "Branch"),
+    ("next", "Next"),
     ("pr", "PR"),
     ("ci", "CI"),
     ("review", "Review"),
@@ -90,6 +98,7 @@ COLUMNS = [
     ("session", "Session"),
 ]
 _FILTER_LABELS = {
+    "next": "Next",
     "pr": "PR",
     "ci": "CI",
     "review": "Review",
@@ -102,8 +111,8 @@ _FILTER_LABELS = {
 _KEEPALIVE_SECONDS = 15.0
 
 
-async def fetch_status(branch: str, root: Path) -> BranchStatus:
-    return await fetch_branch_status(branch, root=root)
+async def fetch_status(branch: str, root: Path) -> PrSnapshot:
+    return await fetch_snapshot(branch, root)
 
 
 @functools.cache
@@ -170,10 +179,32 @@ def _checked_out_branch(root: Path) -> str | None:
         return None
 
 
-def _cells_for(fetched: Fetched | None) -> StatusCells:
+def _parent_context(
+    repo_id: int, parents: Parents, branch: str, refresher: StatusRefresher
+) -> ParentContext | None:
+    """The tracked branch ``branch`` is stacked on, with its PR state; ``None``
+    for a branch on the base branch, or while the parent's status is unknown."""
+    parent = parents.get(branch)
+    if parent is None or parent not in parents:
+        return None
+    fetched = refresher.get(repo_id, parent)
+    if fetched is None or fetched.status is None:
+        return None
+    return ParentContext(name=parent, pr=fetched.status.pr)
+
+
+def _cells_for(
+    fetched: Fetched | None, parent: ParentContext | None, now: datetime
+) -> StatusCells:
     if fetched is None:
         return UNLOADED
-    return status_cells(fetched.status, failed=fetched.status is None)
+    return status_cells(
+        fetched.status,
+        failed=fetched.status is None,
+        parent=parent,
+        facts=fetched.facts,
+        now=now,
+    )
 
 
 def _page_rows(
@@ -181,6 +212,7 @@ def _page_rows(
     *,
     tracker: TaskTracker | None,
     refresher: StatusRefresher,
+    now: datetime,
 ) -> tuple[list[RepoView], list[BranchRow]]:
     """Every repo with tracked branches, and all their rows: repos in name
     order, each repo's branches depth-first."""
@@ -223,7 +255,11 @@ def _page_rows(
                         order=len(rows),
                         tracked=name in parents,
                         current=name == current,
-                        cells=_cells_for(refresher.get(repo.id, name)),
+                        cells=_cells_for(
+                            refresher.get(repo.id, name),
+                            _parent_context(repo.id, parents, name, refresher),
+                            now,
+                        ),
                         task=branch_links.task_link(
                             links.task if links else None, tracker=owner
                         ),
@@ -240,6 +276,14 @@ def _page_rows(
 
 def row_id(repo_id: int, branch: str) -> str:
     return f"{repo_id}:{branch}"
+
+
+def _all_parents(repo_id: int) -> Parents:
+    store = StackStore(default_db_path())
+    try:
+        return store.all_parents(repo_id)
+    finally:
+        store.close()
 
 
 def _tracked_branches() -> list[TrackedBranch]:
@@ -299,6 +343,7 @@ def create_app(
     fetch: StatusFetcher = fetch_status,
     task_ttl_seconds: float = 60.0,
     clock: Callable[[], float] = time.monotonic,
+    wall_clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     refresh_interval: float = DEFAULT_INTERVAL_SECONDS,
     settled_refresh_interval: float = DEFAULT_SETTLED_INTERVAL_SECONDS,
     concurrency: int = DEFAULT_CONCURRENCY,
@@ -311,7 +356,8 @@ def create_app(
     branch is marked current, as `tt g tree` does. ``fetch`` looks up a
     branch's PR status; ``db_version`` reports when the stack DB changes
     (default: ``PRAGMA data_version`` on a connection held while serving).
-    Fetched task info is cached for ``task_ttl_seconds``. Polling carries on
+    ``clock`` times the polling and caches; ``wall_clock`` (UTC) dates the
+    ages shown. Fetched task info is cached for ``task_ttl_seconds``. Polling carries on
     for ``grace_seconds`` after the last browser disconnects. The background
     pollers start with the app's lifespan, so an app that is not served (a
     bare ``TestClient``) never polls; tests drive ``app.state.refresher`` and
@@ -323,14 +369,37 @@ def create_app(
     templates.env.globals["UNLOADED"] = UNLOADED
     status_template = templates.env.get_template("status.html")
 
-    def publish_status(branch: TrackedBranch, fetched: Fetched) -> None:
-        html = status_template.render(
-            repo_id=branch.repo_id,
-            branch=branch.branch,
-            c=_cells_for(fetched),
-            path_missing=False,
+    def publish_cells(
+        repo_id: int,
+        branch: str,
+        fetched: Fetched | None,
+        parent: ParentContext | None,
+    ) -> None:
+        c = _cells_for(fetched, parent, wall_clock())
+        hub.publish(
+            "status",
+            {
+                "html": status_template.render(
+                    repo_id=repo_id, branch=branch, c=c, path_missing=False
+                ),
+            },
         )
-        hub.publish("status", {"html": html})
+
+    def publish_status(branch: TrackedBranch, fetched: Fetched) -> None:
+        # The cache already holds ``fetched``, so parent contexts see it.
+        parents = _all_parents(branch.repo_id)
+        names = [branch.branch] + [
+            child for child, parent in parents.items() if parent == branch.branch
+        ]
+        # A branch stacked on this one has its next action depend on this
+        # PR's state ("Blocked on <parent>"), so its cells are republished too.
+        for name in names:
+            publish_cells(
+                branch.repo_id,
+                name,
+                refresher.get(branch.repo_id, name),
+                _parent_context(branch.repo_id, parents, name, refresher),
+            )
 
     refresher = StatusRefresher(
         branches=_tracked_branches,
@@ -394,7 +463,9 @@ def create_app(
         # Read before the rows: an event published meanwhile then makes the
         # page look stale to /events, never the other way round.
         version = hub.version
-        repos, rows = _page_rows(cwd_root, tracker=tracker, refresher=refresher)
+        repos, rows = _page_rows(
+            cwd_root, tracker=tracker, refresher=refresher, now=wall_clock()
+        )
         return templates.TemplateResponse(
             request,
             "index.html",

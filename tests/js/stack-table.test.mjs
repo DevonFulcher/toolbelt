@@ -224,3 +224,19 @@ test("repo filter combines with value filters and keeps ancestors", () => {
   assert.deepEqual(ids(out), ["1:main", "1:x", "1:y"]);
   assert.deepEqual(table.layout(multi, state({ repo: "2", pr: "open" })), []);
 });
+
+test("the next column floats rows that need the user first and filters by who", () => {
+  assert.ok(table.COLUMNS.includes("next"));
+  assert.ok(table.VALUE_FILTERS.includes("next"));
+  const rows = [
+    row("a", "main", 1, { next: { value: "others", sort: "3" } }),
+    row("b", "main", 2, { next: { value: "you", sort: "1" } }),
+    row("c", "main", 3, { next: { value: "ci", sort: "2" } }),
+    row("d", "main", 4, { next: { value: "you", sort: "1" } }),
+    row("e", "main", 5, { next: { value: "", sort: "" } }),
+  ];
+  const view = (o) => ids(table.layout(rows, state({ view: "flat", ...o })));
+  assert.deepEqual(view({ sort: "next" }), ["b", "d", "c", "a", "e"]);
+  assert.deepEqual(view({ next: "you" }), ["b", "d"]);
+  assert.equal(table.parseState("?next=you").next, "you");
+});

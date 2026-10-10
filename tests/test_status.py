@@ -14,7 +14,7 @@ from toolbelt.git.stack.status import (
     ReviewState,
     _ci_state,
     _count_unresolved,
-    _parse_status,
+    parse_status,
     format_status,
 )
 
@@ -53,7 +53,7 @@ def test_ci_state_none_when_no_checks_configured():
     assert _ci_state([]) == CiState.NONE
 
 
-def test_parse_status_draft_pr():
+def testparse_status_draft_pr():
     data = {
         "state": "OPEN",
         "isDraft": True,
@@ -62,7 +62,7 @@ def test_parse_status_draft_pr():
         "statusCheckRollup": [],
         "url": "https://github.com/acme/widgets/pull/1",
     }
-    assert _parse_status(data) == BranchStatus(
+    assert parse_status(data) == BranchStatus(
         pr=PrState.DRAFT,
         ci=CiState.NONE,
         review=ReviewState.NONE,
@@ -70,7 +70,7 @@ def test_parse_status_draft_pr():
     )
 
 
-def test_parse_status_open_pr_with_pending_review_request():
+def testparse_status_open_pr_with_pending_review_request():
     data = {
         "state": "OPEN",
         "isDraft": False,
@@ -79,7 +79,7 @@ def test_parse_status_open_pr_with_pending_review_request():
         "statusCheckRollup": [{"conclusion": "SUCCESS"}],
         "url": "https://github.com/acme/widgets/pull/2",
     }
-    assert _parse_status(data) == BranchStatus(
+    assert parse_status(data) == BranchStatus(
         pr=PrState.OPEN,
         ci=CiState.SUCCESS,
         review=ReviewState.REQUESTED,
@@ -87,7 +87,7 @@ def test_parse_status_open_pr_with_pending_review_request():
     )
 
 
-def test_parse_status_changes_requested_maps_to_reviewed():
+def testparse_status_changes_requested_maps_to_reviewed():
     data = {
         "state": "OPEN",
         "isDraft": False,
@@ -96,10 +96,10 @@ def test_parse_status_changes_requested_maps_to_reviewed():
         "statusCheckRollup": [],
         "url": "https://github.com/acme/widgets/pull/3",
     }
-    assert _parse_status(data).review == ReviewState.REVIEWED
+    assert parse_status(data).review == ReviewState.REVIEWED
 
 
-def test_parse_status_merged_pr():
+def testparse_status_merged_pr():
     data = {
         "state": "MERGED",
         "isDraft": False,
@@ -108,7 +108,7 @@ def test_parse_status_merged_pr():
         "statusCheckRollup": [{"conclusion": "SUCCESS"}],
         "url": "https://github.com/acme/widgets/pull/4",
     }
-    assert _parse_status(data) == BranchStatus(
+    assert parse_status(data) == BranchStatus(
         pr=PrState.MERGED,
         ci=CiState.SUCCESS,
         review=ReviewState.APPROVED,
@@ -195,7 +195,7 @@ def test_format_status_shows_open_comments_only_when_nonzero():
     assert format_status(with_comments).endswith("open comments: 3")
 
 
-def test_parse_status_carries_through_open_comments():
+def testparse_status_carries_through_open_comments():
     data = {
         "state": "OPEN",
         "isDraft": False,
@@ -204,7 +204,7 @@ def test_parse_status_carries_through_open_comments():
         "statusCheckRollup": [],
         "url": "https://github.com/acme/widgets/pull/5",
     }
-    assert _parse_status(data, open_comments=4).open_comments == 4
+    assert parse_status(data, open_comments=4).open_comments == 4
 
 
 def _open_pr_payload(mergeable: str, state: str = "OPEN") -> dict:
@@ -219,17 +219,17 @@ def _open_pr_payload(mergeable: str, state: str = "OPEN") -> dict:
     }
 
 
-def test_parse_status_flags_conflicting_open_pr():
-    assert _parse_status(_open_pr_payload("CONFLICTING")).has_conflicts
+def testparse_status_flags_conflicting_open_pr():
+    assert parse_status(_open_pr_payload("CONFLICTING")).has_conflicts
 
 
-def test_parse_status_does_not_flag_mergeable_or_unknown():
-    assert not _parse_status(_open_pr_payload("MERGEABLE")).has_conflicts
-    assert not _parse_status(_open_pr_payload("UNKNOWN")).has_conflicts
+def testparse_status_does_not_flag_mergeable_or_unknown():
+    assert not parse_status(_open_pr_payload("MERGEABLE")).has_conflicts
+    assert not parse_status(_open_pr_payload("UNKNOWN")).has_conflicts
 
 
-def test_parse_status_ignores_conflicts_on_a_merged_pr():
-    assert not _parse_status(_open_pr_payload("CONFLICTING", "MERGED")).has_conflicts
+def testparse_status_ignores_conflicts_on_a_merged_pr():
+    assert not parse_status(_open_pr_payload("CONFLICTING", "MERGED")).has_conflicts
 
 
 def test_format_status_shows_merge_conflicts_only_when_present():
@@ -288,7 +288,7 @@ def test_fetch_retries_until_github_settles_mergeable(
 
     monkeypatch.setattr(status_module, "_gh_pr_view", fake_view)
     monkeypatch.setattr(status_module, "_fetch_open_comment_count", no_comments)
-    monkeypatch.setattr(status_module, "_MERGEABLE_RETRY_DELAY_SECONDS", 0)
+    monkeypatch.setattr(status_module, "MERGEABLE_RETRY_DELAY_SECONDS", 0)
 
     result = asyncio.run(status_module.fetch_branch_status("b", root=Path(".")))
 
@@ -308,9 +308,9 @@ def test_fetch_gives_up_after_bounded_retries(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(status_module, "_gh_pr_view", always_unknown)
     monkeypatch.setattr(status_module, "_fetch_open_comment_count", no_comments)
-    monkeypatch.setattr(status_module, "_MERGEABLE_RETRY_DELAY_SECONDS", 0)
+    monkeypatch.setattr(status_module, "MERGEABLE_RETRY_DELAY_SECONDS", 0)
 
     result = asyncio.run(status_module.fetch_branch_status("b", root=Path(".")))
 
     assert not result.has_conflicts
-    assert calls == 1 + status_module._MERGEABLE_RETRIES
+    assert calls == 1 + status_module.MERGEABLE_RETRIES

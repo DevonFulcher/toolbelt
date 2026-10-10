@@ -11,6 +11,7 @@ import asyncio
 import re
 import subprocess
 import sys
+from datetime import UTC, datetime
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -32,6 +33,8 @@ from toolbelt.git.stack.store import RepoIdentity, StackStore, default_db_path
 from toolbelt.tasks.tracker import TaskInfo
 from toolbelt.ui import app as ui_app
 from toolbelt.ui.app import create_app
+from toolbelt.ui.pr_activity import PrFacts, TimelineItem
+from toolbelt.ui.pr_fetch import PrSnapshot
 from toolbelt.ui.branch_links import agent_link, owning_tracker, task_link
 from toolbelt.ui.status_cells import status_cells
 
@@ -47,11 +50,11 @@ class FakeStatuses:
         self.calls: list[tuple[str, Path]] = []
         self.fail = False
 
-    async def __call__(self, branch: str, root: Path) -> BranchStatus:
+    async def __call__(self, branch: str, root: Path) -> PrSnapshot:
         self.calls.append((branch, root))
         if self.fail:
             raise FileNotFoundError("gh")
-        return self.statuses.get(branch, NO_PR)
+        return PrSnapshot(self.statuses.get(branch, NO_PR), None)
 
 
 class FakeTracker:
@@ -229,6 +232,7 @@ def test_columns_are_separate_and_labelled(tmp_path, make_client):
     assert headers == [
         ("repo", "Repo"),
         ("branch", "Branch"),
+        ("next", "Next"),
         ("pr", "PR"),
         ("ci", "CI"),
         ("review", "Review"),
@@ -275,6 +279,7 @@ def test_filter_controls_are_rendered(tmp_path, make_client):
 
     assert 'name="q"' in html
     for column, values in {
+        "next": ["you", "ci", "others", "none"],
         "pr": ["none", "draft", "open", "merged", "closed"],
         "ci": ["none", "running", "failed", "success"],
         "review": ["none", "requested", "approved", "reviewed"],
@@ -699,6 +704,96 @@ def test_tt_ui_serves_over_uvicorn(tmp_path):
         process.wait(timeout=10)
 
 
+def next_cell(html: str, branch: str) -> Cells:
+    row = html[html.index(f'data-branch="{branch}"') :].split("</tr>")[0]
+    return Cells(row)
+
+
+def test_next_column_says_what_to_do_and_who_it_waits_on(
+    tmp_path, make_client, fetcher
+):
+    seed_repo(
+        tmp_path,
+        "api",
+        {"devon/none": "main", "devon/ci": "main", "devon/ready": "main"},
+    )
+    pull = "https://github.com/o/r/pull/"
+    fetcher.statuses["devon/ci"] = BranchStatus(
+        pr=PrState.OPEN, ci=CiState.RUNNING, review=ReviewState.NONE, url=pull + "1"
+    )
+    fetcher.statuses["devon/ready"] = BranchStatus(
+        pr=PrState.OPEN,
+        ci=CiState.SUCCESS,
+        review=ReviewState.APPROVED,
+        url=pull + "2",
+    )
+    client = make_client()
+    refresh(client)
+
+    html = client.get("/").text
+
+    none, ci, ready = (
+        next_cell(html, b) for b in ("devon/none", "devon/ci", "devon/ready")
+    )
+    assert none.by_col["next"]["data-value"] == "you"
+    assert none.text["next"].strip() == "Open PR"
+    assert ci.by_col["next"]["data-value"] == "ci"
+    assert ci.text["next"].strip() == "Waiting on CI"
+    assert ready.text["next"].strip() == "Merge"
+    # "needs me" sorts first: you, then ci, others, none.
+    assert (
+        none.by_col["next"]["data-sort"],
+        ci.by_col["next"]["data-sort"],
+    ) == ("1", "2")
+    assert ready.by_col["next"]["data-search"] == "Merge"
+
+
+def test_a_stacked_branch_is_blocked_until_its_parent_merges(
+    tmp_path, make_client, fetcher
+):
+    seed_repo(tmp_path, "api", {"devon/a": "main", "devon/b": "devon/a"})
+    pull = "https://github.com/o/r/pull/"
+    fetcher.statuses["devon/a"] = BranchStatus(
+        pr=PrState.OPEN,
+        ci=CiState.SUCCESS,
+        review=ReviewState.REQUESTED,
+        url=pull + "1",
+    )
+    fetcher.statuses["devon/b"] = BranchStatus(
+        pr=PrState.OPEN, ci=CiState.SUCCESS, review=ReviewState.APPROVED, url=pull + "2"
+    )
+    now = [1000.0]
+    client = make_client(clock=lambda: now[0])
+    refresh(client)
+
+    html = client.get("/").text
+
+    blocked = next_cell(html, "devon/b")
+    assert blocked.text["next"].strip() == "Blocked on devon/a"
+    assert blocked.by_col["next"]["data-value"] == "others"
+
+    # Once the parent merges, the child can be merged.
+    fetcher.statuses["devon/a"] = BranchStatus(
+        pr=PrState.MERGED,
+        ci=CiState.SUCCESS,
+        review=ReviewState.APPROVED,
+        url=pull + "1",
+    )
+    now[0] += 100  # past the polling interval
+    refresh(client)
+    html = client.get("/").text
+    assert next_cell(html, "devon/b").text["next"].strip() == "Merge"
+
+
+def test_next_is_loading_until_the_status_is_in(tmp_path, make_client):
+    seed_repo(tmp_path, "api", {"devon/a": "main"})
+
+    cells = next_cell(make_client().get("/").text, "devon/a")
+
+    assert cells.by_col["next"]["data-value"] == ""
+    assert cells.by_col["next"]["data-sort"] == ""
+
+
 class TestStatusCells:
     def test_unloaded_has_no_values(self):
         cells = status_cells(None)
@@ -769,3 +864,91 @@ class TestStatusCells:
         cells = status_cells(None, failed=True)
         assert cells.failed and not cells.loaded
         assert not status_cells(None).failed
+
+
+class TestPrDetailCells:
+    NOW = datetime(2026, 10, 6, 9, 0, tzinfo=UTC)
+
+    def facts(self, **overrides):
+        base = dict(
+            number=5,
+            title="Add it",
+            author="devon",
+            base_ref="main",
+            head_oid="abc",
+            state="OPEN",
+            is_draft=True,
+            created_at=datetime(2026, 10, 1, 9, 0, tzinfo=UTC),
+            merged_at=None,
+            closed_at=None,
+            requested_reviewers=("sam",),
+            commit_rollups=(("a", "FAILURE"), ("b", "SUCCESS"), ("c", "ERROR")),
+            items=(
+                TimelineItem(
+                    datetime(2026, 10, 6, 6, 0, tzinfo=UTC),
+                    "review_requested",
+                    "devon",
+                    "requested review from sam",
+                    subject="sam",
+                ),
+            ),
+        )
+        base.update(overrides)
+        return PrFacts(**base)
+
+    def cells(self, facts):
+        status = BranchStatus(
+            pr=PrState.DRAFT,
+            ci=CiState.NONE,
+            review=ReviewState.REQUESTED,
+            url="https://github.com/o/r/pull/5",
+        )
+        return status_cells(status, facts=facts, now=self.NOW)
+
+    def test_ages_failures_and_events_are_exposed_for_display(self):
+        detail = self.cells(self.facts()).detail
+
+        assert detail is not None
+        assert detail.title == "Add it"
+        assert (detail.pr_age.text, detail.pr_age.since) == (
+            "5d",
+            "2026-10-01T09:00:00Z",
+        )
+        assert detail.draft_age is not None and detail.draft_age.text == "5d"
+        assert detail.review_request_age is not None
+        assert (
+            detail.review_request_age.text,
+            detail.review_request_age.since,
+        ) == ("3h", "2026-10-06T06:00:00Z")
+        assert detail.ci_failures == 2
+        assert [e["kind"] for e in detail.events] == ["opened", "review_requested"]
+        assert detail.events[1] == {
+            "t": "2026-10-06T06:00:00Z",
+            "kind": "review_requested",
+            "actor": "devon",
+            "detail": "requested review from sam",
+        }
+
+    def test_a_finished_pr_has_a_fixed_age_that_no_longer_ticks(self):
+        merged = self.facts(
+            state="MERGED",
+            is_draft=False,
+            merged_at=datetime(2026, 10, 2, 9, 0, tzinfo=UTC),
+            requested_reviewers=(),
+        )
+
+        detail = self.cells(merged).detail
+
+        assert detail is not None
+        assert (detail.pr_age.text, detail.pr_age.since) == ("1d", None)
+        assert detail.draft_age is None and detail.review_request_age is None
+
+    def test_without_facts_there_is_no_detail(self):
+        status = BranchStatus(
+            pr=PrState.OPEN,
+            ci=CiState.NONE,
+            review=ReviewState.NONE,
+            url="https://github.com/o/r/pull/5",
+        )
+
+        assert status_cells(status).detail is None

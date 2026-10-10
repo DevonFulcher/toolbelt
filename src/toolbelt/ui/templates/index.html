@@ -79,6 +79,11 @@
   .pill { display: inline-block; padding: 0 7px; border: 1px solid currentColor;
           border-radius: 10px; font-size: 12px; white-space: nowrap; }
   a.pill:hover { text-decoration: none; background: color-mix(in srgb, currentColor 12%, transparent); }
+  /* Who a branch's next action is waiting on. */
+  .next-you { color: var(--accent); font-weight: 600; }
+  .next-others { color: var(--muted); }
+  .next-ci { color: var(--amber); }
+  .next-none { color: var(--gray); }
   .pr-open, .ci-success, .review-approved { color: var(--green); }
   .pr-merged { color: var(--purple); }
   .pr-closed, .ci-failed, .conflicts, .error { color: var(--red); }
@@ -165,7 +170,7 @@
             {%- else -%}<span class="muted">—</span>{%- endif -%}
           </td>
         {% else %}
-          {% for key in ("pr", "ci", "review", "comments", "merge", "task", "session") %}
+          {% for key in ("next", "pr", "ci", "review", "comments", "merge", "task", "session") %}
           <td data-col="{{ key }}" data-value="" data-sort="" data-search=""></td>
           {% endfor %}
         {% endif %}

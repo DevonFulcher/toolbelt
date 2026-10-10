@@ -28,6 +28,7 @@
   const COLUMNS = [
     "repo",
     "branch",
+    "next",
     "pr",
     "ci",
     "review",
@@ -38,7 +39,7 @@
   ];
   // Columns with an exact-match value filter (the repo filter is separate:
   // it scopes the whole table rather than hiding rows).
-  const VALUE_FILTERS = ["pr", "ci", "review", "comments", "merge"];
+  const VALUE_FILTERS = ["next", "pr", "ci", "review", "comments", "merge"];
   const DEFAULT_STATE = {
     view: "tree",
     sort: "",
@@ -50,6 +51,7 @@
     review: "",
     comments: "",
     merge: "",
+    next: "",
   };
 
   // ---- state <-> query string -------------------------------------------

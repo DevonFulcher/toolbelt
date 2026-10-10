@@ -2,7 +2,7 @@
 
 One `gh pr view` per branch, run concurrently (see `stream_branch_statuses`) so
 a full-stack lookup costs about one network round trip regardless of stack
-size. Parsing is split out as a pure function (`_parse_status`) so it's
+size. Parsing is split out as a pure function (`parse_status`) so it's
 testable without shelling out.
 """
 
@@ -127,7 +127,7 @@ def _ci_state(rollup: list[dict]) -> CiState:
     return CiState.SUCCESS
 
 
-def _parse_status(data: dict, *, open_comments: int = 0) -> BranchStatus:
+def parse_status(data: dict, *, open_comments: int = 0) -> BranchStatus:
     """Parse a `gh pr view --json {_FIELDS}` payload into a `BranchStatus`."""
     if data["state"] == "MERGED":
         pr_state = PrState.MERGED
@@ -161,10 +161,16 @@ def _parse_status(data: dict, *, open_comments: int = 0) -> BranchStatus:
     )
 
 
+def count_unresolved_nodes(nodes: list[dict]) -> int:
+    """Count unresolved threads among a `reviewThreads` connection's nodes."""
+    return sum(1 for node in nodes if not node["isResolved"])
+
+
 def _count_unresolved(payload: dict) -> int:
     """Count unresolved review threads in a `reviewThreads` GraphQL payload."""
-    nodes = payload["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]
-    return sum(1 for node in nodes if not node["isResolved"])
+    return count_unresolved_nodes(
+        payload["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]
+    )
 
 
 async def _fetch_open_comment_count(url: str, *, root: Path) -> int:
@@ -199,8 +205,8 @@ async def _fetch_open_comment_count(url: str, *, root: Path) -> int:
 
 # GitHub reports `mergeable: UNKNOWN` while it recomputes after the base or
 # head moves, and settles within a few seconds.
-_MERGEABLE_RETRIES = 4
-_MERGEABLE_RETRY_DELAY_SECONDS = 1.5
+MERGEABLE_RETRIES = 4
+MERGEABLE_RETRY_DELAY_SECONDS = 1.5
 
 
 async def _gh_pr_view(branch: str, *, root: Path) -> dict | None:
@@ -227,15 +233,15 @@ async def _gh_pr_view(branch: str, *, root: Path) -> dict | None:
 async def fetch_branch_status(branch: str, *, root: Path) -> BranchStatus:
     """Look up `branch`'s PR/CI/review status. No PR at all is `NO_PR`."""
     data = await _gh_pr_view(branch, root=root)
-    for _ in range(_MERGEABLE_RETRIES):
+    for _ in range(MERGEABLE_RETRIES):
         if data is None or data.get("mergeable") != "UNKNOWN":
             break
-        await asyncio.sleep(_MERGEABLE_RETRY_DELAY_SECONDS)
+        await asyncio.sleep(MERGEABLE_RETRY_DELAY_SECONDS)
         data = await _gh_pr_view(branch, root=root)
     if data is None:
         return NO_PR
     open_comments = await _fetch_open_comment_count(data["url"], root=root)
-    return _parse_status(data, open_comments=open_comments)
+    return parse_status(data, open_comments=open_comments)
 
 
 async def stream_branch_statuses(
