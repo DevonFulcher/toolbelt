@@ -44,6 +44,7 @@ from toolbelt.git.worktrees import (
 )
 from toolbelt.git.worktrees_ops import delete_branch_and_worktree, main_worktree
 from toolbelt.logger import logger
+from toolbelt.personal_machine import is_personal
 
 stack_typer = typer.Typer(help="Stack + worktree management")
 
@@ -55,11 +56,14 @@ def append(
         help="Name of the new stacked branch, without the devon/ prefix "
         "(it is added for you).",
     ),
-    task: str = typer.Option(
-        ...,
+    task: str | None = typer.Option(
+        None,
         "--task",
         help="Task this branch is for, as its key or URL in the configured "
-        "tracker (tasks.tracker in the config file).",
+        "tracker (tasks.tracker in the config file). Required, except on a "
+        "personal laptop (IS_PERSONAL=true), where it may be omitted. "
+        "IS_PERSONAL is only set in interactive shells that source the "
+        "dotfiles secrets, so non-interactive (agent) shells must pass it.",
     ),
     agent_link: str = typer.Option(
         ...,
@@ -85,10 +89,17 @@ def append(
     already-prefixed "devon/foo" would become "devon/devon_foo".
 
     --task and --agent-link are stored as given with the branch; --task is
-    also tagged with the configured task tracker's name (if any).
+    also tagged with the configured task tracker's name (if any). Without
+    --task (personal laptops only) the branch has no task and no tracker is
+    consulted.
     """
+    if task is None and not is_personal():
+        raise typer.BadParameter(
+            "--task is required unless IS_PERSONAL=true (personal laptop)",
+            param_hint="--task",
+        )
     root = repo_root()
-    tracker = configured_tracker(default_config_path())
+    tracker = configured_tracker(default_config_path()) if task is not None else None
     with repo_lock(root):
         wt_path = _worktree_path_for_name(name=name, repo_root=root)
         create_stacked_branch(
