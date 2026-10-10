@@ -31,6 +31,7 @@ from pathlib import Path
 import yaml
 
 from toolbelt import logged_process
+from toolbelt.dotfiles.config import config_path
 
 _FALLBACK_DEFAULT_BRANCHES = ("main", "master")
 
@@ -40,14 +41,13 @@ def default_state_dir() -> Path:
 
 
 def default_config_path(env: Mapping[str, str] = os.environ) -> Path:
-    """toolbelt's config file: ``$XDG_CONFIG_HOME/toolbelt/config.yaml``, else
-    ``~/.config/toolbelt/config.yaml``.
+    """toolbelt's config file (shared with ``tt dotfiles``); see
+    ``toolbelt.dotfiles.config.config_path``.
 
     Config is kept apart from the state dir (``default_state_dir``) because
     only the config is symlinked in from the dotfiles repo.
     """
-    config_home = env.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
-    return Path(config_home) / "toolbelt" / "config.yaml"
+    return config_path(env, home=Path.home())
 
 
 def load_sync_repos(config_path: Path, *, workdir: Path | None = None) -> list[Path]:

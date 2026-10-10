@@ -5,9 +5,10 @@ containing ``tt:allow-secret`` is skipped, for deliberate false positives.
 """
 
 import re
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+
+from toolbelt import logged_process
 
 ALLOW_MARKER = "tt:allow-secret"
 _MAX_BYTES = 2 * 1024 * 1024
@@ -76,7 +77,7 @@ def scan_paths(paths: list[Path]) -> list[Finding]:
 
 def scan_repo(root: Path) -> list[Finding]:
     """Scan every file git would commit: tracked, plus untracked-not-ignored."""
-    listed = subprocess.run(
+    listed = logged_process.run(
         ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
         cwd=root,
         capture_output=True,
