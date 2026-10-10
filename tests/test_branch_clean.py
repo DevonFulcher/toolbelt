@@ -94,3 +94,56 @@ def test_leaves_untracked_gone_branches_alone_beyond_deleting_them(
         not in git("branch", "--format=%(refname:short)", cwd=repo).splitlines()
     )
     assert lineage.get_parent("scratch", root=repo) is None
+
+
+def _push_then_delete_remote(branch: str, *, cwd: Path) -> None:
+    git("push", "-u", "origin", branch, cwd=cwd)
+    git("push", "origin", "--delete", branch, cwd=cwd)
+
+
+def test_keeps_gone_branch_with_unmerged_commits(repo: Path, tmp_path: Path):
+    """A PR closed without merging also leaves its upstream "gone"."""
+    api_wt = tmp_path / "wt-api"
+    create_stacked_branch("api", root=repo, wt_path=api_wt)
+    (api_wt / "api.txt").write_text("unmerged\n")
+    git("add", "-A", cwd=api_wt)
+    git("commit", "-m", "unmerged work", cwd=api_wt)
+    _push_then_delete_remote("devon/api", cwd=api_wt)
+
+    git_branch_clean(root=repo)
+
+    assert api_wt.exists()
+    assert lineage.get_parent("devon/api", root=repo) == "main"
+    assert "devon/api" in git("branch", "--format=%(refname:short)", cwd=repo)
+
+
+def test_deletes_gone_branch_whose_changes_were_squash_merged(
+    repo: Path, tmp_path: Path
+):
+    api_wt = tmp_path / "wt-api"
+    create_stacked_branch("api", root=repo, wt_path=api_wt)
+    (api_wt / "api.txt").write_text("api\n")
+    git("add", "-A", cwd=api_wt)
+    git("commit", "-m", "api work", cwd=api_wt)
+    _push_then_delete_remote("devon/api", cwd=api_wt)
+    # Land the same change on main as a squash commit (new sha).
+    (repo / "api.txt").write_text("api\n")
+    git("add", "-A", cwd=repo)
+    git("commit", "-m", "squash of api", cwd=repo)
+    git("push", "origin", "main", cwd=repo)
+
+    git_branch_clean(root=repo)
+
+    assert "devon/api" not in git("branch", "--format=%(refname:short)", cwd=repo)
+
+
+def test_keeps_gone_branch_with_dirty_worktree(repo: Path, tmp_path: Path):
+    api_wt = tmp_path / "wt-api"
+    create_stacked_branch("api", root=repo, wt_path=api_wt)
+    _push_then_delete_remote("devon/api", cwd=api_wt)
+    (api_wt / "scratch.txt").write_text("uncommitted\n")
+
+    git_branch_clean(root=repo)
+
+    assert (api_wt / "scratch.txt").exists()
+    assert "devon/api" in git("branch", "--format=%(refname:short)", cwd=repo)

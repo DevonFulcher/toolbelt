@@ -16,7 +16,17 @@ from .branches import (
     get_default_branch,
 )
 from .repo import current_repo_org, get_current_repo_root_path
-from .worktrees_ops import delete_branch_and_worktree, main_worktree
+from .repo_pull import (
+    default_state_dir,
+    start_background_pull,
+    take_unreported_summary,
+)
+from .worktrees_ops import (
+    _is_worktree_dirty,
+    _worktree_paths_for_branch,
+    delete_branch_and_worktree,
+    main_worktree,
+)
 
 
 def update_repo(target_path: Path):
@@ -41,7 +51,16 @@ def sync_repo(root: Path | None = None) -> None:
     from inside a branch whose own PR just merged), and so can
     ``git_branch_clean``. ``update_repo`` needs a real, still-existing path,
     so it falls back to the main worktree when ``root`` no longer exists.
+
+    Finally it spawns a detached process that fast-forwards the repos listed
+    under ``sync.repos`` (see ``repo_pull``) without blocking; the summary of
+    the previous run is printed here, once, at the start of the next sync.
     """
+    state_dir = default_state_dir()
+    summary = take_unreported_summary(state_dir=state_dir)
+    if summary:
+        logger.info(summary)
+
     # Imported lazily: worktrees -> bootstrap.repo_setup -> workflow would be a
     # circular import at module load time.
     from toolbelt.git.stack.forge import GhForge
@@ -53,6 +72,7 @@ def sync_repo(root: Path | None = None) -> None:
     sync_stack(root=root, forge=GhForge(root))
     git_branch_clean(root)
     update_repo(root if root.exists() else main_wt)
+    start_background_pull(state_dir=state_dir, config_path=state_dir / "config.yaml")
 
 
 def git_merge(pr: str) -> None:
@@ -136,19 +156,64 @@ def _drop_lineage_entry(branch: str, *, root: Path) -> None:
     lineage.remove_parent(branch, root=root)
 
 
-def _branch_exists(branch: str, *, root: Path) -> bool:
+def _branch_exists(branch: str, *, root: Path, remote: bool = False) -> bool:
+    prefix = "refs/remotes" if remote else "refs/heads"
     return (
         subprocess.run(
-            ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
+            ["git", "show-ref", "--verify", "--quiet", f"{prefix}/{branch}"],
             cwd=root,
         ).returncode
         == 0
     )
 
 
+def _unsafe_to_delete_reason(branch: str, *, root: Path) -> str | None:
+    """Why a "gone" ``branch`` must be kept, or ``None`` if it's safe to delete.
+
+    Its upstream being gone only says the remote branch was deleted — which
+    also happens to PRs that were closed unmerged. So keep it when:
+
+    - it's checked out in the main worktree (``git branch -D`` would fail),
+    - a worktree holding it has uncommitted/untracked changes, or
+    - it carries changes not already in ``origin``'s default branch. Merging it
+      into that branch is simulated (``git merge-tree``) and must leave the
+      tree unchanged — this also holds for squash merges, where the branch's
+      commits themselves never become ancestors.
+    """
+    worktrees = _worktree_paths_for_branch(branch, root)
+    if root in worktrees:
+        return "checked out in the main worktree"
+    if any(_is_worktree_dirty(path) for path in worktrees):
+        return "its worktree has uncommitted changes"
+
+    base = next(
+        (
+            f"origin/{name}"
+            for name in ("main", "master")
+            if _branch_exists(f"origin/{name}", root=root, remote=True)
+        ),
+        None,
+    )
+    if base is None:
+        return "no origin/main or origin/master to compare against"
+    merged = subprocess.run(
+        ["git", "merge-tree", "--write-tree", base, branch],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    base_tree = capture(["git", "rev-parse", f"{base}^{{tree}}"], cwd=root)
+    if merged.returncode != 0 or merged.stdout.split()[0] != base_tree:
+        return f"it has changes not in {base}"
+    return None
+
+
 def git_branch_clean(root: Path | None = None) -> None:
     """
-    Delete local branches whose upstream has been removed, and drop stale
+    Delete local branches whose upstream has been removed (unless they may
+    hold unmerged work or uncommitted changes; see ``_unsafe_to_delete_reason``
+    — those are kept and reported), and drop stale
     stack lineage entries — both this command's own deletions, and any
     tracked branch that's already gone by some other means (e.g. deleted
     directly with ``git branch -D``, bypassing this tool entirely). Without
@@ -179,6 +244,7 @@ def git_branch_clean(root: Path | None = None) -> None:
     ).stdout.splitlines()
 
     deleted_branches: list[str] = []
+    kept_branches: list[str] = []
     for line in branch_list:
         if ": gone]" not in line:
             continue
@@ -191,6 +257,11 @@ def git_branch_clean(root: Path | None = None) -> None:
             branch_name = tokens[1]
         else:
             branch_name = tokens[0]
+
+        reason = _unsafe_to_delete_reason(branch_name, root=root)
+        if reason:
+            kept_branches.append(f"{branch_name} ({reason})")
+            continue
 
         deleted_branch = delete_branch_and_worktree(branch_name, repo_root=root)
         _drop_lineage_entry(deleted_branch, root=root)
@@ -209,6 +280,10 @@ def git_branch_clean(root: Path | None = None) -> None:
             logger.info(f"  {branch_name}")
     else:
         logger.info("No branches to delete.")
+    if kept_branches:
+        logger.warning("Kept branches whose upstream is gone but may hold work:")
+        for entry in kept_branches:
+            logger.warning(f"  {entry}")
     if stale_entries:
         logger.info("Dropped stack entries for already-gone branches:")
         for branch_name in stale_entries:
