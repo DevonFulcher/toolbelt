@@ -1,8 +1,8 @@
 """Whether toolbelt is running on a personal laptop rather than a work machine.
 
-``IS_PERSONAL=true`` is exported by the user's dotfiles secrets, which only
-interactive shells source; non-interactive shells (e.g. agent shells) do not
-see it and are treated as non-personal.
+``IS_PERSONAL=true`` is exported from the user's dotfiles via ``.zshenv``
+(``secrets/machine.sh``), so non-interactive shells such as agent shells see
+it too. Where it is unset the machine is treated as non-personal.
 """
 
 import os

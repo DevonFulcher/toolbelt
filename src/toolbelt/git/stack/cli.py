@@ -61,9 +61,7 @@ def append(
         "--task",
         help="Task this branch is for, as its key or URL in the configured "
         "tracker (tasks.tracker in the config file). Required, except on a "
-        "personal laptop (IS_PERSONAL=true), where it may be omitted. "
-        "IS_PERSONAL is only set in interactive shells that source the "
-        "dotfiles secrets, so non-interactive (agent) shells must pass it.",
+        "personal laptop (IS_PERSONAL=true), where it may be omitted.",
     ),
     agent_link: str = typer.Option(
         ...,
