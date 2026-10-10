@@ -210,6 +210,27 @@ def _unsafe_to_delete_reason(branch: str, *, root: Path) -> str | None:
     return None
 
 
+class WorktreeInUseError(RuntimeError):
+    """A branch's worktree is the one the current process is working in."""
+
+
+def _ensure_not_inside_worktree(
+    branch: str, *, root: Path, caller_dirs: list[Path]
+) -> None:
+    """Raise if any of ``caller_dirs`` is inside a (non-main) worktree of
+    ``branch``: deleting it would strand the process in a removed directory."""
+    for worktree in _worktree_paths_for_branch(branch, root):
+        if worktree == root:
+            continue
+        for directory in caller_dirs:
+            if directory.resolve().is_relative_to(worktree.resolve()):
+                raise WorktreeInUseError(
+                    f"Cannot delete '{branch}': this command is running inside "
+                    f"its worktree {worktree}. cd to another worktree (e.g. "
+                    f"{root}) and re-run."
+                )
+
+
 def git_branch_clean(root: Path | None = None) -> None:
     """
     Delete local branches whose upstream has been removed (unless they may
@@ -228,13 +249,16 @@ def git_branch_clean(root: Path | None = None) -> None:
     actually runs from the repo's *main* worktree (see ``main_worktree``), not
     ``root`` itself — one of the "gone" branches can easily be the one
     checked out in ``root``, e.g. running this from inside the very worktree
-    whose branch just got merged.
+    whose branch just got merged. For the same reason, a branch whose worktree
+    contains ``root`` (or the cwd) is not deleted: ``WorktreeInUseError`` is
+    raised instead, asking the caller to run from another worktree.
     """
     # Lazy import: worktrees -> bootstrap.repo_setup -> workflow would be a
     # circular import at module load time.
     from toolbelt.git.stack import lineage
 
-    root = main_worktree(root or get_current_repo_root_path())
+    caller_root = root or get_current_repo_root_path()
+    root = main_worktree(caller_root)
     logged_process.run(["git", "fetch", "-p"], check=True, cwd=root)
     branch_list = logged_process.run(
         ["git", "branch", "-vv"],
@@ -264,6 +288,9 @@ def git_branch_clean(root: Path | None = None) -> None:
             kept_branches.append(f"{branch_name} ({reason})")
             continue
 
+        _ensure_not_inside_worktree(
+            branch_name, root=root, caller_dirs=[caller_root, Path.cwd()]
+        )
         deleted_branch = delete_branch_and_worktree(branch_name, repo_root=root)
         _drop_lineage_entry(deleted_branch, root=root)
         deleted_branches.append(deleted_branch)

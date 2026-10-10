@@ -2,11 +2,13 @@
 
 from pathlib import Path
 
+import pytest
+
 from conftest import git
 
 from toolbelt.git.stack import lineage
 from toolbelt.git.stack.append import create_stacked_branch
-from toolbelt.git.workflow import git_branch_clean
+from toolbelt.git.workflow import WorktreeInUseError, git_branch_clean
 
 
 def test_deletes_branch_and_drops_its_own_lineage_entry(repo: Path, tmp_path: Path):
@@ -42,21 +44,38 @@ def test_reparents_tracked_children_onto_the_deleted_branchs_parent(
     assert lineage.get_parent("devon/api_tests", root=repo) == "main"
 
 
-def test_works_when_root_is_the_worktree_being_deleted(repo: Path, tmp_path: Path):
-    """`root` can be the very worktree whose branch just landed. Deletion must
-    still run from the main worktree (see `main_worktree`) since git can't
-    remove a worktree with cwd pointed at the worktree being removed."""
+def test_refuses_to_delete_the_worktree_root_is_inside(repo: Path, tmp_path: Path):
+    """`root` can be the very worktree whose branch just landed. Deleting it
+    out from under the caller would strand the process in a removed directory,
+    so it's an error and nothing is deleted."""
     api_wt = tmp_path / "wt-api"
     create_stacked_branch("api", root=repo, wt_path=api_wt)
     create_stacked_branch("api_tests", root=api_wt, wt_path=tmp_path / "wt-api-tests")
     git("push", "-u", "origin", "devon/api", cwd=api_wt)
     git("push", "origin", "--delete", "devon/api", cwd=api_wt)
 
-    git_branch_clean(root=api_wt)
+    with pytest.raises(WorktreeInUseError, match="inside its worktree"):
+        git_branch_clean(root=api_wt)
 
-    assert not api_wt.exists()
-    assert lineage.get_parent("devon/api", root=repo) is None
-    assert lineage.get_parent("devon/api_tests", root=repo) == "main"
+    assert api_wt.exists()
+    assert lineage.get_parent("devon/api", root=repo) == "main"
+    assert "devon/api" in git("branch", "--format=%(refname:short)", cwd=repo)
+
+
+def test_refuses_to_delete_the_worktree_the_process_cwd_is_inside(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    api_wt = tmp_path / "wt-api"
+    create_stacked_branch("api", root=repo, wt_path=api_wt)
+    git("push", "-u", "origin", "devon/api", cwd=api_wt)
+    git("push", "origin", "--delete", "devon/api", cwd=api_wt)
+    (api_wt / "sub").mkdir()
+    monkeypatch.chdir(api_wt / "sub")
+
+    with pytest.raises(WorktreeInUseError):
+        git_branch_clean(root=repo)
+
+    assert api_wt.exists()
 
 
 def test_drops_lineage_entry_for_a_branch_already_deleted_by_other_means(
