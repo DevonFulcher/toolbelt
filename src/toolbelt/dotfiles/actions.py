@@ -2,8 +2,8 @@
 
 Commands build a list of actions from the current state, print each one's
 ``describe()``, and only call ``run()`` when not in ``--dry-run``. Anything
-that would be overwritten or removed is first moved (or, for ``backup``,
-copied) into ``<home>/.toolbelt/dotfiles-backups/<timestamp>/``.
+that would be overwritten or removed is first moved into
+``<home>/.toolbelt/dotfiles-backups/<timestamp>/``.
 """
 
 import shutil
@@ -50,14 +50,6 @@ class BackupDir:
         stored.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(original, stored)
 
-    def copy(self, original: Path) -> None:
-        stored = self.path_for(original)
-        stored.parent.mkdir(parents=True, exist_ok=True)
-        if original.is_dir() and not original.is_symlink():
-            shutil.copytree(original, stored, symlinks=True)
-        else:
-            shutil.copy2(original, stored, follow_symlinks=False)
-
 
 class Action(Protocol):
     def describe(self, backups: BackupDir) -> str: ...
@@ -74,17 +66,6 @@ class MoveToBackup:
 
     def run(self, backups: BackupDir) -> None:
         backups.move(self.path)
-
-
-@dataclass(frozen=True)
-class CopyToBackup:
-    path: Path
-
-    def describe(self, backups: BackupDir) -> str:
-        return f"backup  {self.path} -> {backups.path_for(self.path)} (copy)"
-
-    def run(self, backups: BackupDir) -> None:
-        backups.copy(self.path)
 
 
 @dataclass(frozen=True)
@@ -176,33 +157,6 @@ def link_actions(plan: Plan) -> list[Action]:
             actions.append(MoveToBackup(target.dest))
         actions += _install(target, made_dirs=made_dirs)
     actions += [RemoveLink(entry.dest) for entry in stale_links(plan)]
-    return actions
-
-
-def unlink_actions(plan: Plan) -> list[Action]:
-    """Remove links that point at the repo; leave everything else alone."""
-    actions: list[Action] = []
-    for target in plan.targets:
-        if target_state(target).state is not State.OK:
-            continue
-        if target.dest.is_symlink():
-            actions.append(RemoveLink(target.dest))
-        elif target.mode == "copy":
-            actions.append(MoveToBackup(target.dest))
-    actions += [RemoveLink(entry.dest) for entry in stale_links(plan)]
-    return actions
-
-
-def backup_actions(plan: Plan) -> list[Action]:
-    """Copy aside everything `link` would displace, changing nothing."""
-    actions: list[Action] = []
-    for container in plan.containers:
-        if container_state(container).state is State.CONFLICT:
-            actions.append(CopyToBackup(container))
-    for target in plan.targets:
-        entry = target_state(target)
-        if entry.state in (State.CONFLICT, State.WRONG_TARGET):
-            actions.append(CopyToBackup(target.dest))
     return actions
 
 

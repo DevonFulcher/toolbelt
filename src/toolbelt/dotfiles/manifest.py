@@ -3,7 +3,7 @@
 Each repo declares which of its files land where in the home directory::
 
     visibility = "public"        # "public" | "private" (default private)
-    adopt_dir = "Mackup"         # where `adopt` stores files; default "home"
+    adopt_dir = "Mackup"         # ignored; accepted so older manifests parse
 
     [[link]]
     src = "Mackup/.zshrc"        # relative to the repo root
@@ -50,7 +50,6 @@ class RepoManifest(BaseModel):
 
     root: Path
     public: bool
-    adopt_dir: str
     links: list[LinkSpec]
 
     @property
@@ -65,7 +64,6 @@ def load_manifest(root: Path) -> RepoManifest:
     return RepoManifest(
         root=root,
         public=parsed.visibility == "public",
-        adopt_dir=parsed.adopt_dir,
         links=parsed.link,
     )
 

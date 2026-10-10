@@ -11,12 +11,9 @@ import typer
 from toolbelt.dotfiles.actions import (
     Action,
     BackupDir,
-    backup_actions,
     link_actions,
     run_actions,
-    unlink_actions,
 )
-from toolbelt.dotfiles.adopt import adopt_actions
 from toolbelt.dotfiles.config import config_path, dotfiles_repos
 from toolbelt.dotfiles.manifest import RepoManifest, load_manifest
 from toolbelt.dotfiles.plan import Plan, build_plan
@@ -104,50 +101,6 @@ def link(ctx: typer.Context, dry_run: bool = _DRY_RUN) -> None:
     """Link everything in the manifests; displaced files are backed up first"""
     context = _context(ctx)
     _execute(link_actions(context.plan()), home=context.home, dry_run=dry_run)
-
-
-@dotfiles_typer.command()
-def unlink(ctx: typer.Context, dry_run: bool = _DRY_RUN) -> None:
-    """Remove links that point into the repos (copies are backed up)"""
-    context = _context(ctx)
-    _execute(unlink_actions(context.plan()), home=context.home, dry_run=dry_run)
-
-
-@dotfiles_typer.command()
-def backup(ctx: typer.Context, dry_run: bool = _DRY_RUN) -> None:
-    """Copy aside every file `link` would displace, changing nothing else"""
-    context = _context(ctx)
-    _execute(backup_actions(context.plan()), home=context.home, dry_run=dry_run)
-
-
-@dotfiles_typer.command()
-def adopt(
-    ctx: typer.Context,
-    path: Path = typer.Argument(..., help="Existing file or directory under home."),
-    repo: str | None = typer.Option(
-        None,
-        "--repo",
-        help="Target repo directory name or path. Default: first private repo.",
-    ),
-    src: str | None = typer.Option(
-        None,
-        "--src",
-        help="Path inside the repo. Default: <adopt_dir>/<home-relative>.",
-    ),
-    dry_run: bool = _DRY_RUN,
-) -> None:
-    """Move an existing real file into a repo, record it, and link it back"""
-    context = _context(ctx)
-    manifests = context.manifests()
-    chosen = _choose_repo(manifests, repo)
-    actions = adopt_actions(
-        path.expanduser().absolute(),
-        repo=chosen,
-        plan=build_plan(manifests, home=context.home),
-        home=context.home,
-        src_rel=src,
-    )
-    _execute(actions, home=context.home, dry_run=dry_run)
 
 
 def _choose_repo(manifests: list[RepoManifest], repo: str | None) -> RepoManifest:

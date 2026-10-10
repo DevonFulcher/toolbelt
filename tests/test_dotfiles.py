@@ -15,10 +15,8 @@ from typer.testing import CliRunner
 
 from toolbelt.dotfiles.actions import (
     BackupDir,
-    backup_actions,
     link_actions,
     run_actions,
-    unlink_actions,
 )
 from toolbelt.dotfiles.cli import dotfiles_typer
 from toolbelt.dotfiles.config import config_path, dotfiles_repos
@@ -329,37 +327,7 @@ def test_missing_source_aborts_link(machine: Machine) -> None:
         link_actions(plan_for(machine))
 
 
-# --- unlink / backup --------------------------------------------------------
-
-
-def test_unlink_removes_only_links_into_repo(machine: Machine) -> None:
-    link_for_real(machine)
-    write(machine.home / ".claude/skills/own-skill/SKILL.md")
-    (machine.home / ".netrc").unlink()
-    write(machine.home / ".netrc", "real")
-    run_actions(
-        unlink_actions(plan_for(machine)),
-        backups=BackupDir(machine.home, lambda: FIXED_NOW),
-        dry_run=False,
-    )
-    assert not (machine.home / ".zshrc").exists()
-    assert not (machine.home / ".claude/skills/python").exists()
-    assert (machine.home / ".claude/skills/own-skill/SKILL.md").exists()
-    assert (machine.home / ".netrc").read_text() == "real"
-    # The repo is untouched.
-    assert (machine.public / "Mackup/.zshrc").read_text() == "export A=1\n"
-
-
-def test_backup_command_copies_without_changing(machine: Machine) -> None:
-    write(machine.home / ".zshrc", "local")
-    run_actions(
-        backup_actions(plan_for(machine)),
-        backups=BackupDir(machine.home, lambda: FIXED_NOW),
-        dry_run=False,
-    )
-    root = machine.home / ".toolbelt/dotfiles-backups/20260102T030405"
-    assert (root / ".zshrc").read_text() == "local"
-    assert (machine.home / ".zshrc").read_text() == "local"
+# --- backup dir ---------------------------------------------------------
 
 
 def test_backup_dir_does_not_collide(machine: Machine) -> None:
@@ -367,55 +335,6 @@ def test_backup_dir_does_not_collide(machine: Machine) -> None:
     first.root.mkdir(parents=True)
     second = BackupDir(machine.home, lambda: FIXED_NOW)
     assert second.root != first.root
-
-
-# --- adopt ------------------------------------------------------------------
-
-
-def test_adopt_moves_file_into_private_repo_and_links(machine: Machine) -> None:
-    write(machine.home / ".config/new/app.conf", "setting=1\n")
-    result = machine.cli("adopt", str(machine.home / ".config/new/app.conf"))
-    assert result.exit_code == 0, result.output
-    stored = machine.private / "home/.config/new/app.conf"
-    assert stored.read_text() == "setting=1\n"
-    assert (machine.home / ".config/new/app.conf").is_symlink()
-    assert '"~/.config/new/app.conf"' in (machine.private / "dotfiles.toml").read_text()
-    assert machine.cli("status").exit_code == 1  # other links still missing
-    assert states(machine)[".config/new/app.conf"] is State.OK
-
-
-def test_adopt_dry_run_changes_nothing(machine: Machine) -> None:
-    target = write(machine.home / ".thing", "v")
-    manifest = (machine.private / "dotfiles.toml").read_text()
-    result = machine.cli("adopt", str(target), "--dry-run")
-    assert result.exit_code == 0, result.output
-    assert not target.is_symlink()
-    assert (machine.private / "dotfiles.toml").read_text() == manifest
-    assert not (machine.private / "home/.thing").exists()
-
-
-def test_adopt_into_public_repo_refuses_secrets(machine: Machine) -> None:
-    key = "ghp_" + "a" * 36
-    target = write(machine.home / ".tokenrc", f"token {key}\n")
-    result = machine.cli("adopt", str(target), "--repo", "dotfiles")
-    assert result.exit_code != 0
-    assert target.read_text() == f"token {key}\n"
-    assert not target.is_symlink()
-    assert key not in result.output
-
-
-def test_adopt_into_public_repo_uses_adopt_dir(machine: Machine) -> None:
-    target = write(machine.home / ".harmless", "ok\n")
-    result = machine.cli("adopt", str(target), "--repo", "dotfiles")
-    assert result.exit_code == 0, result.output
-    assert (machine.public / "Mackup/.harmless").read_text() == "ok\n"
-
-
-def test_adopt_rejects_symlinks_and_managed_paths(machine: Machine) -> None:
-    link_for_real(machine)
-    assert machine.cli("adopt", str(machine.home / ".zshrc")).exit_code != 0
-    outside = write(machine.home.parent / "outside", "x")
-    assert machine.cli("adopt", str(outside)).exit_code != 0
 
 
 # --- check ------------------------------------------------------------------
