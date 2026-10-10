@@ -91,7 +91,8 @@
   #live { font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
   #live::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--gray); }
   #live[data-state=live]::before { background: var(--green); }
-  #live[data-state=reconnecting]::before { background: var(--amber); }
+  #live[data-state=reconnecting]::before, #live[data-state=resuming]::before,
+  #live[data-state=paused]::before { background: var(--amber); }
   #live[data-state=disconnected]::before { background: var(--red); }
   @keyframes flash { from { background: color-mix(in srgb, var(--accent) 30%, transparent); } }
   .flash { animation: flash 1.5s ease-out; }

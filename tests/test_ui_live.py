@@ -74,11 +74,11 @@ class Fetcher:
 
 
 class Setup:
-    def __init__(self, names: list[str], **kwargs) -> None:
+    def __init__(self, names: list[str], *, grace: float = 0, **kwargs) -> None:
         self.names = names
         self.clock = Clock()
         self.fetcher = Fetcher()
-        self.hub = EventHub()
+        self.hub = EventHub(clock=self.clock, grace=grace)
         self.changes: list[tuple[str, Fetched]] = []
         self.refresher = StatusRefresher(
             branches=lambda: [
@@ -244,6 +244,133 @@ class TestStatusRefresher:
         run(scenario())
 
 
+async def settle() -> None:
+    for _ in range(20):
+        await asyncio.sleep(0)
+
+
+class TestPollingFollowsViewing:
+    """The poller runs while a browser's stream is open (the page closes it
+    when hidden), for a grace period after, and wakes the moment one opens."""
+
+    def test_a_returning_browser_refetches_what_went_stale_without_waiting_a_tick(
+        self,
+    ):
+        async def scenario():
+            ticks = asyncio.Event()
+
+            async def sleep(_seconds: float) -> None:
+                await ticks.wait()  # a tick only passes when the test says
+                ticks.clear()
+
+            s = Setup(["stale", "fresh"], sleep=sleep)
+            task = asyncio.create_task(s.refresher.run())
+            queue = s.hub.subscribe()
+            await settle()
+            assert sorted(s.fetcher.calls) == ["fresh", "stale"]
+
+            s.hub.unsubscribe(queue)  # tab hidden: the stream is closed
+            ticks.set()
+            await settle()  # the loop notices nobody is watching and parks
+            s.clock.now += 25  # both are past the 20s interval now
+            s.fetcher.calls.clear()
+
+            s.hub.subscribe()  # tab visible again
+            await settle()
+            assert sorted(s.fetcher.calls) == ["fresh", "stale"]
+            task.cancel()
+
+        run(scenario())
+
+    def test_only_stale_entries_are_refetched_on_return(self):
+        async def scenario():
+            ticks = asyncio.Event()
+
+            async def sleep(_seconds: float) -> None:
+                await ticks.wait()
+                ticks.clear()
+
+            s = Setup(["a", "b"], sleep=sleep)
+            task = asyncio.create_task(s.refresher.run())
+            queue = s.hub.subscribe()
+            await settle()
+            s.hub.unsubscribe(queue)
+            ticks.set()
+            await settle()
+            s.clock.now += 10  # younger than the 20s interval
+            s.fetcher.calls.clear()
+
+            s.hub.subscribe()
+            await settle()
+            assert s.fetcher.calls == []
+            task.cancel()
+
+        run(scenario())
+
+    def test_polling_carries_on_through_the_grace_period_then_stops(self):
+        async def scenario():
+            ticks = asyncio.Event()
+
+            async def sleep(_seconds: float) -> None:
+                await ticks.wait()
+                ticks.clear()
+
+            s = Setup(["a"], sleep=sleep, grace=15)
+            task = asyncio.create_task(s.refresher.run())
+            queue = s.hub.subscribe()
+            await settle()
+            assert s.fetcher.calls == ["a"]
+
+            s.hub.unsubscribe(queue)
+            s.clock.now += 14  # still within the grace period
+            assert s.hub.watched()
+            s.clock.now += 6  # 20s since the last fetch, 20s > grace
+            ticks.set()
+            await settle()
+            # Past the grace period at that tick: the loop parked, no fetch.
+            assert not s.hub.watched()
+            assert s.fetcher.calls == ["a"]
+            task.cancel()
+
+        run(scenario())
+
+    def test_a_browser_returning_after_the_grace_period_gets_a_fresh_pass(self):
+        async def scenario():
+            ticks = asyncio.Event()
+
+            async def sleep(_seconds: float) -> None:
+                await ticks.wait()
+                ticks.clear()
+
+            s = Setup(["a"], sleep=sleep, grace=15)
+            task = asyncio.create_task(s.refresher.run())
+            queue = s.hub.subscribe()
+            await settle()
+            s.hub.unsubscribe(queue)
+            s.clock.now += 8
+            ticks.set()
+            await settle()
+            assert s.hub.watched()  # a tick ran inside the grace period
+            s.clock.now += 20  # due again; the grace period is long over...
+            s.hub.subscribe()  # ...but the browser is back first
+            await settle()
+            assert s.fetcher.calls == ["a", "a"]
+            task.cancel()
+
+        run(scenario())
+
+    def test_unsubscribing_the_last_stream_is_noticed_by_the_hub(self):
+        async def scenario():
+            hub = EventHub(clock=Clock(), grace=0)
+            assert not hub.watched()
+            queue = hub.subscribe()
+            assert hub.watched()
+            hub.unsubscribe(queue)
+            return hub.watched()
+
+        assert run(scenario()) is False
+
+
 class TestEventHub:
     def test_events_reach_every_subscriber_with_a_version(self):
         async def scenario():
@@ -382,6 +509,27 @@ def test_events_stream_says_hello_then_relays_status_and_refresh(tmp_path):
             assert (name, refreshed["v"]) == ("refreshed", 2)
         # The disconnect is noticed: the poller would pause again.
         assert app.state.hub.subscribers == 0
+
+    run(scenario())
+
+
+def test_closing_the_stream_stops_the_polling_after_the_grace_period(tmp_path):
+    clock = Clock()
+    app, _, _ = seeded_app(tmp_path, clock=clock, grace_seconds=15)
+
+    async def scenario():
+        hub = app.state.hub
+        assert not hub.watched()  # nobody has ever connected
+        async with Stream(app) as stream:
+            await stream.next()  # hello
+            assert hub.watched()
+        # The page closed its stream (tab hidden): still polled for a moment...
+        assert hub.subscribers == 0 and hub.watched()
+        clock.now += 14
+        assert hub.watched()
+        clock.now += 1
+        # ...then the poller parks.
+        assert not hub.watched()
 
     run(scenario())
 

@@ -56,6 +56,7 @@ from toolbelt.ui import branch_links
 from toolbelt.ui.branch_links import Link
 from toolbelt.ui.live_status import (
     DEFAULT_CONCURRENCY,
+    DEFAULT_GRACE_SECONDS,
     DEFAULT_INTERVAL_SECONDS,
     DEFAULT_SETTLED_INTERVAL_SECONDS,
     DEFAULT_TICK_SECONDS,
@@ -302,6 +303,7 @@ def create_app(
     settled_refresh_interval: float = DEFAULT_SETTLED_INTERVAL_SECONDS,
     concurrency: int = DEFAULT_CONCURRENCY,
     tick: float = DEFAULT_TICK_SECONDS,
+    grace_seconds: float = DEFAULT_GRACE_SECONDS,
     db_version: Callable[[], int] | None = None,
     keepalive_seconds: float = _KEEPALIVE_SECONDS,
 ) -> FastAPI:
@@ -309,12 +311,13 @@ def create_app(
     branch is marked current, as `tt g tree` does. ``fetch`` looks up a
     branch's PR status; ``db_version`` reports when the stack DB changes
     (default: ``PRAGMA data_version`` on a connection held while serving).
-    Fetched task info is cached for ``task_ttl_seconds``. The background
+    Fetched task info is cached for ``task_ttl_seconds``. Polling carries on
+    for ``grace_seconds`` after the last browser disconnects. The background
     pollers start with the app's lifespan, so an app that is not served (a
     bare ``TestClient``) never polls; tests drive ``app.state.refresher`` and
     ``app.state.structure_watcher`` directly."""
     task_cache = TaskInfoCache(ttl_seconds=task_ttl_seconds, clock=clock)
-    hub = EventHub()
+    hub = EventHub(clock=clock, grace=grace_seconds)
     templates = Jinja2Templates(directory=_HERE / "templates")
     templates.env.globals["cell_id"] = cell_id
     templates.env.globals["UNLOADED"] = UNLOADED

@@ -8,6 +8,13 @@
  *   hello      {v, age}   on (re)connect; if v is not the last version seen,
  *                         events were missed, so the rows are re-fetched
  *
+ * The stream is only open while the page is being looked at: once the page
+ * has been hidden (background tab, minimized window) for GRACE_MS the stream
+ * is closed, which is what makes the server stop polling GitHub, and it is
+ * reopened as soon as the page is visible again. The server then refetches
+ * whatever went stale meanwhile. A brief tab switch (shorter than the grace
+ * period) never closes the stream.
+ *
  * After each DOM change a "stack-table:changed" event is dispatched, and
  * stack-table.js re-applies the user's sort and filters, so a live update
  * never resets them (nor the scroll position: only cells and rows change).
@@ -31,6 +38,7 @@
   }
 })(typeof self !== "undefined" ? self : this, function () {
   const RECONNECT_DELAY_MS = 3000;
+  const GRACE_MS = 15000;
 
   // "updated 5s ago" / "updated 3m ago" for a whole number of seconds.
   function formatAgo(seconds) {
@@ -47,9 +55,80 @@
     return lastVersion !== helloVersion;
   }
 
+  // What to do about the stream given the page's visibility: "connect" a
+  // missing one when visible, "disconnect" a live one once the page has been
+  // hidden for the grace period, "wait" while that period runs.
+  function connectionAction({ visible, connected, hiddenForMs, graceMs }) {
+    if (visible) return connected ? "none" : "connect";
+    if (!connected) return "none";
+    return hiddenForMs >= graceMs ? "disconnect" : "wait";
+  }
+
+  /*
+   * Owns when the stream is open. Everything environmental is injected so the
+   * logic is testable without a DOM: isVisible(), now() (ms), open(),
+   * close(), setTimer(fn, ms) / clearTimer(handle) and onState(name), which
+   * is told "paused" when the stream was closed for being hidden and
+   * "resuming" when it is reopened after that.
+   */
+  function createConnectionController(deps) {
+    let connected = false;
+    let paused = false;
+    let hiddenSince = null;
+    let timer = null;
+
+    function cancelTimer() {
+      if (timer !== null) deps.clearTimer(timer);
+      timer = null;
+    }
+
+    function reconcile() {
+      cancelTimer();
+      const hiddenForMs = hiddenSince === null ? 0 : deps.now() - hiddenSince;
+      const action = connectionAction({
+        visible: deps.isVisible(),
+        connected,
+        hiddenForMs,
+        graceMs: GRACE_MS,
+      });
+      if (action === "connect") {
+        connected = true;
+        if (paused) deps.onState("resuming");
+        paused = false;
+        deps.open();
+      } else if (action === "disconnect") {
+        connected = false;
+        paused = true;
+        deps.close();
+        deps.onState("paused");
+      } else if (action === "wait") {
+        timer = deps.setTimer(reconcile, GRACE_MS - hiddenForMs);
+      }
+    }
+
+    return {
+      // Call once at page load.
+      start() {
+        hiddenSince = deps.isVisible() ? null : deps.now();
+        reconcile();
+      },
+      visibilityChanged() {
+        hiddenSince = deps.isVisible() ? null : deps.now();
+        reconcile();
+      },
+      // The stream died on its own (not by us); reconnect if still wanted.
+      connectionLost() {
+        connected = false;
+        reconcile();
+      },
+    };
+  }
+
   // The label for the connection indicator.
   function statusLabel(state, updatedSecondsAgo) {
     if (state === "connecting") return "connecting…";
+    if (state === "resuming") return "resuming…";
+    if (state === "paused") return "paused (tab hidden)";
     if (state === "reconnecting") return "reconnecting…";
     if (state === "disconnected") return "disconnected";
     if (updatedSecondsAgo === null) return "live · updating…";
@@ -130,17 +209,21 @@
       return undefined;
     }
 
-    function connect() {
-      const source = new window.EventSource("/events");
+    let source = null;
+    let reconnectTimer = null;
+
+    function open() {
+      const stream = new window.EventSource("/events");
+      source = stream;
       const enqueue = (name, task) => {
         chain = chain.then(task).catch(() => {});
       };
       for (const name of ["status", "structure", "refreshed"]) {
-        source.addEventListener(name, (event) => {
+        stream.addEventListener(name, (event) => {
           enqueue(name, () => handle(name, JSON.parse(event.data)));
         });
       }
-      source.addEventListener("hello", (event) => {
+      stream.addEventListener("hello", (event) => {
         const data = JSON.parse(event.data);
         state = "live";
         updatedAt = data.age === null ? null : Date.now() - data.age * 1000;
@@ -149,19 +232,53 @@
         if (missed) enqueue("hello", reloadRows);
         render();
       });
-      source.onerror = () => {
-        state = source.readyState === window.EventSource.CLOSED ? "disconnected" : "reconnecting";
-        render();
-        if (source.readyState === window.EventSource.CLOSED) {
-          window.setTimeout(connect, RECONNECT_DELAY_MS);
+      stream.onerror = () => {
+        if (source !== stream) return;
+        if (stream.readyState === window.EventSource.CLOSED) {
+          state = "disconnected";
+          source = null;
+          render();
+          window.clearTimeout(reconnectTimer);
+          reconnectTimer = window.setTimeout(controller.connectionLost, RECONNECT_DELAY_MS);
+        } else {
+          state = "reconnecting";
+          render();
         }
       };
     }
 
+    function close() {
+      window.clearTimeout(reconnectTimer);
+      if (source) source.close();
+      source = null;
+    }
+
+    const controller = createConnectionController({
+      isVisible: () => document.visibilityState !== "hidden",
+      now: () => Date.now(),
+      open,
+      close,
+      setTimer: (fn, ms) => window.setTimeout(fn, ms),
+      clearTimer: (handle) => window.clearTimeout(handle),
+      onState: (name) => {
+        state = name;
+        render();
+      },
+    });
+    document.addEventListener("visibilitychange", controller.visibilityChanged);
+
     window.setInterval(render, 1000);
     render();
-    connect();
+    controller.start();
   }
 
-  return { formatAgo, missedEvents, statusLabel, init };
+  return {
+    GRACE_MS,
+    formatAgo,
+    missedEvents,
+    connectionAction,
+    createConnectionController,
+    statusLabel,
+    init,
+  };
 });
