@@ -6,6 +6,17 @@ from ``/repos/{id}/status`` — the same lookup `tt g tree` uses
 (``status.fetch_branch_status``). Placeholders fire concurrently, so the page is
 usable immediately and statuses fill in as ``gh`` answers. Nothing here writes.
 
+Each status column (PR, CI, review, merge) is its own table cell. One request
+fills all four: the PR cell is the htmx target and the others ride along as
+out-of-band swaps (see ``templates/status.html``).
+
+Sorting and filtering are client-side (``static/stack-table.js``): statuses
+arrive from ``gh`` asynchronously, so the server never has them when it renders
+the page, and the script simply re-applies the sort/filter after every htmx
+swap. Cells carry their sort/filter values as ``data-*`` attributes, and the
+chosen view lives in the URL query string so it is linkable. Branch trees are
+rendered flat in the DOM with parent pointers; the script does the indentation.
+
 Each branch's task cell works the same way: it renders the stored ref
 immediately (linked via the configured task tracker) and a placeholder fetches
 the task's title and status from ``/repos/{id}/task`` through a short TTL cache.
@@ -15,7 +26,7 @@ The status lookup and the task tracker are FastAPI dependencies
 """
 
 import functools
-import re
+import hashlib
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -36,10 +47,22 @@ from toolbelt.tasks.config import configured_tracker
 from toolbelt.tasks.tracker import TaskInfo, TaskTracker
 from toolbelt.ui import branch_links
 from toolbelt.ui.branch_links import Link
+from toolbelt.ui.status_cells import FILTER_OPTIONS, UNLOADED, status_cells
 from toolbelt.ui.task_cache import TaskInfoCache
 
 _HERE = Path(__file__).parent
-_PR_NUMBER_RE = re.compile(r"/pull/(\d+)")
+
+# (column key, header label), in display order.
+COLUMNS = [
+    ("branch", "Branch"),
+    ("pr", "PR"),
+    ("ci", "CI"),
+    ("review", "Review"),
+    ("merge", "Merge"),
+    ("task", "Task"),
+    ("session", "Session"),
+]
+_FILTER_LABELS = {"pr": "PR", "ci": "CI", "review": "Review", "merge": "Merge"}
 
 # (branch, repo path) -> that branch's PR status.
 StatusFetcher = Callable[[str, Path], Awaitable[BranchStatus]]
@@ -67,6 +90,9 @@ def task_tracker() -> TaskTracker | None:
 class BranchRow:
     name: str
     depth: int
+    parent: str | None
+    # Position in the repo's depth-first order: the default sort.
+    order: int
     # False for the untracked base branch (e.g. ``main``): no status, no links.
     tracked: bool
     current: bool
@@ -129,7 +155,7 @@ def _repo_views(
                 else None
             )
             rows = []
-            for name, depth in _walk(parents):
+            for order, (name, depth) in enumerate(_walk(parents)):
                 links = store.get_links(repo.id, name)
                 owner = branch_links.owning_tracker(
                     links.task_tracker if links else None, tracker
@@ -138,6 +164,8 @@ def _repo_views(
                     BranchRow(
                         name=name,
                         depth=depth,
+                        parent=parents.get(name),
+                        order=order,
                         tracked=name in parents,
                         current=name == current,
                         task=branch_links.task_link(
@@ -176,6 +204,13 @@ def _task_ref(repo_id: int, branch: str) -> tuple[str, str | None]:
     return links.task, links.task_tracker
 
 
+def cell_id(repo_id: int, branch: str, column: str) -> str:
+    """A DOM id for one branch's cell: branch names hold characters that are
+    awkward in ids (``/``), so they are hashed."""
+    digest = hashlib.sha1(branch.encode()).hexdigest()[:12]
+    return f"c-{repo_id}-{digest}-{column}"
+
+
 def _tracked_repo(repo_id: int, branch: str) -> RepoRecord:
     """The repo, 404 unless ``branch`` is tracked in it (so only known
     branch names ever reach ``gh``)."""
@@ -202,6 +237,8 @@ def create_app(
     app = FastAPI(title="toolbelt", docs_url=None, redoc_url=None, openapi_url=None)
     app.mount("/static", StaticFiles(directory=_HERE / "static"), name="static")
     templates = Jinja2Templates(directory=_HERE / "templates")
+    templates.env.globals["cell_id"] = cell_id
+    templates.env.globals["UNLOADED"] = UNLOADED
 
     @app.get("/", response_class=HTMLResponse)
     def index(
@@ -210,7 +247,14 @@ def create_app(
         return templates.TemplateResponse(
             request,
             "index.html",
-            {"repos": _repo_views(cwd_root, tracker=tracker)},
+            {
+                "repos": _repo_views(cwd_root, tracker=tracker),
+                "columns": COLUMNS,
+                "filters": [
+                    (key, _FILTER_LABELS[key], options)
+                    for key, options in FILTER_OPTIONS.items()
+                ],
+            },
         )
 
     @app.get("/repos/{repo_id}/task", response_class=HTMLResponse)
@@ -250,18 +294,14 @@ def create_app(
         result = None
         if repo.path.is_dir():
             result = await fetch(branch, repo.path)
-        pr_number = None
-        if result is not None and result.url:
-            match = _PR_NUMBER_RE.search(result.url)
-            pr_number = match.group(1) if match else None
         return templates.TemplateResponse(
             request,
             "status.html",
             {
                 "repo_id": repo_id,
                 "branch": branch,
-                "status": result,
-                "pr_number": pr_number,
+                "c": status_cells(result),
+                "oob": True,
                 "path_missing": not repo.path.is_dir(),
             },
         )

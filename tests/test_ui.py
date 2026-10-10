@@ -5,6 +5,7 @@ no test touches `gh`, Jira or the real config. The last test starts the real CLI
 command under uvicorn.
 """
 
+import re
 import subprocess
 import sys
 from html.parser import HTMLParser
@@ -29,6 +30,7 @@ from toolbelt.tasks.tracker import TaskInfo
 from toolbelt.ui import app as ui_app
 from toolbelt.ui.app import create_app
 from toolbelt.ui.branch_links import agent_link, owning_tracker, task_link
+from toolbelt.ui.status_cells import status_cells
 
 
 class FakeStatuses:
@@ -61,6 +63,38 @@ class FakeTracker:
     def fetch(self, ref: str) -> TaskInfo | None:
         self.fetches.append(ref)
         return self.tasks.get(ref)
+
+
+class Cells(HTMLParser):
+    """The `<td>`s in a fragment: attributes and text, keyed by data-col."""
+
+    def __init__(self, html: str) -> None:
+        super().__init__()
+        self.by_col: dict[str, dict[str, str]] = {}
+        self.text: dict[str, str] = {}
+        self.ids: list[str] = []
+        self._raw = html
+        self._col: str | None = None
+        self.feed(html)
+
+    def attrs_of(self, column: str) -> dict[str, str]:
+        return self.by_col[column]
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "td":
+            attributes = {k: v or "" for k, v in attrs}
+            self._col = attributes["data-col"]
+            self.by_col[self._col] = attributes
+            self.text[self._col] = ""
+            self.ids.append(attributes.get("id", ""))
+
+    def handle_data(self, data):
+        if self._col is not None:
+            self.text[self._col] += data
+
+    def handle_endtag(self, tag):
+        if tag == "td":
+            self._col = None
 
 
 class Anchors(HTMLParser):
@@ -165,6 +199,77 @@ def test_index_renders_tree_without_fetching_status(tmp_path, make_client, fetch
     assert "/static/htmx.min.js" in html
 
 
+def test_columns_are_separate_and_labelled(tmp_path, make_client):
+    seed_repo(tmp_path, "api", {"devon/a": "main"})
+
+    html = make_client().get("/").text
+
+    headers = re.findall(r'<th data-col="(\w+)"[^>]*><button[^>]*>(\w+)', html)
+    assert headers == [
+        ("branch", "Branch"),
+        ("pr", "PR"),
+        ("ci", "CI"),
+        ("review", "Review"),
+        ("merge", "Merge"),
+        ("task", "Task"),
+        ("session", "Session"),
+    ]
+    # Every tracked row has one cell per column, in the same order.
+    row = html[html.index('data-branch="devon/a"') :]
+    cols = re.findall(r'<td[^>]*data-col="(\w+)"', row.split("</tr>")[0])
+    assert cols == [key for key, _ in ui_app.COLUMNS]
+
+
+def test_rows_carry_tree_data_for_the_sort_script(tmp_path, make_client):
+    seed_repo(
+        tmp_path,
+        "api",
+        {"devon/a": "main", "devon/b": "devon/a", "devon/c": "main"},
+    )
+
+    html = make_client().get("/").text
+
+    rows = re.findall(
+        r'<tr data-branch="([^"]*)" data-parent="([^"]*)"\s+'
+        r'data-order="(\d+)" data-tracked="(\d)"\s+style="--depth: (\d+)"',
+        html,
+    )
+    assert rows == [
+        ("main", "", "0", "0", "0"),
+        ("devon/a", "main", "1", "1", "1"),
+        ("devon/b", "devon/a", "2", "1", "2"),
+        ("devon/c", "main", "3", "1", "1"),
+    ]
+
+
+def test_filter_controls_are_rendered(tmp_path, make_client):
+    seed_repo(tmp_path, "alpha", {"devon/one": "main"})
+    seed_repo(tmp_path, "beta", {"devon/two": "main"})
+
+    html = make_client().get("/").text
+
+    assert 'name="q"' in html
+    for column, values in {
+        "pr": ["none", "draft", "open", "merged", "closed"],
+        "ci": ["none", "running", "failed", "success"],
+        "review": ["none", "requested", "approved", "reviewed"],
+        "merge": ["conflicts", "clean", "none"],
+    }.items():
+        select = html.split(f'<select name="{column}">')[1].split("</select>")[0]
+        options = re.findall(r'<option value="([^"]*)"', select)
+        assert options == ["", *values]
+    repo_select = html.split('<select name="repo">')[1].split("</select>")[0]
+    assert ">alpha<" in repo_select and ">beta<" in repo_select
+    assert 'data-view="tree"' in html and 'data-view="flat"' in html
+    assert "/static/stack-table.js" in html
+
+
+def test_static_sort_script_is_served(make_client):
+    response = make_client().get("/static/stack-table.js")
+    assert response.status_code == 200
+    assert "layout" in response.text
+
+
 def test_static_htmx_is_served(make_client):
     response = make_client().get("/static/htmx.min.js")
     assert response.status_code == 200
@@ -219,14 +324,48 @@ def test_status_partial_shows_pr_ci_review_conflicts_comments(
     html = response.text
     assert "#42 open" in html
     assert 'href="https://github.com/o/r/pull/42"' in html
-    assert "CI failed" in html
-    assert "review approved" in html
-    assert "merge conflicts" in html
     assert "2 open comments" in html
     assert fetcher.calls == [("devon/a", tmp_path / "api")]
     # A loaded cell must not re-fire "load", or it would refetch forever.
     assert 'hx-trigger="refresh from:body' in html
     assert 'hx-trigger="load' not in html
+
+    # PR, CI, review and merge are separate cells carrying their own
+    # filter value and sort key.
+    cells = Cells(html)
+    assert cells.by_col["pr"]["data-value"] == "open"
+    assert cells.by_col["pr"]["data-sort"] == "42"
+    assert cells.by_col["pr"]["data-search"] == "42"
+    assert (cells.by_col["ci"]["data-value"], cells.by_col["ci"]["data-sort"]) == (
+        "failed",
+        "1",
+    )
+    assert cells.by_col["review"]["data-value"] == "approved"
+    assert cells.by_col["merge"]["data-value"] == "conflicts"
+    assert "CI" not in cells.text["pr"] and "failed" in cells.text["ci"]
+    assert "approved" in cells.text["review"]
+    assert "2 open comments" in cells.text["review"]
+    assert "conflicts" in cells.text["merge"]
+    # One request fills the whole row: the PR cell is the swap target, the
+    # others are out-of-band swaps matched by id.
+    assert "hx-swap-oob" not in cells.attrs_of("pr")
+    for column in ("ci", "review", "merge"):
+        assert cells.by_col[column]["hx-swap-oob"] == "true"
+        assert cells.by_col[column]["id"].endswith(f"-{column}")
+
+
+def test_index_placeholders_match_the_partial_cell_ids(tmp_path, make_client, fetcher):
+    repo_id = seed_repo(tmp_path, "api", {"devon/a": "main"})
+    client = make_client()
+
+    index_ids = Cells(client.get("/").text).ids
+    partial_ids = Cells(
+        client.get(status_url(repo_id), params={"branch": "devon/a"}).text
+    ).ids
+
+    for column in ("pr", "ci", "review", "merge"):
+        assert [i for i in partial_ids if i.endswith(f"-{column}")]
+        assert set(partial_ids) >= {i for i in index_ids if i.endswith(f"-{column}")}
 
 
 def test_status_partial_draft_and_no_pr(tmp_path, make_client, fetcher):
@@ -243,8 +382,14 @@ def test_status_partial_draft_and_no_pr(tmp_path, make_client, fetcher):
     none = client.get(status_url(repo_id), params={"branch": "devon/b"})
 
     assert "#7 draft" in draft.text
-    assert "CI " not in draft.text
+    assert Cells(draft.text).by_col["ci"]["data-value"] == "none"
+    # A draft PR with no conflicts is mergeable.
+    assert Cells(draft.text).by_col["merge"]["data-value"] == "clean"
     assert "no PR" in none.text
+    no_pr = Cells(none.text)
+    assert no_pr.by_col["pr"]["data-value"] == "none"
+    assert no_pr.by_col["pr"]["data-sort"] == ""
+    assert no_pr.by_col["merge"]["data-value"] == "none"
 
 
 def test_status_unknown_repo_or_untracked_branch_is_404(tmp_path, make_client, fetcher):
@@ -486,3 +631,48 @@ def test_tt_ui_serves_over_uvicorn(tmp_path):
     finally:
         process.terminate()
         process.wait(timeout=10)
+
+
+class TestStatusCells:
+    def test_unloaded_has_no_values(self):
+        cells = status_cells(None)
+        assert not cells.loaded
+        assert (cells.pr, cells.ci, cells.review, cells.merge) == ("", "", "", "")
+
+    def test_sort_keys_rank_urgent_states_first(self):
+        def cells(ci=CiState.NONE, review=ReviewState.NONE):
+            return status_cells(
+                BranchStatus(
+                    pr=PrState.OPEN,
+                    ci=ci,
+                    review=review,
+                    url="https://github.com/o/r/pull/5",
+                )
+            )
+
+        assert [cells(ci=c).ci_sort for c in (CiState.FAILED, CiState.RUNNING)] == [
+            "1",
+            "2",
+        ]
+        assert cells(ci=CiState.SUCCESS).ci_sort == "3"
+        assert cells(ci=CiState.NONE).ci_sort == ""
+        assert cells(review=ReviewState.REQUESTED).review_sort == "1"
+        assert cells(review=ReviewState.APPROVED).review_sort == "3"
+        assert cells().pr_sort == "5"
+
+    def test_merge_is_only_meaningful_for_open_prs(self):
+        def merge(pr, conflicts):
+            return status_cells(
+                BranchStatus(
+                    pr=pr,
+                    ci=CiState.NONE,
+                    review=ReviewState.NONE,
+                    url="https://github.com/o/r/pull/5",
+                    has_conflicts=conflicts,
+                )
+            ).merge
+
+        assert merge(PrState.OPEN, True) == "conflicts"
+        assert merge(PrState.OPEN, False) == "clean"
+        assert merge(PrState.MERGED, False) == "none"
+        assert merge(PrState.NONE, False) == "none"
