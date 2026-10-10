@@ -9,7 +9,7 @@ Both are ``""`` while the status is still loading (or failed), and ``sort`` is
 The "next" column holds the branch's ``next_action``: its value is who the
 branch is waiting on (``you``/``ci``/``others``/``none``) and its sort ranks
 those so rows that need the user come first. The richer per-PR history (ages,
-CI failures, event feed) rides along as ``detail`` for the cards and timeline.
+CI failures, event feed) rides along as ``detail`` for the cards and their per-card timelines.
 """
 
 import re
@@ -67,7 +67,15 @@ class PrDetail:
     draft_age: Age | None
     review_request_age: Age | None
     ci_failures: int
-    #: ``[{t, kind, actor, detail}]`` in time order, times as ISO strings.
+    #: Reviewers with a review request outstanding.
+    reviewers: tuple[str, ...]
+    #: ISO time the PR was created, when it ended (merged/closed; ``None``
+    #: while open) and whether it is a draft: what the per-card timeline
+    #: track is scaled and shaded from.
+    created: str
+    ended: str | None
+    is_draft: bool
+    #: ``[{t, kind, actor, detail, ci, subject}]`` in time order, times as ISO strings.
     events: list[dict]
 
 
@@ -132,6 +140,11 @@ def _age(age: timedelta | None, since: datetime | None) -> Age | None:
 def pr_detail(facts: PrFacts, now: datetime) -> PrDetail:
     activity = derive_activity(facts, now)
     done = facts.state in ("MERGED", "CLOSED")
+    ended = None
+    if facts.state == "MERGED":
+        ended = facts.merged_at
+    elif facts.state == "CLOSED":
+        ended = facts.closed_at
     return PrDetail(
         title=facts.title,
         # A finished PR's age is fixed, so it carries no start to count from.
@@ -144,12 +157,18 @@ def pr_detail(facts: PrFacts, now: datetime) -> PrDetail:
             activity.review_request_age, activity.review_request_since
         ),
         ci_failures=activity.ci_failure_count,
+        reviewers=facts.requested_reviewers,
+        created=_iso(facts.created_at),
+        ended=_iso(ended) if ended else None,
+        is_draft=facts.is_draft,
         events=[
             {
                 "t": _iso(event.time),
                 "kind": event.kind,
                 "actor": event.actor,
                 "detail": event.detail,
+                "ci": event.ci,
+                "subject": event.subject,
             }
             for event in activity.timeline
         ],

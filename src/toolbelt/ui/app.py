@@ -16,11 +16,12 @@ receives changes over a Server-Sent Events stream (``/events``):
   reconnects knows whether it missed anything.
 
 Each status column (next action, PR, CI, review, comments, merge) is its own
-cell. The same branches are also rendered as cards and as an event timeline
-(``view=cards`` / ``view=timeline``): the page script lays those out from the
-table's data, so the table stays the one source of truth for filtering and
-sorting. Sorting
-and filtering are client-side (``static/stack-table.js``): cells carry their
+cell. The same branches are also rendered as cards (``view=cards``), each with
+its own timeline track: the page script lays those out from the table's data,
+so the table stays the one source of truth for filtering and sorting. The
+trunk (``main``) is not a tracked branch and is never rendered; each stack
+starts at its first real branch. Sorting and filtering are client-side
+(``static/stack-table.js``): cells carry their
 sort/filter values as ``data-*`` attributes, the chosen view lives in the URL
 query string, and the script re-applies it after every live update. Rows are
 rendered flat in the DOM with parent pointers; the script does the indentation.
@@ -60,7 +61,6 @@ from toolbelt.tasks.tracker import TaskInfo, TaskTracker
 from toolbelt.ui import branch_links
 from toolbelt.ui.branch_links import Link
 from toolbelt.ui.next_action import ParentContext
-from toolbelt.ui.pr_activity import EVENT_KINDS
 from toolbelt.ui.pr_fetch import PrSnapshot, fetch_snapshot
 from toolbelt.ui.live_status import (
     DEFAULT_CONCURRENCY,
@@ -142,12 +142,15 @@ class BranchRow:
     id: str
     repo: RepoView
     name: str
+    #: Stack depth: 0 for a branch directly on the trunk.
     depth: int
+    #: Row id of the parent branch; ``""`` for a branch on the trunk, which is
+    #: not a tracked branch and never rendered.
     parent_id: str
+    #: The tracked branch this one is stacked on (``""`` on the trunk).
+    parent: str
     # Position in the page's depth-first order: the default sort.
     order: int
-    # False for the untracked base branch (e.g. ``main``): no status, no links.
-    tracked: bool
     current: bool
     cells: StatusCells
     task: Link | None
@@ -158,7 +161,9 @@ class BranchRow:
 
 
 def _walk(parents: Parents) -> list[tuple[str, int]]:
-    """Every branch (bases included) depth-first as ``(name, depth)``."""
+    """Every tracked branch depth-first as ``(name, depth)``. The trunk(s)
+    the stacks hang off are not tracked branches and are left out, so a
+    stack starts at depth 0 with its first real branch."""
     children = lineage.children_map(parents)
     order: list[tuple[str, int]] = []
 
@@ -168,7 +173,8 @@ def _walk(parents: Parents) -> list[tuple[str, int]]:
             visit(child, depth + 1)
 
     for base in lineage.roots(parents):
-        visit(base, 0)
+        for first in children.get(base, []):
+            visit(first, 0)
     return order
 
 
@@ -252,9 +258,11 @@ def _page_rows(
                         repo=view,
                         name=name,
                         depth=depth,
-                        parent_id=row_id(repo.id, parent) if parent else "",
+                        parent_id=(
+                            row_id(repo.id, parent) if parent in parents else ""
+                        ),
+                        parent=parent if parent in parents else "",
                         order=len(rows),
-                        tracked=name in parents,
                         current=name == current,
                         cells=_cells_for(
                             refresher.get(repo.id, name),
@@ -479,9 +487,8 @@ def create_app(
                 "repos": repos,
                 "rows": rows,
                 "columns": COLUMNS,
-                "event_kinds": EVENT_KINDS,
                 "filters": [
-                    (key, _FILTER_LABELS[key], options)
+                    (key, _FILTER_LABELS[key], [(o, o) for o in options])
                     for key, options in FILTER_OPTIONS.items()
                 ],
             },

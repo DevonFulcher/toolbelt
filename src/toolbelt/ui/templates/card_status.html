@@ -1,56 +1,110 @@
-{#- The live half of a branch's card: next action, PR, ages and status pills.
+{#- The live half of a branch's card: next action, PR, CI, review, comments,
+    merge, ages, failures, reviewers, title and the timeline mount.
 
     Rendered inside the card (card.html) and, on its own, as the "card"
     payload of a "status" server-sent event: the page script replaces the
-    element by id (static/live-updates.js). It also carries the branch's event
-    feed (data-events) that the timeline view is built from. -#}
+    element by id (static/live-updates.js). Its children are grid items of
+    the card (display: contents).
+
+    Every slot is always present and labelled. A slot's state class says how
+    to read its value: v-ok (data), v-na (not applicable: muted) and v-gap
+    (missing but could be set: a little more visible). While the status is
+    loading, failed or unreachable every slot says so. -#}
+{%- macro slot(key, label, state="ok") -%}
+<div class="slot s-{{ key }} v-{{ state }}" data-slot="{{ key }}"><span class="slot-label">{{ label }}</span><span class="slot-value">{{ caller() }}</span></div>
+{%- endmacro -%}
 {%- macro age(a) -%}
 <time{% if a.since %} data-since="{{ a.since }}"{% endif %}>{{ a.text }}</time>
 {%- endmacro -%}
-{%- set who_text = {"you": "needs you", "others": "waiting on others", "ci": "waiting on CI", "none": ""} -%}
+{%- set who_text = {"you": "needs you", "others": "waiting on others", "ci": "waiting on CI", "none": "done"} -%}
+{%- set slots = [
+    ("next", "Next"), ("pr", "PR"), ("ci", "CI"), ("review", "Review"),
+    ("comments", "Comments"), ("merge", "Merge"), ("pr_age", "PR age"),
+    ("in_draft", "In draft"), ("review_requested", "Review requested"),
+    ("ci_failures", "CI failures"), ("reviewers", "Reviewers"),
+    ("title", "PR title"), ("timeline", "Timeline"),
+] -%}
+{%- set d = c.detail -%}
+{%- set has_pr = c.loaded and c.pr != "none" -%}
 <div id="{{ cell_id(repo_id, branch, 'card') }}" class="card-live"
-     data-url="{{ c.pr_url or '' }}"
-     data-events='{{ (c.detail.events if c.detail else []) | tojson }}'>
-  {%- if path_missing -%}
-    <div class="muted">repo path missing</div>
-  {%- elif c.failed -%}
-    <div class="error" title="gh could not look up this branch's PR">status unavailable</div>
-  {%- elif not c.loaded -%}
-    <div class="muted">loading…</div>
-  {%- else -%}
-    <div class="card-next next-{{ c.next_who }}" title="{{ c.next_kind }}">
-      <span class="card-next-label">{{ c.next_label }}</span>
-      {%- if who_text[c.next_who] %} <span class="card-next-who">{{ who_text[c.next_who] }}</span>{% endif %}
-    </div>
-    <div class="card-pr">
-      {%- if c.pr == "none" -%}
-        <span class="muted">no PR</span>
+     data-url="{{ c.pr_url or '' }}">
+{%- if not c.loaded -%}
+  {%- set note = "repo path missing" if path_missing else ("status unavailable" if c.failed else "loading…") -%}
+  {%- for key, label in slots -%}
+    {%- call slot(key, label, "na") -%}<span{% if c.failed %} class="error" title="gh could not look up this branch's PR"{% endif %}>{{ note }}</span>{%- endcall -%}
+  {%- endfor -%}
+{%- else -%}
+  {%- call slot("next", "Next") -%}
+    <span class="card-next next-{{ c.next_who }}" title="{{ c.next_kind }}">{{ c.next_label }}</span>
+    <span class="card-next-who muted">{{ who_text[c.next_who] }}</span>
+  {%- endcall -%}
+
+  {%- if has_pr -%}
+    {%- call slot("pr", "PR") -%}
+      <a class="pill pr-{{ c.pr }}" href="{{ c.pr_url }}" target="_blank" rel="noopener">
+        {%- if c.pr_number %}#{{ c.pr_number }} {% endif %}{{ c.pr }}</a>
+    {%- endcall -%}
+    {%- if c.ci != "none" -%}
+      {%- call slot("ci", "CI") -%}<span class="pill ci-{{ c.ci }}">{{ c.ci }}</span>{%- endcall -%}
+    {%- else -%}
+      {%- call slot("ci", "CI", "na") -%}no CI configured{%- endcall -%}
+    {%- endif -%}
+    {%- if c.review != "none" -%}
+      {%- call slot("review", "Review") -%}<span class="pill review-{{ c.review }}">{{ c.review }}</span>{%- endcall -%}
+    {%- else -%}
+      {%- call slot("review", "Review", "gap") -%}no review requested{%- endcall -%}
+    {%- endif -%}
+    {%- if c.open_comments -%}
+      {%- call slot("comments", "Comments") -%}<span class="pill comments" title="unresolved review threads">{{ c.open_comments }} comment{{ "s" if c.open_comments != 1 }}</span>{%- endcall -%}
+    {%- else -%}
+      {%- call slot("comments", "Comments", "na") -%}0 comments{%- endcall -%}
+    {%- endif -%}
+    {%- if c.merge == "conflicts" -%}
+      {%- call slot("merge", "Merge") -%}<span class="pill conflicts">conflicts</span>{%- endcall -%}
+    {%- elif c.merge == "clean" -%}
+      {%- call slot("merge", "Merge") -%}clean{%- endcall -%}
+    {%- else -%}
+      {%- call slot("merge", "Merge", "na") -%}n/a (PR {{ c.pr }}){%- endcall -%}
+    {%- endif -%}
+
+    {%- if d -%}
+      {%- call slot("pr_age", "PR age") -%}{{ age(d.pr_age) }}{%- endcall -%}
+      {%- if d.draft_age -%}
+        {%- call slot("in_draft", "In draft") -%}{{ age(d.draft_age) }}{%- endcall -%}
       {%- else -%}
-        <a class="pill pr-{{ c.pr }}" href="{{ c.pr_url }}" target="_blank" rel="noopener">
-          {%- if c.pr_number %}#{{ c.pr_number }} {% endif %}{{ c.pr }}</a>
-        {%- if c.detail %} <span class="card-title" title="{{ c.detail.title }}">{{ c.detail.title }}</span>{% endif -%}
+        {%- call slot("in_draft", "In draft", "na") -%}not a draft{%- endcall -%}
       {%- endif -%}
-    </div>
-    {%- if c.detail %}
-    <dl class="ages">
-      <div><dt>PR age</dt><dd>{{ age(c.detail.pr_age) }}</dd></div>
-      {%- if c.detail.draft_age %}
-      <div><dt>In draft</dt><dd>{{ age(c.detail.draft_age) }}</dd></div>
-      {%- endif %}
-      {%- if c.detail.review_request_age %}
-      <div><dt>Review requested</dt><dd>{{ age(c.detail.review_request_age) }}</dd></div>
-      {%- endif %}
-      <div><dt>CI failures</dt><dd{% if c.detail.ci_failures %} class="ci-failed"{% endif %}>{{ c.detail.ci_failures }}</dd></div>
-    </dl>
-    {%- endif %}
-    {%- if c.pr != "none" %}
-    <div class="card-facts">
-      {%- if c.ci != "none" %}<span class="pill ci-{{ c.ci }}">CI {{ c.ci }}</span>{% endif %}
-      {%- if c.review != "none" %}<span class="pill review-{{ c.review }}">{{ c.review }}</span>{% endif %}
-      {%- if c.open_comments %}<span class="pill comments" title="unresolved review threads">{{ c.open_comments }} comment{{ "s" if c.open_comments != 1 }}</span>{% endif %}
-      {%- if c.merge == "conflicts" %}<span class="pill conflicts">conflicts</span>
-      {%- elif c.merge == "clean" %}<span class="muted">merge clean</span>{% endif %}
-    </div>
-    {%- endif %}
+      {%- if d.review_request_age -%}
+        {%- call slot("review_requested", "Review requested") -%}{{ age(d.review_request_age) }}{%- endcall -%}
+      {%- else -%}
+        {%- call slot("review_requested", "Review requested", "na") -%}not requested{%- endcall -%}
+      {%- endif -%}
+      {%- call slot("ci_failures", "CI failures", "ok" if d.ci_failures else "na") -%}
+        <span{% if d.ci_failures %} class="ci-failed"{% endif %}>{{ d.ci_failures }} failure{{ "s" if d.ci_failures != 1 }}</span>
+      {%- endcall -%}
+      {%- if d.reviewers -%}
+        {%- call slot("reviewers", "Reviewers") -%}{{ d.reviewers | join(", ") }}{%- endcall -%}
+      {%- else -%}
+        {%- call slot("reviewers", "Reviewers", "na") -%}none requested{%- endcall -%}
+      {%- endif -%}
+      {%- call slot("title", "PR title") -%}<span title="{{ d.title }}">{{ d.title }}</span>{%- endcall -%}
+      {%- call slot("timeline", "Timeline") -%}
+        <div class="tl-mount" data-track='{{ {"created": d.created, "ended": d.ended, "state": c.pr, "draft": d.is_draft, "events": d.events} | tojson }}'></div>
+      {%- endcall -%}
+    {%- else -%}
+      {%- for key, label in slots[6:] -%}
+        {%- call slot(key, label, "na") -%}PR details unavailable{%- endcall -%}
+      {%- endfor -%}
+    {%- endif -%}
+  {%- else -%}
+    {%- for key, label in slots[1:6] -%}
+      {%- call slot(key, label, "gap" if key == "pr" else "na") -%}no PR{%- endcall -%}
+    {%- endfor -%}
+    {%- for key, label in slots[6:11] -%}
+      {%- call slot(key, label, "na") -%}no PR{%- endcall -%}
+    {%- endfor -%}
+    {%- call slot("title", "PR title", "na") -%}no PR{%- endcall -%}
+    {%- call slot("timeline", "Timeline", "na") -%}no PR yet — no timeline{%- endcall -%}
   {%- endif -%}
+{%- endif -%}
 </div>

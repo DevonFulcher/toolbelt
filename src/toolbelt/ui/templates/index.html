@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>toolbelt stacks</title>
 <script src="/static/htmx.min.js"></script>
+<script src="/static/pr-timeline.js" defer></script>
 <script src="/static/stack-table.js" defer></script>
 <script src="/static/live-updates.js" defer></script>
 <style>
@@ -102,51 +103,112 @@
   @keyframes flash { from { background: color-mix(in srgb, var(--accent) 30%, transparent); } }
   .flash { animation: flash 1.5s ease-out; }
   .notice { padding: 6px 12px; color: var(--amber); font-size: 12px; }
-  /* Cards view */
-  .cards { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(19rem, 1fr)); }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px;
-          padding: 10px 12px; display: grid; gap: 8px; align-content: start; min-width: 0; }
-  .card[hidden] { display: none; }
-  .card-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
-  .card-head .branch { margin-left: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .repo-chip { flex: none; font-size: 11px; color: var(--muted); border: 1px solid var(--line);
-               border-radius: 4px; padding: 0 6px; }
-  .card-live { display: grid; gap: 8px; min-width: 0; }
-  .card-next { font-size: 16px; font-weight: 600; border-left: 3px solid currentColor;
-               padding-left: 8px; }
-  .card-next-who { font-size: 12px; font-weight: 400; opacity: .85; }
-  .card-pr { display: flex; align-items: center; gap: 8px; min-width: 0; }
-  .card-title { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  dl.ages { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0; }
-  dl.ages div { display: flex; gap: 6px; align-items: baseline; }
-  dl.ages dt { font-size: 11px; color: var(--muted); }
-  dl.ages dd { margin: 0; font-weight: 600; }
-  .card-facts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-  .card-foot { display: flex; justify-content: space-between; gap: 8px; font-size: 12px;
-               color: var(--muted); border-top: 1px solid var(--line); padding-top: 6px; min-width: 0; }
-  .card-foot > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-  .card-task .task-title { margin: 0 4px; }
+  /* Compact table: one combined status cell instead of five columns. */
+  .stacks .col-status, .stacks th[data-col=status] { display: none; }
+  .stacks.compact .col-status, .stacks.compact th[data-col=status] { display: table-cell; }
+  .stacks.compact .col-pr, .stacks.compact .col-ci, .stacks.compact .col-review,
+  .stacks.compact .col-comments, .stacks.compact .col-merge,
+  .stacks.compact th[data-col=pr], .stacks.compact th[data-col=ci],
+  .stacks.compact th[data-col=review], .stacks.compact th[data-col=comments],
+  .stacks.compact th[data-col=merge] { display: none; }
+  .stacks th[data-col=status] { padding: 6px 12px; font-size: 12px; font-weight: 600; color: var(--muted); }
+  .stacks tr.context td { opacity: .55; }
+  .stacks .col-status .pill { margin-right: 4px; }
 
-  /* Timeline view */
-  #timeline-list { list-style: none; margin: 0; padding: 0; background: var(--card);
-                   border: 1px solid var(--line); border-radius: 8px; }
-  .ev { display: grid; grid-template-columns: 5.5rem 11rem minmax(0, 1fr); gap: 2px 12px;
-        padding: 6px 12px; border-top: 1px solid var(--line); align-items: baseline; }
-  .ev:first-child { border-top: 0; }
-  .ev-time { color: var(--muted); font-size: 12px; }
-  .ev-kind { font-size: 12px; white-space: nowrap; }
-  .ev-icon { display: inline-block; width: 1.2em; text-align: center; }
-  .ev-what { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; min-width: 0; }
-  .ev-actor { color: var(--muted); }
-  .ev-detail { overflow: hidden; text-overflow: ellipsis; }
-  .ev-opened .ev-kind, .ev-ready_for_review .ev-kind, .ev-reopened .ev-kind { color: var(--green); }
-  .ev-converted_to_draft .ev-kind, .ev-review_request_removed .ev-kind { color: var(--gray); }
-  .ev-review_requested .ev-kind, .ev-review .ev-kind { color: var(--amber); }
-  .ev-commit .ev-kind, .ev-force_push .ev-kind { color: var(--accent); }
-  .ev-merged .ev-kind { color: var(--purple); }
-  .ev-closed .ev-kind { color: var(--red); }
-  .ev-more { padding: 8px 12px; color: var(--muted); font-size: 12px; }
-  @media (max-width: 40rem) { .ev { grid-template-columns: 1fr; } }
+  /* Cards: vertical, dense, table-like rows. Every datum is a labelled slot
+     in a fixed grid position, so rows align; empty values say why. */
+  .cards-wrap { display: grid; gap: 8px; }
+  .cards { display: grid; gap: 8px; }
+  .cards-group { margin: 8px 0 0; font-size: 12px; font-weight: 600; color: var(--muted);
+                 text-transform: uppercase; letter-spacing: .04em; }
+  .card { --cols: minmax(13rem, 1.7fr) 10rem 6.5rem 5.5rem 6.5rem 6rem 6.5rem minmax(8rem, 1fr) 8rem;
+          background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+          padding: 8px 12px; display: grid; grid-template-columns: var(--cols);
+          gap: 6px 12px; align-items: start; min-width: 0; }
+  .card[hidden] { display: none; }
+  .card-live { display: contents; }
+  .slot { display: grid; gap: 1px; min-width: 0; }
+  .slot-label { font-size: 10px; text-transform: uppercase; letter-spacing: .04em;
+                color: var(--muted); }
+  .slot-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  /* not applicable: muted; missing but could be set: a little more visible */
+  .v-na .slot-value { color: var(--muted); opacity: .8; }
+  .v-gap .slot-value { color: var(--fg); font-style: italic;
+                       text-decoration: underline dashed var(--amber); text-underline-offset: 3px; }
+  .s-branch { grid-area: 1 / 1; padding-left: calc(var(--depth, 0) * 1.25rem); }
+  .s-branch .branch { margin-left: 0; }
+  .s-next { grid-area: 1 / 2; }
+  .s-pr { grid-area: 1 / 3; }
+  .s-ci { grid-area: 1 / 4; }
+  .s-review { grid-area: 1 / 5; }
+  .s-comments { grid-area: 1 / 6; }
+  .s-merge { grid-area: 1 / 7; }
+  .s-task { grid-area: 1 / 8; }
+  .s-session { grid-area: 1 / 9; }
+  .s-parent { grid-area: 2 / 1; padding-left: calc(var(--depth, 0) * 1.25rem); }
+  .s-pr_age { grid-area: 2 / 2; }
+  .s-in_draft { grid-area: 2 / 3; }
+  .s-review_requested { grid-area: 2 / 4 / auto / span 2; }
+  .s-ci_failures { grid-area: 2 / 6; }
+  .s-reviewers { grid-area: 2 / 7 / auto / span 3; }
+  .s-title { grid-area: 3 / 1 / auto / -1; }
+  .s-timeline { grid-area: 4 / 1 / auto / -1; }
+  .s-title .slot-value { color: var(--fg); }
+  .repo-chip { font-size: 11px; color: var(--muted); border: 1px solid var(--line);
+               border-radius: 4px; padding: 0 6px; margin-right: 4px; }
+  .card-next { font-weight: 600; }
+  .card-next-who { font-size: 11px; margin-left: 4px; }
+  .card .task-title { margin: 0 4px; }
+  @media (max-width: 70rem) {
+    .card { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+    .card .slot { flex: 0 1 auto; padding-left: 0; }
+    .s-title, .s-timeline { flex: 1 1 100%; order: 9; }
+    .s-task, .s-session { order: 5; }
+    .s-parent, .s-pr_age, .s-in_draft, .s-review_requested, .s-ci_failures, .s-reviewers { order: 6; }
+  }
+
+  /* Per-card timeline track */
+  .tl { display: grid; gap: 2px; }
+  .tl-ends { display: flex; justify-content: space-between; align-items: center; gap: 8px;
+             font-size: 11px; color: var(--muted); }
+  .tl-ends button { font-size: 11px; padding: 0 6px; border-radius: 4px; }
+  .tl-ends .tl-buttons { display: inline-flex; gap: 6px; }
+  .tl-track { position: relative; height: var(--tl-height, 24px); margin: 0 6px; cursor: pointer; }
+  .tl-expanded .tl-track { cursor: default; }
+  .tl-axis { position: absolute; left: 0; right: 0; top: 12px; height: 2px; margin-top: -1px;
+             background: var(--line); }
+  .tl-expanded .tl-axis { top: 14px; }
+  .tl-tick { position: absolute; top: 20px; font-size: 10px; color: var(--muted);
+             transform: translateX(-50%); }
+  .tl-phase { position: absolute; border-radius: 3px; opacity: .35; }
+  .tl-collapsed .tl-phase { top: 7px; height: 10px; }
+  .tl-expanded .tl-phase { top: 8px; height: 12px; }
+  .tl-phase-draft { background: var(--gray); }
+  .tl-phase-waiting { background: var(--amber); }
+  .tl-phase-ci_failing { background: var(--red); }
+  .tl-collapsed .tl-phase-ci_failing { top: 18px; height: 4px; }
+  .tl-expanded .tl-phase-ci_failing { top: 22px; height: 5px; }
+  .tl-mark { position: absolute; top: 12px; transform: translate(-50%, -50%); font-size: 12px;
+             line-height: 1; white-space: nowrap; }
+  .tl-expanded .tl-mark { top: 14px; }
+  .tl-faint { opacity: .55; color: var(--gray); font-size: 10px; }
+  .tl-collapsed .tl-faint { display: none; }
+  .tl-k-commits { border: 1px solid var(--gray); border-radius: 8px; padding: 1px 4px; background: var(--card); }
+  .tl-k-commit_failed, .tl-k-closed, .tl-k-review_changes { color: var(--red); }
+  .tl-k-review_requested, .tl-k-review_commented, .tl-k-review_request_removed { color: var(--amber); }
+  .tl-k-ready_for_review, .tl-k-review_approved, .tl-k-opened, .tl-k-reopened { color: var(--green); }
+  .tl-k-converted_to_draft { color: var(--gray); }
+  .tl-k-force_push { color: var(--accent); }
+  .tl-k-merged { color: var(--purple); }
+  .tl-now { position: absolute; right: -1px; top: 2px; bottom: 2px; border-right: 2px solid var(--accent); }
+  .tl-label { position: absolute; left: 100%; top: 50%; transform: translateY(-50%);
+              margin-left: 4px; font-size: 11px; color: var(--fg); }
+  .tl-label.tl-flip { left: auto; right: 100%; margin-left: 0; margin-right: 4px; }
+  .tl-list { list-style: none; margin: 6px 0 0; padding: 6px 0 0; border-top: 1px solid var(--line);
+             display: grid; gap: 2px; font-size: 12px; white-space: normal; }
+  .tl-item { display: grid; grid-template-columns: 5rem 11rem 8rem minmax(0, 1fr); gap: 0 12px; }
+  .tl-when, .tl-who { color: var(--muted); }
+  .tl-i-commit_failed .tl-what { color: var(--red); }
   .empty { padding: 24px; text-align: center; color: var(--muted); }
   [hidden] { display: none !important; }
 </style>
@@ -172,7 +234,7 @@
     <label>{{ label }}
       <select name="{{ key }}">
         <option value="">Any</option>
-        {% for option in options %}<option value="{{ option }}">{{ option }}</option>{% endfor %}
+        {% for value, text in options %}<option value="{{ value }}">{{ text }}</option>{% endfor %}
       </select>
     </label>
     {% endfor %}
@@ -180,7 +242,6 @@
       <button type="button" data-view="tree" aria-pressed="true">Tree</button>
       <button type="button" data-view="flat" aria-pressed="false">Flat</button>
       <button type="button" data-view="cards" aria-pressed="false">Cards</button>
-      <button type="button" data-view="timeline" aria-pressed="false">Timeline</button>
     </span>
     <label data-views="cards" hidden>Sort
       <select name="sort">
@@ -188,13 +249,9 @@
         {% for key, label in columns %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
       </select>
     </label>
-    <label data-views="timeline" hidden>Event
-      <select name="kind">
-        <option value="">Any</option>
-        {% for kind in event_kinds %}<option value="{{ kind }}">{{ kind.replace("_", " ") }}</option>{% endfor %}
-      </select>
-    </label>
-    <button type="button" id="order" data-views="timeline" hidden>Newest first</button>
+    <button type="button" id="done" aria-pressed="false" title="Show merged and closed branches">Include done</button>
+    <button type="button" id="compact" data-views="tree flat" aria-pressed="false" title="Combine the PR, CI, review, comments and merge columns">Compact</button>
+    <button type="button" id="group" data-views="cards" aria-pressed="false" title="Group cards by repo and stack">Group by repo</button>
     <button type="button" id="clear">Clear</button>
     <span id="count" aria-live="polite"></span>
   </form>
@@ -208,6 +265,7 @@
     <thead>
       <tr>
         {% for key, label in columns %}
+        {% if key == "task" %}<th data-col="status" aria-sort="none">Status</th>{% endif %}
         <th data-col="{{ key }}" aria-sort="none"><button type="button">{{ label }}<span class="arrow" aria-hidden="true"></span></button></th>
         {% endfor %}
       </tr>
@@ -216,12 +274,11 @@
     {% for row in rows %}
       <tr data-id="{{ row.id }}" data-repo="{{ row.repo.id }}" data-branch="{{ row.name }}"
           data-parent="{{ row.parent_id }}" data-order="{{ row.order }}"
-          data-tracked="{{ 1 if row.tracked else 0 }}" style="--depth: {{ row.depth }}">
+          style="--depth: {{ row.depth }}">
         <td class="col-repo" data-col="repo" data-value="{{ row.repo.id }}" data-sort="{{ row.repo.name }}" data-search="{{ row.repo.name }}" title="{{ row.repo.path }}">{{ row.repo.name }}</td>
         <td class="col-branch" data-col="branch" data-value="{{ row.name }}" data-sort="{{ row.name }}" data-search="{{ row.name }}">
-          <span class="branch{% if not row.tracked %} base{% endif %}{% if row.current %} current{% endif %}">{{ row.name }}</span>
+          <span class="branch{% if row.current %} current{% endif %}">{{ row.name }}</span>
         </td>
-        {% if row.tracked %}
           {% with repo_id=row.repo.id, branch=row.name, c=row.cells, path_missing=row.repo.path_missing %}{% include "status.html" %}{% endwith %}
           {% with repo_id=row.repo.id, branch=row.name, task=row.task, fetchable=row.task_fetchable, loading=row.task_fetchable, info=none, unavailable=none %}{% include "task.html" %}{% endwith %}
           <td class="col-session" data-col="session"
@@ -229,22 +286,16 @@
             {%- if row.agent -%}{%- if row.agent.href -%}<a href="{{ row.agent.href }}">{{ row.agent.label }}</a>{%- else -%}{{ row.agent.label }}{%- endif -%}
             {%- else -%}<span class="muted">—</span>{%- endif -%}
           </td>
-        {% else %}
-          {% for key in ("next", "pr", "ci", "review", "comments", "merge", "task", "session") %}
-          <td data-col="{{ key }}" data-value="" data-sort="" data-search=""></td>
-          {% endfor %}
-        {% endif %}
       </tr>
     {% endfor %}
     </tbody>
   </table>
   </div>
-  <div class="cards" id="cards" hidden>
-    {% for row in rows if row.tracked %}{% include "card.html" %}{% endfor %}
+  <div class="cards-wrap" id="cards-wrap" hidden>
+    <div class="cards" id="cards">
+      {% for row in rows %}{% include "card.html" %}{% endfor %}
+    </div>
   </div>
-  <section id="timeline" hidden>
-    <ol id="timeline-list"></ol>
-  </section>
 {% else %}
   <div class="empty">No tracked stacks. Use <code>tt g append</code> to start one.</div>
 {% endif %}

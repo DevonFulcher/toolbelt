@@ -10,17 +10,12 @@ const table = require("../../src/toolbelt/ui/static/stack-table.js");
 const state = (overrides = {}) => ({ ...table.DEFAULT_STATE, ...overrides });
 
 // A row as the DOM layer reads it: only the values the tests care about.
-function row(
-  id,
-  parent,
-  order,
-  { tracked = true, search = id, repo = "1", ...cells } = {},
-) {
+function row(id, parent, order, { search = id, repo = "1", ...cells } = {}) {
   const out = {};
   for (const [col, value] of Object.entries(cells)) {
     out[col] = typeof value === "string" ? { value, sort: value } : value;
   }
-  return { id, repo, parent, order, tracked, search, cells: out };
+  return { id, repo, parent, order, search, cells: out };
 }
 
 const ids = (entries) => entries.map((e) => e.id);
@@ -38,6 +33,9 @@ test("state round-trips through the query string and omits defaults", () => {
     review: "approved",
     comments: "has comments",
     merge: "conflicts",
+    done: "1",
+    compact: "1",
+    group: "repo",
   });
   const query = table.serializeState(full);
   assert.deepEqual(table.parseState(query), full);
@@ -62,8 +60,25 @@ test("the comments column is sortable and filterable", () => {
 });
 
 test("parseState ignores unknown sort columns and view names", () => {
-  const parsed = table.parseState("?sort=evil&view=3d&dir=sideways");
+  const parsed = table.parseState("?sort=evil&view=3d&dir=sideways&done=yes&group=x");
   assert.deepEqual(parsed, table.DEFAULT_STATE);
+});
+
+test("the retired timeline view and its filters are ignored, not an error", () => {
+  const parsed = table.parseState("?view=timeline&kind=review&order=oldest&next=you");
+  assert.deepEqual(parsed, { ...table.DEFAULT_STATE, next: "you" });
+  assert.equal(table.serializeState(parsed), "?next=you");
+  assert.deepEqual(table.VIEWS, ["tree", "flat", "cards"]);
+});
+
+test("compact comes from the URL, else from the remembered choice", () => {
+  assert.equal(table.initialState("", null).compact, "");
+  assert.equal(table.initialState("", "1").compact, "1");
+  assert.equal(table.initialState("?compact=1", null).compact, "1");
+  // The URL wins over the remembered choice (a bare URL is "not compact"
+  // only when it names compact explicitly as absent: here there is no key).
+  assert.equal(table.initialState("?view=flat", "1").compact, "1");
+  assert.equal(table.initialState("?view=flat", "0").compact, "");
 });
 
 test("toggleSort starts ascending and flips on the same column", () => {
@@ -86,10 +101,9 @@ const flat = [
   row("b", "main", 2, { pr: { value: "merged", sort: "9" } }),
   row("c", "main", 3, { pr: { value: "none", sort: "" } }),
   row("d", "main", 4, { pr: { value: "open", sort: "101" } }),
-  row("main", null, 0, { tracked: false }),
 ];
 
-test("flat view lists only tracked rows, in server order by default", () => {
+test("flat view lists the rows in server order by default", () => {
   const out = table.layout(flat, state({ view: "flat" }));
   assert.deepEqual(ids(out), ["a", "b", "c", "d"]);
   assert.ok(out.every((e) => e.depth === 0));
@@ -132,37 +146,37 @@ test("text filter is case-insensitive, ANDs terms, and accepts #PR numbers", () 
   assert.deepEqual(view("nothing"), []);
 });
 
-// main
+// (trunk)
 // ├─ a ── a1, a2
 // └─ b
+// The trunk is not a row: a stack's first branch has no parent row.
 const tree = [
-  row("main", null, 0, { tracked: false, pr: "" }),
   row("a", "main", 1, { pr: { value: "open", sort: "30" } }),
   row("a1", "a", 2, { pr: { value: "open", sort: "5" } }),
   row("a2", "a", 3, { pr: { value: "closed", sort: "50" } }),
   row("b", "main", 4, { pr: { value: "open", sort: "10" } }),
 ];
 
-test("tree view is depth-first with depths, bases included", () => {
+test("tree view is depth-first from each stack's first branch", () => {
   const out = table.layout(tree, state());
   assert.deepEqual(
     out.map((e) => [e.id, e.depth]),
-    [["main", 0], ["a", 1], ["a1", 2], ["a2", 2], ["b", 1]],
+    [["a", 0], ["a1", 1], ["a2", 1], ["b", 0]],
   );
 });
 
 test("tree sort applies among siblings, keeping children under parents", () => {
   const asc = table.layout(tree, state({ sort: "pr" }));
-  assert.deepEqual(ids(asc), ["main", "b", "a", "a1", "a2"]);
+  assert.deepEqual(ids(asc), ["b", "a", "a1", "a2"]);
   const desc = table.layout(tree, state({ sort: "pr", dir: "desc" }));
-  assert.deepEqual(ids(desc), ["main", "a", "a2", "a1", "b"]);
+  assert.deepEqual(ids(desc), ["a", "a2", "a1", "b"]);
 });
 
-test("tree filter keeps ancestors of matches for context", () => {
+test("tree filter keeps ancestors of matches for context, flagged", () => {
   const out = table.layout(tree, state({ pr: "closed" }));
   assert.deepEqual(
-    out.map((e) => [e.id, e.depth]),
-    [["main", 0], ["a", 1], ["a2", 2]],
+    out.map((e) => [e.id, e.depth, e.context]),
+    [["a", 0, true], ["a2", 1, false]],
   );
 });
 
@@ -181,47 +195,40 @@ test("rows whose parent is missing become roots; cycles do not hang", () => {
 });
 
 // Two repos in one table: ids are unique across repos, so a branch name can
-// repeat (here "main" and "x").
+// repeat (here "x").
 const multi = [
-  row("1:main", null, 0, { tracked: false, repo: "1", pr: "" }),
   row("1:x", "1:main", 1, { repo: "1", pr: { value: "open", sort: "9" } }),
   row("1:y", "1:main", 2, { repo: "1", pr: { value: "open", sort: "3" } }),
-  row("2:main", null, 3, { tracked: false, repo: "2", pr: "" }),
   row("2:x", "2:main", 4, { repo: "2", pr: { value: "merged", sort: "1" } }),
 ];
-multi[0].cells.repo = { value: "1", sort: "alpha" };
 for (const r of multi) r.cells.repo = { value: r.repo, sort: r.repo === "1" ? "alpha" : "beta" };
 
 test("tree view keeps each repo's rows together in server order", () => {
   const out = table.layout(multi, state());
-  assert.deepEqual(ids(out), ["1:main", "1:x", "1:y", "2:main", "2:x"]);
-  assert.deepEqual(out.map((e) => e.depth), [0, 1, 1, 0, 1]);
+  assert.deepEqual(ids(out), ["1:x", "1:y", "2:x"]);
+  assert.deepEqual(out.map((e) => e.depth), [0, 0, 0]);
 });
 
 test("sorting a column never interleaves repos in tree view", () => {
   const out = table.layout(multi, state({ sort: "pr" }));
-  assert.deepEqual(ids(out), ["1:main", "1:y", "1:x", "2:main", "2:x"]);
+  assert.deepEqual(ids(out), ["1:y", "1:x", "2:x"]);
 });
 
 test("sorting by repo orders the repo groups; flat view sorts across repos", () => {
   const desc = table.layout(multi, state({ sort: "repo", dir: "desc" }));
-  assert.deepEqual(ids(desc), ["2:main", "2:x", "1:main", "1:x", "1:y"]);
-  const flatByRepo = table.layout(multi, state({ view: "flat", sort: "repo", dir: "desc" }));
-  assert.deepEqual(ids(flatByRepo), ["2:x", "1:x", "1:y"]);
+  assert.deepEqual(ids(desc), ["2:x", "1:x", "1:y"]);
   const flatByPr = table.layout(multi, state({ view: "flat", sort: "pr" }));
   assert.deepEqual(ids(flatByPr), ["2:x", "1:y", "1:x"]);
 });
 
-test("the repo filter scopes the table to one repo, bases included in tree view", () => {
-  const tree = table.layout(multi, state({ repo: "2" }));
-  assert.deepEqual(ids(tree), ["2:main", "2:x"]);
-  const flat = table.layout(multi, state({ view: "flat", repo: "1" }));
-  assert.deepEqual(ids(flat), ["1:x", "1:y"]);
+test("the repo filter scopes the table to one repo", () => {
+  assert.deepEqual(ids(table.layout(multi, state({ repo: "2" }))), ["2:x"]);
+  assert.deepEqual(ids(table.layout(multi, state({ view: "flat", repo: "1" }))), ["1:x", "1:y"]);
 });
 
-test("repo filter combines with value filters and keeps ancestors", () => {
+test("repo filter combines with value filters", () => {
   const out = table.layout(multi, state({ repo: "1", pr: "open" }));
-  assert.deepEqual(ids(out), ["1:main", "1:x", "1:y"]);
+  assert.deepEqual(ids(out), ["1:x", "1:y"]);
   assert.deepEqual(table.layout(multi, state({ repo: "2", pr: "open" })), []);
 });
 
@@ -241,17 +248,15 @@ test("the next column floats rows that need the user first and filters by who", 
   assert.equal(table.parseState("?next=you").next, "you");
 });
 
-test("the cards and timeline views live in the URL next to tree and flat", () => {
-  for (const view of ["flat", "cards", "timeline"]) {
+test("the cards view lives in the URL next to tree and flat", () => {
+  for (const view of ["flat", "cards"]) {
     const query = table.serializeState(state({ view }));
     assert.equal(query, `?view=${view}`);
     assert.equal(table.parseState(query).view, view);
   }
   assert.equal(table.parseState("?view=tree").view, "tree");
-  const full = state({ view: "timeline", kind: "review", order: "oldest", q: "auth", next: "you" });
+  const full = state({ view: "cards", group: "repo", q: "auth", next: "you", done: "1" });
   assert.deepEqual(table.parseState(table.serializeState(full)), full);
-  // The defaults stay out of the URL.
-  assert.equal(table.serializeState(state({ view: "timeline" })), "?view=timeline");
 });
 
 test("cards are flat, filtered, and by default list what needs you first", () => {
@@ -263,77 +268,56 @@ test("cards are flat, filtered, and by default list what needs you first", () =>
   ];
   const cards = (o) => table.layout(rows, state({ view: "cards", ...o }));
   assert.deepEqual(ids(cards({})), ["b", "d", "c", "a"]);
-  // Never indented: a card grid has no depth.
+  // Not indented unless grouped: sorted rows are not in stack order.
   assert.ok(cards({}).every((entry) => entry.depth === 0));
   // The sort select overrides the default; filters apply as in the table.
   assert.deepEqual(ids(cards({ sort: "next", dir: "desc" })), ["a", "c", "b", "d"]);
   assert.deepEqual(ids(cards({ next: "you" })), ["b", "d"]);
 });
 
-function withEvents(r, events, extra = {}) {
-  return { ...r, branch: r.id, repoName: "api", number: "1", url: "", events, ...extra };
-}
-
-test("the timeline merges every branch's events, newest first", () => {
+test("grouped cards keep each repo's stacks together, indented by depth", () => {
   const rows = [
-    withEvents(row("a", "main", 1), [
-      { t: "2026-10-01T10:00:00Z", kind: "opened", actor: "devon", detail: "A" },
-      { t: "2026-10-03T10:00:00Z", kind: "commit", actor: "devon", detail: "c1" },
-    ]),
-    withEvents(row("b", "main", 2), [
-      { t: "2026-10-02T10:00:00Z", kind: "review", actor: "sam", detail: "approved" },
-    ]),
+    row("1:a", "1:main", 1, { repo: "1", next: { value: "others", sort: "3" } }),
+    row("1:b", "1:a", 2, { repo: "1", next: { value: "you", sort: "1" } }),
+    row("2:c", "2:main", 3, { repo: "2", next: { value: "you", sort: "1" } }),
+    row("1:d", "1:main", 4, { repo: "1", next: { value: "ci", sort: "2" } }),
   ];
 
-  const newest = table.timeline(rows, state({ view: "timeline" }));
-  assert.deepEqual(newest.entries.map((e) => `${e.id}:${e.kind}`), [
-    "a:commit",
-    "b:review",
-    "a:opened",
-  ]);
-  assert.equal(newest.total, 3);
+  const out = table.layout(rows, state({ view: "cards", group: "repo" }));
 
-  const oldest = table.timeline(rows, state({ view: "timeline", order: "oldest" }));
-  assert.deepEqual(oldest.entries.map((e) => e.kind), ["opened", "review", "commit"]);
+  // Siblings still float what needs you first; children stay under parents.
+  assert.deepEqual(
+    out.map((e) => [e.id, e.depth]),
+    [["1:d", 0], ["1:a", 0], ["1:b", 1], ["2:c", 0]],
+  );
 });
 
-test("the timeline filters by event kind, branch text, repo and the other filters", () => {
-  const events = [
-    { t: "2026-10-01T10:00:00Z", kind: "opened", actor: "devon", detail: "" },
-    { t: "2026-10-02T10:00:00Z", kind: "review", actor: "sam", detail: "approved" },
-  ];
+const withNext = (value) => ({ next: { value, sort: "" } });
+
+test("done branches are hidden unless included or asked for by the next filter", () => {
   const rows = [
-    withEvents(row("a", "main", 1, { search: "auth-api", repo: "1", ci: "failed" }), events),
-    withEvents(row("b", "main", 2, { search: "auth-ui", repo: "2", ci: "success" }), events),
-    // An untracked base branch has no events of its own to show.
-    withEvents(row("main", null, 0, { tracked: false }), events),
+    row("a", "main", 1, withNext("you")),
+    row("b", "main", 2, withNext("none")),
+    row("c", "main", 3, withNext("")),
   ];
-  const kinds = (o) =>
-    table.timeline(rows, state({ view: "timeline", ...o })).entries.map((e) => `${e.id}:${e.kind}`);
-  assert.deepEqual(kinds({ kind: "review" }), ["b:review", "a:review"]);
-  assert.deepEqual(kinds({ q: "auth-api" }), ["a:review", "a:opened"]);
-  assert.deepEqual(kinds({ repo: "2", kind: "opened" }), ["b:opened"]);
-  assert.deepEqual(kinds({ ci: "failed", kind: "review" }), ["a:review"]);
+  const view = (o) => ids(table.layout(rows, state({ view: "flat", ...o })));
+  assert.deepEqual(view({}), ["a", "c"]);
+  assert.deepEqual(view({ done: "1" }), ["a", "b", "c"]);
+  assert.deepEqual(view({ next: "none" }), ["b"]);
+  assert.deepEqual(view({ next: "you" }), ["a"]);
 });
 
-test("the timeline is cut to the most recent events", () => {
-  const events = [];
-  for (let i = 0; i < 250; i += 1) {
-    const day = String(1 + Math.floor(i / 24)).padStart(2, "0");
-    const hour = String(i % 24).padStart(2, "0");
-    events.push({ t: `2026-10-${day}T${hour}:00:00Z`, kind: "commit", actor: "d", detail: `${i}` });
-  }
-  const rows = [withEvents(row("a", "main", 1), events)];
-
-  const result = table.timeline(rows, state({ view: "timeline" }));
-
-  assert.equal(result.total, 250);
-  assert.equal(result.entries.length, table.TIMELINE_LIMIT);
-  assert.equal(result.entries[0].detail, "249");
-  assert.equal(result.entries[result.entries.length - 1].detail, "50");
-  // Oldest-first reads the same window from its start.
-  const oldest = table.timeline(rows, state({ view: "timeline", order: "oldest" }));
-  assert.equal(oldest.entries[0].detail, "50");
+test("a done parent stays as context for an open child", () => {
+  const rows = [
+    row("a", "main", 1, withNext("none")),
+    row("b", "a", 2, withNext("you")),
+  ];
+  const out = table.layout(rows, state());
+  assert.deepEqual(
+    out.map((e) => [e.id, e.depth, e.context]),
+    [["a", 0, true], ["b", 1, false]],
+  );
+  assert.equal(table.matches(rows[0], state()), false);
 });
 
 test("formatAge matches the server's compact ages", () => {

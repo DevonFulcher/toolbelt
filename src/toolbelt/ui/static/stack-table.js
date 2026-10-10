@@ -1,10 +1,11 @@
 /*
  * Sorting, filtering and the views of the `tt ui` page: the stack table (tree
- * or flat), a grid of cards and an event timeline.
+ * or flat, optionally compact) and a vertical list of cards, one per branch,
+ * each with its own timeline track (static/pr-timeline.js).
  *
  * The table is the source of truth: its cells carry the sort/filter values,
- * and the cards and timeline are laid out from the same rows (a card is
- * matched to its row by id; its live half carries the branch's events).
+ * and the cards are laid out from the same rows (a card is matched to its row
+ * by id; its live half carries the branch's timeline data).
  *
  * Two layers. The first half is pure (no DOM): it parses/serialises the view
  * state kept in the URL query string and computes which rows show, in what
@@ -16,7 +17,7 @@
  * cells or rows), keeping the user's sort, filters and scroll position.
  */
 (function (root, factory) {
-  const api = factory();
+  const api = factory(root);
   if (typeof module === "object" && module.exports) {
     module.exports = api;
   } else {
@@ -29,7 +30,10 @@
       }
     }
   }
-})(typeof self !== "undefined" ? self : this, function () {
+})(typeof self !== "undefined" ? self : this, function (root) {
+  const PrTimeline =
+    typeof require === "function" ? require("./pr-timeline.js") : root.PrTimeline;
+
   const COLUMNS = [
     "repo",
     "branch",
@@ -45,15 +49,14 @@
   // Columns with an exact-match value filter (the repo filter is separate:
   // it scopes the whole table rather than hiding rows).
   const VALUE_FILTERS = ["next", "pr", "ci", "review", "comments", "merge"];
-  const VIEWS = ["tree", "flat", "cards", "timeline"];
-  // The timeline shows at most this many of the most recent events.
-  const TIMELINE_LIMIT = 200;
+  const VIEWS = ["tree", "flat", "cards"];
+  // Where the compact-table choice is remembered between visits. A
+  // convenience only: the URL is the state.
+  const COMPACT_STORAGE_KEY = "tt-ui-compact";
   const DEFAULT_STATE = {
     view: "tree",
     sort: "",
     dir: "asc",
-    kind: "",
-    order: "newest",
     q: "",
     repo: "",
     pr: "",
@@ -62,22 +65,41 @@
     comments: "",
     merge: "",
     next: "",
+    // "1" includes merged/closed branches, which are hidden by default.
+    done: "",
+    // "1" collapses the PR/CI/Review/Comments/Merge columns into one.
+    compact: "",
+    // "repo" groups cards by repo and stack (default: one flat sorted list).
+    group: "",
   };
 
   // ---- state <-> query string -------------------------------------------
 
+  // Unknown or retired keys (the old timeline view's `view=timeline`,
+  // `kind`, `order`) are ignored, so an old link just opens the default.
   function parseState(search) {
     const params = new URLSearchParams(search);
     const state = { ...DEFAULT_STATE };
     const view = params.get("view");
     if (VIEWS.includes(view)) state.view = view;
-    state.kind = params.get("kind") || "";
-    if (params.get("order") === "oldest") state.order = "oldest";
     const sort = params.get("sort");
     if (COLUMNS.includes(sort)) state.sort = sort;
     if (params.get("dir") === "desc") state.dir = "desc";
     for (const key of ["q", "repo", ...VALUE_FILTERS]) {
       state[key] = params.get(key) || "";
+    }
+    if (params.get("done") === "1") state.done = "1";
+    if (params.get("compact") === "1") state.compact = "1";
+    if (params.get("group") === "repo") state.group = "repo";
+    return state;
+  }
+
+  // The state a page load starts with: the URL's, except that the remembered
+  // compact choice applies when the URL does not say.
+  function initialState(search, storedCompact) {
+    const state = parseState(search);
+    if (!new URLSearchParams(search).has("compact") && storedCompact === "1") {
+      state.compact = "1";
     }
     return state;
   }
@@ -90,11 +112,12 @@
       params.set("sort", state.sort);
       if (state.dir !== DEFAULT_STATE.dir) params.set("dir", state.dir);
     }
-    if (state.kind) params.set("kind", state.kind);
-    if (state.order !== DEFAULT_STATE.order) params.set("order", state.order);
     for (const key of ["q", "repo", ...VALUE_FILTERS]) {
       if (state[key]) params.set(key, state[key]);
     }
+    if (state.done) params.set("done", "1");
+    if (state.compact) params.set("compact", "1");
+    if (state.group) params.set("group", state.group);
     const text = params.toString();
     return text ? "?" + text : "";
   }
@@ -105,10 +128,6 @@
       return { ...state, dir: state.dir === "asc" ? "desc" : "asc" };
     }
     return { ...state, sort: column, dir: "asc" };
-  }
-
-  function filtersActive(state) {
-    return Boolean(state.q.trim()) || VALUE_FILTERS.some((key) => state[key]);
   }
 
   // ---- ordering -----------------------------------------------------------
@@ -148,10 +167,18 @@
     return !state.repo || row.repo === state.repo;
   }
 
-  // Whether a tracked row passes the repo, text and per-column filters. Every
+  // A merged/closed branch ("done": its next action's who is "none") is
+  // hidden unless the Include done toggle is on or the Next filter asks for
+  // done branches.
+  function hiddenAsDone(row, state) {
+    if (state.done === "1" || state.next === "none") return false;
+    return Boolean(row.cells.next) && row.cells.next.value === "none";
+  }
+
+  // Whether a row passes the repo, done, text and per-column filters. Every
   // whitespace-separated term of the text filter must appear.
   function matches(row, state) {
-    if (!row.tracked || !inScope(row, state)) return false;
+    if (!inScope(row, state) || hiddenAsDone(row, state)) return false;
     for (const key of VALUE_FILTERS) {
       if (state[key] && (row.cells[key] ? row.cells[key].value : "") !== state[key]) {
         return false;
@@ -166,44 +193,45 @@
   }
 
   /*
-   * The rows to show, in order, as [{id, depth}].
+   * The rows to show, in order, as [{id, depth, context}].
    *
-   * rows: [{id, repo, parent, order, tracked, search, cells: {col: {value,
-   * sort}}}] for the whole table (ids are unique across repos). Flat view:
-   * the matching tracked rows, sorted. Tree view: the same rows plus their
-   * ancestors (kept for context), depth-first, with the sort applied among
-   * siblings; each repo's rows stay together, and the repos themselves are in
-   * server (name) order, or by the Repo column when it is the sort. With no
-   * filter every row of the chosen repos (untracked bases included) shows.
+   * rows: [{id, repo, parent, order, search, cells: {col: {value, sort}}}]
+   * for the whole table (ids are unique across repos; the trunk is not a
+   * row, so a stack's first branch has no parent row and is a root). Flat
+   * view: the matching rows, sorted. Tree view: the same rows plus their
+   * ancestors (kept for context, flagged ``context``), depth-first, with the
+   * sort applied among siblings; each repo's rows stay together, and the
+   * repos themselves are in server (name) order, or by the Repo column when
+   * it is the sort.
+   *
+   * Cards are a flat, sorted list (by default the rows that need the user
+   * come first), or with group=repo each repo's stacks in tree order.
    */
   function layout(rows, state) {
-    // Cards are a flat, sorted list; by default the rows that need the user
-    // come first. The timeline only needs the matching rows.
     if (state.view === "cards") {
-      state = { ...state, view: "flat", sort: state.sort || "next" };
-    } else if (state.view === "timeline") {
-      state = { ...state, view: "flat" };
+      state = {
+        ...state,
+        view: state.group === "repo" ? "tree" : "flat",
+        sort: state.sort || "next",
+      };
     }
     const compare = rowComparator(state);
     if (state.view === "flat") {
       return rows
         .filter((row) => matches(row, state))
         .sort(compare)
-        .map((row) => ({ id: row.id, depth: 0 }));
+        .map((row) => ({ id: row.id, depth: 0, context: false }));
     }
 
     const byId = new Map(rows.map((row) => [row.id, row]));
-    let keep;
-    if (filtersActive(state)) {
-      keep = new Set();
-      for (const row of rows) {
-        if (!matches(row, state)) continue;
-        for (let r = row; r && !keep.has(r.id); r = byId.get(r.parent)) {
-          keep.add(r.id);
-        }
+    const matched = new Set();
+    const keep = new Set();
+    for (const row of rows) {
+      if (!matches(row, state)) continue;
+      matched.add(row.id);
+      for (let r = row; r && !keep.has(r.id); r = byId.get(r.parent)) {
+        keep.add(r.id);
       }
-    } else {
-      keep = new Set(rows.filter((row) => inScope(row, state)).map((row) => row.id));
     }
 
     const children = new Map();
@@ -228,7 +256,7 @@
 
     const out = [];
     const visit = (row, depth) => {
-      out.push({ id: row.id, depth });
+      out.push({ id: row.id, depth, context: !matched.has(row.id) });
       for (const child of (children.get(row.id) || []).sort(compare)) {
         visit(child, depth + 1);
       }
@@ -239,68 +267,9 @@
     return out;
   }
 
-  // ---- timeline -------------------------------------------------------------
-
-  /*
-   * The event feed: every event of every matching branch (rows carry
-   * ``events`` [{t, kind, actor, detail}], ``branch``, ``repoName``,
-   * ``number``, ``url``), newest first unless state.order is "oldest", cut to
-   * the most recent ``limit``. Returns {entries, total}.
-   */
-  function timeline(rows, state, limit = TIMELINE_LIMIT) {
-    const all = [];
-    for (const row of rows) {
-      if (!matches(row, state)) continue;
-      for (const event of row.events || []) {
-        if (state.kind && event.kind !== state.kind) continue;
-        all.push({
-          id: row.id,
-          branch: row.branch,
-          repoName: row.repoName,
-          number: row.number,
-          url: row.url,
-          t: event.t,
-          kind: event.kind,
-          actor: event.actor,
-          detail: event.detail,
-          ms: Date.parse(event.t),
-          seq: all.length,
-        });
-      }
-    }
-    // Newest first, ties in reverse source order (so that, flipped, events
-    // that share a time read in the order they happened).
-    all.sort((a, b) => b.ms - a.ms || b.seq - a.seq);
-    const entries = all.slice(0, limit);
-    if (state.order === "oldest") entries.reverse();
-    return { entries, total: all.length };
-  }
-
   // ---- ages ---------------------------------------------------------------
 
-  // "<1m", "5m", "3h", "4d", "3w": kept in step with pr_activity.format_age.
-  function formatAge(seconds) {
-    const s = Math.max(0, Math.floor(seconds));
-    if (s < 60) return "<1m";
-    if (s < 3600) return `${Math.floor(s / 60)}m`;
-    if (s < 86400) return `${Math.floor(s / 3600)}h`;
-    if (s < 14 * 86400) return `${Math.floor(s / 86400)}d`;
-    return `${Math.floor(s / (7 * 86400))}w`;
-  }
-
-  const EVENT_LABELS = {
-    opened: ["＋", "opened"],
-    ready_for_review: ["▶", "ready for review"],
-    converted_to_draft: ["◐", "back to draft"],
-    review_requested: ["→", "review requested"],
-    review_request_removed: ["⊘", "request removed"],
-    review: ["✎", "review"],
-    commit: ["•", "commit"],
-    force_push: ["↯", "force push"],
-    merged: ["⇢", "merged"],
-    closed: ["✕", "closed"],
-    reopened: ["↺", "reopened"],
-  };
+  const formatAge = PrTimeline.formatAge;
 
   // ---- DOM ----------------------------------------------------------------
 
@@ -320,22 +289,46 @@
       repo: tr.dataset.repo,
       branch: tr.dataset.branch,
       repoName: cells.repo ? cells.repo.sort : "",
-      number: cells.pr ? cells.pr.search : "",
       parent: tr.dataset.parent || null,
       order: Number(tr.dataset.order),
-      tracked: tr.dataset.tracked === "1",
       search: search.join(" "),
       cells,
     };
   }
 
   function init(document, window) {
-    let state = parseState(window.location.search);
+    const storage = (() => {
+      try {
+        return window.localStorage;
+      } catch (error) {
+        return null;
+      }
+    })();
+    const remembered = () => {
+      try {
+        return storage ? storage.getItem(COMPACT_STORAGE_KEY) : null;
+      } catch (error) {
+        return null;
+      }
+    };
+    const remember = (value) => {
+      try {
+        if (storage) storage.setItem(COMPACT_STORAGE_KEY, value);
+      } catch (error) {
+        // Remembering is a convenience; ignore a blocked store.
+      }
+    };
+
+    let state = initialState(window.location.search, remembered());
     const controls = document.getElementById("controls");
     const table = document.getElementById("stacks");
     const tableWrap = document.getElementById("table-wrap");
     const cardsEl = document.getElementById("cards");
-    const timelineEl = document.getElementById("timeline");
+    const cardsWrap = document.getElementById("cards-wrap");
+    // Per-card timeline UI state, kept across live updates (the card's DOM
+    // is replaced then): card id -> {expanded, hideCommits}.
+    const trackState = new Map();
+    const groupHeaders = new Map();
 
     function syncControls() {
       if (!controls) return;
@@ -346,99 +339,104 @@
       for (const button of controls.querySelectorAll("[data-view]")) {
         button.setAttribute("aria-pressed", String(button.dataset.view === state.view));
       }
-      for (const key of ["sort", "kind"]) {
-        if (controls.elements[key]) controls.elements[key].value = state[key];
+      if (controls.elements.sort) controls.elements.sort.value = state.sort;
+      const toggles = {
+        done: state.done === "1",
+        compact: state.compact === "1",
+        group: state.group === "repo",
+      };
+      for (const [id, on] of Object.entries(toggles)) {
+        const button = controls.querySelector(`#${id}`);
+        if (button) button.setAttribute("aria-pressed", String(on));
       }
-      // Controls that only mean something in one view.
+      // Controls that only mean something in some views.
       for (const el of controls.querySelectorAll("[data-views]")) {
-        el.hidden = el.dataset.views !== state.view;
-      }
-      const order = controls.querySelector("#order");
-      if (order) order.textContent = state.order === "oldest" ? "Oldest first" : "Newest first";
-    }
-
-    // Puts ``items`` (elements keyed by row id) into ``container`` in the
-    // order of ``shown``, hiding the rest.
-    function arrange(container, items, shown) {
-      const shownIds = new Set(shown.map((entry) => entry.id));
-      const desired = shown.map((entry) => items.get(entry.id)).filter(Boolean);
-      for (const [id, el] of items) {
-        el.hidden = !shownIds.has(id);
-        if (!shownIds.has(id)) desired.push(el);
-      }
-      if (desired.some((el, index) => el !== container.children[index])) {
-        for (const el of desired) container.appendChild(el);
+        el.hidden = !el.dataset.views.split(" ").includes(state.view);
       }
     }
 
     // A card's task slot shows what the table's task cell shows (the title
-    // and status arrive there by htmx), so each task is looked up once.
+    // and status arrive there by htmx), so each task is looked up once. A
+    // branch without a task keeps the card's own "no task linked" note.
     function syncCardTasks(cards, byId) {
       for (const [id, card] of cards) {
         const td = byId.get(id) && byId.get(id).querySelector("td.col-task");
         const slot = card.querySelector(".card-task");
-        if (td && slot && slot.innerHTML !== td.innerHTML) slot.innerHTML = td.innerHTML;
+        if (!td || !slot || !td.dataset.value) continue;
+        if (slot.innerHTML !== td.innerHTML) slot.innerHTML = td.innerHTML;
       }
     }
 
-    function renderTimeline(rows, cards) {
-      for (const row of rows) {
-        const live = cards.get(row.id) && cards.get(row.id).querySelector(".card-live");
-        row.url = live ? live.dataset.url : "";
+    function groupHeader(row) {
+      if (!groupHeaders.has(row.repo)) {
+        const header = document.createElement("h2");
+        header.className = "cards-group";
+        header.textContent = row.repoName;
+        groupHeaders.set(row.repo, header);
+      }
+      return groupHeaders.get(row.repo);
+    }
+
+    // Puts the cards in the order of ``shown`` (with repo headings when
+    // grouped, each card indented by stack depth then), hiding the rest.
+    function arrangeCards(cards, shown, rowsById) {
+      const grouped = state.group === "repo";
+      const shownIds = new Set();
+      const desired = [];
+      let repo = null;
+      for (const entry of shown) {
+        if (entry.context) continue;
+        const card = cards.get(entry.id);
+        if (!card) continue;
+        shownIds.add(entry.id);
+        const row = rowsById.get(entry.id);
+        if (grouped && row.repo !== repo) {
+          repo = row.repo;
+          desired.push(groupHeader(row));
+        }
+        card.style.setProperty("--depth", String(grouped ? entry.depth : 0));
+        desired.push(card);
+      }
+      for (const [id, card] of cards) {
+        card.hidden = !shownIds.has(id);
+        if (card.hidden) desired.push(card);
+      }
+      const current = [...cardsEl.children];
+      if (
+        desired.length !== current.length ||
+        desired.some((node, index) => node !== current[index])
+      ) {
+        cardsEl.replaceChildren(...desired);
+      }
+    }
+
+    // Re-draws each visible card's timeline track when its data, its UI
+    // state or the minute changed.
+    function renderTracks(cards) {
+      const now = Date.now();
+      const minute = Math.floor(now / 60000);
+      for (const [id, card] of cards) {
+        if (card.hidden) continue;
+        const mount = card.querySelector(".tl-mount");
+        if (!mount) continue;
+        const ui = trackState.get(id) || {};
+        const signature = [mount.dataset.track, ui.expanded, ui.hideCommits, minute].join("|");
+        if (mount.dataset.signature === signature) continue;
+        let track;
         try {
-          row.events = live ? JSON.parse(live.dataset.events || "[]") : [];
+          track = JSON.parse(mount.dataset.track);
         } catch (error) {
-          row.events = [];
+          continue;
         }
+        mount.replaceChildren(
+          PrTimeline.render(document, track, {
+            now,
+            expanded: Boolean(ui.expanded),
+            hideCommits: Boolean(ui.hideCommits),
+          }),
+        );
+        mount.dataset.signature = signature;
       }
-      const { entries, total } = timeline(rows, state);
-      const list = document.getElementById("timeline-list");
-      const items = entries.map((entry) => {
-        const [icon, label] = EVENT_LABELS[entry.kind] || ["·", entry.kind];
-        const li = document.createElement("li");
-        li.className = `ev ev-${entry.kind}`;
-        const time = document.createElement("time");
-        time.className = "ev-time";
-        time.dataset.since = entry.t;
-        time.dataset.suffix = " ago";
-        time.title = new Date(entry.t).toLocaleString();
-        const kind = document.createElement("span");
-        kind.className = "ev-kind";
-        const glyph = document.createElement("span");
-        glyph.className = "ev-icon";
-        glyph.textContent = icon;
-        kind.append(glyph, label);
-        const what = document.createElement("span");
-        what.className = "ev-what";
-        const repo = document.createElement("span");
-        repo.className = "repo-chip";
-        repo.textContent = entry.repoName;
-        const target = document.createElement(entry.url ? "a" : "span");
-        target.textContent = entry.number ? `${entry.branch} #${entry.number}` : entry.branch;
-        if (entry.url) {
-          target.href = entry.url;
-          target.target = "_blank";
-          target.rel = "noopener";
-        }
-        const actor = document.createElement("span");
-        actor.className = "ev-actor";
-        actor.textContent = entry.actor;
-        const detail = document.createElement("span");
-        detail.className = "ev-detail";
-        detail.textContent = entry.detail;
-        what.append(repo, target, actor, detail);
-        li.append(time, kind, what);
-        return li;
-      });
-      if (total > entries.length) {
-        const more = document.createElement("li");
-        more.className = "ev-more";
-        more.textContent = `Showing the ${entries.length} most recent of ${total} events.`;
-        items.push(more);
-      }
-      list.replaceChildren(...items);
-      refreshAges();
-      return entries.length;
     }
 
     // Re-writes every [data-since] element's text from the current time, so
@@ -453,6 +451,14 @@
       }
     }
 
+    function currentCards() {
+      return new Map(
+        cardsEl
+          ? [...cardsEl.querySelectorAll("article.card")].map((card) => [card.dataset.id, card])
+          : [],
+      );
+    }
+
     function apply() {
       if (!table) return;
       const tbody = table.querySelector("tbody");
@@ -461,18 +467,15 @@
       const rows = trs.map(readRow);
       const showTable = state.view === "tree" || state.view === "flat";
       if (tableWrap) tableWrap.hidden = !showTable;
-      if (cardsEl) cardsEl.hidden = state.view !== "cards";
-      if (timelineEl) timelineEl.hidden = state.view !== "timeline";
-      const cards = new Map(
-        cardsEl ? [...cardsEl.children].map((card) => [card.dataset.id, card]) : [],
-      );
+      if (cardsWrap) cardsWrap.hidden = state.view !== "cards";
+      table.classList.toggle("compact", state.compact === "1");
+      const cards = currentCards();
       syncCardTasks(cards, byId);
       const shown = layout(rows, state);
       const shownIds = new Set(shown.map((entry) => entry.id));
-      if (state.view === "cards") {
-        arrange(cardsEl, cards, shown);
-      } else if (state.view === "timeline") {
-        renderTimeline(rows, cards);
+      if (state.view === "cards" && cardsEl) {
+        arrangeCards(cards, shown, new Map(rows.map((row) => [row.id, row])));
+        renderTracks(cards);
       }
 
       const desired = shown.map((entry) => byId.get(entry.id));
@@ -480,6 +483,7 @@
       shown.forEach((entry) => {
         const tr = byId.get(entry.id);
         tr.hidden = false;
+        tr.classList.toggle("context", entry.context);
         tr.style.setProperty("--depth", String(entry.depth));
       });
       for (const tr of trs) if (!shownIds.has(tr.dataset.id)) tr.hidden = true;
@@ -496,16 +500,22 @@
       }
       // Counts are of matching branches; tree view also shows non-matching
       // ancestors for context.
-      const inRepo = rows.filter((row) => row.tracked && inScope(row, state));
+      const inRepo = rows.filter((row) => inScope(row, state));
       const visible = rows.filter((row) => matches(row, state)).length;
+      const doneHidden = inRepo.filter((row) => hiddenAsDone(row, state)).length;
       const count = document.getElementById("count");
-      if (count) count.textContent = `${visible} of ${inRepo.length} branches`;
+      if (count) {
+        count.textContent =
+          `${visible} of ${inRepo.length} branches` +
+          (doneHidden ? ` (${doneHidden} done hidden)` : "");
+      }
       const none = document.getElementById("no-match");
       if (none) none.hidden = visible > 0 || inRepo.length === 0;
       refreshAges();
     }
 
     function commit(next) {
+      if (next.compact !== state.compact) remember(next.compact ? "1" : "0");
       state = next;
       const query = serializeState(state);
       window.history.replaceState(null, "", window.location.pathname + query);
@@ -516,7 +526,7 @@
     if (controls) {
       const read = () => {
         const next = { ...state };
-        for (const key of ["q", "repo", "kind", ...VALUE_FILTERS]) {
+        for (const key of ["q", "repo", ...VALUE_FILTERS]) {
           next[key] = controls.elements[key].value;
         }
         commit(next);
@@ -533,16 +543,43 @@
         const button = event.target.closest("button");
         if (!button) return;
         if (button.dataset.view) commit({ ...state, view: button.dataset.view });
-        if (button.id === "order") {
-          commit({ ...state, order: state.order === "oldest" ? "newest" : "oldest" });
+        if (button.id === "done") commit({ ...state, done: state.done ? "" : "1" });
+        if (button.id === "compact") commit({ ...state, compact: state.compact ? "" : "1" });
+        if (button.id === "group") commit({ ...state, group: state.group ? "" : "repo" });
+        if (button.id === "clear") {
+          commit({
+            ...DEFAULT_STATE,
+            view: state.view,
+            compact: state.compact,
+            group: state.group,
+          });
         }
-        if (button.id === "clear") commit({ ...DEFAULT_STATE, view: state.view });
       });
     }
     document.addEventListener("click", (event) => {
       const th = event.target.closest("thead th[data-col]");
-      if (th) commit(toggleSort(state, th.dataset.col));
+      // The compact table's combined Status column is not sortable.
+      if (th && COLUMNS.includes(th.dataset.col)) commit(toggleSort(state, th.dataset.col));
     });
+    if (cardsEl) {
+      cardsEl.addEventListener("click", (event) => {
+        const card = event.target.closest("article.card");
+        if (!card) return;
+        const ui = { ...(trackState.get(card.dataset.id) || {}) };
+        if (event.target.closest(".tl-commits")) {
+          ui.hideCommits = !ui.hideCommits;
+        } else if (
+          event.target.closest(".tl-expand") ||
+          (!ui.expanded && event.target.closest(".tl-track"))
+        ) {
+          ui.expanded = !ui.expanded;
+        } else {
+          return;
+        }
+        trackState.set(card.dataset.id, ui);
+        renderTracks(currentCards());
+      });
+    }
 
     // Task info swaps in asynchronously via htmx, and live updates swap in
     // cells or rows ("stack-table:changed"): re-apply afterwards. A burst of
@@ -560,24 +597,31 @@
     document.body.addEventListener("htmx:afterSettle", reapply);
     document.addEventListener("stack-table:changed", reapply);
 
-    window.setInterval(refreshAges, 30000);
+    window.setInterval(() => {
+      refreshAges();
+      if (state.view === "cards") renderTracks(currentCards());
+    }, 30000);
 
+    // A stale or hand-edited URL (e.g. the retired view=timeline) is
+    // rewritten to the state it was understood as.
+    const normalized = serializeState(state);
+    if (normalized !== window.location.search) {
+      window.history.replaceState(null, "", window.location.pathname + normalized);
+    }
     syncControls();
     apply();
   }
 
   return {
     VIEWS,
-    TIMELINE_LIMIT,
     formatAge,
-    timeline,
     COLUMNS,
     VALUE_FILTERS,
     DEFAULT_STATE,
     parseState,
+    initialState,
     serializeState,
     toggleSort,
-    filtersActive,
     compareKeys,
     matches,
     layout,

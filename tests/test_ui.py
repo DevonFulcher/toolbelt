@@ -214,12 +214,13 @@ def test_index_renders_one_table_without_fetching_status(
     html = response.text
     assert html.index("devon/a<") < html.index("devon/b<") < html.index("devon/c<")
     assert html.count("<table") == 1
-    assert html.count("<section") == 1  # the timeline view; none per repo
+    assert "<section" not in html  # one table, no per-repo sections
     # Rendering never waits on `gh`; the cells are placeholders until the
     # background refresher has an answer.
     assert fetcher.calls == []
     table = html.split("</table>")[0]
-    assert table.count("loading…") == 3
+    # Each row's PR cell and its compact-mode status cell.
+    assert table.count("loading…") == 6
     assert "hx-get" not in html
     assert "/static/htmx.min.js" in html
     assert "/static/live-updates.js" in html
@@ -245,10 +246,12 @@ def test_columns_are_separate_and_labelled(tmp_path, make_client):
         ("task", "Task"),
         ("session", "Session"),
     ]
-    # Every tracked row has one cell per column, in the same order.
+    # Every row has one cell per column, in the same order, plus the combined
+    # status cell the compact table shows in place of PR..Merge.
     row = html[html.index('data-branch="devon/a"') :]
     cols = re.findall(r'<td[^>]*data-col="(\w+)"', row.split("</tr>")[0])
-    assert cols == [key for key, _ in ui_app.COLUMNS]
+    keys = [key for key, _ in ui_app.COLUMNS]
+    assert cols == keys[: keys.index("task")] + ["status"] + keys[keys.index("task") :]
 
 
 def test_rows_carry_tree_data_for_the_sort_script(tmp_path, make_client):
@@ -263,16 +266,17 @@ def test_rows_carry_tree_data_for_the_sort_script(tmp_path, make_client):
     rows = re.findall(
         r'<tr data-id="([^"]*)" data-repo="(\d+)" data-branch="([^"]*)"\s+'
         r'data-parent="([^"]*)" data-order="(\d+)"\s+'
-        r'data-tracked="(\d)" style="--depth: (\d+)"',
+        r'style="--depth: (\d+)"',
         html,
     )
     r = str(repo_id)
+    # The trunk is not a row: a stack starts at its first branch, depth 0.
     assert rows == [
-        (f"{r}:main", r, "main", "", "0", "0", "0"),
-        (f"{r}:devon/a", r, "devon/a", f"{r}:main", "1", "1", "1"),
-        (f"{r}:devon/b", r, "devon/b", f"{r}:devon/a", "2", "1", "2"),
-        (f"{r}:devon/c", r, "devon/c", f"{r}:main", "3", "1", "1"),
+        (f"{r}:devon/a", r, "devon/a", "", "0", "0"),
+        (f"{r}:devon/b", r, "devon/b", f"{r}:devon/a", "1", "1"),
+        (f"{r}:devon/c", r, "devon/c", "", "2", "0"),
     ]
+    assert 'data-branch="main"' not in html
 
 
 def test_filter_controls_are_rendered(tmp_path, make_client):
@@ -327,12 +331,12 @@ def test_multi_repo_is_one_table_grouped_by_repo_name(tmp_path, make_client):
     order = [
         m.group(1) for m in re.finditer(r'class="branch(?: [a-z ]+)?">([^<]+)<', tbody)
     ]
-    assert order == ["main", "devon/one", "devon/uno", "develop", "devon/two"]
-    # The repo is a column of every row, bases included.
+    assert order == ["devon/one", "devon/uno", "devon/two"]
+    # The repo is a column of every row.
     repo_cells = re.findall(
         r'data-col="repo" data-value="\d+" data-sort="(\w+)"', tbody
     )
-    assert repo_cells == ["alpha"] * 3 + ["beta"] * 2
+    assert repo_cells == ["alpha"] * 2 + ["beta"]
 
 
 def test_same_branch_name_in_two_repos_has_distinct_row_ids(tmp_path, make_client):
@@ -342,7 +346,7 @@ def test_same_branch_name_in_two_repos_has_distinct_row_ids(tmp_path, make_clien
     html = make_client().get("/").text
 
     ids = re.findall(r'<tr data-id="([^"]*)"', html)
-    assert len(ids) == len(set(ids)) == 4
+    assert len(ids) == len(set(ids)) == 2
     cell_ids = [i for i in Cells(html).ids if i]
     assert len(cell_ids) == len(set(cell_ids))
 
@@ -932,6 +936,8 @@ class TestPrDetailCells:
             "kind": "review_requested",
             "actor": "devon",
             "detail": "requested review from sam",
+            "ci": "",
+            "subject": "sam",
         }
 
     def test_a_finished_pr_has_a_fixed_age_that_no_longer_ticks(self):
@@ -959,26 +965,51 @@ class TestPrDetailCells:
         assert status_cells(status).detail is None
 
 
+SLOT_RE = re.compile(
+    r'<div class="slot s-(\w+) v-(\w+)" data-slot="(\w+)">\s*'
+    r'<span class="slot-label">(.*?)</span>\s*'
+    r'<span class="slot-value[^"]*">(.*?)</span>\s*</div>',
+    re.DOTALL,
+)
+
+#: Every labelled slot of a card, in the order the card lays them out.
+CARD_SLOTS = {
+    "branch": "Repo / branch",
+    "next": "Next",
+    "pr": "PR",
+    "ci": "CI",
+    "review": "Review",
+    "comments": "Comments",
+    "merge": "Merge",
+    "task": "Task",
+    "session": "Session",
+    "parent": "Parent",
+    "pr_age": "PR age",
+    "in_draft": "In draft",
+    "review_requested": "Review requested",
+    "ci_failures": "CI failures",
+    "reviewers": "Reviewers",
+    "title": "PR title",
+    "timeline": "Timeline",
+}
+
+
+def slots_of(card: str) -> dict[str, tuple[str, str, str]]:
+    """``{key: (label, state, visible text)}`` for a card's slots."""
+    found = {}
+    for key, state, _, label, value in SLOT_RE.findall(card):
+        text = re.sub(r"<[^>]+>", " ", value)
+        found[key] = (label, state, " ".join(html_unescape(text).split()))
+    return found
+
+
 class TestViews:
-    """Cards and timeline are rendered from the same rows as the table."""
+    """Cards are rendered from the same rows as the table."""
 
     NOW = datetime(2026, 10, 6, 9, 0, tzinfo=UTC)
 
-    def seed(self, tmp_path, fetcher):
-        seed_repo(
-            tmp_path,
-            "api",
-            {"devon/a": "main", "devon/b": "devon/a"},
-            links={"devon/a": ("ABC-1", AGENT_LINK)},
-        )
-        fetcher.statuses["devon/a"] = BranchStatus(
-            pr=PrState.DRAFT,
-            ci=CiState.FAILED,
-            review=ReviewState.NONE,
-            url="https://github.com/o/r/pull/7",
-            open_comments=0,
-        )
-        fetcher.facts["devon/a"] = PrFacts(
+    def facts(self, **overrides) -> PrFacts:
+        base = dict(
             number=7,
             title="Add <b>the</b> thing",
             author="devon",
@@ -998,19 +1029,38 @@ class TestViews:
                     "devon",
                     "a1a1a1a Fix it",
                     oid="a1",
+                    ci="FAILURE",
                 ),
             ),
         )
+        base.update(overrides)
+        return PrFacts(**base)
+
+    def seed(self, tmp_path, fetcher):
+        seed_repo(
+            tmp_path,
+            "api",
+            {"devon/a": "main", "devon/b": "devon/a"},
+            links={"devon/a": ("ABC-1", AGENT_LINK)},
+        )
+        fetcher.statuses["devon/a"] = BranchStatus(
+            pr=PrState.DRAFT,
+            ci=CiState.FAILED,
+            review=ReviewState.NONE,
+            url="https://github.com/o/r/pull/7",
+            open_comments=0,
+        )
+        fetcher.facts["devon/a"] = self.facts()
 
     def client(self, make_client, tracker):
         return make_client(tracker, wall_clock=lambda: self.NOW)
 
     def card(self, html: str, branch: str) -> str:
-        cards = html.split('<div class="cards"')[1].split("</section>")[0]
+        cards = html.split('<div class="cards"')[1]
         start = cards.index(f'data-branch="{branch}"')
         return cards[start:].split("</article>")[0]
 
-    def test_there_is_one_card_per_tracked_branch_not_per_base(
+    def test_there_is_one_card_per_tracked_branch_not_for_the_trunk(
         self, tmp_path, make_client, fetcher, tracker
     ):
         self.seed(tmp_path, fetcher)
@@ -1019,60 +1069,70 @@ class TestViews:
 
         html = client.get("/").text
 
-        cards = html.split('<div class="cards"')[1].split("</section>")[0]
+        cards = html.split('<div class="cards"')[1]
         assert re.findall(
             r'<article class="card" data-id="[^"]*" data-repo="\d+" data-branch="([^"]*)"',
             cards,
-        ) == [
-            "devon/a",
-            "devon/b",
-        ]
+        ) == ["devon/a", "devon/b"]
 
-    def test_a_card_shows_next_action_ages_and_failures(
+    def test_a_populated_card_labels_every_value(
         self, tmp_path, make_client, fetcher, tracker
     ):
         self.seed(tmp_path, fetcher)
+        fetcher.statuses["devon/b"] = BranchStatus(
+            pr=PrState.OPEN,
+            ci=CiState.SUCCESS,
+            review=ReviewState.REQUESTED,
+            url="https://github.com/o/r/pull/8",
+            open_comments=3,
+            has_conflicts=True,
+        )
+        fetcher.facts["devon/b"] = self.facts(
+            number=8,
+            title="Second",
+            is_draft=False,
+            requested_reviewers=("sam", "lee"),
+            items=(
+                TimelineItem(
+                    datetime(2026, 10, 5, 9, 0, tzinfo=UTC),
+                    "review_requested",
+                    "devon",
+                    "requested review from sam",
+                    subject="sam",
+                ),
+            ),
+        )
         client = self.client(make_client, tracker)
         refresh(client)
 
-        card = self.card(client.get("/").text, "devon/a")
+        html = client.get("/").text
+        full = slots_of(self.card(html, "devon/b"))
+        draft = slots_of(self.card(html, "devon/a"))
 
-        assert "Fix / re-run CI" in card
-        assert "next-you" in card
-        assert 'href="https://github.com/o/r/pull/7"' in card
-        assert "#7 draft" in card
-        assert "api</span>" in card  # the repo chip
-        # 5 days old, in draft the whole time; two pushes failed CI.
-        assert re.search(r"PR age</dt><dd><time[^>]*>5d</time>", card)
-        assert re.search(r"In draft</dt><dd><time[^>]*>5d</time>", card)
-        assert re.search(r'CI failures</dt><dd class="ci-failed">2<', card)
-        assert 'data-since="2026-10-01T09:00:00Z"' in card
-        # The task and session links are on the card.
-        assert "ABC-1" in card
-        assert AGENT_LINK in card
+        assert {k: v[0] for k, v in full.items()} == CARD_SLOTS
+        assert full["next"][2] == "Resolve conflicts needs you"
+        assert full["pr"] == ("PR", "ok", "#8 open")
+        assert full["ci"][2] == "success"
+        assert full["review"][2] == "requested"
+        assert full["comments"] == ("Comments", "ok", "3 comments")
+        assert full["merge"][2] == "conflicts"
+        assert full["pr_age"][2] == "5d"
+        assert full["in_draft"] == ("In draft", "na", "not a draft")
+        assert full["review_requested"] == ("Review requested", "ok", "1d")
+        assert full["ci_failures"][2] == "2 failures"
+        assert full["reviewers"] == ("Reviewers", "ok", "sam, lee")
+        assert full["parent"] == ("Parent", "ok", "devon/a")
+        assert full["title"][2] == "Second"
+        assert "no task" in full["task"][2]
+        # The draft one: task and session linked, in draft for 5 days.
+        assert draft["task"] == ("Task", "ok", "ABC-1")
+        assert draft["session"][1] == "ok"
+        assert draft["in_draft"][2] == "5d"
+        assert draft["parent"] == ("Parent", "na", "no parent (stack root)")
         # The PR title is escaped.
-        assert "Add &lt;b&gt;the&lt;/b&gt; thing" in card
+        assert "Add &lt;b&gt;the&lt;/b&gt; thing" in html
 
-    def test_cards_carry_the_events_the_timeline_is_built_from(
-        self, tmp_path, make_client, fetcher, tracker
-    ):
-        self.seed(tmp_path, fetcher)
-        client = self.client(make_client, tracker)
-        refresh(client)
-
-        card = self.card(client.get("/").text, "devon/a")
-
-        match = re.search(r"data-events='([^']*)'", card)
-        assert match is not None
-        events = json.loads(html_unescape(match.group(1)))
-        assert [(e["kind"], e["actor"]) for e in events] == [
-            ("opened", "devon"),
-            ("commit", "devon"),
-        ]
-        assert events[1]["t"] == "2026-10-02T09:00:00Z"
-        assert events[1]["detail"] == "a1a1a1a Fix it"
-
-    def test_a_card_without_a_pr_still_says_what_to_do(
+    def test_a_card_without_a_pr_still_has_every_slot(
         self, tmp_path, make_client, fetcher, tracker
     ):
         self.seed(tmp_path, fetcher)
@@ -1080,34 +1140,175 @@ class TestViews:
         refresh(client)
 
         card = self.card(client.get("/").text, "devon/b")
+        found = slots_of(card)
 
-        assert "Open PR" in card
-        assert "no PR" in card
-        assert "no task" in card
+        assert {k: v[0] for k, v in found.items()} == CARD_SLOTS
+        assert found["next"][2] == "Open PR needs you"
+        assert found["pr"] == ("PR", "gap", "no PR")
+        for key in (
+            "ci",
+            "review",
+            "comments",
+            "merge",
+            "pr_age",
+            "in_draft",
+            "review_requested",
+            "ci_failures",
+            "reviewers",
+            "title",
+        ):
+            assert found[key][1:] == ("na", "no PR"), key
+        assert found["timeline"] == ("Timeline", "na", "no PR yet — no timeline")
+        # Missing but settable reads as a gap, not as "not applicable".
+        assert found["task"] == ("Task", "gap", "no task linked")
+        assert found["session"] == ("Session", "gap", "no session linked")
+        assert found["parent"] == ("Parent", "ok", "devon/a")
+        assert "tl-mount" not in card
 
-    def test_an_unloaded_card_is_a_placeholder(
+    def test_zero_and_empty_values_are_explicit(
+        self, tmp_path, make_client, fetcher, tracker
+    ):
+        seed_repo(tmp_path, "api", {"devon/q": "main"})
+        fetcher.statuses["devon/q"] = BranchStatus(
+            pr=PrState.OPEN,
+            ci=CiState.NONE,
+            review=ReviewState.NONE,
+            url="https://github.com/o/r/pull/9",
+        )
+        fetcher.facts["devon/q"] = self.facts(
+            number=9, is_draft=False, commit_rollups=(), items=()
+        )
+        client = self.client(make_client, tracker)
+        refresh(client)
+
+        found = slots_of(self.card(client.get("/").text, "devon/q"))
+
+        assert {k: v[0] for k, v in found.items()} == CARD_SLOTS
+        assert found["ci"] == ("CI", "na", "no CI configured")
+        assert found["review"] == ("Review", "gap", "no review requested")
+        assert found["comments"] == ("Comments", "na", "0 comments")
+        assert found["merge"] == ("Merge", "ok", "clean")
+        assert found["in_draft"] == ("In draft", "na", "not a draft")
+        assert found["review_requested"] == (
+            "Review requested",
+            "na",
+            "not requested",
+        )
+        assert found["ci_failures"] == ("CI failures", "na", "0 failures")
+        assert found["reviewers"] == ("Reviewers", "na", "none requested")
+        # A merged PR's merge slot says why it is empty.
+        fetcher.statuses["devon/q"] = BranchStatus(
+            pr=PrState.MERGED,
+            ci=CiState.SUCCESS,
+            review=ReviewState.APPROVED,
+            url="https://github.com/o/r/pull/9",
+        )
+        now = [1000.0]
+        client = make_client(tracker, wall_clock=lambda: self.NOW, clock=lambda: now[0])
+        refresh(client)
+        merged = slots_of(self.card(client.get("/").text, "devon/q"))
+        assert merged["merge"] == ("Merge", "na", "n/a (PR merged)")
+
+    def test_an_unloaded_card_has_every_slot_saying_loading(
         self, tmp_path, make_client, fetcher, tracker
     ):
         self.seed(tmp_path, fetcher)
 
         card = self.card(self.client(make_client, tracker).get("/").text, "devon/a")
+        found = slots_of(card)
 
-        assert "loading…" in card
+        assert {k: v[0] for k, v in found.items()} == CARD_SLOTS
+        for key in CARD_SLOTS:
+            if key in ("branch", "task", "session", "parent"):
+                continue
+            assert found[key][1:] == ("na", "loading…"), key
+
+    def test_a_card_carries_the_data_its_timeline_track_is_drawn_from(
+        self, tmp_path, make_client, fetcher, tracker
+    ):
+        self.seed(tmp_path, fetcher)
+        client = self.client(make_client, tracker)
+        refresh(client)
+
+        card = self.card(client.get("/").text, "devon/a")
+
+        match = re.search(r"data-track='([^']*)'", card)
+        assert match is not None
+        track = json.loads(html_unescape(match.group(1)))
+        assert track["created"] == "2026-10-01T09:00:00Z"
+        assert track["ended"] is None
+        assert track["state"] == "draft"
+        assert track["draft"] is True
+        assert [(e["kind"], e["actor"], e["ci"]) for e in track["events"]] == [
+            ("opened", "devon", ""),
+            ("commit", "devon", "failed"),
+        ]
+        assert track["events"][1]["t"] == "2026-10-02T09:00:00Z"
+        assert track["events"][1]["detail"] == "a1a1a1a Fix it"
+
+    def test_a_finished_pr_track_ends_at_the_merge(
+        self, tmp_path, make_client, fetcher, tracker
+    ):
+        seed_repo(tmp_path, "api", {"devon/m": "main"})
+        fetcher.statuses["devon/m"] = BranchStatus(
+            pr=PrState.MERGED,
+            ci=CiState.SUCCESS,
+            review=ReviewState.APPROVED,
+            url="https://github.com/o/r/pull/3",
+        )
+        fetcher.facts["devon/m"] = self.facts(
+            state="MERGED",
+            is_draft=False,
+            merged_at=datetime(2026, 10, 3, 9, 0, tzinfo=UTC),
+        )
+        client = self.client(make_client, tracker)
+        refresh(client)
+
+        card = self.card(client.get("/?done=1").text, "devon/m")
+
+        match = re.search(r"data-track='([^']*)'", card)
+        assert match is not None
+        track = json.loads(html_unescape(match.group(1)))
+        assert (track["state"], track["ended"]) == ("merged", "2026-10-03T09:00:00Z")
 
     def test_view_toggles_and_their_controls_are_rendered(self, tmp_path, make_client):
         seed_repo(tmp_path, "api", {"devon/a": "main"})
 
         html = make_client().get("/").text
 
-        for view in ("tree", "flat", "cards", "timeline"):
+        for view in ("tree", "flat", "cards"):
             assert f'data-view="{view}"' in html
         sort = html.split('<select name="sort">')[1].split("</select>")[0]
         assert "Needs my action first" in sort
-        kinds = html.split('<select name="kind">')[1].split("</select>")[0]
-        for kind in ("review_requested", "force_push", "merged"):
-            assert f'value="{kind}"' in kinds
-        assert 'id="timeline-list"' in html
-        assert 'id="order"' in html
+        for control in ("done", "compact", "group"):
+            assert f'id="{control}"' in html
+        # The global timeline view and its controls are gone.
+        assert 'data-view="timeline"' not in html
+        assert 'name="kind"' not in html
+        assert 'id="order"' not in html
+        assert 'id="timeline' not in html
+        assert "/static/pr-timeline.js" in html
+
+    def test_the_compact_status_cell_combines_pr_ci_review_comments_merge(
+        self, tmp_path, make_client, fetcher
+    ):
+        seed_repo(tmp_path, "api", {"devon/a": "main"})
+        fetcher.statuses["devon/a"] = BranchStatus(
+            pr=PrState.OPEN,
+            ci=CiState.FAILED,
+            review=ReviewState.REQUESTED,
+            url="https://github.com/o/r/pull/4",
+            open_comments=2,
+            has_conflicts=True,
+        )
+        client = make_client()
+        refresh(client)
+
+        cells = next_cell(client.get("/").text, "devon/a")
+
+        status = cells.text["status"]
+        for part in ("#4 open", "CI failed", "requested", "2 comments", "conflicts"):
+            assert part in status
 
     def test_the_status_event_payload_includes_the_card(
         self, tmp_path, make_client, fetcher, tracker
@@ -1125,3 +1326,4 @@ class TestViews:
         assert statuses
         assert all('class="card-live"' in data["card"] for data in statuses)
         assert any("Fix / re-run CI" in data["card"] for data in statuses)
+        assert any("tl-mount" in data["card"] for data in statuses)

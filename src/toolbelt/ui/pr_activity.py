@@ -33,20 +33,6 @@ MERGED = "merged"
 CLOSED = "closed"
 REOPENED = "reopened"
 
-EVENT_KINDS = [
-    OPENED,
-    READY_FOR_REVIEW,
-    CONVERTED_TO_DRAFT,
-    REVIEW_REQUESTED,
-    REVIEW_REQUEST_REMOVED,
-    REVIEW,
-    COMMIT,
-    FORCE_PUSH,
-    MERGED,
-    CLOSED,
-    REOPENED,
-]
-
 _CI_FAILED_ROLLUPS = {"FAILURE", "ERROR"}
 
 
@@ -95,6 +81,11 @@ class Event:
     kind: str
     actor: str
     detail: str
+    #: For a commit (or the commit a force push replaced): ``failed``,
+    #: ``success``, ``pending``, or ``""`` when it had no CI.
+    ci: str = ""
+    #: The reviewer a review request concerns, or who submitted a review.
+    subject: str = ""
 
 
 @dataclass(frozen=True)
@@ -169,6 +160,14 @@ def _ci_failure_count(facts: PrFacts) -> int:
     return len(failed)
 
 
+def _ci_label(rollup: str | None) -> str:
+    if rollup is None:
+        return ""
+    if rollup in _CI_FAILED_ROLLUPS:
+        return "failed"
+    return "success" if rollup == "SUCCESS" else "pending"
+
+
 def _timeline(facts: PrFacts) -> tuple[Event, ...]:
     opened = Event(
         time=facts.created_at,
@@ -177,7 +176,14 @@ def _timeline(facts: PrFacts) -> tuple[Event, ...]:
         detail=facts.title,
     )
     events = [opened] + [
-        Event(time=item.time, kind=item.kind, actor=item.actor, detail=item.detail)
+        Event(
+            time=item.time,
+            kind=item.kind,
+            actor=item.actor,
+            detail=item.detail,
+            ci=_ci_label(item.ci),
+            subject=item.subject,
+        )
         for item in facts.items
     ]
     # Stable: events sharing a timestamp keep GitHub's order, with "opened"

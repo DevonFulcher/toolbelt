@@ -73,3 +73,25 @@
     <span class="muted">—</span>
   {%- endif -%}
 </td>
+{#- The compact table's combined cell: the PR, CI, review, comments and merge
+    states in one (the individual columns are hidden then). Not a sort or
+    filter column; those stay on the individual cells. -#}
+<td id="{{ cell_id(repo_id, branch, 'status') }}" class="col-status"
+    data-col="status" data-value="" data-sort="" data-search="">
+  {%- if path_missing -%}
+    <span class="muted">repo path missing</span>
+  {%- elif c.failed -%}
+    <span class="error" title="gh could not look up this branch's PR">status unavailable</span>
+  {%- elif not c.loaded -%}
+    <span class="muted">loading…</span>
+  {%- elif c.pr == "none" -%}
+    <span class="muted">no PR</span>
+  {%- else -%}
+    <a class="pill pr-{{ c.pr }}" href="{{ c.pr_url }}" target="_blank" rel="noopener">
+      {%- if c.pr_number %}#{{ c.pr_number }} {% endif %}{{ c.pr }}</a>
+    {%- if c.ci != "none" %} <span class="pill ci-{{ c.ci }}">CI {{ c.ci }}</span>{% endif %}
+    {%- if c.review != "none" %} <span class="pill review-{{ c.review }}">{{ c.review }}</span>{% endif %}
+    {%- if c.open_comments %} <span class="pill comments" title="unresolved review threads">{{ c.open_comments }} comment{{ "s" if c.open_comments != 1 }}</span>{% endif %}
+    {%- if c.merge == "conflicts" %} <span class="pill conflicts">conflicts</span>{% endif %}
+  {%- endif -%}
+</td>
