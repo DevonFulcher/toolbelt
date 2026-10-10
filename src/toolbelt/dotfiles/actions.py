@@ -2,8 +2,8 @@
 
 Commands build a list of actions from the current state, print each one's
 ``describe()``, and only call ``run()`` when not in ``--dry-run``. Anything
-that would be overwritten or removed is first moved (or, for ``backup``,
-copied) into ``<home>/.toolbelt/dotfiles-backups/<timestamp>/``.
+that would be overwritten or removed is first moved into
+``<home>/.toolbelt/dotfiles-backups/<timestamp>/``.
 """
 
 import shutil
@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 
+from toolbelt import logged_process
 from toolbelt.dotfiles.plan import Plan, Target
 from toolbelt.dotfiles.status import (
     State,
@@ -20,6 +21,12 @@ from toolbelt.dotfiles.status import (
     stale_links,
     target_state,
 )
+
+
+# A public repo that ships this hook (a secret scan, see `tt dotfiles check`)
+# gets it activated by `link`.
+HOOKS_DIR = ".githooks"
+PRE_COMMIT_HOOK = f"{HOOKS_DIR}/pre-commit"
 
 
 class BackupDir:
@@ -50,14 +57,6 @@ class BackupDir:
         stored.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(original, stored)
 
-    def copy(self, original: Path) -> None:
-        stored = self.path_for(original)
-        stored.parent.mkdir(parents=True, exist_ok=True)
-        if original.is_dir() and not original.is_symlink():
-            shutil.copytree(original, stored, symlinks=True)
-        else:
-            shutil.copy2(original, stored, follow_symlinks=False)
-
 
 class Action(Protocol):
     def describe(self, backups: BackupDir) -> str: ...
@@ -74,17 +73,6 @@ class MoveToBackup:
 
     def run(self, backups: BackupDir) -> None:
         backups.move(self.path)
-
-
-@dataclass(frozen=True)
-class CopyToBackup:
-    path: Path
-
-    def describe(self, backups: BackupDir) -> str:
-        return f"backup  {self.path} -> {backups.path_for(self.path)} (copy)"
-
-    def run(self, backups: BackupDir) -> None:
-        backups.copy(self.path)
 
 
 @dataclass(frozen=True)
@@ -136,6 +124,30 @@ class RemoveLink:
         self.path.unlink()
 
 
+@dataclass(frozen=True)
+class SetHooksPath:
+    repo: Path
+
+    def describe(self, backups: BackupDir) -> str:
+        return f"hooks   {self.repo}: core.hooksPath = {HOOKS_DIR}"
+
+    def run(self, backups: BackupDir) -> None:
+        logged_process.run(
+            ["git", "config", "core.hooksPath", HOOKS_DIR], cwd=self.repo, check=True
+        )
+
+
+def _hooks_path_unset(repo: Path) -> bool:
+    current = logged_process.run(
+        ["git", "config", "--get", "core.hooksPath"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.strip()
+    return current != HOOKS_DIR
+
+
 def _install(target: Target, *, made_dirs: set[Path]) -> list[Action]:
     actions: list[Action] = []
     parent = target.dest.parent
@@ -150,7 +162,10 @@ def _install(target: Target, *, made_dirs: set[Path]) -> list[Action]:
 
 
 def link_actions(plan: Plan) -> list[Action]:
-    """Make every target exist, backing up whatever is in the way."""
+    """Make every target exist, backing up whatever is in the way.
+
+    Public repos that ship a pre-commit hook also get it activated.
+    """
     actions: list[Action] = []
     replaced_containers: set[Path] = set()
     made_dirs: set[Path] = set()
@@ -176,33 +191,13 @@ def link_actions(plan: Plan) -> list[Action]:
             actions.append(MoveToBackup(target.dest))
         actions += _install(target, made_dirs=made_dirs)
     actions += [RemoveLink(entry.dest) for entry in stale_links(plan)]
-    return actions
-
-
-def unlink_actions(plan: Plan) -> list[Action]:
-    """Remove links that point at the repo; leave everything else alone."""
-    actions: list[Action] = []
-    for target in plan.targets:
-        if target_state(target).state is not State.OK:
-            continue
-        if target.dest.is_symlink():
-            actions.append(RemoveLink(target.dest))
-        elif target.mode == "copy":
-            actions.append(MoveToBackup(target.dest))
-    actions += [RemoveLink(entry.dest) for entry in stale_links(plan)]
-    return actions
-
-
-def backup_actions(plan: Plan) -> list[Action]:
-    """Copy aside everything `link` would displace, changing nothing."""
-    actions: list[Action] = []
-    for container in plan.containers:
-        if container_state(container).state is State.CONFLICT:
-            actions.append(CopyToBackup(container))
-    for target in plan.targets:
-        entry = target_state(target)
-        if entry.state in (State.CONFLICT, State.WRONG_TARGET):
-            actions.append(CopyToBackup(target.dest))
+    for repo in plan.repos:
+        if (
+            repo.public
+            and (repo.root / PRE_COMMIT_HOOK).is_file()
+            and _hooks_path_unset(repo.root)
+        ):
+            actions.append(SetHooksPath(repo.root))
     return actions
 
 

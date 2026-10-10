@@ -11,14 +11,11 @@ import typer
 from toolbelt.dotfiles.actions import (
     Action,
     BackupDir,
-    backup_actions,
     link_actions,
     run_actions,
-    unlink_actions,
 )
-from toolbelt.dotfiles.adopt import adopt_actions
 from toolbelt.dotfiles.config import config_path, dotfiles_repos
-from toolbelt.dotfiles.manifest import RepoManifest, load_manifest
+from toolbelt.dotfiles.manifest import MANIFEST_FILENAME, RepoManifest, load_manifest
 from toolbelt.dotfiles.plan import Plan, build_plan
 from toolbelt.dotfiles.secret_scan import scan_repo
 from toolbelt.dotfiles.status import State, collect_status
@@ -106,60 +103,18 @@ def link(ctx: typer.Context, dry_run: bool = _DRY_RUN) -> None:
     _execute(link_actions(context.plan()), home=context.home, dry_run=dry_run)
 
 
-@dotfiles_typer.command()
-def unlink(ctx: typer.Context, dry_run: bool = _DRY_RUN) -> None:
-    """Remove links that point into the repos (copies are backed up)"""
-    context = _context(ctx)
-    _execute(unlink_actions(context.plan()), home=context.home, dry_run=dry_run)
-
-
-@dotfiles_typer.command()
-def backup(ctx: typer.Context, dry_run: bool = _DRY_RUN) -> None:
-    """Copy aside every file `link` would displace, changing nothing else"""
-    context = _context(ctx)
-    _execute(backup_actions(context.plan()), home=context.home, dry_run=dry_run)
-
-
-@dotfiles_typer.command()
-def adopt(
-    ctx: typer.Context,
-    path: Path = typer.Argument(..., help="Existing file or directory under home."),
-    repo: str | None = typer.Option(
-        None,
-        "--repo",
-        help="Target repo directory name or path. Default: first private repo.",
-    ),
-    src: str | None = typer.Option(
-        None,
-        "--src",
-        help="Path inside the repo. Default: <adopt_dir>/<home-relative>.",
-    ),
-    dry_run: bool = _DRY_RUN,
-) -> None:
-    """Move an existing real file into a repo, record it, and link it back"""
-    context = _context(ctx)
-    manifests = context.manifests()
-    chosen = _choose_repo(manifests, repo)
-    actions = adopt_actions(
-        path.expanduser().absolute(),
-        repo=chosen,
-        plan=build_plan(manifests, home=context.home),
-        home=context.home,
-        src_rel=src,
-    )
-    _execute(actions, home=context.home, dry_run=dry_run)
-
-
-def _choose_repo(manifests: list[RepoManifest], repo: str | None) -> RepoManifest:
-    if repo is None:
-        private = [m for m in manifests if not m.public]
-        if not private:
-            raise ValueError("no private repo configured; pass --repo")
-        return private[0]
+def _choose_repo(manifests: list[RepoManifest], repo: str) -> RepoManifest:
     for manifest in manifests:
         if repo in (manifest.root.name, str(manifest.root)):
             return manifest
-    raise ValueError(f"--repo {repo} is not one of the configured dotfiles repos")
+    # Not configured, but a directory with its own manifest (e.g. a git
+    # worktree of a configured repo) can still be scanned.
+    if (Path(repo) / MANIFEST_FILENAME).is_file():
+        return load_manifest(Path(repo))
+    raise ValueError(
+        f"{repo} is neither a configured dotfiles repo nor a directory "
+        f"containing {MANIFEST_FILENAME}"
+    )
 
 
 @dotfiles_typer.command()

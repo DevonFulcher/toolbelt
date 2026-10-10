@@ -8,7 +8,8 @@ from conftest import git
 
 from toolbelt.git.stack import lineage
 from toolbelt.git.stack.append import create_stacked_branch
-from toolbelt.git.workflow import WorktreeInUseError, git_branch_clean
+from toolbelt.git.workflow import git_branch_clean
+from toolbelt.git.worktrees_ops import WorktreeInUseError
 
 
 def test_deletes_branch_and_drops_its_own_lineage_entry(repo: Path, tmp_path: Path):

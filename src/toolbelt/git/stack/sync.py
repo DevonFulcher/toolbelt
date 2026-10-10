@@ -28,7 +28,11 @@ from toolbelt.git.stack.lineage import (
 from toolbelt.git.stack.ops import has_unpushed_real_work
 from toolbelt.git.stack.worktree import worktree_paths
 from toolbelt.git.worktrees import current_branch
-from toolbelt.git.worktrees_ops import delete_branch_and_worktree, main_worktree
+from toolbelt.git.worktrees_ops import (
+    delete_branch_and_worktree,
+    ensure_not_inside_worktree,
+    main_worktree,
+)
 from toolbelt.logger import logger
 
 
@@ -168,6 +172,15 @@ def sync_stack(
     # independent `gh` network round-trip).
     landed, has_open_pr = asyncio.run(_resolve_stack_status(stack, forge))
 
+    # Landed branches are deleted at the end; refuse up front (before
+    # restacking or deleting anything) if that would remove the worktree this
+    # process is running in.
+    main_wt = main_worktree(root)
+    for landed_branch in sorted(landed):
+        ensure_not_inside_worktree(
+            landed_branch, root=main_wt, caller_dirs=[root, Path.cwd()]
+        )
+
     def surviving_base(child: str) -> str:
         """Nearest ancestor of ``child`` that has not landed (collapses chains
         of consecutive landed ancestors so cascading lands resolve correctly)."""
@@ -274,9 +287,7 @@ def sync_stack(
 
     # Every landed branch has had its children restacked away, so each is now a
     # leaf in the lineage and safe to remove (branch, worktree, and config key).
-    # Run from the main worktree so a landed branch can be removed even when it
-    # is the caller's current worktree.
-    main_wt = main_worktree(root)
+    # Run from the main worktree: git can't remove a worktree it runs in.
     for landed_branch in landed:
         landed_wt = paths.get(landed_branch)
         if landed_wt is not None and landed_wt.resolve() == main_wt.resolve():
