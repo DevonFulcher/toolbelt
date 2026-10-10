@@ -93,7 +93,7 @@ def render(
 
 @dataclass(frozen=True)
 class RepoTree:
-    """One repo's stack, as shown by `git tree --all`."""
+    """One repo's stack, as shown by `git tree`."""
 
     name: str
     path: Path

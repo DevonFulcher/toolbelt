@@ -1,6 +1,7 @@
 """Tests for the SQLite stack store, the legacy git-config import, and
 multi-repo `tree`."""
 
+import shutil
 import sqlite3
 from pathlib import Path
 
@@ -106,7 +107,7 @@ def test_worktrees_share_one_repo_record(repo: Path, tmp_path: Path):
     assert len(lineage.known_repos()) == 1
 
 
-def test_tree_all_shows_multiple_repos(
+def test_tree_shows_multiple_repos(
     repo: Path, tmp_path: Path, capfd: pytest.CaptureFixture
 ):
     other = tmp_path / "other-repo"
@@ -115,7 +116,7 @@ def test_tree_all_shows_multiple_repos(
     lineage.set_parent("devon/api", "main", root=repo)
     lineage.set_parent("devon/docs", "main", root=other)
 
-    result = _invoke(["tree", "--all"], cwd=repo, capfd=capfd)
+    result = _invoke(["tree"], cwd=repo, capfd=capfd)
 
     assert f"other-repo ({other.resolve()})" in result.output
     assert f"repo ({repo.resolve()})" in result.output
@@ -136,17 +137,18 @@ def test_tree_outside_a_repo_shows_known_repos(
     assert "devon/api" in result.output
 
 
-def test_tree_default_in_a_repo_is_single_repo_without_header(
+def test_tree_marks_cwd_branch_and_skips_repos_whose_path_is_gone(
     repo: Path, tmp_path: Path, capfd: pytest.CaptureFixture
 ):
-    other = tmp_path / "other-repo"
-    other.mkdir()
-    git("init", "-b", "main", cwd=other)
-    lineage.set_parent("devon/api", "main", root=repo)
-    lineage.set_parent("devon/docs", "main", root=other)
+    gone = tmp_path / "gone-repo"
+    gone.mkdir()
+    git("init", "-b", "main", cwd=gone)
+    lineage.set_parent("devon/docs", "main", root=gone)
+    lineage.set_parent("main", "origin-base", root=repo)
+    shutil.rmtree(gone)
 
     result = _invoke(["tree"], cwd=repo, capfd=capfd)
 
-    assert "devon/api" in result.output
+    assert "main *" in result.output
     assert "devon/docs" not in result.output
-    assert "other-repo" not in result.output
+    assert f"gone-repo ({gone.resolve()})" not in result.output

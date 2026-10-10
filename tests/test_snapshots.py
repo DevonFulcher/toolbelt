@@ -8,8 +8,9 @@ reading a snapshot diff, not new assertion code — accept intentional wording
 changes with `pytest --snapshot-update`.
 
 Only `git tree`'s output is snapshotted: it's pure, deterministic text (branch
-names + ASCII tree characters, no paths/timestamps), unlike e.g. `git diff`
-output which is data-specific and not a meaningful thing to pin.
+names + ASCII tree characters, with the per-repo header's temp path
+normalized), unlike e.g. `git diff` output which is data-specific and not a
+meaningful thing to pin.
 """
 
 from pathlib import Path
@@ -22,11 +23,15 @@ from test_cli import _invoke
 from toolbelt.git.stack.append import create_stacked_branch
 
 
+def _stable(output: str, repo: Path) -> str:
+    return output.replace(str(repo.resolve()), "<repo>")
+
+
 def test_tree_output_empty_stack(
     repo: Path, capfd: pytest.CaptureFixture, snapshot: SnapshotAssertion
 ):
     result = _invoke(["tree"], cwd=repo, capfd=capfd)
-    assert result.output == snapshot
+    assert _stable(result.output, repo) == snapshot
 
 
 def test_tree_output_branching_stack(
@@ -42,4 +47,4 @@ def test_tree_output_branching_stack(
 
     result = _invoke(["tree"], cwd=repo, capfd=capfd)
 
-    assert result.output == snapshot
+    assert _stable(result.output, repo) == snapshot

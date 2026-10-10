@@ -155,44 +155,22 @@ def _known_repo_trees(cwd_root: Path | None) -> list[RepoTree]:
 
 
 @stack_typer.command()
-def tree(
-    all_repos: bool = typer.Option(
-        False,
-        "--all",
-        "-a",
-        help="Show every known repo's stacks (the default outside a repo).",
-    ),
-) -> None:
-    """Print the stack tree, filling in each branch's PR/CI/review status.
+def tree() -> None:
+    """Print every known repo's stack tree, with each branch's PR/CI/review status.
 
-    The tree itself is local and renders instantly; the status column comes
-    from one `gh pr view` per branch, run concurrently, and fills in as each
-    completes. On a real terminal this redraws live; piped output waits for
-    every lookup and prints once.
-
-    With `--all` (or outside a git repo) it shows every repo toolbelt has
-    tracked stacks for, each under its own header.
+    Each repo toolbelt tracks stacks for appears under its own `name (path)`
+    header, with the current repo's current branch marked. The tree itself is
+    local and renders instantly; the status column comes from one `gh pr view`
+    per branch, run concurrently, and fills in as each completes. On a real
+    terminal this redraws live; piped output waits for every lookup and prints
+    once.
     """
     cwd_root = _repo_root_or_none()
-    multi = all_repos or cwd_root is None
-    if multi:
-        trees = _known_repo_trees(cwd_root)
-    else:
-        assert cwd_root is not None
-        parents = lineage.all_parents(root=cwd_root)
-        trees = (
-            [
-                RepoTree(
-                    name=cwd_root.name,
-                    path=cwd_root,
-                    parents=parents,
-                    current=current_branch(cwd_root),
-                    statuses={},
-                )
-            ]
-            if parents
-            else []
-        )
+    if cwd_root is not None:
+        # Register (and import legacy config for) the current repo so it shows
+        # up even if no other command has touched it yet.
+        lineage.all_parents(root=cwd_root)
+    trees = _known_repo_trees(cwd_root)
     if not trees:
         logger.info("No tracked stacks. Use `git append <name>` to start one.")
         return
@@ -202,11 +180,7 @@ def tree(
     live: Live | None = None
 
     def view() -> str:
-        shown = [replace(t, statuses=s) for t, s in zip(trees, statuses)]
-        if multi:
-            return render_repos(shown)
-        only = shown[0]
-        return render(only.parents, current=only.current, statuses=only.statuses)
+        return render_repos([replace(t, statuses=s) for t, s in zip(trees, statuses)])
 
     async def load_repo(index: int) -> None:
         repo_tree = trees[index]

@@ -1,6 +1,7 @@
 # serializer version: 1
 # name: test_tree_output_branching_stack
   '''
+  repo (<repo>)
   main *
   └─ devon/api           PR none
      ├─ devon/api_docs   PR none
