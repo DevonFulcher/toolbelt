@@ -18,6 +18,7 @@ from .branches import (
 )
 from .repo import current_repo_org, get_current_repo_root_path
 from .repo_pull import (
+    default_config_path,
     default_state_dir,
     start_background_pull,
     take_unreported_summary,
@@ -73,7 +74,7 @@ def sync_repo(root: Path | None = None) -> None:
     sync_stack(root=root, forge=GhForge(root))
     git_branch_clean(root)
     update_repo(root if root.exists() else main_wt)
-    start_background_pull(state_dir=state_dir, config_path=state_dir / "config.yaml")
+    start_background_pull(state_dir=state_dir, config_path=default_config_path())
 
 
 def git_merge(pr: str) -> None:

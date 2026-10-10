@@ -7,6 +7,7 @@ from pathlib import Path
 from conftest import git
 
 from toolbelt.git.repo_pull import (
+    default_config_path,
     load_sync_repos,
     pull_repo,
     run_pulls,
@@ -35,6 +36,16 @@ def test_load_sync_repos_resolves_relative_paths_against_workdir(tmp_path: Path)
         tmp_path / "work" / "proj",
         tmp_path / "abs",
     ]
+
+
+def test_default_config_path_honors_xdg_config_home():
+    assert default_config_path({"XDG_CONFIG_HOME": "/c"}) == Path(
+        "/c/toolbelt/config.yaml"
+    )
+    assert default_config_path({}) == Path.home() / ".config/toolbelt/config.yaml"
+    assert default_config_path({"XDG_CONFIG_HOME": ""}) == (
+        Path.home() / ".config/toolbelt/config.yaml"
+    )
 
 
 def test_load_sync_repos_without_config_is_empty(tmp_path: Path):

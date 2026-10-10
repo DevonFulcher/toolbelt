@@ -1,6 +1,7 @@
 """Background fast-forward pulls of the repos listed under ``sync.repos``.
 
-``~/.toolbelt/config.yaml``::
+``$XDG_CONFIG_HOME/toolbelt/config.yaml`` (default
+``~/.config/toolbelt/config.yaml``; see ``default_config_path``)::
 
     sync:
       repos:
@@ -22,6 +23,7 @@ import json
 import os
 import subprocess
 import sys
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,6 +37,17 @@ _FALLBACK_DEFAULT_BRANCHES = ("main", "master")
 
 def default_state_dir() -> Path:
     return Path.home() / ".toolbelt"
+
+
+def default_config_path(env: Mapping[str, str] = os.environ) -> Path:
+    """toolbelt's config file: ``$XDG_CONFIG_HOME/toolbelt/config.yaml``, else
+    ``~/.config/toolbelt/config.yaml``.
+
+    Config is kept apart from the state dir (``default_state_dir``) because
+    only the config is symlinked in from the dotfiles repo.
+    """
+    config_home = env.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    return Path(config_home) / "toolbelt" / "config.yaml"
 
 
 def load_sync_repos(config_path: Path, *, workdir: Path | None = None) -> list[Path]:
@@ -178,7 +191,7 @@ if __name__ == "__main__":
     _state_dir = default_state_dir()
     run_pulls(
         load_sync_repos(
-            _state_dir / "config.yaml",
+            default_config_path(),
             workdir=Path(_workdir) if _workdir else None,
         ),
         state_dir=_state_dir,
