@@ -60,7 +60,7 @@ from toolbelt.tasks.config import configured_tracker
 from toolbelt.tasks.tracker import TaskInfo, TaskTracker
 from toolbelt.ui import branch_links
 from toolbelt.ui.branch_links import Link
-from toolbelt.ui.next_action import ParentContext
+from toolbelt.ui.next_action import ParentContext, next_action
 from toolbelt.ui.pr_fetch import PrSnapshot, fetch_snapshot
 from toolbelt.ui.live_status import (
     DEFAULT_CONCURRENCY,
@@ -105,6 +105,15 @@ _FILTER_LABELS = {
     "review": "Review",
     "comments": "Comments",
     "merge": "Merge",
+}
+
+#: The Next filter's friendly option texts. The option *values* stay the raw
+#: who (what the cell's data-value, the sort and the URL use).
+_NEXT_OPTION_LABELS = {
+    "you": "Needs me",
+    "ci": "Waiting on CI",
+    "others": "Waiting on others",
+    "none": "Done",
 }
 
 # Sent when no event has gone out for this long, so intermediaries keep the
@@ -189,7 +198,8 @@ def _checked_out_branch(root: Path) -> str | None:
 def _parent_context(
     repo_id: int, parents: Parents, branch: str, refresher: StatusRefresher
 ) -> ParentContext | None:
-    """The tracked branch ``branch`` is stacked on, with its PR state; ``None``
+    """The tracked branch ``branch`` is stacked on, with its PR state and who
+    its own next action waits on (which depends on *its* parent in turn); ``None``
     for a branch on the base branch, or while the parent's status is unknown."""
     parent = parents.get(branch)
     if parent is None or parent not in parents:
@@ -197,7 +207,10 @@ def _parent_context(
     fetched = refresher.get(repo_id, parent)
     if fetched is None or fetched.status is None:
         return None
-    return ParentContext(name=parent, pr=fetched.status.pr)
+    parent_action = next_action(
+        fetched.status, _parent_context(repo_id, parents, parent, refresher)
+    )
+    return ParentContext(name=parent, pr=fetched.status.pr, next_who=parent_action.who)
 
 
 def _cells_for(
@@ -401,11 +414,13 @@ def create_app(
     def publish_status(branch: TrackedBranch, fetched: Fetched) -> None:
         # The cache already holds ``fetched``, so parent contexts see it.
         parents = _all_parents(branch.repo_id)
-        names = [branch.branch] + [
-            child for child, parent in parents.items() if parent == branch.branch
-        ]
-        # A branch stacked on this one has its next action depend on this
-        # PR's state ("Blocked on <parent>"), so its cells are republished too.
+        # A branch stacked on this one (at any depth) has its next action
+        # depend on this PR's state ("Blocked on <parent>", and who that waits
+        # on follows the parent's own next action), so the cells of all its
+        # descendants are republished too.
+        names = [branch.branch]
+        for name in names:
+            names.extend(child for child, parent in parents.items() if parent == name)
         for name in names:
             publish_cells(
                 branch.repo_id,
@@ -488,7 +503,14 @@ def create_app(
                 "rows": rows,
                 "columns": COLUMNS,
                 "filters": [
-                    (key, _FILTER_LABELS[key], [(o, o) for o in options])
+                    (
+                        key,
+                        _FILTER_LABELS[key],
+                        [
+                            (o, _NEXT_OPTION_LABELS.get(o, o) if key == "next" else o)
+                            for o in options
+                        ],
+                    )
                     for key, options in FILTER_OPTIONS.items()
                 ],
             },

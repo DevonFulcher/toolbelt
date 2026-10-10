@@ -17,15 +17,20 @@ CI failed                 Fix / re-run CI            you
 draft, CI running         Waiting on CI              ci
 draft (CI green / none)   Publish PR                 you
 open, CI running          Waiting on CI              ci
-approved, parent PR not   Blocked on <parent>        others
-merged (stacked)
+approved, parent PR not   Blocked on <parent>        you if the parent's own
+merged (stacked)                                     next action is yours,
+                                                     else others
 approved                  Merge                      you
 review requested          Waiting for review         others
 otherwise                 Request review             you
 ========================  =========================  ======
 
 "Blocked on <parent>" replaces "Merge" only: a child's review can proceed
-while its parent is open, but it must not be merged before the parent.
+while its parent is open, but it must not be merged before the parent. Who it
+waits on follows the parent's own next action: when that is yours (the parent
+needs you to fix CI, merge, ...) the stack is work for you, so the child reads
+``you`` too; when the parent waits on others or CI, so does the child. A chain
+inherits this transitively.
 """
 
 from dataclasses import dataclass
@@ -56,6 +61,8 @@ class ParentContext:
 
     name: str
     pr: PrState
+    #: Who the parent's own next action waits on (``WHO_*``).
+    next_who: str = WHO_OTHERS
 
 
 def next_action(status: BranchStatus, parent: ParentContext | None) -> NextAction:
@@ -79,7 +86,8 @@ def next_action(status: BranchStatus, parent: ParentContext | None) -> NextActio
         return NextAction("Publish PR", WHO_YOU, "publish")
     if status.review is ReviewState.APPROVED:
         if parent is not None and parent.pr is not PrState.MERGED:
-            return NextAction(f"Blocked on {parent.name}", WHO_OTHERS, "blocked")
+            who = WHO_YOU if parent.next_who == WHO_YOU else WHO_OTHERS
+            return NextAction(f"Blocked on {parent.name}", who, "blocked")
         return NextAction("Merge", WHO_YOU, "merge")
     if status.review is ReviewState.REQUESTED:
         return NextAction("Waiting for review", WHO_OTHERS, "wait_review")

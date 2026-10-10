@@ -9,6 +9,7 @@ TestClient buffers a whole response and an event stream never ends.
 
 import asyncio
 import json
+import re
 from pathlib import Path
 
 from toolbelt.git.stack.status import (
@@ -19,7 +20,7 @@ from toolbelt.git.stack.status import (
     ReviewState,
 )
 from toolbelt.git.stack.store import RepoIdentity, StackStore, default_db_path
-from toolbelt.ui.app import create_app
+from toolbelt.ui.app import cell_id, create_app
 from toolbelt.ui.pr_fetch import PrSnapshot
 from toolbelt.ui.live_status import (
     EventHub,
@@ -652,3 +653,73 @@ def test_lifespan_runs_and_stops_the_background_loops(tmp_path):
 def test_an_empty_database_has_nothing_to_poll():
     s = Setup([])
     assert run(s.refresher.run_once()) == 0
+
+
+def test_a_change_republishes_every_descendant_not_only_children(tmp_path):
+    # c is blocked on b, and who that waits on follows b's own next action,
+    # which follows a's: a change to a alone must refresh c's cells too.
+    store = StackStore(default_db_path())
+    path = tmp_path / "api"
+    path.mkdir()
+    repo_id = store.ensure_repo(
+        RepoIdentity(git_common_dir=path / ".git", path=path, remote_url=None)
+    )
+    store.set_parent(repo_id, "devon/a", "main")
+    store.set_parent(repo_id, "devon/b", "devon/a")
+    store.set_parent(repo_id, "devon/c", "devon/b")
+    store.close()
+    approved = BranchStatus(
+        pr=PrState.OPEN,
+        ci=CiState.SUCCESS,
+        review=ReviewState.APPROVED,
+        url="https://github.com/o/r/pull/2",
+    )
+    waiting = BranchStatus(
+        pr=PrState.OPEN,
+        ci=CiState.SUCCESS,
+        review=ReviewState.REQUESTED,
+        url="https://github.com/o/r/pull/1",
+    )
+    fetcher = Fetcher()
+    fetcher.statuses = {"devon/a": waiting, "devon/b": approved, "devon/c": approved}
+    clock = Clock()
+    app = create_app(fetch=fetcher, clock=clock)
+    queue = app.state.hub.subscribe()
+
+    def drain() -> list[tuple[str, dict]]:
+        events = []
+        while not queue.empty():
+            events.append(queue.get_nowait())
+        return events
+
+    def next_value(events: list, branch: str) -> str | None:
+        found = None
+        for name, data in events:
+            if name != "status":
+                continue
+            match = re.search(
+                rf'id="{cell_id(repo_id, branch, "next")}"[^>]*data-value="(\w*)"',
+                data["html"],
+            )
+            if match:
+                found = match.group(1)
+        return found
+
+    async def scenario():
+        await app.state.refresher.run_once()
+        first = drain()
+        # a now needs the user: fix CI.
+        fetcher.statuses["devon/a"] = BranchStatus(
+            pr=PrState.OPEN,
+            ci=CiState.FAILED,
+            review=ReviewState.NONE,
+            url="https://github.com/o/r/pull/1",
+        )
+        clock.now += 1000
+        await app.state.refresher.run_once()
+        return first, drain()
+
+    first, second = run(scenario())
+
+    assert next_value(first, "devon/c") == "others"
+    assert next_value(second, "devon/c") == "you"

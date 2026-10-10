@@ -297,6 +297,15 @@ def test_filter_controls_are_rendered(tmp_path, make_client):
         select = html.split(f'<select name="{column}">')[1].split("</select>")[0]
         options = re.findall(r'<option value="([^"]*)"', select)
         assert options == ["", *values]
+    # The Next filter reads in plain words while keeping the raw who value.
+    next_select = html.split('<select name="next">')[1].split("</select>")[0]
+    assert re.findall(r'<option value="([^"]*)">([^<]*)<', next_select) == [
+        ("", "Any"),
+        ("you", "Needs me"),
+        ("ci", "Waiting on CI"),
+        ("others", "Waiting on others"),
+        ("none", "Done"),
+    ]
     repo_select = html.split('name="repo"')[1].split("</select>")[0]
     assert ">alpha<" in repo_select and ">beta<" in repo_select
     assert 'data-view="tree"' in html and 'data-view="flat"' in html
@@ -792,6 +801,53 @@ def test_a_stacked_branch_is_blocked_until_its_parent_merges(
     refresh(client)
     html = client.get("/").text
     assert next_cell(html, "devon/b").text["next"].strip() == "Merge"
+
+
+def test_blocked_stacks_wait_on_you_when_the_parent_needs_you(
+    tmp_path, make_client, fetcher
+):
+    seed_repo(
+        tmp_path,
+        "api",
+        {
+            "devon/a": "main",
+            "devon/b": "devon/a",
+            "devon/c": "devon/b",
+            "devon/x": "main",
+            "devon/y": "devon/x",
+        },
+    )
+    pull = "https://github.com/o/r/pull/"
+    approved = BranchStatus(
+        pr=PrState.OPEN, ci=CiState.SUCCESS, review=ReviewState.APPROVED, url=pull + "9"
+    )
+    # a needs me (CI failed); b and c are approved and stacked on it.
+    fetcher.statuses["devon/a"] = BranchStatus(
+        pr=PrState.OPEN, ci=CiState.FAILED, review=ReviewState.NONE, url=pull + "1"
+    )
+    fetcher.statuses["devon/b"] = approved
+    fetcher.statuses["devon/c"] = approved
+    # x waits on a reviewer; y is approved on it.
+    fetcher.statuses["devon/x"] = BranchStatus(
+        pr=PrState.OPEN,
+        ci=CiState.SUCCESS,
+        review=ReviewState.REQUESTED,
+        url=pull + "2",
+    )
+    fetcher.statuses["devon/y"] = approved
+    client = make_client()
+    refresh(client)
+
+    html = client.get("/").text
+
+    for branch, parent, who in [
+        ("devon/b", "devon/a", "you"),
+        ("devon/c", "devon/b", "you"),
+        ("devon/y", "devon/x", "others"),
+    ]:
+        cell = next_cell(html, branch)
+        assert cell.text["next"].strip() == f"Blocked on {parent}"
+        assert cell.by_col["next"]["data-value"] == who
 
 
 def test_next_is_loading_until_the_status_is_in(tmp_path, make_client):

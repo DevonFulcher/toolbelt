@@ -27,6 +27,11 @@ def status(
 
 MERGED_PARENT = ParentContext("devon/base", PrState.MERGED)
 OPEN_PARENT = ParentContext("devon/base", PrState.OPEN)
+# A parent whose own next action is the user's (e.g. fix CI), or waits on
+# someone else / CI.
+MINE_PARENT = ParentContext("devon/base", PrState.OPEN, next_who="you")
+CI_PARENT = ParentContext("devon/base", PrState.OPEN, next_who="ci")
+OTHERS_PARENT = ParentContext("devon/base", PrState.OPEN, next_who="others")
 
 
 @pytest.mark.parametrize(
@@ -159,6 +164,30 @@ OPEN_PARENT = ParentContext("devon/base", PrState.OPEN)
             "approved on an open parent",
             status(review=ReviewState.APPROVED),
             OPEN_PARENT,
+            "Blocked on devon/base",
+            "others",
+            "blocked",
+        ),
+        (
+            "approved on a parent that needs me: the stack is my work",
+            status(review=ReviewState.APPROVED),
+            MINE_PARENT,
+            "Blocked on devon/base",
+            "you",
+            "blocked",
+        ),
+        (
+            "approved on a parent waiting on CI",
+            status(review=ReviewState.APPROVED),
+            CI_PARENT,
+            "Blocked on devon/base",
+            "others",
+            "blocked",
+        ),
+        (
+            "approved on a parent waiting on others",
+            status(review=ReviewState.APPROVED),
+            OTHERS_PARENT,
             "Blocked on devon/base",
             "others",
             "blocked",
