@@ -1,23 +1,16 @@
-"""How a branch's stored Jira / agent-session links are shown.
+"""How a branch's stored task / agent-session links are shown.
 
 Pure functions, so link rendering is testable without a web app.
 
-``jira.base_url`` in toolbelt's config file (see
-``toolbelt.git.repo_pull.default_config_path``) is the Jira site root::
-
-    jira:
-      base_url: https://example.atlassian.net
-
-A stored Jira *key* (``ABC-123``) links to ``<base_url>/browse/<key>``; with no
-``base_url`` it is shown as plain text. A stored URL is linked as-is.
+A task ref is shown through the configured ``TaskTracker`` (see
+``toolbelt.tasks``); with no tracker configured, or a ref that belongs to a
+different tracker than the configured one, it is plain text.
 """
 
-import re
 from dataclasses import dataclass
-from pathlib import Path
 from urllib.parse import urlsplit
 
-import yaml
+from toolbelt.tasks.tracker import TaskTracker
 
 # Schemes that execute or embed content in the page rather than navigate, so
 # they are never rendered as an anchor even though the DB is the user's own.
@@ -32,29 +25,32 @@ class Link:
     href: str | None
 
 
-def jira_base_url(config_file: Path) -> str | None:
-    """``jira.base_url`` from the YAML config at ``config_file``, if set."""
-    if not config_file.exists():
-        return None
-    config = yaml.safe_load(config_file.read_text()) or {}
-    value = (config.get("jira") or {}).get("base_url")
-    return str(value) if value else None
-
-
 def _scheme(value: str) -> str:
     return urlsplit(value).scheme.lower()
 
 
-def jira_link(value: str | None, *, base_url: str | None) -> Link | None:
-    if not value:
+def owning_tracker(
+    stored_tracker: str | None, configured: TaskTracker | None
+) -> TaskTracker | None:
+    """``configured`` if a ref stored under ``stored_tracker`` belongs to it.
+    Refs stored before trackers were recorded (``None``) are assumed to."""
+    if configured is None:
         return None
-    if _scheme(value) in ("http", "https"):
-        key = value.rstrip("/").rsplit("/", 1)[-1]
-        label = key if re.fullmatch(r"[A-Z][A-Z0-9_]*-\d+", key) else value
-        return Link(label=label, href=value)
-    if base_url:
-        return Link(label=value, href=f"{base_url.rstrip('/')}/browse/{value}")
-    return Link(label=value, href=None)
+    if stored_tracker is None or stored_tracker == configured.name:
+        return configured
+    return None
+
+
+def task_link(ref: str | None, *, tracker: TaskTracker | None) -> Link | None:
+    """``tracker`` is the one that owns ``ref`` (see ``owning_tracker``)."""
+    if not ref:
+        return None
+    if tracker is None:
+        return Link(label=ref, href=None)
+    href = tracker.url_for(ref)
+    if href is not None and _scheme(href) not in ("http", "https"):
+        href = None
+    return Link(label=tracker.display_ref(ref), href=href)
 
 
 def agent_link(value: str | None) -> Link | None:

@@ -131,16 +131,24 @@ def set_parent(
     parent: str,
     *,
     root: Path,
-    jira: str | None = None,
+    task: str | None = None,
+    task_tracker: str | None = None,
     agent_link: str | None = None,
 ) -> None:
     """Record ``parent`` as ``branch``'s parent, and its links if given."""
     with _repo_store(root) as (store, repo_id):
-        store.set_parent(repo_id, branch, parent, jira=jira, agent_link=agent_link)
+        store.set_parent(
+            repo_id,
+            branch,
+            parent,
+            task=task,
+            task_tracker=task_tracker,
+            agent_link=agent_link,
+        )
 
 
 def get_links(branch: str, *, root: Path) -> BranchLinks | None:
-    """``branch``'s Jira / agent-session links, or ``None`` if untracked."""
+    """``branch``'s task / agent-session links, or ``None`` if untracked."""
     with _repo_store(root) as (store, repo_id):
         return store.get_links(repo_id, branch)
 
@@ -149,14 +157,21 @@ def set_links(
     branch: str,
     *,
     root: Path,
-    jira: str | None = None,
+    task: str | None = None,
+    task_tracker: str | None = None,
     agent_link: str | None = None,
 ) -> None:
     """Set the given links on a tracked ``branch`` (omitted ones are kept).
 
     Raises ``LookupError`` if ``branch`` is not tracked."""
     with _repo_store(root) as (store, repo_id):
-        if not store.set_links(repo_id, branch, jira=jira, agent_link=agent_link):
+        if not store.set_links(
+            repo_id,
+            branch,
+            task=task,
+            task_tracker=task_tracker,
+            agent_link=agent_link,
+        ):
             raise LookupError(f"'{branch}' is not a tracked stack branch")
 
 

@@ -39,6 +39,17 @@ def _isolate_state_dir(
     monkeypatch.setenv("TOOLBELT_HOME", str(tmp_path_factory.mktemp("toolbelt-home")))
 
 
+@pytest.fixture(autouse=True)
+def _isolate_config_dir(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Point toolbelt's config (``config.yaml``) at a per-test temp dir, so no
+    test reads the developer's real one. Returns the config file's path."""
+    config_home = tmp_path_factory.mktemp("config-home")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    return config_home / "toolbelt" / "config.yaml"
+
+
 class FakeForge:
     """Test `Forge`: a branch is merged iff seeded as such; every branch has
     an open PR by default unless seeded via `no_pr` — most tests don't care

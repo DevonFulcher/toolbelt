@@ -25,7 +25,8 @@ def create_stacked_branch(
     *,
     root: Path,
     wt_path: Path,
-    jira: str | None = None,
+    task: str | None = None,
+    task_tracker: str | None = None,
     agent_link: str | None = None,
 ) -> str:
     """Create a child branch off the current branch and a worktree for it.
@@ -35,7 +36,7 @@ def create_stacked_branch(
     keeps its exact in-flight state — just committed rather than dirty —
     instead of having it moved out from under it onto the new branch. The
     new branch then forks from that checkpoint. Records the new branch's
-    parent (and ``jira`` / ``agent_link``, when given) in lineage. Returns the
+    parent (and ``task`` / ``task_tracker`` / ``agent_link``, when given) in lineage. Returns the
     new branch name. Does not run repo setup
     or open an editor.
     """
@@ -51,7 +52,14 @@ def create_stacked_branch(
     # was already running against it.
     _commit_uncommitted(root=root)
     run(["git", "checkout", "-b", new_branch], cwd=root, exit_on_error=True)
-    set_parent(new_branch, parent, root=root, jira=jira, agent_link=agent_link)
+    set_parent(
+        new_branch,
+        parent,
+        root=root,
+        task=task,
+        task_tracker=task_tracker,
+        agent_link=agent_link,
+    )
     run(["git", "checkout", parent], cwd=root, exit_on_error=True)
     run(
         ["git", "worktree", "add", str(wt_path), new_branch],

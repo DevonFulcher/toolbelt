@@ -90,17 +90,22 @@ def test_links_default_to_none_and_roundtrip(repo: Path):
 
     lineage.set_parent("devon/api", "main", root=repo)
     links = lineage.get_links("devon/api", root=repo)
-    assert links is not None and (links.jira, links.agent_link) == (None, None)
+    assert links is not None
+    assert (links.task, links.task_tracker, links.agent_link) == (None, None, None)
 
-    lineage.set_links("devon/api", root=repo, jira="ABC-1")
+    lineage.set_links("devon/api", root=repo, task="ABC-1", task_tracker="jira")
     lineage.set_links("devon/api", root=repo, agent_link="claude://session/1")
     # Reparenting leaves the links alone.
     lineage.set_parent("devon/api", "develop", root=repo)
     links = lineage.get_links("devon/api", root=repo)
     assert links is not None
-    assert (links.jira, links.agent_link) == ("ABC-1", "claude://session/1")
+    assert (links.task, links.task_tracker, links.agent_link) == (
+        "ABC-1",
+        "jira",
+        "claude://session/1",
+    )
 
 
 def test_set_links_on_untracked_branch_raises(repo: Path):
     with pytest.raises(LookupError):
-        lineage.set_links("devon/nope", root=repo, jira="ABC-1")
+        lineage.set_links("devon/nope", root=repo, task="ABC-1")

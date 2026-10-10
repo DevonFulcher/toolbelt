@@ -20,6 +20,7 @@ from rich.live import Live
 from toolbelt import logged_process
 from toolbelt.git.exec import run
 from toolbelt.git.repo_lock import repo_lock
+from toolbelt.git.repo_pull import default_config_path
 from toolbelt.git.stack import lineage
 from toolbelt.git.stack.append import create_stacked_branch
 from toolbelt.git.stack.forge import GhForge
@@ -34,6 +35,7 @@ from toolbelt.git.stack.sync import sync_stack
 from toolbelt.git.stack.viz import RepoTree, render, render_repos
 from toolbelt.git.stack.worktree import worktree_paths
 from toolbelt.git.workflow import update_repo
+from toolbelt.tasks.config import configured_tracker
 from toolbelt.git.worktrees import (
     _worktree_path_for_name,
     copy_dotfiles,
@@ -53,8 +55,11 @@ def append(
         help="Name of the new stacked branch, without the devon/ prefix "
         "(it is added for you).",
     ),
-    jira: str = typer.Option(
-        ..., "--jira", help="Jira ticket this branch is for (key or URL)."
+    task: str = typer.Option(
+        ...,
+        "--task",
+        help="Task this branch is for, as its key or URL in the configured "
+        "tracker (tasks.tracker in the config file).",
     ),
     agent_link: str = typer.Option(
         ...,
@@ -76,13 +81,20 @@ def append(
     directory name: "/" and spaces become "_". So pass a bare name — an
     already-prefixed "devon/foo" would become "devon/devon_foo".
 
-    --jira and --agent-link are stored as given with the branch.
+    --task and --agent-link are stored as given with the branch; --task is
+    also tagged with the configured task tracker's name (if any).
     """
     root = repo_root()
+    tracker = configured_tracker(default_config_path())
     with repo_lock(root):
         wt_path = _worktree_path_for_name(name=name, repo_root=root)
         create_stacked_branch(
-            name, root=root, wt_path=wt_path, jira=jira, agent_link=agent_link
+            name,
+            root=root,
+            wt_path=wt_path,
+            task=task,
+            task_tracker=tracker.name if tracker else None,
+            agent_link=agent_link,
         )
         # Copy dotfiles, then install deps so the worktree is runnable.
         copy_dotfiles(root=root, wt_path=wt_path)

@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>toolbelt stacks</title>
 <script src="/static/htmx.min.js"></script>
+<script src="/static/stack-table.js" defer></script>
 <style>
   :root {
     color-scheme: light dark;
@@ -20,6 +21,7 @@
     }
   }
   * { box-sizing: border-box; }
+  html, body { overflow-x: hidden; }
   body { margin: 0; background: var(--bg); color: var(--fg);
          font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
   a { color: var(--accent); text-decoration: none; }
@@ -27,26 +29,55 @@
   header { display: flex; align-items: center; justify-content: space-between;
            padding: 10px 20px; border-bottom: 1px solid var(--line); }
   h1 { font-size: 15px; margin: 0; }
-  button { font: inherit; color: var(--fg); background: var(--card); cursor: pointer;
+  button, select, input { font: inherit; color: var(--fg); background: var(--card);
            border: 1px solid var(--line); border-radius: 6px; padding: 3px 10px; }
-  button:hover { border-color: var(--accent); }
-  main { padding: 16px 20px; display: grid; gap: 16px; }
+  button { cursor: pointer; }
+  button:hover, select:hover, input:hover { border-color: var(--accent); }
+  select { padding: 3px 6px; }
+  main { padding: 16px 20px; display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); }
+
+  /* Filter bar */
+  #controls { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: end; }
+  #controls label { display: grid; gap: 2px; font-size: 11px; color: var(--muted); }
+  #controls input[type=search] { min-width: 16rem; }
+  .seg { display: inline-flex; }
+  .seg button { border-radius: 0; margin-left: -1px; }
+  .seg button:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
+  .seg button:last-child { border-radius: 0 6px 6px 0; }
+  .seg button[aria-pressed=true] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  #count { color: var(--muted); font-size: 12px; align-self: center; }
+
+  /* One scrolling card per repo: the table scrolls inside, never the page. */
   section { background: var(--card); border: 1px solid var(--line); border-radius: 8px;
-            overflow-x: auto; }
+            min-width: 0; }
   h2 { font-size: 13px; margin: 0; padding: 8px 12px; border-bottom: 1px solid var(--line); }
   h2 small { color: var(--muted); font-weight: normal; margin-left: 8px; }
-  .row { display: grid; grid-template-columns: minmax(16rem, 1.4fr) minmax(12rem, 2fr) minmax(6rem, .6fr) minmax(6rem, .6fr);
-         gap: 12px; align-items: center; padding: 3px 12px; min-width: 52rem; }
-  .row:nth-child(even) { background: color-mix(in srgb, var(--line) 25%, transparent); }
-  .row.head { color: var(--muted); font-size: 12px; border-bottom: 1px solid var(--line); }
-  .branch { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px;
-            white-space: nowrap; }
+  .table-wrap { overflow: auto; max-height: calc(100vh - 12rem); }
+  table.stacks { border-collapse: separate; border-spacing: 0; width: 100%; min-width: 56rem; }
+  .stacks th, .stacks td { padding: 3px 12px; text-align: left; white-space: nowrap;
+                           vertical-align: middle; }
+  .stacks thead th { position: sticky; top: 0; z-index: 1; background: var(--card);
+                     border-bottom: 1px solid var(--line); font-size: 12px; font-weight: 600;
+                     color: var(--muted); padding: 0; }
+  .stacks thead th button { all: unset; box-sizing: border-box; display: block; width: 100%;
+                            padding: 6px 12px; cursor: pointer; }
+  .stacks thead th button:hover, .stacks thead th button:focus-visible { color: var(--fg); }
+  .stacks th .arrow { display: inline-block; width: 1em; margin-left: 4px; font-size: 10px; }
+  .stacks th[aria-sort=ascending] .arrow::after { content: "▲"; }
+  .stacks th[aria-sort=descending] .arrow::after { content: "▼"; }
+  .stacks th[aria-sort=ascending], .stacks th[aria-sort=descending] { color: var(--fg); }
+  .stacks tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--line) 25%, transparent); }
+  .stacks tr[hidden] { display: none; }
+  .col-task { max-width: 28rem; overflow: hidden; text-overflow: ellipsis; }
+  .task-title { color: var(--muted); margin: 0 4px; }
+
+  .branch { display: inline-block; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 13px; margin-left: calc(var(--depth, 0) * 1.25rem); }
   .branch.base { color: var(--muted); }
   .current { font-weight: 600; }
   .current::after { content: " ●"; color: var(--accent); }
   .muted { color: var(--muted); }
-  .status { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; }
-  .htmx-request.status { opacity: .55; }
+  .htmx-request.col-pr { opacity: .55; }
   .pill { display: inline-block; padding: 0 7px; border: 1px solid currentColor;
           border-radius: 10px; font-size: 12px; white-space: nowrap; }
   a.pill:hover { text-decoration: none; background: color-mix(in srgb, currentColor 12%, transparent); }
@@ -55,8 +86,10 @@
   .pr-closed, .ci-failed, .conflicts, .error { color: var(--red); }
   .pr-draft { color: var(--gray); }
   .ci-running, .review-requested, .review-reviewed, .comments { color: var(--amber); }
+  .task-status { color: var(--gray); }
   .notice { padding: 6px 12px; color: var(--amber); font-size: 12px; }
   .empty { padding: 24px; text-align: center; color: var(--muted); }
+  [hidden] { display: none !important; }
 </style>
 </head>
 <body>
@@ -65,28 +98,77 @@
   <button type="button" hx-on:click="htmx.trigger(document.body, 'refresh')">Refresh statuses</button>
 </header>
 <main>
+{% if repos %}
+  <form id="controls" onsubmit="return false">
+    <label>Filter
+      <input type="search" id="q" name="q" placeholder="branch, PR #, task…" autocomplete="off">
+    </label>
+    <label>Repo
+      <select name="repo">
+        <option value="">All</option>
+        {% for repo in repos %}<option value="{{ repo.id }}">{{ repo.name }}</option>{% endfor %}
+      </select>
+    </label>
+    {% for key, label, options in filters %}
+    <label>{{ label }}
+      <select name="{{ key }}">
+        <option value="">Any</option>
+        {% for option in options %}<option value="{{ option }}">{{ option }}</option>{% endfor %}
+      </select>
+    </label>
+    {% endfor %}
+    <span class="seg" role="group" aria-label="View">
+      <button type="button" data-view="tree" aria-pressed="true">Tree</button>
+      <button type="button" data-view="flat" aria-pressed="false">Flat</button>
+    </span>
+    <button type="button" id="clear">Clear</button>
+    <span id="count" aria-live="polite"></span>
+  </form>
+{% endif %}
 {% for repo in repos %}
-  <section>
+  <section class="repo" data-repo-id="{{ repo.id }}">
     <h2>{{ repo.name }}<small>{{ repo.path }}</small></h2>
     {% if repo.path_missing %}<div class="notice">Checkout no longer exists at this path; PR status unavailable.</div>{% endif %}
-    <div class="row head"><span>Branch</span><span>PR / CI / review</span><span>Jira</span><span>Session</span></div>
-    {% for row in repo.rows %}
-    <div class="row">
-      <span class="branch{% if not row.tracked %} base{% endif %}{% if row.current %} current{% endif %}"
-            style="padding-left: {{ row.depth * 1.25 }}rem">{{ row.name }}</span>
-      {% if row.tracked %}
-        {% with repo_id=repo.id, branch=row.name, status=none, path_missing=repo.path_missing %}{% include "status.html" %}{% endwith %}
-        <span>{% if row.jira %}{% if row.jira.href %}<a href="{{ row.jira.href }}" target="_blank" rel="noopener">{{ row.jira.label }}</a>{% else %}{{ row.jira.label }}{% endif %}{% else %}<span class="muted">—</span>{% endif %}</span>
-        <span>{% if row.agent %}{% if row.agent.href %}<a href="{{ row.agent.href }}">{{ row.agent.label }}</a>{% else %}{{ row.agent.label }}{% endif %}{% else %}<span class="muted">—</span>{% endif %}</span>
-      {% else %}
-        <span></span><span></span><span></span>
-      {% endif %}
+    <div class="table-wrap">
+    <table class="stacks">
+      <thead>
+        <tr>
+          {% for key, label in columns %}
+          <th data-col="{{ key }}" aria-sort="none"><button type="button">{{ label }}<span class="arrow" aria-hidden="true"></span></button></th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+      {% for row in repo.rows %}
+        <tr data-branch="{{ row.name }}" data-parent="{{ row.parent or '' }}"
+            data-order="{{ row.order }}" data-tracked="{{ 1 if row.tracked else 0 }}"
+            style="--depth: {{ row.depth }}">
+          <td class="col-branch" data-col="branch" data-value="{{ row.name }}" data-sort="{{ row.name }}" data-search="{{ row.name }}">
+            <span class="branch{% if not row.tracked %} base{% endif %}{% if row.current %} current{% endif %}">{{ row.name }}</span>
+          </td>
+          {% if row.tracked %}
+            {% with repo_id=repo.id, branch=row.name, c=UNLOADED, oob=false, path_missing=repo.path_missing %}{% include "status.html" %}{% endwith %}
+            {% with repo_id=repo.id, branch=row.name, task=row.task, fetchable=row.task_fetchable, loading=row.task_fetchable, info=none %}{% include "task.html" %}{% endwith %}
+            <td class="col-session" data-col="session"
+                data-value="{{ 'linked' if row.agent else '' }}" data-sort="{{ row.agent.label if row.agent else '' }}" data-search="">
+              {%- if row.agent -%}{%- if row.agent.href -%}<a href="{{ row.agent.href }}">{{ row.agent.label }}</a>{%- else -%}{{ row.agent.label }}{%- endif -%}
+              {%- else -%}<span class="muted">—</span>{%- endif -%}
+            </td>
+          {% else %}
+            {% for key in ("pr", "ci", "review", "merge", "task", "session") %}
+            <td data-col="{{ key }}" data-value="" data-sort="" data-search=""></td>
+            {% endfor %}
+          {% endif %}
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
     </div>
-    {% endfor %}
   </section>
 {% else %}
   <div class="empty">No tracked stacks. Use <code>tt g append</code> to start one.</div>
 {% endfor %}
+  <div id="no-match" class="empty" hidden>No branches match the current filters.</div>
 </main>
 </body>
 </html>
