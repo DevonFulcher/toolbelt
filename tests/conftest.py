@@ -31,6 +31,14 @@ def _isolate_git_env(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(var, raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_state_dir(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Point toolbelt's state dir (stack DB) at a per-test temp dir."""
+    monkeypatch.setenv("TOOLBELT_HOME", str(tmp_path_factory.mktemp("toolbelt-home")))
+
+
 class FakeForge:
     """Test `Forge`: a branch is merged iff seeded as such; every branch has
     an open PR by default unless seeded via `no_pr` — most tests don't care

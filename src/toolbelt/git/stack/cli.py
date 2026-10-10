@@ -11,6 +11,8 @@ entirely folded in here — there is no separate `git worktree`/`git wt` group.
 import asyncio
 import subprocess
 import sys
+from dataclasses import replace
+from pathlib import Path
 
 import typer
 from rich.live import Live
@@ -27,7 +29,7 @@ from toolbelt.git.stack.ops import (
 )
 from toolbelt.git.stack.status import BranchStatus, stream_branch_statuses
 from toolbelt.git.stack.sync import sync_stack
-from toolbelt.git.stack.viz import render
+from toolbelt.git.stack.viz import RepoTree, render, render_repos
 from toolbelt.git.stack.worktree import worktree_paths
 from toolbelt.git.workflow import update_repo
 from toolbelt.git.worktrees import (
@@ -118,42 +120,111 @@ def set_parent(
         sync_stack(root=root, forge=GhForge(root))
 
 
+def _repo_root_or_none() -> Path | None:
+    result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True
+    )
+    return Path(result.stdout.strip()) if result.returncode == 0 else None
+
+
+def _known_repo_trees(cwd_root: Path | None) -> list[RepoTree]:
+    """Every known repo with tracked stacks, marking the cwd repo's current
+    branch. Repos whose checkout no longer exists are skipped."""
+    cwd_common_dir = (
+        lineage.repo_identity(cwd_root).git_common_dir if cwd_root else None
+    )
+    trees = []
+    for repo, parents in lineage.known_repos():
+        if not parents:
+            continue
+        if not repo.path.is_dir():
+            logger.warning(f"Skipping {repo.name}: {repo.path} no longer exists.")
+            continue
+        is_cwd_repo = repo.git_common_dir == cwd_common_dir
+        trees.append(
+            RepoTree(
+                name=repo.name,
+                path=repo.path,
+                parents=parents,
+                current=current_branch(cwd_root) if cwd_root and is_cwd_repo else None,
+                statuses={},
+            )
+        )
+    return trees
+
+
 @stack_typer.command()
-def tree() -> None:
+def tree(
+    all_repos: bool = typer.Option(
+        False,
+        "--all",
+        "-a",
+        help="Show every known repo's stacks (the default outside a repo).",
+    ),
+) -> None:
     """Print the stack tree, filling in each branch's PR/CI/review status.
 
     The tree itself is local and renders instantly; the status column comes
     from one `gh pr view` per branch, run concurrently, and fills in as each
     completes. On a real terminal this redraws live; piped output waits for
     every lookup and prints once.
+
+    With `--all` (or outside a git repo) it shows every repo toolbelt has
+    tracked stacks for, each under its own header.
     """
-    root = repo_root()
-    parents = lineage.all_parents(root=root)
-    if not parents:
+    cwd_root = _repo_root_or_none()
+    multi = all_repos or cwd_root is None
+    if multi:
+        trees = _known_repo_trees(cwd_root)
+    else:
+        assert cwd_root is not None
+        parents = lineage.all_parents(root=cwd_root)
+        trees = (
+            [
+                RepoTree(
+                    name=cwd_root.name,
+                    path=cwd_root,
+                    parents=parents,
+                    current=current_branch(cwd_root),
+                    statuses={},
+                )
+            ]
+            if parents
+            else []
+        )
+    if not trees:
         logger.info("No tracked stacks. Use `git append <name>` to start one.")
         return
 
-    current = current_branch(root)
-    branches = sorted(parents.keys())
-    statuses: dict[str, BranchStatus] = {}
+    # Per-repo statuses fill in as lookups complete (mutated in place).
+    statuses: list[dict[str, BranchStatus]] = [{} for _ in trees]
     live: Live | None = None
 
-    async def load() -> None:
-        async for branch, status in stream_branch_statuses(branches, root=root):
-            statuses[branch] = status
+    def view() -> str:
+        shown = [replace(t, statuses=s) for t, s in zip(trees, statuses)]
+        if multi:
+            return render_repos(shown)
+        only = shown[0]
+        return render(only.parents, current=only.current, statuses=only.statuses)
+
+    async def load_repo(index: int) -> None:
+        repo_tree = trees[index]
+        async for branch, status in stream_branch_statuses(
+            sorted(repo_tree.parents), root=repo_tree.path
+        ):
+            statuses[index][branch] = status
             if live is not None:
-                live.update(
-                    render(parents, current=current, statuses=statuses), refresh=True
-                )
+                live.update(view(), refresh=True)
+
+    async def load() -> None:
+        await asyncio.gather(*(load_repo(i) for i in range(len(trees))))
 
     if sys.stdout.isatty():
-        with Live(
-            render(parents, current=current, statuses=statuses), auto_refresh=False
-        ) as live:
+        with Live(view(), auto_refresh=False) as live:
             asyncio.run(load())
     else:
         asyncio.run(load())
-        typer.echo(render(parents, current=current, statuses=statuses))
+        typer.echo(view())
 
 
 @stack_typer.command()

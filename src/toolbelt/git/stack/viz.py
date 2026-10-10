@@ -5,7 +5,9 @@ per-branch statuses, return the tree as a string. No git or network access, so
 it is trivially unit-testable.
 """
 
-from typing import Mapping
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from pathlib import Path
 
 from toolbelt.git.stack.lineage import Parents, children_map, roots
 from toolbelt.git.stack.status import BranchStatus, format_status
@@ -87,3 +89,23 @@ def render(
             row = f"{row.ljust(branch_width + 2 + suffix_width)}  {status.url}"
         lines.append(row)
     return "\n".join(lines)
+
+
+@dataclass(frozen=True)
+class RepoTree:
+    """One repo's stack, as shown by `git tree --all`."""
+
+    name: str
+    path: Path
+    parents: Parents
+    current: str | None
+    statuses: Mapping[str, BranchStatus]
+
+
+def render_repos(trees: Sequence[RepoTree]) -> str:
+    """Render several repos' trees, each under a ``name (path)`` header."""
+    return "\n\n".join(
+        f"{tree.name} ({tree.path})\n"
+        + render(tree.parents, current=tree.current, statuses=tree.statuses)
+        for tree in trees
+    )

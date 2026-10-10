@@ -1,7 +1,6 @@
 # serializer version: 1
 # name: test_tree_output_branching_stack
   '''
-  🔧 git config --get-regexp ^toolbelt\-stack\..*\.parent$
   main *
   └─ devon/api           PR none
      ├─ devon/api_docs   PR none
