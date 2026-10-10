@@ -110,7 +110,9 @@ def _choose_repo(manifests: list[RepoManifest], repo: str | None) -> RepoManifes
             raise ValueError("no private repo configured; pass --repo")
         return private[0]
     for manifest in manifests:
-        if repo in (manifest.root.name, str(manifest.root)):
+        if repo in (manifest.root.name, str(manifest.root)) or (
+            Path(repo).resolve() == manifest.root.resolve()
+        ):
             return manifest
     raise ValueError(f"--repo {repo} is not one of the configured dotfiles repos")
 

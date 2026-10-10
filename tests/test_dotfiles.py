@@ -382,3 +382,50 @@ def test_check_passes_for_clean_public_repo(machine: Machine) -> None:
     subprocess.run(["git", "init", "-q"], cwd=machine.public, check=True)
     result = machine.cli("check")
     assert result.exit_code == 0, result.output
+
+
+def test_check_scopes_to_a_repo_path_and_never_prints_the_match(
+    machine: Machine,
+) -> None:
+    for repo in (machine.public, machine.private):
+        subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    key = "AKIA" + "ABCDEFGHIJKLMNOP"
+    write(machine.private / "home/.netrc", f"key {key}\n")
+    assert machine.cli("check", str(machine.public)).exit_code == 0
+    leaky = machine.cli("check", str(machine.private))
+    assert leaky.exit_code == 1
+    assert key not in leaky.output
+
+
+# --- pre-commit hook ----------------------------------------------------
+
+
+def hooks_path(repo: Path) -> str:
+    return subprocess.run(
+        ["git", "config", "--get", "core.hooksPath"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def test_link_activates_the_pre_commit_hook_of_a_public_repo(
+    machine: Machine,
+) -> None:
+    for repo in (machine.public, machine.private):
+        subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+        write(repo / ".githooks/pre-commit", "#!/bin/sh\n")
+    dry = machine.cli("link", "--dry-run")
+    assert "hooks" in dry.output
+    assert hooks_path(machine.public) == ""
+
+    assert machine.cli("link").exit_code == 0
+    assert hooks_path(machine.public) == ".githooks"
+    assert hooks_path(machine.private) == ""  # the scanner targets public repos
+    assert "hooks" not in machine.cli("link").output
+
+
+def test_link_leaves_hooks_alone_when_the_repo_ships_none(machine: Machine) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=machine.public, check=True)
+    assert machine.cli("link").exit_code == 0
+    assert hooks_path(machine.public) == ""
