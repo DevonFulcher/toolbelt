@@ -17,7 +17,7 @@ repo's identity (see ``lineage``) and pass it in.
 import contextlib
 import os
 import sqlite3
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,8 +31,9 @@ Parents = dict[str, str]
 _MIGRATIONS: list[tuple[str, ...]] = [
     (
         # A repo is identified by its canonical git common dir, which is shared
-        # by all of its worktrees. ``imported_at`` is set once the legacy
-        # ``toolbelt-stack.*`` git config was copied in.
+        # by all of its worktrees. ``imported_at`` was set when legacy
+        # ``toolbelt-stack.*`` git config was first copied in; it is no longer
+        # written (legacy config is re-checked, see ``lineage``).
         """
         CREATE TABLE repos (
             id INTEGER PRIMARY KEY,
@@ -130,58 +131,45 @@ class StackStore:
                 # PRAGMA can't take bound parameters.
                 conn.execute(f"PRAGMA user_version = {index + 1}")
 
-    def ensure_repo(
-        self, identity: RepoIdentity, load_legacy_parents: Callable[[], Parents]
-    ) -> int:
-        """Return the repo's id, registering it (and, the first time it is
-        seen, importing ``load_legacy_parents()``) as needed.
-
-        Legacy rows never overwrite rows already in the database.
-        """
-        row = self._conn.execute(
-            "SELECT id, imported_at FROM repos WHERE git_common_dir = ?",
-            (str(identity.git_common_dir),),
-        ).fetchone()
-        if row is not None and row[1] is not None:
-            return row[0]
-
+    def ensure_repo(self, identity: RepoIdentity) -> int:
+        """Return the repo's id, registering it if it is new."""
         with self._write() as conn:
-            # Re-check under the write lock so concurrent first uses import once.
             row = conn.execute(
-                "SELECT id, imported_at FROM repos WHERE git_common_dir = ?",
+                "SELECT id FROM repos WHERE git_common_dir = ?",
                 (str(identity.git_common_dir),),
             ).fetchone()
-            now = _now()
-            if row is None:
-                cursor = conn.execute(
-                    "INSERT INTO repos "
-                    "(git_common_dir, path, name, remote_url, created_at) "
-                    "VALUES (?, ?, ?, ?, ?)",
-                    (
-                        str(identity.git_common_dir),
-                        str(identity.path),
-                        identity.path.name,
-                        identity.remote_url,
-                        now,
-                    ),
-                )
-                assert cursor.lastrowid is not None
-                repo_id: int = cursor.lastrowid
-            else:
-                repo_id = row[0]
-                if row[1] is not None:
-                    return repo_id
-            for branch, parent in load_legacy_parents().items():
+            if row is not None:
+                return row[0]
+            cursor = conn.execute(
+                "INSERT INTO repos "
+                "(git_common_dir, path, name, remote_url, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    str(identity.git_common_dir),
+                    str(identity.path),
+                    identity.path.name,
+                    identity.remote_url,
+                    _now(),
+                ),
+            )
+            assert cursor.lastrowid is not None
+            return cursor.lastrowid
+
+    def import_parents(self, repo_id: int, parents: Parents) -> None:
+        """Add ``parents`` for branches the repo does not already track.
+
+        Existing rows win: an imported parent never overwrites one already in
+        the database.
+        """
+        now = _now()
+        with self._write() as conn:
+            for branch, parent in parents.items():
                 conn.execute(
                     "INSERT OR IGNORE INTO branches "
                     "(repo_id, name, parent, created_at, updated_at) "
                     "VALUES (?, ?, ?, ?, ?)",
                     (repo_id, branch, parent, now, now),
                 )
-            conn.execute(
-                "UPDATE repos SET imported_at = ? WHERE id = ?", (now, repo_id)
-            )
-            return repo_id
 
     def get_parent(self, repo_id: int, branch: str) -> str | None:
         row = self._conn.execute(

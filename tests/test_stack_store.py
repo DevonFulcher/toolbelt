@@ -3,6 +3,7 @@ multi-repo `tree`."""
 
 import shutil
 import sqlite3
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -35,7 +36,7 @@ def test_migrations_apply_on_top_of_an_older_version(
     extra = ("ALTER TABLE branches ADD COLUMN jira_key TEXT",)
     monkeypatch.setattr(store, "_MIGRATIONS", [*store._MIGRATIONS, extra])
     s = StackStore(db)
-    assert s.schema_version() == 2
+    assert s.schema_version() == len(store._MIGRATIONS)
     columns = [
         row[1] for row in s._conn.execute("PRAGMA table_info(branches)").fetchall()
     ]
@@ -51,8 +52,8 @@ def test_wal_mode_enabled(tmp_path: Path):
 
 def test_parents_are_scoped_per_repo(tmp_path: Path):
     s = StackStore(tmp_path / "stacks.db")
-    a = s.ensure_repo(_identity(tmp_path, "a"), dict)
-    b = s.ensure_repo(_identity(tmp_path, "b"), dict)
+    a = s.ensure_repo(_identity(tmp_path, "a"))
+    b = s.ensure_repo(_identity(tmp_path, "b"))
     s.set_parent(a, "feat", "main")
     s.set_parent(b, "feat", "develop")
     assert s.get_parent(a, "feat") == "main"
@@ -64,22 +65,25 @@ def test_parents_are_scoped_per_repo(tmp_path: Path):
     assert s.get_parent(b, "feat") == "develop"
 
 
-def test_import_runs_once_per_repo(tmp_path: Path):
+def test_import_parents_never_overwrites_existing_rows(tmp_path: Path):
     s = StackStore(tmp_path / "stacks.db")
-    identity = _identity(tmp_path)
-    repo_id = s.ensure_repo(identity, lambda: {"feat": "main"})
-    assert s.all_parents(repo_id) == {"feat": "main"}
-
-    s.remove_branch(repo_id, "feat")
-
-    def must_not_load() -> dict[str, str]:
-        raise AssertionError("legacy data imported twice")
-
-    assert s.ensure_repo(identity, must_not_load) == repo_id
-    assert s.all_parents(repo_id) == {}
+    repo_id = s.ensure_repo(_identity(tmp_path))
+    assert s.ensure_repo(_identity(tmp_path)) == repo_id
+    s.set_parent(repo_id, "feat", "main")
+    s.import_parents(repo_id, {"feat": "other", "new": "main"})
+    assert s.all_parents(repo_id) == {"feat": "main", "new": "main"}
 
 
-def test_existing_git_config_is_imported_and_left_untouched(repo: Path):
+def _legacy_keys(repo: Path) -> str:
+    return subprocess.run(
+        ["git", "config", "--get-regexp", "^toolbelt-stack"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def test_first_import_copies_legacy_config_then_unsets_it(repo: Path):
     git("config", "toolbelt-stack.devon/api.parent", "main", cwd=repo)
     git("config", "toolbelt-stack.devon/api_tests.parent", "devon/api", cwd=repo)
 
@@ -88,15 +92,34 @@ def test_existing_git_config_is_imported_and_left_untouched(repo: Path):
         "devon/api_tests": "devon/api",
     }
 
-    # git config was neither modified nor deleted...
-    assert git("config", "--get", "toolbelt-stack.devon/api.parent", cwd=repo) == "main"
-    # ...and later writes go to the DB only.
+    assert _legacy_keys(repo) == ""
+    # Later writes go to the DB only.
     lineage.set_parent("devon/new", "main", root=repo)
-    lineage.remove_parent("devon/api", root=repo)
-    assert git("config", "--get", "toolbelt-stack.devon/api.parent", cwd=repo) == "main"
-    assert "toolbelt-stack.devon/new" not in git("config", "--list", cwd=repo)
-    assert lineage.get_parent("devon/api", root=repo) is None
+    assert "toolbelt-stack" not in git("config", "--list", cwd=repo)
     assert lineage.get_parent("devon/new", root=repo) == "main"
+
+
+def test_legacy_keys_reappearing_are_imported_on_next_process(repo: Path):
+    lineage.set_parent("devon/api", "main", root=repo)
+    # An older toolbelt writes git config after the DB was already in use.
+    git("config", "toolbelt-stack.devon/late.parent", "devon/api", cwd=repo)
+
+    # Same process: already checked, so this is not re-read.
+    assert lineage.get_parent("devon/late", root=repo) is None
+    assert _legacy_keys(repo) != ""
+
+    lineage.recheck_legacy_config()  # simulates the next `tt` process
+    assert lineage.get_parent("devon/late", root=repo) == "devon/api"
+    assert _legacy_keys(repo) == ""
+
+
+def test_db_wins_over_conflicting_legacy_config(repo: Path):
+    lineage.set_parent("devon/api", "main", root=repo)
+    git("config", "toolbelt-stack.devon/api.parent", "stale-parent", cwd=repo)
+    lineage.recheck_legacy_config()
+
+    assert lineage.get_parent("devon/api", root=repo) == "main"
+    assert _legacy_keys(repo) == ""
 
 
 def test_worktrees_share_one_repo_record(repo: Path, tmp_path: Path):

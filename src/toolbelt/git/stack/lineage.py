@@ -1,11 +1,12 @@
 """Stack lineage: which branch is stacked on which.
 
 Parent pointers are persisted in toolbelt's SQLite stack DB (see ``store``),
-keyed by repo. The first time a repo is seen, any legacy
-``toolbelt-stack.<branch>.parent`` git config keys are imported (the git config
-itself is left untouched and no longer written). Functions take ``root`` (the
-repo/worktree path) explicitly so they are easy to test against a throwaway
-repo.
+keyed by repo. Legacy ``toolbelt-stack.<branch>.parent`` git config keys are
+migrated whenever they are found: the first time a repo is touched in a process
+(so also keys re-written by an older toolbelt after an earlier import), parents
+not already in the DB are imported (the DB wins on conflict) and the legacy keys
+are unset so they stop going stale. Functions take ``root`` (the repo/worktree
+path) explicitly so they are easy to test against a throwaway repo.
 """
 
 import contextlib
@@ -57,6 +58,28 @@ def _legacy_parents(*, root: Path) -> Parents:
     return parents
 
 
+# Repos (by git common dir) whose legacy config this process already checked,
+# so lineage access costs one `git config` read per repo per process.
+_legacy_checked: set[Path] = set()
+
+
+def recheck_legacy_config() -> None:
+    """Forget which repos were checked, so the next access looks again."""
+    _legacy_checked.clear()
+
+
+def _migrate_legacy_parents(store: StackStore, repo_id: int, root: Path) -> None:
+    legacy = _legacy_parents(root=root)
+    if not legacy:
+        return
+    store.import_parents(repo_id, legacy)
+    for branch in legacy:
+        run(
+            ["git", "config", "--unset-all", f"{SECTION}.{branch}{_KEY_SUFFIX}"],
+            cwd=root,
+        )
+
+
 @functools.cache
 def repo_identity(root: Path) -> RepoIdentity:
     """Identify the repo ``root`` (any of its worktrees) belongs to."""
@@ -80,13 +103,15 @@ def repo_identity(root: Path) -> RepoIdentity:
 
 @contextlib.contextmanager
 def _repo_store(root: Path) -> Iterator[tuple[StackStore, int]]:
-    """Open the stack DB and the repo's id, importing legacy git config the
-    first time this repo is seen."""
+    """Open the stack DB and the repo's id, migrating any legacy git config
+    the first time this process touches the repo."""
     store = StackStore(default_db_path())
     try:
-        repo_id = store.ensure_repo(
-            repo_identity(root), lambda: _legacy_parents(root=root)
-        )
+        identity = repo_identity(root)
+        repo_id = store.ensure_repo(identity)
+        if identity.git_common_dir not in _legacy_checked:
+            _migrate_legacy_parents(store, repo_id, root)
+            _legacy_checked.add(identity.git_common_dir)
         yield store, repo_id
     finally:
         store.close()
