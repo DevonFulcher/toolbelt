@@ -268,8 +268,11 @@ def create_app(
         ref, stored_tracker = _task_ref(repo_id, branch)
         owner = branch_links.owning_tracker(stored_tracker, tracker)
         info: TaskInfo | None = None
+        unavailable: str | None = None
         if owner is not None:
             info = task_cache.get(owner, ref)
+            if info is None:
+                unavailable = owner.unavailable_reason() or "task details unavailable"
         return templates.TemplateResponse(
             request,
             "task.html",
@@ -280,6 +283,7 @@ def create_app(
                 "fetchable": owner is not None,
                 "loading": False,
                 "info": info,
+                "unavailable": unavailable,
             },
         )
 

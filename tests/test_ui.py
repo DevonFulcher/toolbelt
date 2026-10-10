@@ -33,6 +33,9 @@ from toolbelt.ui.branch_links import agent_link, owning_tracker, task_link
 from toolbelt.ui.status_cells import status_cells
 
 
+AGENT_LINK = "claude://claude.ai/epitaxy/local_0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
+
+
 class FakeStatuses:
     """A `StatusFetcher` serving seeded statuses (default: no PR)."""
 
@@ -53,6 +56,10 @@ class FakeTracker:
     def __init__(self) -> None:
         self.tasks: dict[str, TaskInfo] = {}
         self.fetches: list[str] = []
+        self.reason: str | None = None
+
+    def unavailable_reason(self) -> str | None:
+        return self.reason
 
     def url_for(self, ref: str) -> str | None:
         return f"https://tasks.example/{ref}"
@@ -423,16 +430,15 @@ def test_link_rendering_in_index(tmp_path, make_client, tracker):
         },
         links={
             "devon/key": ("abc-1", None),
-            "devon/deeplink": (None, "claude://claude.ai/local_session?id=a&b=c"),
+            "devon/deeplink": (None, AGENT_LINK),
         },
     )
 
     with_tracker = make_client(tracker).get("/").text
     anchors = Anchors(with_tracker)
     assert anchors.hrefs["ABC-1"] == "https://tasks.example/abc-1"
-    # `&` is entity-escaped in the markup and parses back to the original;
-    # the custom scheme is untouched.
-    assert anchors.hrefs["Open session"] == "claude://claude.ai/local_session?id=a&b=c"
+    # The custom scheme is untouched.
+    assert anchors.hrefs["Open session"] == AGENT_LINK
     # The title/status are fetched lazily, never while rendering the index.
     assert f"/repos/{repo_id}/task?branch=devon/key" in with_tracker
     assert tracker.fetches == []
@@ -492,6 +498,23 @@ def test_task_fetch_failure_shows_the_bare_ref(tmp_path, make_client, tracker):
     assert response.status_code == 200
     assert "ABC-1" in response.text
     assert "task-title" not in response.text
+
+
+def test_task_fetch_failure_explains_why_in_the_tooltip(tmp_path, make_client, tracker):
+    repo_id = seed_repo(
+        tmp_path, "api", {"devon/a": "main"}, links={"devon/a": ("abc-1", None)}
+    )
+    tracker.reason = "JIRA_API_TOKEN not set"
+    client = make_client(tracker)
+
+    html = client.get(f"/repos/{repo_id}/task", params={"branch": "devon/a"}).text
+
+    assert html.count('title="JIRA_API_TOKEN not set"') == 2  # cell and marker
+
+    # A failure the tracker cannot explain still says something.
+    tracker.reason = None
+    html = client.get(f"/repos/{repo_id}/task", params={"branch": "devon/a"}).text
+    assert "task details unavailable" in html
 
 
 def test_task_fetches_are_cached_with_a_ttl(tmp_path, make_client, tracker):
@@ -591,9 +614,9 @@ class TestBranchLinks:
         assert agent_link(None) is None
 
     def test_agent_link_keeps_custom_scheme(self):
-        link = agent_link("claude://x/y?z=1")
+        link = agent_link(AGENT_LINK)
         assert link is not None
-        assert link.href == "claude://x/y?z=1"
+        assert link.href == AGENT_LINK
 
     @pytest.mark.parametrize("value", ["javascript:alert(1)", "data:text/html,x"])
     def test_agent_link_never_links_executable_schemes(self, value):

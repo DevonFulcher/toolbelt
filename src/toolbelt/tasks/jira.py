@@ -1,10 +1,9 @@
 """The Jira implementation of ``TaskTracker``.
 
 Configured under ``tasks.jira`` in toolbelt's config file (see
-``toolbelt.tasks.config``). The API token is never stored there: it is read
-from the output of ``token_command`` (an argv list run without a shell, e.g.
-``[op, read, op://Private/Jira/token]``), falling back to the
-``JIRA_API_TOKEN`` environment variable.
+``toolbelt.tasks.config``). Credentials come from the environment, never the
+config file: the API token from ``JIRA_API_TOKEN`` and, for ``auth: basic``,
+the account email from ``JIRA_EMAIL`` (falling back to ``tasks.jira.email``).
 
 * Jira Cloud: ``auth: basic`` (the default) — ``email`` + API token, REST
   API v3.
@@ -16,30 +15,20 @@ A stored URL is linked as-is; a stored key becomes ``<base_url>/browse/<key>``
 """
 
 import re
-import subprocess
 import threading
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping
 from typing import Any
 from urllib.parse import quote, urlsplit
 
 import httpx
 
-from toolbelt import logged_process
 from toolbelt.tasks.tracker import TaskInfo
 
 TOKEN_ENV_VAR = "JIRA_API_TOKEN"
+EMAIL_ENV_VAR = "JIRA_EMAIL"
 _KEY_RE = re.compile(r"[A-Z][A-Z0-9_]*-\d+")
 _REQUEST_TIMEOUT_SECONDS = 10
 _AUTH_MODES = ("basic", "bearer")
-
-# Runs an argv and returns its stdout.
-CommandRunner = Callable[[Sequence[str]], str]
-
-
-def run_token_command(argv: Sequence[str]) -> str:
-    return logged_process.run(
-        list(argv), capture_output=True, text=True, check=True
-    ).stdout
 
 
 class JiraTracker:
@@ -52,9 +41,7 @@ class JiraTracker:
         email: str | None = None,
         auth: str = "basic",
         api_version: int = 3,
-        token_command: Sequence[str] | None = None,
         env: Mapping[str, str],
-        run_command: CommandRunner = run_token_command,
         client: httpx.Client | None = None,
     ) -> None:
         if auth not in _AUTH_MODES:
@@ -65,12 +52,10 @@ class JiraTracker:
         self._email = email
         self._auth = auth
         self._api_version = api_version
-        self._token_command = list(token_command) if token_command else None
         self._env = env
-        self._run_command = run_command
         self._client = client
-        # The token command may prompt (a password manager), so it runs at
-        # most once per tracker, even when it yields nothing.
+        # The token is read once per tracker, so a missing one stays missing
+        # until restart.
         self._token_lock = threading.Lock()
         self._token_resolved = False
         self._token: str | None = None
@@ -83,7 +68,6 @@ class JiraTracker:
             email=_optional_str(section.get("email")),
             auth=str(section.get("auth") or "basic"),
             api_version=int(section.get("api_version") or 3),
-            token_command=_argv(section.get("token_command")),
             **kwargs,
         )
 
@@ -102,9 +86,10 @@ class JiraTracker:
         key = _key_of(ref)
         if key is None or self._base_url is None:
             return None
-        token = self._resolve_token()
-        if token is None:
+        if self.unavailable_reason() is not None:
             return None
+        token = self._resolve_token()
+        assert token is not None
         try:
             response = self._http().get(
                 f"{self._base_url}/rest/api/{self._api_version}/issue/{key}",
@@ -123,14 +108,27 @@ class JiraTracker:
         except (httpx.HTTPError, ValueError, KeyError, TypeError):
             return None
 
+    def unavailable_reason(self) -> str | None:
+        if self._base_url is None:
+            return "tasks.jira.base_url not set"
+        if self._resolve_token() is None:
+            return f"{TOKEN_ENV_VAR} not set"
+        if self._auth == "basic" and self._account_email() is None:
+            return f"{EMAIL_ENV_VAR} not set"
+        return None
+
+    def _account_email(self) -> str | None:
+        return self._env.get(EMAIL_ENV_VAR) or self._email
+
     def _http(self) -> httpx.Client:
         if self._client is None:
             self._client = httpx.Client(timeout=_REQUEST_TIMEOUT_SECONDS)
         return self._client
 
     def _basic_auth(self, token: str) -> httpx.BasicAuth | None:
-        if self._auth == "basic" and self._email:
-            return httpx.BasicAuth(self._email, token)
+        email = self._account_email()
+        if self._auth == "basic" and email:
+            return httpx.BasicAuth(email, token)
         return None
 
     def _auth_headers(self, token: str) -> dict[str, str]:
@@ -139,19 +137,9 @@ class JiraTracker:
     def _resolve_token(self) -> str | None:
         with self._token_lock:
             if not self._token_resolved:
-                self._token = self._read_token()
+                self._token = self._env.get(TOKEN_ENV_VAR) or None
                 self._token_resolved = True
             return self._token
-
-    def _read_token(self) -> str | None:
-        if self._token_command:
-            try:
-                token = self._run_command(self._token_command).strip()
-            except (OSError, subprocess.CalledProcessError):
-                token = ""
-            if token:
-                return token
-        return self._env.get(TOKEN_ENV_VAR) or None
 
 
 def _key_of(ref: str) -> str | None:
@@ -168,11 +156,3 @@ def _key_of(ref: str) -> str | None:
 
 def _optional_str(value: object) -> str | None:
     return str(value) if value else None
-
-
-def _argv(value: object) -> list[str] | None:
-    if value is None:
-        return None
-    if not isinstance(value, list) or not all(isinstance(a, str) for a in value):
-        raise ValueError("tasks.jira.token_command must be a list of strings (argv)")
-    return value

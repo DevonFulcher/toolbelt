@@ -8,6 +8,7 @@
 <td id="{{ cell_id(repo_id, branch, 'task') }}" class="col-task"
     data-col="task" data-value="{{ label }}" data-sort="{{ label }}"
     data-search="{{ label }}{% if info %} {{ info.title }} {{ info.status }}{% endif %}"
+    {%- if unavailable %} title="{{ unavailable }}"{% endif %}
     {%- if fetchable %}
     hx-get="{{ url }}"
     hx-trigger="{% if loading %}load, {% endif %}refresh from:body"
@@ -20,6 +21,9 @@
       <a href="{{ task.href }}" target="_blank" rel="noopener">{{ task.label }}</a>
     {%- else -%}
       {{ task.label }}
+    {%- endif -%}
+    {%- if unavailable %}
+    <span class="task-warn" title="{{ unavailable }}">⚠</span>
     {%- endif -%}
     {%- if info %}
     <span class="task-title" title="{{ info.title }}">{{ info.title }}</span>

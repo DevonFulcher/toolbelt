@@ -64,7 +64,10 @@ def append(
     agent_link: str = typer.Option(
         ...,
         "--agent-link",
-        help="Deep link to the Claude Desktop session/chat working on this.",
+        help="Deep link to the Claude Desktop session working on this: "
+        "claude://claude.ai/epitaxy/local_<session-uuid>. The current "
+        "session's id is in $CLAUDE_CODE_HOST_SESSION_ID, so pass "
+        "claude://claude.ai/epitaxy/$CLAUDE_CODE_HOST_SESSION_ID.",
     ),
 ) -> None:
     """Create a new branch stacked on the current one, in its own worktree.

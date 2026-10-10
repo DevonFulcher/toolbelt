@@ -7,12 +7,12 @@
       tracker: jira                     # omit for no tracker: refs are plain text
       jira:
         base_url: https://example.atlassian.net
-        email: me@example.com           # basic auth only
+        email: me@example.com           # basic auth only; $JIRA_EMAIL wins
         auth: basic                     # basic (Cloud, default) | bearer (Server/DC)
         api_version: 3                  # 2 for Server / Data Center
-        token_command: [op, read, op://Private/Jira/token]
 
-The API token is never kept in this file; see ``toolbelt.tasks.jira``.
+The API token is never kept in this file: it comes from ``$JIRA_API_TOKEN``
+(see ``toolbelt.tasks.jira``).
 """
 
 import os
@@ -31,7 +31,7 @@ def configured_tracker(
 ) -> TaskTracker | None:
     """The tracker named by ``tasks.tracker``, or ``None`` if unset.
 
-    ``jira_kwargs`` (``run_command``, ``client``) are passed to
+    ``jira_kwargs`` (``client``) are passed to
     ``JiraTracker`` so tests can inject fakes."""
     if not config_file.exists():
         return None

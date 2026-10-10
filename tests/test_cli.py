@@ -244,7 +244,8 @@ def test_change_creates_new_branch(repo: Path, capfd: pytest.CaptureFixture):
 # --- append / switch / tree ------------------------------------------------
 
 
-_LINKS = ["--task", "ABC-1", "--agent-link", "claude://session/1"]
+_AGENT_LINK = "claude://claude.ai/epitaxy/local_0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
+_LINKS = ["--task", "ABC-1", "--agent-link", _AGENT_LINK]
 
 
 def test_append_creates_worktree_via_cli(repo: Path, capfd: pytest.CaptureFixture):
@@ -258,7 +259,7 @@ def test_append_creates_worktree_via_cli(repo: Path, capfd: pytest.CaptureFixtur
     assert (links.task, links.task_tracker, links.agent_link) == (
         "ABC-1",
         None,
-        "claude://session/1",
+        _AGENT_LINK,
     )
 
 
@@ -281,9 +282,9 @@ def test_append_tags_the_task_with_the_configured_tracker(
 @pytest.mark.parametrize(
     "args",
     [
-        ["--agent-link", "claude://session/1"],
+        ["--agent-link", _AGENT_LINK],
         ["--task", "ABC-1"],
-        ["--jira", "ABC-1", "--agent-link", "claude://session/1"],
+        ["--jira", "ABC-1", "--agent-link", _AGENT_LINK],
         [],
     ],
 )

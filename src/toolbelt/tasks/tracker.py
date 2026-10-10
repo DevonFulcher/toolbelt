@@ -31,6 +31,11 @@ class TaskTracker(Protocol):
         """A short label for ``ref`` (e.g. the key out of a full URL)."""
         ...
 
+    def unavailable_reason(self) -> str | None:
+        """A one-line reason ``fetch`` cannot work at all (e.g. credentials
+        not set), or ``None`` if it can. Never touches the network."""
+        ...
+
     def fetch(self, ref: str) -> TaskInfo | None:
         """The task's title and status, or ``None`` if they cannot be
         obtained (unreachable, unauthorized, unknown ref). Never raises for

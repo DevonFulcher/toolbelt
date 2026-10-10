@@ -1,13 +1,10 @@
 """The task tracker interface, its Jira implementation, and config selection.
 
-HTTP goes through an `httpx.MockTransport` and the token command through an
-injected runner, so nothing here touches Jira or spawns a process.
+HTTP goes through an `httpx.MockTransport` and credentials through an injected
+env mapping, so nothing here touches Jira or the real environment.
 """
 
 import base64
-import subprocess
-import sys
-from collections.abc import Sequence
 from pathlib import Path
 
 import httpx
@@ -31,21 +28,6 @@ class FakeJira:
     def _handle(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
         return self.response
-
-
-class FakeCommands:
-    """A token-command runner returning ``output`` (or raising ``error``)."""
-
-    def __init__(self, output: str = "", error: Exception | None = None) -> None:
-        self.output = output
-        self.error = error
-        self.calls: list[list[str]] = []
-
-    def __call__(self, argv: Sequence[str]) -> str:
-        self.calls.append(list(argv))
-        if self.error:
-            raise self.error
-        return self.output
 
 
 def tracker_with(jira: FakeJira, **kwargs) -> JiraTracker:
@@ -114,45 +96,61 @@ class TestFetch:
         assert info is not None and info.ref == "ABC-7"
         assert jira.requests[0].url.path.endswith("/issue/ABC-7")
 
-    def test_token_command_wins_over_env_and_runs_once(self):
+    def test_email_comes_from_env_over_config(self):
         jira = FakeJira()
-        commands = FakeCommands(output="cmd-token\n")
         t = tracker_with(
             jira,
-            token_command=["op", "read", "op://Private/Jira/token"],
-            run_command=commands,
+            email="config@example.com",
+            env={"JIRA_API_TOKEN": "tok", "JIRA_EMAIL": "env@example.com"},
         )
 
         t.fetch("ABC-1")
-        t.fetch("ABC-2")
 
-        assert commands.calls == [["op", "read", "op://Private/Jira/token"]]
-        expected = base64.b64encode(b"me@example.com:cmd-token").decode()
-        assert all(
-            r.headers["Authorization"] == f"Basic {expected}" for r in jira.requests
-        )
-
-    def test_failed_token_command_falls_back_to_env(self):
-        jira = FakeJira()
-        commands = FakeCommands(error=subprocess.CalledProcessError(1, ["op"]))
-        t = tracker_with(jira, token_command=["op"], run_command=commands)
-
-        assert t.fetch("ABC-1") is not None
-
-        expected = base64.b64encode(b"me@example.com:env-token").decode()
+        expected = base64.b64encode(b"env@example.com:tok").decode()
         assert jira.requests[0].headers["Authorization"] == f"Basic {expected}"
 
-    def test_missing_command_binary_falls_back_to_env(self):
+    def test_email_falls_back_to_config(self):
         jira = FakeJira()
-        commands = FakeCommands(error=FileNotFoundError("op"))
-        t = tracker_with(jira, token_command=["op"], run_command=commands)
-        assert t.fetch("ABC-1") is not None
+        t = tracker_with(jira, email="config@example.com")
+
+        t.fetch("ABC-1")
+
+        expected = base64.b64encode(b"config@example.com:env-token").decode()
+        assert jira.requests[0].headers["Authorization"] == f"Basic {expected}"
+
+    def test_token_is_read_once_so_a_missing_one_stays_missing(self):
+        jira = FakeJira()
+        env: dict[str, str] = {}
+        t = tracker_with(jira, env=env)
+
+        assert t.fetch("ABC-1") is None
+        env["JIRA_API_TOKEN"] = "late"
+
+        assert t.fetch("ABC-1") is None
+        assert jira.requests == []
 
     def test_no_token_means_no_request(self):
         jira = FakeJira()
         t = tracker_with(jira, env={})
         assert t.fetch("ABC-1") is None
         assert jira.requests == []
+
+    def test_unavailable_reason_names_what_is_missing(self):
+        jira = FakeJira()
+        assert tracker_with(jira).unavailable_reason() is None
+        assert (
+            tracker_with(jira, env={}).unavailable_reason() == "JIRA_API_TOKEN not set"
+        )
+        assert (
+            tracker_with(jira, email=None).unavailable_reason() == "JIRA_EMAIL not set"
+        )
+        assert (
+            tracker_with(jira, base_url=None).unavailable_reason()
+            == "tasks.jira.base_url not set"
+        )
+        # Bearer auth needs no email.
+        bearer = tracker_with(jira, auth="bearer", email=None)
+        assert bearer.unavailable_reason() is None
 
     @pytest.mark.parametrize(
         "response",
@@ -201,7 +199,6 @@ class TestConfig:
 
     def test_jira_section_is_parsed(self, tmp_path):
         jira = FakeJira()
-        commands = FakeCommands(output="tok")
         config = self.write(
             tmp_path,
             "tasks:\n"
@@ -209,12 +206,11 @@ class TestConfig:
             "  jira:\n"
             "    base_url: https://jira.corp.example\n"
             "    auth: bearer\n"
-            "    api_version: 2\n"
-            "    token_command: [op, read, op://Private/Jira/token]\n",
+            "    api_version: 2\n",
         )
 
         tracker = configured_tracker(
-            config, env={}, client=jira.client, run_command=commands
+            config, env={"JIRA_API_TOKEN": "tok"}, client=jira.client
         )
 
         assert tracker is not None and tracker.name == "jira"
@@ -223,23 +219,14 @@ class TestConfig:
         request = jira.requests[0]
         assert request.url.path == "/rest/api/2/issue/ABC-1"
         assert request.headers["Authorization"] == "Bearer tok"
-        assert commands.calls == [["op", "read", "op://Private/Jira/token"]]
 
     def test_unknown_tracker_is_an_error(self, tmp_path):
         config = self.write(tmp_path, "tasks:\n  tracker: trello\n")
         with pytest.raises(ValueError, match="trello"):
             configured_tracker(config)
 
-    def test_token_command_must_be_an_argv_list(self, tmp_path):
-        config = self.write(
-            tmp_path,
-            "tasks:\n  tracker: jira\n  jira:\n    token_command: op read x\n",
-        )
-        with pytest.raises(ValueError, match="token_command"):
-            configured_tracker(config)
-
     def test_the_token_is_not_a_config_key(self, tmp_path):
-        """Only the *command* is configurable; a literal token is ignored."""
+        """The token only comes from the environment; a config one is ignored."""
         jira = FakeJira()
         config = self.write(
             tmp_path,
@@ -250,14 +237,3 @@ class TestConfig:
         assert tracker is not None
         assert tracker.fetch("ABC-1") is None
         assert jira.requests == []
-
-
-def test_default_token_command_runner_is_shell_free():
-    """The real runner execs the argv directly (no shell expansion)."""
-    from toolbelt.tasks.jira import run_token_command
-
-    out = run_token_command(
-        [sys.executable, "-c", "import sys; print(sys.argv[1])", "$HOME && x"]
-    )
-
-    assert out.strip() == "$HOME && x"
