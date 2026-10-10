@@ -5,6 +5,7 @@ import subprocess
 import typer
 
 from toolbelt import invocation_log
+from toolbelt.dotfiles.cli import dotfiles_typer
 from toolbelt.git.cli import git_typer
 from toolbelt.github.status import display_status
 from toolbelt.logger import logger
@@ -17,6 +18,7 @@ app = typer.Typer(help="A collection of tools that I use.")
 app.add_typer(git_typer, name="git")
 app.add_typer(git_typer, name="g", help="Alias for 'git'")
 app.add_typer(zsh_typer, name="zsh")
+app.add_typer(dotfiles_typer, name="dotfiles")
 
 
 @app.command()
