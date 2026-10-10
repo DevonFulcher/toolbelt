@@ -15,7 +15,7 @@ from toolbelt.dotfiles.actions import (
     run_actions,
 )
 from toolbelt.dotfiles.config import config_path, dotfiles_repos
-from toolbelt.dotfiles.manifest import RepoManifest, load_manifest
+from toolbelt.dotfiles.manifest import MANIFEST_FILENAME, RepoManifest, load_manifest
 from toolbelt.dotfiles.plan import Plan, build_plan
 from toolbelt.dotfiles.secret_scan import scan_repo
 from toolbelt.dotfiles.status import State, collect_status
@@ -103,18 +103,18 @@ def link(ctx: typer.Context, dry_run: bool = _DRY_RUN) -> None:
     _execute(link_actions(context.plan()), home=context.home, dry_run=dry_run)
 
 
-def _choose_repo(manifests: list[RepoManifest], repo: str | None) -> RepoManifest:
-    if repo is None:
-        private = [m for m in manifests if not m.public]
-        if not private:
-            raise ValueError("no private repo configured; pass --repo")
-        return private[0]
+def _choose_repo(manifests: list[RepoManifest], repo: str) -> RepoManifest:
     for manifest in manifests:
-        if repo in (manifest.root.name, str(manifest.root)) or (
-            Path(repo).resolve() == manifest.root.resolve()
-        ):
+        if repo in (manifest.root.name, str(manifest.root)):
             return manifest
-    raise ValueError(f"--repo {repo} is not one of the configured dotfiles repos")
+    # Not configured, but a directory with its own manifest (e.g. a git
+    # worktree of a configured repo) can still be scanned.
+    if (Path(repo) / MANIFEST_FILENAME).is_file():
+        return load_manifest(Path(repo))
+    raise ValueError(
+        f"{repo} is neither a configured dotfiles repo nor a directory "
+        f"containing {MANIFEST_FILENAME}"
+    )
 
 
 @dotfiles_typer.command()

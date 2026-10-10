@@ -429,3 +429,16 @@ def test_link_leaves_hooks_alone_when_the_repo_ships_none(machine: Machine) -> N
     subprocess.run(["git", "init", "-q"], cwd=machine.public, check=True)
     assert machine.cli("link").exit_code == 0
     assert hooks_path(machine.public) == ""
+
+
+def test_check_scans_an_unconfigured_directory_that_has_a_manifest(
+    machine: Machine, tmp_path: Path
+) -> None:
+    """A git worktree of a configured repo is not itself in the config."""
+    worktree = tmp_path / "dotfiles-worktree"
+    write(worktree / "dotfiles.toml", PUBLIC_MANIFEST)
+    subprocess.run(["git", "init", "-q"], cwd=worktree, check=True)
+    assert machine.cli("check", str(worktree)).exit_code == 0
+    write(worktree / "Mackup/.zshrc", "export GH=" + "ghp_" + "f" * 36 + "\n")
+    assert machine.cli("check", str(worktree)).exit_code == 1
+    assert machine.cli("check", str(tmp_path / "nowhere")).exit_code != 0
