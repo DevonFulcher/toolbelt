@@ -10,6 +10,7 @@ from conftest import FakeForge, git
 from toolbelt.git.stack import lineage
 from toolbelt.git.stack.append import create_stacked_branch
 from toolbelt.git.stack.sync import sync_stack
+from toolbelt.git.worktrees_ops import WorktreeInUseError
 
 
 def _branches(repo: Path) -> set[str]:
@@ -113,16 +114,20 @@ def test_sync_on_untracked_branch_errors(repo: Path, tmp_path: Path):
         sync_stack(root=repo, forge=FakeForge())
 
 
-def test_cleanup_landed_branch_while_standing_in_it(repo: Path, tmp_path: Path):
+def test_sync_refuses_to_delete_the_landed_worktree_it_runs_in(
+    repo: Path, tmp_path: Path
+):
     api_wt, tests_wt = _build_stack(repo, tmp_path)
     _squash_merge_to_main(repo, "api.txt", "api\n")
 
     # Run sync from the landed branch's own worktree.
-    sync_stack(root=api_wt, forge=FakeForge(merged={"devon/api"}))
+    with pytest.raises(WorktreeInUseError, match="inside its worktree"):
+        sync_stack(root=api_wt, forge=FakeForge(merged={"devon/api"}))
 
-    # It is still cleaned up (cleanup runs from the main worktree).
-    assert "devon/api" not in _branches(repo)
-    assert lineage.get_parent("devon/api_tests", root=repo) == "main"
+    # Nothing was restacked or deleted.
+    assert api_wt.exists()
+    assert "devon/api" in _branches(repo)
+    assert lineage.get_parent("devon/api_tests", root=repo) == "devon/api"
 
 
 def test_restack_when_child_never_synced_with_parent(repo: Path, tmp_path: Path):

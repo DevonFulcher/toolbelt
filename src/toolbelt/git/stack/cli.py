@@ -298,6 +298,6 @@ def remove(
     # like "feature" still clears "devon/feature"'s parent entry.
     with repo_lock(root):
         deleted_branch = delete_branch_and_worktree(
-            name, repo_root=main_wt, force=force
+            name, repo_root=main_wt, force=force, caller_dirs=[root, Path.cwd()]
         )
         lineage.remove_parent(deleted_branch, root=main_wt)

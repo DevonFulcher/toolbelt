@@ -23,6 +23,7 @@ from conftest import git
 from toolbelt.git.cli import git_typer
 from toolbelt.git.stack import lineage
 from toolbelt.git.stack.append import create_stacked_branch
+from toolbelt.git.worktrees_ops import WorktreeInUseError
 
 runner = CliRunner()
 
@@ -38,6 +39,7 @@ def _git_projects_workdir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
 class Invocation:
     exit_code: int
     output: str  # combined stdout+stderr captured at the fd level
+    exception: BaseException | None = None
 
 
 def _invoke(args: list[str], *, cwd: Path, capfd: pytest.CaptureFixture) -> Invocation:
@@ -69,6 +71,7 @@ def _invoke(args: list[str], *, cwd: Path, capfd: pytest.CaptureFixture) -> Invo
     return Invocation(
         exit_code=result.exit_code,
         output=captured.out + captured.err + result.output,
+        exception=result.exception,
     )
 
 
@@ -287,13 +290,9 @@ def test_remove_deletes_branch_worktree_and_lineage_via_cli(
     )
 
 
-def test_remove_can_delete_the_branch_checked_out_in_cwd(
+def test_remove_refuses_to_delete_the_worktree_it_runs_in(
     repo: Path, tmp_path: Path, capfd: pytest.CaptureFixture
 ):
-    """`root` (from `repo_root()`) is the worktree being removed here — git
-    can't run `worktree remove` with cwd pointed at the worktree it's
-    removing, so this must actually run from the main worktree instead (see
-    `main_worktree`)."""
     feature_wt = tmp_path / "wt-feature"
     create_stacked_branch("feature", root=repo, wt_path=feature_wt)
 
@@ -301,9 +300,15 @@ def test_remove_can_delete_the_branch_checked_out_in_cwd(
         ["remove", "devon/feature", "--force"], cwd=feature_wt, capfd=capfd
     )
 
-    assert result.exit_code == 0, result.output
-    assert not feature_wt.exists()
-    assert lineage.get_parent("devon/feature", root=repo) is None
+    assert result.exit_code != 0
+    assert isinstance(result.exception, WorktreeInUseError)
+    assert "inside its worktree" in str(result.exception)
+    assert feature_wt.exists()
+    assert lineage.get_parent("devon/feature", root=repo) == "main"
+    assert (
+        "devon/feature"
+        in git("branch", "--format=%(refname:short)", cwd=repo).splitlines()
+    )
 
 
 def test_tree_reports_no_stacks_when_untracked(

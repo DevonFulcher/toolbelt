@@ -27,6 +27,7 @@ from .worktrees_ops import (
     _is_worktree_dirty,
     _worktree_paths_for_branch,
     delete_branch_and_worktree,
+    ensure_not_inside_worktree,
     main_worktree,
 )
 
@@ -211,27 +212,6 @@ def _unsafe_to_delete_reason(branch: str, *, root: Path) -> str | None:
     return None
 
 
-class WorktreeInUseError(RuntimeError):
-    """A branch's worktree is the one the current process is working in."""
-
-
-def _ensure_not_inside_worktree(
-    branch: str, *, root: Path, caller_dirs: list[Path]
-) -> None:
-    """Raise if any of ``caller_dirs`` is inside a (non-main) worktree of
-    ``branch``: deleting it would strand the process in a removed directory."""
-    for worktree in _worktree_paths_for_branch(branch, root):
-        if worktree == root:
-            continue
-        for directory in caller_dirs:
-            if directory.resolve().is_relative_to(worktree.resolve()):
-                raise WorktreeInUseError(
-                    f"Cannot delete '{branch}': this command is running inside "
-                    f"its worktree {worktree}. cd to another worktree (e.g. "
-                    f"{root}) and re-run."
-                )
-
-
 def git_branch_clean(root: Path | None = None) -> None:
     """
     Delete local branches whose upstream has been removed (unless they may
@@ -289,7 +269,7 @@ def git_branch_clean(root: Path | None = None) -> None:
             kept_branches.append(f"{branch_name} ({reason})")
             continue
 
-        _ensure_not_inside_worktree(
+        ensure_not_inside_worktree(
             branch_name, root=root, caller_dirs=[caller_root, Path.cwd()]
         )
         deleted_branch = delete_branch_and_worktree(branch_name, repo_root=root)

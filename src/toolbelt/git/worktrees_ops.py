@@ -93,6 +93,27 @@ def _worktree_paths_for_branch(branch_name: str, root: Path) -> list[Path]:
     return unique_paths
 
 
+class WorktreeInUseError(RuntimeError):
+    """A branch's worktree is the one the current process is working in."""
+
+
+def ensure_not_inside_worktree(
+    branch: str, *, root: Path, caller_dirs: list[Path]
+) -> None:
+    """Raise if any of ``caller_dirs`` is inside a (non-main) worktree of
+    ``branch``: deleting it would strand the process in a removed directory."""
+    for worktree in _worktree_paths_for_branch(branch, root):
+        if worktree == root:
+            continue
+        for directory in caller_dirs:
+            if directory.resolve().is_relative_to(worktree.resolve()):
+                raise WorktreeInUseError(
+                    f"Cannot delete '{branch}': this command is running inside "
+                    f"its worktree {worktree}. cd to another worktree (e.g. "
+                    f"{root}) and re-run."
+                )
+
+
 def _is_worktree_dirty(path: Path) -> bool:
     """True if ``path``'s worktree has uncommitted or untracked changes."""
     result = logged_process.run(
@@ -150,6 +171,7 @@ def delete_branch_and_worktree(
     *,
     repo_root: Path,
     force: bool = False,
+    caller_dirs: list[Path] | None = None,
 ) -> str:
     """
     Delete a local branch and its associated worktree (if present).
@@ -164,6 +186,10 @@ def delete_branch_and_worktree(
         Path to the repository root.
     force:
         If True, skip the check for uncommitted/untracked changes.
+    caller_dirs:
+        Directories the calling process is working in. If any is inside the
+        branch's (non-main) worktree, ``WorktreeInUseError`` is raised before
+        anything is deleted.
 
     Returns
     -------
@@ -194,6 +220,9 @@ def delete_branch_and_worktree(
         if candidate and branch_exists(candidate):
             branch_to_delete = candidate
             break
+
+    if caller_dirs:
+        ensure_not_inside_worktree(branch_to_delete, root=root, caller_dirs=caller_dirs)
 
     worktree_paths = _worktree_paths_for_branch(branch_to_delete, root)
 
