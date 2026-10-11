@@ -1,5 +1,5 @@
 import { act, fireEvent, screen, within } from "@testing-library/react";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import type { Branch } from "../api/generated";
 import { branch, detail, noPr, pr, repo, snapshot, NOW } from "../testing/fixtures";
 import { renderWith } from "../testing/render";
@@ -153,6 +153,56 @@ describe("the table", () => {
 
     expect(document.querySelector('tr[data-id="1:devon/a"] .col-pr')).toHaveTextContent("loading…");
     expect(document.querySelector('tr[data-id="2:devon/b"] .col-pr')).toHaveTextContent("repo path missing");
+  });
+});
+
+describe("the view selector", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** Where the selector sits in the page: its ancestors up to the form, each
+   * with its index among its siblings, and the form's own place. */
+  function placement(): string {
+    const selector = screen.getByRole("group", { name: "View" });
+    const path: string[] = [];
+    for (let node: Element | null = selector; node && node.id !== "controls"; node = node.parentElement) {
+      const index = [...(node.parentElement?.children ?? [])].indexOf(node);
+      path.push(`${node.tagName}.${node.className}[${index}]`);
+    }
+    const form = document.getElementById("controls")!;
+    const labels = [...form.querySelectorAll("[aria-label=View] button")].map((b) => b.textContent);
+    return JSON.stringify({ path, formIndex: [...form.parentElement!.children].indexOf(form), labels });
+  }
+
+  test("sits in the same place, first in the controls, in every view", () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+    const placements: string[] = [];
+    for (const search of ["", "?view=stacked", "?view=table", "?view=aggregate"]) {
+      const { unmount } = show(stack(), search);
+      placements.push(placement());
+      // The selector is the first thing to tab to in the controls.
+      const form = document.getElementById("controls")!;
+      expect(form.querySelector("button, input, select")).toBe(
+        screen.getByRole("group", { name: "View" }).querySelector("button"),
+      );
+      unmount();
+    }
+
+    expect(new Set(placements).size).toBe(1);
+    expect(placements[0]).toContain("controls-views");
+  });
+
+  test("the options row follows it, with the repo filter first in every view", () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+    for (const search of ["", "?view=table", "?view=aggregate"]) {
+      const { unmount } = show(stack(), search);
+      const options = document.querySelector(".controls-options")!;
+
+      expect(options.previousElementSibling).toBe(document.querySelector(".controls-views"));
+      expect(options.firstElementChild).toContainElement(screen.getByLabelText("Repo"));
+      unmount();
+    }
   });
 });
 

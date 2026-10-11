@@ -8,9 +8,11 @@ import { formatBucketDate } from "../logic/aggregateChart";
 import { bucketDays, leadTimeSeries, STAGES, type StageKey } from "../logic/leadTime";
 import { browserTimeZone, formatLocalDate, windowStart } from "../logic/localTime";
 import { throughput } from "../logic/throughput";
+import type { Counts } from "../store/selectors";
 import { NEXT_SECTIONS } from "../logic/layout";
 import { useApp, useAppStore } from "../store/StoreContext";
 import { LeadTimeChart, MixChart, ThroughputChart, withHatches, type LeadStageStyle } from "./AggregateCharts";
+import { FilterBar } from "./FilterBar";
 
 type Load =
   | { weeks: number; repo: string; state: "ready"; data: Aggregate }
@@ -97,42 +99,60 @@ const LEAD_TONES: Record<StageKey, Tone> = {
   start_to_merge: "accent",
 };
 
-export function AggregateView({ fetchImpl = fetch }: { fetchImpl?: typeof fetch }) {
+/**
+ * The aggregate view's whole page: the controls (the shared bar, with this
+ * view's fetch time and refresh button in its options row) and the charts.
+ */
+export function AggregatePage({
+  counts,
+  fetchImpl = fetch,
+}: {
+  counts: Counts;
+  fetchImpl?: typeof fetch;
+}) {
   const weeks = useApp((s) => s.view.weeks);
   const repo = useApp((s) => s.view.repo);
   const weekends = useApp((s) => s.view.weekends);
   const store = useAppStore();
   const { load, refresh, refreshing } = useAggregate(weeks, repo, fetchImpl);
-  if (load === null) {
-    return <div className="empty">{`Loading the last ${weeks} weeks…`}</div>;
-  }
-  if (load.state === "error") {
-    return <div className="empty error">{`Could not load the aggregate: ${load.message}`}</div>;
-  }
+  const data = load?.state === "ready" ? load.data : null;
+  const status = (
+    <span className="agg-fetched">
+      {data
+        ? `Fetched ${new Date(data.fetched_at).toLocaleTimeString()}, ${data.refreshed} PR${data.refreshed === 1 ? "" : "s"} refreshed from GitHub. `
+        : ""}
+      <button type="button" className="agg-refresh" disabled={refreshing} onClick={refresh}>
+        {refreshing ? "Refreshing…" : "Refresh"}
+      </button>
+    </span>
+  );
   return (
-    <AggregatePanels
-      data={load.data}
-      onRefresh={refresh}
-      refreshing={refreshing}
-      excludeWeekends={weekends === "exclude"}
-      onExcludeWeekends={(exclude) =>
-        store.getState().setView({ ...store.getState().view, weekends: exclude ? "exclude" : "" })
-      }
-    />
+    <>
+      <FilterBar counts={counts} aggregate={status} />
+      {load === null ? (
+        <div className="empty">{`Loading the last ${weeks} weeks…`}</div>
+      ) : load.state === "error" ? (
+        <div className="empty error">{`Could not load the aggregate: ${load.message}`}</div>
+      ) : (
+        <AggregatePanels
+          data={load.data}
+          excludeWeekends={weekends === "exclude"}
+          onExcludeWeekends={(exclude) =>
+            store.getState().setView({ ...store.getState().view, weekends: exclude ? "exclude" : "" })
+          }
+        />
+      )}
+    </>
   );
 }
 
 export function AggregatePanels({
   data,
-  onRefresh,
-  refreshing = false,
   timeZone = browserTimeZone(),
   excludeWeekends = false,
   onExcludeWeekends,
 }: {
   data: Aggregate;
-  onRefresh?: () => void;
-  refreshing?: boolean;
   /** The viewer's IANA zone: what a day, a week and a weekend are. */
   timeZone?: string;
   excludeWeekends?: boolean;
@@ -196,12 +216,7 @@ export function AggregatePanels({
         )}
         {`${formatLocalDate(start, timeZone)} to ${formatLocalDate(now, timeZone)} (${data.weeks} weeks, ${timeZone}): ${inWindow.length} of your PRs`}
         {coverage.tasks_without_pr > 0 && `, ${coverage.tasks_without_pr} task${coverage.tasks_without_pr === 1 ? "" : "s"} without a PR yet`}
-        {`. Fetched ${new Date(data.fetched_at).toLocaleTimeString()}, ${data.refreshed} PR${data.refreshed === 1 ? "" : "s"} refreshed from GitHub. `}
-        {onRefresh && (
-          <button type="button" className="agg-refresh" disabled={refreshing} onClick={onRefresh}>
-            {refreshing ? "Refreshing…" : "Refresh"}
-          </button>
-        )}
+        {"."}
       </p>
       <div className="agg-notices">
         {inWindow.length === 0 && (

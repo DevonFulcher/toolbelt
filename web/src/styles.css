@@ -30,7 +30,13 @@ select { padding: 3px 6px; }
 main { padding: 16px 20px; display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); }
 
 /* Filter bar */
-#controls { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: end; }
+/* Two rows: the view selector alone (it never moves between views), then the
+   options of the current view. The options row keeps a minimum height, so
+   the page below does not jump between a view with many controls and one
+   with few. */
+#controls { display: grid; gap: 8px; }
+.controls-row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: end; }
+.controls-options { min-height: 3rem; }
 #controls label { display: grid; gap: 2px; font-size: 11px; color: var(--muted); }
 #controls input[type=search] { min-width: 16rem; }
 .seg { display: inline-flex; }
@@ -38,7 +44,7 @@ main { padding: 16px 20px; display: grid; gap: 16px; grid-template-columns: minm
 .seg button:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
 .seg button:last-child { border-radius: 0 6px 6px 0; }
 .seg button[aria-pressed=true] { background: var(--accent); border-color: var(--accent); color: #fff; }
-#controls > button[aria-pressed=true] { background: var(--accent); border-color: var(--accent); color: #fff; }
+#controls .controls-row > button[aria-pressed=true] { background: var(--accent); border-color: var(--accent); color: #fff; }
 #count { color: var(--muted); font-size: 12px; align-self: center; }
 
 /* One scrolling card: the table scrolls inside, never the page. */

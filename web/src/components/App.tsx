@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useCounts, useRows } from "../store/selectors";
 import { useApp } from "../store/StoreContext";
-import { AggregateView } from "./AggregateView";
+import { AggregatePage } from "./AggregateView";
 import { CardList } from "./CardList";
 import { FilterBar } from "./FilterBar";
 import { FocusBar } from "./FocusBar";
@@ -54,10 +54,7 @@ function Content() {
   if (view === "aggregate") {
     // History does not need tracked stacks: archived tasks and PRs count.
     return (
-      <>
-        <FilterBar counts={counts} />
-        <AggregateView />
-      </>
+      <AggregatePage counts={counts} />
     );
   }
   if (rows.length === 0) {

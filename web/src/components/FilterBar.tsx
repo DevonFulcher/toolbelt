@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { FilterKey } from "../api/generated";
 import {
   COLUMNS,
@@ -36,166 +37,174 @@ const COLUMN_LABELS: Record<Column, string> = {
   session: "Session",
 };
 
-/** The view toggle, filters, sort, include-done / compact / clear, and the count. */
-export function FilterBar({ counts }: { counts: Counts }) {
+/**
+ * The top controls, in two rows that keep their place across views: the view
+ * selector alone first (so it never moves), then the options of the current
+ * view: the shared Repo filter, then the view's own (the stack filters, sort,
+ * done/compact/clear for the card and table views; the window for the
+ * aggregate, plus whatever it passes as `aggregate`, its refresh and fetch
+ * time).
+ */
+export function FilterBar({ counts, aggregate }: { counts: Counts; aggregate?: ReactNode }) {
   const store = useAppStore();
   const view = useApp((s) => s.view);
   const repos = useApp((s) => s.repos);
   const filters = useApp((s) => s.filters);
   const set = (patch: Partial<ViewState>): void => store.getState().setView({ ...view, ...patch });
+  const isAggregate = view.view === "aggregate";
 
   return (
     <form id="controls" onSubmit={(event) => event.preventDefault()}>
-      {view.view !== "aggregate" && (
-        <label>
-          Filter
-          <input
-            type="search"
-            name="q"
-            placeholder="branch, PR #, task…"
-            autoComplete="off"
-            value={view.q}
-            onChange={(event) => set({ q: event.target.value })}
-          />
-        </label>
-      )}
-      <label>
-        Repo
-        <select name="repo" value={view.repo} onChange={(event) => set({ repo: event.target.value })}>
-          <option value="">All</option>
-          {repos.map((repo) => (
-            <option key={repo.id} value={String(repo.id)}>
-              {repo.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      {view.view !== "aggregate" && (
-        <>
-          {filters.map((filter) => (
-            <label key={filter.key}>
-              {filter.label}
-              <select
-                name={filter.key}
-                value={view[filter.key as FilterKey]}
-                onChange={(event) => set({ [filter.key]: event.target.value })}
-              >
-                <option value="">Any</option>
-                {filter.options.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ))}
-        </>
-      )}
-      <span className="seg" role="group" aria-label="View">
-        {ORDER.map((name) => (
-          <button
-            key={name}
-            type="button"
-            data-view={name}
-            aria-pressed={view.view === name}
-            title={VIEW_LABELS[name].title}
-            onClick={() => set({ view: name })}
-          >
-            {VIEW_LABELS[name].label}
-          </button>
-        ))}
-      </span>
-      {view.view === "aggregate" && (
-        <span className="seg" role="group" aria-label="Window">
-          {WINDOWS.map((weeks) => (
+      <div className="controls-row controls-views">
+        <span className="seg" role="group" aria-label="View">
+          {ORDER.map((name) => (
             <button
-              key={weeks}
+              key={name}
               type="button"
-              data-weeks={weeks}
-              aria-pressed={view.weeks === weeks}
-              title={`The last ${weeks} weeks`}
-              onClick={() => set({ weeks })}
+              data-view={name}
+              aria-pressed={view.view === name}
+              title={VIEW_LABELS[name].title}
+              onClick={() => set({ view: name })}
             >
-              {`${weeks} weeks`}
+              {VIEW_LABELS[name].label}
             </button>
           ))}
         </span>
-      )}
-      {view.view === "table" && (
-        <span className="seg" role="group" aria-label="Table layout">
-          {(["tree", "flat"] as const).map((mode) => (
-            <button
-              key={mode}
-              type="button"
-              data-mode={mode}
-              aria-pressed={view.mode === mode}
-              onClick={() => set({ mode })}
-            >
-              {mode === "tree" ? "Tree" : "Flat"}
-            </button>
-          ))}
-        </span>
-      )}
-      {view.view !== "table" && view.view !== "aggregate" && (
+      </div>
+      <div className="controls-row controls-options">
         <label>
-          Sort
-          <select
-            name="sort"
-            value={view.sort}
-            onChange={(event) => set({ sort: event.target.value as Column | "", dir: "asc" })}
-          >
-            <option value="">Stack order</option>
-            {COLUMNS.map((column) => (
-              <option key={column} value={column}>
-                {COLUMN_LABELS[column]}
+          Repo
+          <select name="repo" value={view.repo} onChange={(event) => set({ repo: event.target.value })}>
+            <option value="">All</option>
+            {repos.map((repo) => (
+              <option key={repo.id} value={String(repo.id)}>
+                {repo.name}
               </option>
             ))}
           </select>
         </label>
-      )}
-      {view.view !== "aggregate" && (
-        <>
-          <button
-            type="button"
-            id="done"
-            aria-pressed={view.done === "1"}
-            title="Show merged and closed branches"
-            onClick={() => set({ done: view.done ? "" : "1" })}
-          >
-            Include done
-          </button>
-          {view.view === "table" && (
+        {isAggregate ? (
+          <>
+            <span className="seg" role="group" aria-label="Window">
+              {WINDOWS.map((weeks) => (
+                <button
+                  key={weeks}
+                  type="button"
+                  data-weeks={weeks}
+                  aria-pressed={view.weeks === weeks}
+                  title={`The last ${weeks} weeks`}
+                  onClick={() => set({ weeks })}
+                >
+                  {`${weeks} weeks`}
+                </button>
+              ))}
+            </span>
+            {aggregate}
+          </>
+        ) : (
+          <>
+            <label>
+              Filter
+              <input
+                type="search"
+                name="q"
+                placeholder="branch, PR #, task…"
+                autoComplete="off"
+                value={view.q}
+                onChange={(event) => set({ q: event.target.value })}
+              />
+            </label>
+            {filters.map((filter) => (
+              <label key={filter.key}>
+                {filter.label}
+                <select
+                  name={filter.key}
+                  value={view[filter.key as FilterKey]}
+                  onChange={(event) => set({ [filter.key]: event.target.value })}
+                >
+                  <option value="">Any</option>
+                  {filter.options.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ))}
+            {view.view === "table" && (
+              <span className="seg" role="group" aria-label="Table layout">
+                {(["tree", "flat"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    data-mode={mode}
+                    aria-pressed={view.mode === mode}
+                    onClick={() => set({ mode })}
+                  >
+                    {mode === "tree" ? "Tree" : "Flat"}
+                  </button>
+                ))}
+              </span>
+            )}
+            {view.view !== "table" && (
+              <label>
+                Sort
+                <select
+                  name="sort"
+                  value={view.sort}
+                  onChange={(event) => set({ sort: event.target.value as Column | "", dir: "asc" })}
+                >
+                  <option value="">Stack order</option>
+                  {COLUMNS.map((column) => (
+                    <option key={column} value={column}>
+                      {COLUMN_LABELS[column]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <button
               type="button"
-              id="compact"
-              aria-pressed={view.compact === "1"}
-              title="Combine the PR, CI, review, comments and merge columns"
-              onClick={() => set({ compact: view.compact ? "" : "1" })}
+              id="done"
+              aria-pressed={view.done === "1"}
+              title="Show merged and closed branches"
+              onClick={() => set({ done: view.done ? "" : "1" })}
             >
-              Compact
+              Include done
             </button>
-          )}
-          <button
-            type="button"
-            id="clear"
-            onClick={() =>
-              store.getState().setView({
-                ...DEFAULT_STATE,
-                view: view.view,
-                mode: view.mode,
-                compact: view.compact,
-                root: view.root,
-              })
-            }
-          >
-            Clear
-          </button>
-          <span id="count" aria-live="polite">
-            {`${counts.visible} of ${counts.inRepo} branches`}
-            {counts.doneHidden > 0 ? ` (${counts.doneHidden} done hidden)` : ""}
-          </span>
-        </>
-      )}
+            {view.view === "table" && (
+              <button
+                type="button"
+                id="compact"
+                aria-pressed={view.compact === "1"}
+                title="Combine the PR, CI, review, comments and merge columns"
+                onClick={() => set({ compact: view.compact ? "" : "1" })}
+              >
+                Compact
+              </button>
+            )}
+            <button
+              type="button"
+              id="clear"
+              onClick={() =>
+                store.getState().setView({
+                  ...DEFAULT_STATE,
+                  view: view.view,
+                  mode: view.mode,
+                  compact: view.compact,
+                  root: view.root,
+                })
+              }
+            >
+              Clear
+            </button>
+            <span id="count" aria-live="polite">
+              {`${counts.visible} of ${counts.inRepo} branches`}
+              {counts.doneHidden > 0 ? ` (${counts.doneHidden} done hidden)` : ""}
+            </span>
+          </>
+        )}
+      </div>
     </form>
   );
 }
