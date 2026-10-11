@@ -164,31 +164,61 @@ describe("the aggregate view", () => {
     expect(within(mix).queryByRole("status")).not.toBeInTheDocument();
   });
 
-  test("the status mix is a stacked area by default, with lines on the same data", async () => {
+  test("the status mix is a stacked area only: there is no lines mode", async () => {
     serve(aggregate());
     show();
     const mix = await screen.findByRole("region", { name: "Status mix" });
 
-    expect(within(mix).getByRole("button", { name: "Stacked area" })).toHaveAttribute("aria-pressed", "true");
     expect(mix.querySelectorAll("path.agg-band").length).toBeGreaterThan(0);
     expect(mix.querySelectorAll("path.agg-line")).toHaveLength(0);
+    expect(within(mix).queryByRole("button", { name: "Lines" })).toBeNull();
+    expect(within(mix).queryByRole("button", { name: "Stacked area" })).toBeNull();
     // The tasks-in-flight strip is drawn for the sampled instants with tasks.
     expect(mix.querySelectorAll("rect.agg-inflight")).toHaveLength(3);
-
-    fireEvent.click(within(mix).getByRole("button", { name: "Lines" }));
-
-    expect(mix.querySelectorAll("path.agg-band")).toHaveLength(0);
-    expect(mix.querySelectorAll("path.agg-line").length).toBeGreaterThan(0);
-    expect(within(mix).getByRole("button", { name: "Lines" })).toHaveAttribute("aria-pressed", "true");
   });
 
-  test("who the work is waiting on is a stacked area by default too", async () => {
+  test("who the work is waiting on is a stacked area only too", async () => {
     serve(aggregate());
     show();
     const who = await screen.findByRole("region", { name: "Who is it waiting on" });
 
-    expect(within(who).getByRole("button", { name: "Stacked area" })).toHaveAttribute("aria-pressed", "true");
     expect(who.querySelectorAll("path.agg-band").length).toBeGreaterThan(0);
+    expect(who.querySelectorAll("path.agg-line")).toHaveLength(0);
+    expect(within(who).queryByRole("button", { name: "Lines" })).toBeNull();
+  });
+
+  test("weekends are drawn over the stacked area, not behind it, and as a strip on the axis", async () => {
+    // Samples spanning Fri Oct 9 to Mon Oct 12, 2026: Saturday and Sunday are in range.
+    const base = aggregate();
+    serve(
+      aggregate({
+        mix: {
+          ...base.mix,
+          starts: [
+            "2026-10-09T18:00:00Z",
+            "2026-10-10T12:00:00Z",
+            "2026-10-11T12:00:00Z",
+            "2026-10-12T18:00:00Z",
+          ],
+        },
+      }),
+    );
+    show();
+    for (const name of ["Status mix", "Who is it waiting on"]) {
+      const chart = await screen.findByRole("region", { name });
+      const svg = chart.querySelector("svg[role=img]")!;
+      const painted = [...svg.querySelectorAll("path.agg-band, rect.agg-weekend")];
+      const bands = painted.flatMap((e, i) => (e.classList.contains("agg-band") ? [i] : []));
+      const weekends = painted.flatMap((e, i) => (e.classList.contains("agg-weekend") ? [i] : []));
+
+      expect(bands.length, name).toBeGreaterThan(0);
+      expect(weekends.length, name).toBeGreaterThan(0);
+      // Paint order: every weekend rect comes after the last stacked band, otherwise the
+      // opaque stack would hide it.
+      expect(Math.min(...weekends), name).toBeGreaterThan(Math.max(...bands));
+      expect(svg.querySelectorAll("rect.agg-weekend-veil").length, name).toBe(weekends.length);
+      expect(svg.querySelectorAll("rect.agg-weekend-strip").length, name).toBe(weekends.length);
+    }
   });
 
   test("few tasks in flight are called out as coarse, and the table gives counts", async () => {

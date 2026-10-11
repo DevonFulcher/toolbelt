@@ -252,6 +252,7 @@ function WeekendBands({
   x,
   top,
   bottom,
+  veil = false,
 }: {
   id: string;
   from: number;
@@ -260,20 +261,30 @@ function WeekendBands({
   x: (ms: number) => number;
   top: number;
   bottom: number;
+  /** Also dim what is under the band: for a band drawn OVER filled marks. */
+  veil?: boolean;
 }) {
   return (
     <g aria-hidden="true">
-      {weekendSpans(from, to, timeZone).map(([start, end]) => (
-        <rect
-          key={start}
-          className="agg-weekend"
-          x={x(start)}
-          y={top}
-          width={Math.max(x(end) - x(start), 0)}
-          height={bottom - top}
-          fill={`url(#${id}-weekend)`}
-        />
-      ))}
+      {weekendSpans(from, to, timeZone).map(([start, end]) => {
+        const left = x(start);
+        const width = Math.max(x(end) - left, 0);
+        return (
+          <g key={start}>
+            {veil && (
+              <rect className="agg-weekend-veil" x={left} y={top} width={width} height={bottom - top} />
+            )}
+            <rect
+              className="agg-weekend"
+              x={left}
+              y={top}
+              width={width}
+              height={bottom - top}
+              fill={`url(#${id}-weekend)`}
+            />
+          </g>
+        );
+      })}
     </g>
   );
 }
@@ -865,7 +876,6 @@ export function MixChart({
   const [ref, width] = useWidth();
   const id = useId();
   const [hover, setHover] = useState<Hover | null>(null);
-  const [mode, setMode] = useState<"lines" | "area">("area");
   const height = 240;
   const stripHeight = 52;
   const plotW = Math.max(width - MARGIN.left - MARGIN.right, 50);
@@ -915,9 +925,6 @@ export function MixChart({
     .map((s) => `${s.label} ${latest[s.key]}`)
     .join(", ")}.`;
   const bands = stackShares(shares);
-  const drawn = series
-    .map((s, i) => ({ s, i }))
-    .filter(({ i }) => shares[i].some((v) => v !== null && v > 0));
   const stripMax = niceMax(Math.max(...inflight));
   const stripY = linearScale([0, stripMax], [stripHeight - 6, 4]);
   const barW = Math.max(plotW / count, 1);
@@ -957,23 +964,13 @@ export function MixChart({
         </table>
       }
     >
-      <div className="agg-mode" role="group" aria-label={`${title} chart type`}>
-        {(
-          [
-            ["lines", "Lines"],
-            ["area", "Stacked area"],
-          ] as const
-        ).map(([value, label]) => (
-          <button key={value} type="button" aria-pressed={mode === value} onClick={() => setMode(value)}>
-            {label}
-          </button>
-        ))}
-        {typical < COARSE_BELOW && (
+      {typical < COARSE_BELOW && (
+        <div className="agg-mode">
           <span className="agg-coarse">
             {`Typically ${typical} task${typical === 1 ? "" : "s"} in flight: the percentages are coarse.`}
           </span>
-        )}
-      </div>
+        </div>
+      )}
       <div className="agg-plot" ref={ref}>
         <svg
           width={width}
@@ -986,15 +983,6 @@ export function MixChart({
         >
           <Patterns id={id} series={series} />
           <WeekendPattern id={id} />
-          <WeekendBands
-            id={id}
-            from={times[0]}
-            to={times[count - 1]}
-            timeZone={timeZone}
-            x={(ms) => MARGIN.left + ((ms - times[0]) / span) * plotW}
-            top={MARGIN.top}
-            bottom={MARGIN.top + plotH}
-          />
           {ticks.map((t) => (
             <g key={t}>
               <line className="agg-grid" x1={MARGIN.left} x2={MARGIN.left + plotW} y1={y(t)} y2={y(t)} />
@@ -1011,25 +999,38 @@ export function MixChart({
           <text className="agg-axis-title" transform={`translate(11 ${MARGIN.top + plotH / 2}) rotate(-90)`} textAnchor="middle">
             share of tasks in flight
           </text>
-          {mode === "area"
-            ? series.map((s, i) => (
-                <path
-                  key={s.key}
-                  className={`tone-${s.tone} agg-band`}
-                  d={bandPath(bands[i], x, y, Math.max(barW, 2))}
-                  fill={fillOf(id, s)}
-                />
-              ))
-            : drawn.map(({ s, i }) => (
-                <path
-                  key={s.key}
-                  className={`tone-${s.tone} agg-line`}
-                  d={linePath(shares[i], x, y)}
-                  fill="none"
-                  stroke="var(--tone)"
-                  strokeDasharray={s.hatch ? "5 3" : undefined}
-                />
-              ))}
+          {series.map((s, i) => (
+            <path
+              key={s.key}
+              className={`tone-${s.tone} agg-band`}
+              d={bandPath(bands[i], x, y, Math.max(barW, 2))}
+              fill={fillOf(id, s)}
+            />
+          ))}
+          {/* Weekends go OVER the stack (it is opaque, so an underlay would be hidden), and
+              again as a solid strip on the time axis, which reads at a glance. */}
+          <WeekendBands
+            id={id}
+            from={times[0]}
+            to={times[count - 1]}
+            timeZone={timeZone}
+            x={(ms) => MARGIN.left + ((ms - times[0]) / span) * plotW}
+            top={MARGIN.top}
+            bottom={MARGIN.top + plotH}
+            veil
+          />
+          <g aria-hidden="true">
+            {weekendSpans(times[0], times[count - 1], timeZone).map(([start, end]) => (
+              <rect
+                key={start}
+                className="agg-weekend-strip"
+                x={MARGIN.left + ((start - times[0]) / span) * plotW}
+                y={MARGIN.top + plotH + 1}
+                width={Math.max(((end - start) / span) * plotW, 0)}
+                height={5}
+              />
+            ))}
+          </g>
           {/* Tasks in flight: n at each sample, on the same time axis. */}
           <g transform={`translate(0 ${height})`}>
             <text className="agg-tick" x={MARGIN.left - 6} y={stripY(0)} textAnchor="end" dominantBaseline="middle">

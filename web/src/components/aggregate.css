@@ -33,6 +33,9 @@
 .agg-col-active rect { stroke: var(--fg); stroke-width: 1; }
 .agg-band { stroke: var(--card); stroke-width: .5; }
 .agg-weekend-line { fill: var(--muted); fill-opacity: .28; }
+/* Over a filled stack: wash the fill out so the hatch is legible on any colour. */
+.agg-weekend-veil { fill: var(--bg); fill-opacity: .42; }
+.agg-weekend-strip { fill: var(--muted); fill-opacity: .7; }
 .agg-line-total { stroke-width: 3.5; }
 .agg-range { fill: var(--accent); fill-opacity: .15; stroke: none; }
 .agg-dot { fill: var(--tone); fill-opacity: .4; }
