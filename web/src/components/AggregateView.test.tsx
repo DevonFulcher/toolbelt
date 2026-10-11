@@ -164,22 +164,31 @@ describe("the aggregate view", () => {
     expect(within(mix).queryByRole("status")).not.toBeInTheDocument();
   });
 
-  test("the status mix is lines by default, with a stacked area on the same data", async () => {
+  test("the status mix is a stacked area by default, with lines on the same data", async () => {
     serve(aggregate());
     show();
     const mix = await screen.findByRole("region", { name: "Status mix" });
 
-    expect(within(mix).getByRole("button", { name: "Lines" })).toHaveAttribute("aria-pressed", "true");
-    expect(mix.querySelectorAll("path.agg-line").length).toBeGreaterThan(0);
-    expect(mix.querySelectorAll("path.agg-band")).toHaveLength(0);
+    expect(within(mix).getByRole("button", { name: "Stacked area" })).toHaveAttribute("aria-pressed", "true");
+    expect(mix.querySelectorAll("path.agg-band").length).toBeGreaterThan(0);
+    expect(mix.querySelectorAll("path.agg-line")).toHaveLength(0);
     // The tasks-in-flight strip is drawn for the sampled instants with tasks.
     expect(mix.querySelectorAll("rect.agg-inflight")).toHaveLength(3);
 
-    fireEvent.click(within(mix).getByRole("button", { name: "Stacked area" }));
+    fireEvent.click(within(mix).getByRole("button", { name: "Lines" }));
 
-    expect(mix.querySelectorAll("path.agg-line")).toHaveLength(0);
-    expect(mix.querySelectorAll("path.agg-band").length).toBeGreaterThan(0);
-    expect(within(mix).getByRole("button", { name: "Stacked area" })).toHaveAttribute("aria-pressed", "true");
+    expect(mix.querySelectorAll("path.agg-band")).toHaveLength(0);
+    expect(mix.querySelectorAll("path.agg-line").length).toBeGreaterThan(0);
+    expect(within(mix).getByRole("button", { name: "Lines" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  test("who the work is waiting on is a stacked area by default too", async () => {
+    serve(aggregate());
+    show();
+    const who = await screen.findByRole("region", { name: "Who is it waiting on" });
+
+    expect(within(who).getByRole("button", { name: "Stacked area" })).toHaveAttribute("aria-pressed", "true");
+    expect(who.querySelectorAll("path.agg-band").length).toBeGreaterThan(0);
   });
 
   test("few tasks in flight are called out as coarse, and the table gives counts", async () => {

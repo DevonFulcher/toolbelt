@@ -865,7 +865,7 @@ export function MixChart({
   const [ref, width] = useWidth();
   const id = useId();
   const [hover, setHover] = useState<Hover | null>(null);
-  const [mode, setMode] = useState<"lines" | "area">("lines");
+  const [mode, setMode] = useState<"lines" | "area">("area");
   const height = 240;
   const stripHeight = 52;
   const plotW = Math.max(width - MARGIN.left - MARGIN.right, 50);
