@@ -37,6 +37,16 @@ function Slot({
   );
 }
 
+/** A titled, bordered box of related slots (Git, PR, Task). */
+function Group({ id, title, children }: { id: string; title: string; children: ReactNode }) {
+  return (
+    <div className={`group g-${id}`} role="group" aria-label={title}>
+      <div className="group-title">{title}</div>
+      <div className="group-slots">{children}</div>
+    </div>
+  );
+}
+
 /** True for a moment after `value` changes (not on first render). */
 function useFlashOnChange(value: unknown): boolean {
   const last = useRef(value);
@@ -114,6 +124,8 @@ export const Card = memo(
     const childNames = branch.children.map((child) => child.name);
     // A merged PR means the task is done: its age stops being interesting.
     const taskDone = status.load === "loaded" && status.pr === "merged";
+    // Why every live slot is empty while there is no status to show.
+    const note = status.load === "loaded" ? null : unloadedNote(status, repo.path_missing);
 
     return (
       <article
@@ -122,103 +134,113 @@ export const Card = memo(
         style={{ "--depth": depth } as CSSProperties}
       >
         <Rails rails={rails} />
-        <Slot id="repo" label="Repo">
-          <span className="repo-chip" title={repo.path}>
-            {repo.name}
-          </span>
-        </Slot>
-        <Slot id="branch" label="Branch">
-          <span className={`branch${branch.current ? " current" : ""}`}>{branch.name}</span>
-        </Slot>
-        <Slot
-          id="task_age"
-          label="Task age"
-          state={taskDone ? "na" : branch.started_at ? "ok" : "gap"}
-        >
-          {taskDone ? (
-            "n/a (PR merged)"
-          ) : branch.started_at ? (
-            <Age
-              text={formatAge((now - Date.parse(branch.started_at)) / 1000)}
-              since={branch.started_at}
-            />
-          ) : (
-            "no start recorded"
-          )}
-        </Slot>
-        <StatusSlots
-          status={status}
-          startedAt={branch.started_at}
-          pathMissing={repo.path_missing}
-          catalog={catalog}
-          id={id}
-          now={now}
-        />
-        <Slot id="task" label="Task" state={branch.task ? "ok" : "gap"}>
-          {branch.task ? <TaskValue link={branch.task} task={task} /> : "no task linked"}
-        </Slot>
-        <Slot id="session" label="Session" state={branch.agent ? "ok" : "gap"}>
-          {branch.agent ? (
-            branch.agent.href ? (
-              <a href={branch.agent.href}>{branch.agent.label}</a>
+        <Group id="git" title="Git">
+          <Slot id="repo" label="Repo">
+            <span className="repo-chip" title={repo.path}>
+              {repo.name}
+            </span>
+          </Slot>
+          <Slot id="branch" label="Branch">
+            <span className={`branch${branch.current ? " current" : ""}`}>{branch.name}</span>
+          </Slot>
+          <Slot id="stack" label="Stack">
+            {branch.parent && branch.parent_id ? (
+              <a
+                className="branch stack-link"
+                href={`#${branch.parent_id}`}
+                title={
+                  parentOutside
+                    ? `stacked on ${branch.parent}, which is outside this view: focus there`
+                    : `stacked on ${branch.parent}`
+                }
+                data-target={branch.parent_id}
+                data-in={parentIn ?? undefined}
+                data-gone={parentGone ? "1" : undefined}
+                data-outside={parentOutside ? "1" : undefined}
+                onClick={(event) => {
+                  event.preventDefault();
+                  onJump(branch.parent_id as string, id);
+                }}
+              >
+                {branch.parent}
+              </a>
             ) : (
-              branch.agent.label
-            )
-          ) : (
-            "no session linked"
-          )}
-        </Slot>
-        <Slot id="stack" label="Stack">
-          {branch.parent && branch.parent_id ? (
-            <a
-              className="branch stack-link"
-              href={`#${branch.parent_id}`}
-              title={
-                parentOutside
-                  ? `stacked on ${branch.parent}, which is outside this view: focus there`
-                  : `stacked on ${branch.parent}`
-              }
-              data-target={branch.parent_id}
-              data-in={parentIn ?? undefined}
-              data-gone={parentGone ? "1" : undefined}
-              data-outside={parentOutside ? "1" : undefined}
-              onClick={(event) => {
-                event.preventDefault();
-                onJump(branch.parent_id as string, id);
-              }}
+              <span className="stack-chip stack-chip-muted">stack root</span>
+            )}{" "}
+            <span className="stack-chip">
+              {branch.stack_height > 1
+                ? `stack ${branch.stack_pos} of ${branch.stack_height}`
+                : "single branch"}
+            </span>{" "}
+            {stackedHref !== null && childNames.length > 0 && (
+              <a
+                className="stack-open"
+                href={stackedHref}
+                title="Open the Stacked view focused on this branch and what is stacked on it"
+                onClick={(event) => {
+                  event.preventDefault();
+                  store.getState().focusRoot(id, "stacked");
+                }}
+              >
+                open in stacked view →
+              </a>
+            )}{" "}
+            <span
+              className={`stack-chip${childNames.length ? "" : " stack-chip-muted"}`}
+              title={childNames.length ? `stacked on it: ${childNames.join(", ")}` : "nothing stacked on it"}
             >
-              {branch.parent}
-            </a>
-          ) : (
-            <span className="stack-chip stack-chip-muted">stack root</span>
-          )}{" "}
-          <span className="stack-chip">
-            {branch.stack_height > 1
-              ? `stack ${branch.stack_pos} of ${branch.stack_height}`
-              : "single branch"}
-          </span>{" "}
-          {stackedHref !== null && childNames.length > 0 && (
-            <a
-              className="stack-open"
-              href={stackedHref}
-              title="Open the Stacked view focused on this branch and what is stacked on it"
-              onClick={(event) => {
-                event.preventDefault();
-                store.getState().focusRoot(id, "stacked");
-              }}
-            >
-              open in stacked view →
-            </a>
-          )}{" "}
-          <span
-            className={`stack-chip${childNames.length ? "" : " stack-chip-muted"}`}
-            title={childNames.length ? `stacked on it: ${childNames.join(", ")}` : "nothing stacked on it"}
+              {childNames.length === 0
+                ? "no children"
+                : `${childNames.length} ${childNames.length === 1 ? "child" : "children"}`}
+            </span>
+          </Slot>
+        </Group>
+        <Group id="pr" title="PR">
+          <PrSlots status={status} note={note} />
+        </Group>
+        <Group id="task" title="Task">
+          <NextSlot status={status} note={note} />
+          <Slot
+            id="task_age"
+            label="Task age"
+            state={taskDone ? "na" : branch.started_at ? "ok" : "gap"}
           >
-            {childNames.length === 0
-              ? "no children"
-              : `${childNames.length} ${childNames.length === 1 ? "child" : "children"}`}
-          </span>
-        </Slot>
+            {taskDone ? (
+              "n/a (PR merged)"
+            ) : branch.started_at ? (
+              <Age
+                text={formatAge((now - Date.parse(branch.started_at)) / 1000)}
+                since={branch.started_at}
+              />
+            ) : (
+              "no start recorded"
+            )}
+          </Slot>
+          <Slot id="task" label="Task" state={branch.task ? "ok" : "gap"}>
+            {branch.task ? <TaskValue link={branch.task} task={task} /> : "no task linked"}
+          </Slot>
+          <Slot id="session" label="Session" state={branch.agent ? "ok" : "gap"}>
+            {branch.agent ? (
+              branch.agent.href ? (
+                <a href={branch.agent.href}>{branch.agent.label}</a>
+              ) : (
+                branch.agent.label
+              )
+            ) : (
+              "no session linked"
+            )}
+          </Slot>
+        </Group>
+        <div className="g-timeline">
+          <TimelineSlot
+            status={status}
+            note={note}
+            startedAt={branch.started_at}
+            catalog={catalog}
+            id={id}
+            now={now}
+          />
+        </div>
       </article>
     );
   },
@@ -236,35 +258,42 @@ export const Card = memo(
 
 const LOOKUP_FAILED = "gh could not look up this branch's PR";
 
-/** The live half of a card: everything that comes from the PR's status. */
-function StatusSlots({
-  status,
-  startedAt,
-  pathMissing,
-  catalog,
-  id,
-  now,
-}: {
-  status: LiveStatus;
-  startedAt: string | null;
-  pathMissing: boolean;
-  catalog: Catalog;
-  id: string;
-  now: number;
-}) {
-  if (status.load !== "loaded") {
-    // Every slot says why it is empty.
-    const note = pathMissing ? (
-      "repo path missing"
-    ) : status.load === "failed" ? (
+/** What an unloaded card's live slots say instead of a value. */
+function unloadedNote(status: Exclude<LiveStatus, LoadedStatus>, pathMissing: boolean): ReactNode {
+  if (pathMissing) return "repo path missing";
+  if (status.load === "failed") {
+    return (
       <span className="error" title={LOOKUP_FAILED}>
         status unavailable
       </span>
-    ) : (
-      "loading…"
     );
+  }
+  return "loading…";
+}
+
+/** The Next slot (the Task group's first). */
+function NextSlot({ status, note }: { status: LiveStatus; note: ReactNode }) {
+  if (status.load !== "loaded") {
+    return (
+      <Slot id="next" label="Next" state="na">
+        {note}
+      </Slot>
+    );
+  }
+  return (
+    <Slot id="next" label="Next">
+      <span className={`card-next next-${status.next.who}`} title={status.next.kind}>
+        {status.next.label}
+      </span>{" "}
+      <span className="card-next-who muted">{WHO_TEXT[status.next.who]}</span>
+    </Slot>
+  );
+}
+
+/** Every slot of the PR group; each says why when it has no value. */
+function PrSlots({ status, note }: { status: LiveStatus; note: ReactNode }) {
+  if (status.load !== "loaded") {
     const unloaded: [SlotKey, string][] = [
-      ["next", "Next"],
       ["pr", "PR"],
       ["ci", "CI"],
       ["review", "Review"],
@@ -276,7 +305,6 @@ function StatusSlots({
       ["ci_failures", "CI failures"],
       ["reviewers", "Reviewers"],
       ["title", "PR title"],
-      ["timeline", "Timeline"],
     ];
     return (
       <>
@@ -288,33 +316,41 @@ function StatusSlots({
       </>
     );
   }
-  return <LoadedSlots status={status} startedAt={startedAt} catalog={catalog} id={id} now={now} />;
+  return <LoadedPrSlots status={status} />;
 }
 
-function LoadedSlots({
+/** The timeline, in its own box below the groups. */
+function TimelineSlot({
   status,
+  note,
   startedAt,
   catalog,
   id,
   now,
 }: {
-  status: LoadedStatus;
+  status: LiveStatus;
+  note: ReactNode;
   startedAt: string | null;
   catalog: Catalog;
   id: string;
   now: number;
 }) {
+  return (
+    <Slot id="timeline" label="Timeline" state={status.load === "loaded" ? "ok" : "na"}>
+      {status.load === "loaded" ? (
+        <Timeline id={id} status={status} startedAt={startedAt} catalog={catalog} now={now} />
+      ) : (
+        note
+      )}
+    </Slot>
+  );
+}
+
+function LoadedPrSlots({ status }: { status: LoadedStatus }) {
   const { detail } = status;
   const hasPr = status.pr !== "none";
   return (
     <>
-      <Slot id="next" label="Next">
-        <span className={`card-next next-${status.next.who}`} title={status.next.kind}>
-          {status.next.label}
-        </span>{" "}
-        <span className="card-next-who muted">{WHO_TEXT[status.next.who]}</span>
-      </Slot>
-
       {hasPr ? (
         <>
           <Slot id="pr" label="PR">
@@ -435,9 +471,6 @@ function LoadedSlots({
           <UnavailableSlots note="no PR" />
         </>
       )}
-      <Slot id="timeline" label="Timeline">
-        <Timeline id={id} status={status} startedAt={startedAt} catalog={catalog} now={now} />
-      </Slot>
     </>
   );
 }

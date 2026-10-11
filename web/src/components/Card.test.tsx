@@ -215,6 +215,30 @@ describe("a card's labelled slots", () => {
     expect(found.timeline[2]).toContain("PR history unavailable");
   });
 
+  test("slots are grouped into Git, PR and Task boxes, with the timeline below them", () => {
+    showCards([
+      branch(1, "devon/a", { status: pr({ detail: detail() }) }),
+      branch(1, "devon/b"),
+    ]);
+
+    for (const card of document.querySelectorAll<HTMLElement>("article.card")) {
+      const groups = [...card.querySelectorAll<HTMLElement>(":scope > .group")];
+      expect(groups.map((g) => g.getAttribute("aria-label"))).toEqual(["Git", "PR", "Task"]);
+      expect(groups.map((g) => g.querySelector(".group-title")?.textContent)).toEqual(["Git", "PR", "Task"]);
+      const keys = groups.map((g) => [...g.querySelectorAll<HTMLElement>(".slot")].map((s) => s.dataset.slot));
+      expect(keys).toEqual([
+        ["repo", "branch", "stack"],
+        ["pr", "ci", "review", "comments", "merge", "pr_age", "in_draft", "review_requested", "ci_failures", "reviewers", "title"],
+        ["next", "task_age", "task", "session"],
+      ]);
+      // The timeline is its own box, the last child, not one of the groups.
+      const timeline = card.lastElementChild as HTMLElement;
+      expect(timeline).toHaveClass("g-timeline");
+      expect(timeline).not.toHaveClass("group");
+      expect(timeline.querySelector('[data-slot="timeline"]')).not.toBeNull();
+    }
+  });
+
   test("an unloaded card has every slot saying loading", () => {
     showCards([branch(1, "devon/a")]);
 

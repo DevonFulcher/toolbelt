@@ -1,59 +1,69 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
-import { MAX_VISIBLE_DEPTH } from "./logic/focus";
 
-// The card is a fixed nine-column grid above some viewport width and a
-// wrapping flex row below it. The grid's width comes from its columns, so the
-// breakpoints in styles.css have to be derived from them: a card wider than its
-// column overflows (the track and the right-hand slots spill out of the card).
+// A card is a wrapping flex row of boxes (Git, PR, Task) with the timeline
+// across the whole row. It has no breakpoints: its boxes shrink instead, so
+// these tests read styles.css and check the properties that make that true.
+// (jsdom does no layout; the measurement in docs/ui-testing.md checks the
+// result in a real browser.)
 const css = readFileSync(resolve(__dirname, "styles.css"), "utf8");
-const REM = 16;
 
-const columns = (): number[] => {
-  const match = css.match(/\.card\s*\{\s*--cols:\s*([^;]+);/);
-  if (!match) throw new Error("styles.css: .card --cols not found");
-  // Every track's minimum: `minmax(17rem, 1.6fr)` -> 17, `13rem` -> 13.
-  return match[1].match(/(?:minmax\(\s*)?([\d.]+)rem/g)!.map((t) => parseFloat(t.replace(/[^\d.]/g, "")));
+/** The declarations of the rule whose selector is exactly `selector`. */
+const declarations = (selector: string): string => {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = css.match(new RegExp(`(?:^|\\n|\\})\\s*${escaped}\\s*\\{([^}]*)\\}`));
+  if (!match) throw new Error(`styles.css: no rule for ${selector}`);
+  return match[1];
 };
 
-const gridRem = (): number => {
-  const cols = columns();
-  const gap = Number(css.match(/\.card\s*\{[^}]*gap:\s*\d+px\s+(\d+)px/)![1]) / REM;
-  const pad = Number(css.match(/\.card\s*\{[^}]*padding:\s*\d+px\s+(\d+)px/)![1]) / REM;
-  const mainPad = Number(css.match(/\nmain\s*\{[^}]*padding:\s*\d+px\s+(\d+)px/)![1]) / REM;
-  const border = 2 / REM;
-  return cols.reduce((a, b) => a + b, 0) + (cols.length - 1) * gap + 2 * pad + border + 2 * mainPad;
-};
+describe("card layout", () => {
+  test("a card wraps its boxes instead of switching layouts at a width", () => {
+    const card = declarations(".card");
 
-const breakpoint = (selectorStart: string): number => {
-  const re = new RegExp(`@media \\(max-width: ([\\d.]+)rem\\)\\s*\\{\\s*${selectorStart}`);
-  const match = css.match(re);
-  if (!match) throw new Error(`styles.css: no max-width media query for ${selectorStart}`);
-  return parseFloat(match[1]);
-};
-
-describe("card layout breakpoints", () => {
-  test("the grid is only used where the viewport can hold its columns", () => {
-    expect(breakpoint("\\.card \\{")).toBeGreaterThanOrEqual(gridRem());
-  });
-
-  test("stacked cards also leave room for the deepest indentation", () => {
-    const step = parseFloat(css.match(/\.cards\s*\{\s*--step:\s*([\d.]+)rem/)![1]);
-
-    expect(breakpoint("\\.cards-stacked \\.card \\{")).toBeGreaterThanOrEqual(
-      gridRem() + MAX_VISIBLE_DEPTH * step,
-    );
-  });
-
-  test("the wrapping layout lets the timeline take the whole row", () => {
-    // `.card .slot { flex: 0 1 auto }` outranks a bare `.s-timeline`, which left
-    // every timeline as narrow as its own content in the wrapping layout.
-    for (const block of css.match(/@media \(max-width: [\d.]+rem\)\s*\{[\s\S]*?\n\}/g) ?? []) {
-      const rule = block.match(/([^{}\n]*\.s-timeline[^{}]*)\{\s*flex:\s*1 0 100%/);
-      if (!rule) continue;
-      expect(rule[1], "timeline row rule must be at least as specific as `.card .slot`").toMatch(/\.card\s+\.s-timeline/);
+    expect(card).toMatch(/display:\s*flex/);
+    expect(card).toMatch(/flex-wrap:\s*wrap/);
+    expect(card).toMatch(/min-width:\s*0/);
+    // A width-triggered re-layout is what the nine-column grid needed, and
+    // what a card wider than its column came from.
+    for (const block of css.match(/@media[^{]*\{[\s\S]*?\n\}/g) ?? []) {
+      expect(block, "no media query may restyle the card or its boxes").not.toMatch(
+        /\.(card|group|g-[a-z]+|slot|s-[a-z_]+)\b/,
+      );
     }
-    expect(css).toMatch(/\.card \.s-timeline\s*\{\s*flex:\s*1 0 100%/);
+  });
+
+  test("a group can shrink below its preferred width, so it is never wider than the card", () => {
+    const group = declarations(".card .group");
+
+    // `flex: <grow> <shrink> <basis>`: shrink must be 1 (or more).
+    expect(group).toMatch(/flex:\s*[\d.]+\s+[1-9][\d.]*\s+/);
+    expect(group).toMatch(/min-width:\s*0/);
+  });
+
+  test("slots inside a group never force it wider: columns are capped by the group", () => {
+    const grid = declarations(".group-slots");
+
+    // minmax(min(7rem, 100%), 1fr): a one-column group is as wide as the group.
+    expect(grid).toMatch(/repeat\(auto-fill,\s*minmax\(min\([\d.]+rem,\s*100%\),\s*1fr\)\)/);
+    // A slot spans the group's whole row with `1 / -1`; `span N` would add
+    // implicit columns to a group that has fewer.
+    expect(css).not.toMatch(/\.s-[a-z_]+[^{}]*\{[^}]*grid-(?:column|area):[^;}]*span/);
+  });
+
+  test("the timeline takes the whole row and nothing outranks it", () => {
+    const timeline = declarations(".card .g-timeline");
+
+    expect(timeline).toMatch(/flex:\s*1 0 100%/);
+    expect(timeline).toMatch(/min-width:\s*0/);
+    // Every other flex rule that can reach the card's children is on `.group`
+    // (selectors of the form `.card .group`): none may name the timeline.
+    const flexRules = [...css.matchAll(/([^{}]+)\{([^}]*\bflex:[^}]*)\}/g)].filter(([, selector]) =>
+      /\.card\b[^,]*\.(?:group|g-timeline|slot)\b/.test(selector),
+    );
+    for (const [, selector] of flexRules) {
+      if (/\.g-timeline/.test(selector)) continue;
+      expect(selector, "a rule that sets flex on the card's children").toMatch(/\.group\b/);
+    }
   });
 });

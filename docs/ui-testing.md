@@ -37,11 +37,12 @@ and is skipped for that part when `pnpm` or `web/node_modules` is missing.
 A guard test derives its expectation from the real source, so changing one side
 without the other fails:
 
-- `web/src/cardLayout.test.ts` reads `styles.css`, computes the width the card
-  grid needs from its actual column definitions, and asserts the
-  wrapping-layout breakpoints are at least that (plus room for the deepest
-  indentation), and that the timeline's full-row rule is not outranked by
-  `.card .slot`.
+- `web/src/cardLayout.test.ts` reads `styles.css` and asserts what keeps a
+  card from ever being wider than its column: it is a wrapping flex row with no
+  width-triggered media query, a group (Git, PR, Task) may shrink
+  (`flex-shrink >= 1`, `min-width: 0`), the slots inside a group flow into
+  columns capped by the group's own width, and the timeline's full-row rule is
+  not outranked by another flex rule.
 - `tests/test_ui_api_types.py` and `pnpm check:types` fail when the generated
   TS types no longer match the pydantic models.
 
@@ -54,7 +55,7 @@ jsdom (what Vitest renders into) **does not do layout**: it has no media
 queries, container queries, flex/grid sizing or real widths. So these bug
 classes pass every unit test and still ship:
 
-- a card wider than its column (the fixed nine-column grid at 1,120-1,600px)
+- a card wider than its column (the old fixed nine-column grid at 1,120-1,600px)
 - a flex rule beaten by a more specific one (timelines only as wide as their
   content)
 - labels overlapping or running past the track
@@ -78,20 +79,22 @@ a `pr(...)` entry to `SCENARIOS` in `tools/ui-demo/gh` and a row to `STACKS` in
 1. Run the demo, open the page in a real browser tab (a background tab is
    deliberately paused: "paused (tab hidden)"; bring it to the front).
 2. Look at **all three views** (Grouped, Stacked, Table) at several widths:
-   about 400, 830, 1200, 1500 and 1700px. The breakpoints that matter are 92rem
-   (about 1,472px) and 101rem for Stacked.
+   about 400, 830, 1200, 1500 and 1700px. The card has no breakpoint: its
+   Git/PR/Task boxes wrap onto further rows as the width shrinks, so look at
+   where they wrap and that the timeline is always the full row below them.
 3. Use `--deep 14` and re-root to check indentation and the depth cap.
 4. Measure instead of eyeballing. In the page's console:
 
 ```js
-// Anything wider than its card, and event labels that overlap or leave the track.
+// Anything wider than its card (a group included), and event labels that
+// overlap or leave the track.
 (() => {
   const hit = (a, b) => a.left < b.right - .5 && b.left < a.right - .5 &&
                         a.top < b.bottom - .5 && b.top < a.bottom - .5;
   const bad = [];
   document.querySelectorAll("article.card").forEach((card) => {
     const c = card.getBoundingClientRect();
-    card.querySelectorAll(".tl-track, .tl, [class*='s-']").forEach((el) => {
+    card.querySelectorAll(".group, .g-timeline, .tl-track, .tl, [class*='s-']").forEach((el) => {
       const r = el.getBoundingClientRect();
       if (r.width > 0 && r.right > c.right + 1) bad.push(["overflow", el.className, Math.round(r.right - c.right)]);
     });
