@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { Catalog, LiveStatus, LoadedStatus, SlotDimensions } from "../api/generated";
 import type { RailSegment } from "../logic/layout";
+import { stackViewRoot } from "../logic/focus";
 import { serializeState } from "../logic/viewState";
 import { LOADING } from "../store/selectors";
 import { useApp, useAppStore } from "../store/StoreContext";
@@ -80,6 +81,11 @@ export interface CardProps {
    */
   parentOutside: boolean;
   onJump(target: string, from: string): void;
+  /**
+   * Grouped view, a leaf card: open the stacked view rooted at `root` (its
+   * stack's root) and bring this card (`id`) into view.
+   */
+  onOpenInStack(id: string, root: string): void;
 }
 
 function Rails({ rails }: { rails: RailSegment[] }) {
@@ -103,11 +109,23 @@ const sameRails = (a: RailSegment[], b: RailSegment[]): boolean =>
 
 export const Card = memo(
   function Card(props: CardProps) {
-    const { id, depth, rails, moved, highlighted, parentIn, parentGone, parentOutside, onJump } = props;
+    const { id, depth, rails, moved, highlighted, parentIn, parentGone, parentOutside, onJump, onOpenInStack } = props;
     const store = useAppStore();
-    // Grouped view only: the URL of this branch's stack in the stacked view.
+    // Grouped view only: where the stacked view is rooted from this card.
+    // A branch with children: at itself (it and what is stacked on it). A
+    // leaf: at its stack's root, so the whole stack is drawn around it.
+    const stackedRoot = useApp((s) => {
+      if (s.view.view !== "grouped") return null;
+      if ((s.branchesById[id]?.children.length ?? 0) > 0) return id;
+      return stackViewRoot(id, (parent) => s.branchesById[parent]?.parent_id ?? null);
+    });
     const stackedHref = useApp((s) =>
-      s.view.view === "grouped" ? serializeState({ ...s.view, view: "stacked", root: id }) : null,
+      stackedRoot === null ? null : serializeState({ ...s.view, view: "stacked", root: stackedRoot }),
+    );
+    // Stacked view only: where "focus on this subtree" goes (not offered at
+    // the current focus root).
+    const focusHref = useApp((s) =>
+      s.view.view === "stacked" && s.view.root !== id ? serializeState({ ...s.view, root: id }) : null,
     );
     const branch = useApp((s) => s.branchesById[id]);
     const repo = useApp((s) => (branch ? s.reposById[branch.repo_id] : undefined));
@@ -172,17 +190,36 @@ export const Card = memo(
                 ? `stack ${branch.stack_pos} of ${branch.stack_height}`
                 : "single branch"}
             </span>{" "}
-            {stackedHref !== null && childNames.length > 0 && (
+            {/* Not for a lone branch: there is no stack to see. */}
+            {stackedHref !== null && stackedRoot !== null && (stackedRoot !== id || childNames.length > 0) && (
               <a
                 className="stack-open"
                 href={stackedHref}
-                title="Open the Stacked view focused on this branch and what is stacked on it"
+                title={
+                  stackedRoot === id
+                    ? "Open the Stacked view focused on this branch and what is stacked on it"
+                    : "Open the Stacked view showing this branch in its stack"
+                }
                 onClick={(event) => {
                   event.preventDefault();
-                  store.getState().focusRoot(id, "stacked");
+                  if (stackedRoot === id) store.getState().focusRoot(id, "stacked");
+                  else onOpenInStack(id, stackedRoot);
                 }}
               >
                 open in stacked view →
+              </a>
+            )}{" "}
+            {focusHref !== null && childNames.length > 0 && (
+              <a
+                className="stack-open"
+                href={focusHref}
+                title="Show only this branch and what is stacked on it"
+                onClick={(event) => {
+                  event.preventDefault();
+                  store.getState().focusRoot(id);
+                }}
+              >
+                focus on this subtree →
               </a>
             )}{" "}
             <span
@@ -253,6 +290,7 @@ export const Card = memo(
     a.parentGone === b.parentGone &&
     a.parentOutside === b.parentOutside &&
     a.onJump === b.onJump &&
+    a.onOpenInStack === b.onOpenInStack &&
     sameRails(a.rails, b.rails),
 );
 

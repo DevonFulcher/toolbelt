@@ -118,7 +118,7 @@ describe("a card's labelled slots", () => {
     expect(b.review_requested).toEqual(["Review requested", "ok", "1d"]);
     expect(b.ci_failures[2]).toBe("2 failures");
     expect(b.reviewers).toEqual(["Reviewers", "ok", "sam, lee"]);
-    expect(b.stack[2]).toBe("devon/a stack 2 of 2 no children");
+    expect(b.stack[2]).toBe("devon/a stack 2 of 2 open in stacked view → no children");
     // The title is text, never markup.
     expect(b.title[2]).toBe("Add <b>the</b> thing");
     expect(b.task[1]).toBe("gap");

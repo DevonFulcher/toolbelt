@@ -43,6 +43,13 @@ describe("card layout", () => {
     expect(css).not.toMatch(/\.g-(?:git|pr|task)[^{]*\{[^}]*align-self/);
   });
 
+  test("the timeline's button row wraps, so it never makes the track wider than the card", () => {
+    // Expand, Hide commits and ? beside the start and end labels did, at 400px
+    // in a card indented six levels.
+    expect(declarations(".tl-ends")).toMatch(/flex-wrap:\s*wrap/);
+    expect(declarations(".tl-buttons")).toMatch(/flex-wrap:\s*wrap/);
+  });
+
   test("a group can shrink below its preferred width, so it is never wider than the card", () => {
     const group = declarations(".card .group");
 

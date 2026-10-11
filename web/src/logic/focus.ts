@@ -121,6 +121,47 @@ export function focusSize(rows: Row[], root: string): number {
 }
 
 /**
+ * How many of the focused subtree's branches `passes` (the filters) out of
+ * all of them.
+ */
+export function focusCounts(
+  rows: Row[],
+  root: string,
+  passes: (row: Row) => boolean,
+): { shown: number; total: number } {
+  const inside = focusedRows(rows, root);
+  return { shown: inside.filter(passes).length, total: inside.length };
+}
+
+/** "M branches", or "N of M branches" when the filters narrow the subtree. */
+export function branchCountText({ shown, total }: { shown: number; total: number }): string {
+  const noun = total === 1 ? "branch" : "branches";
+  return shown < total ? `${shown} of ${total} ${noun}` : `${total} ${noun}`;
+}
+
+/**
+ * The root for "show this branch in its stack": the stack's root, so the
+ * whole stack is drawn with the branch in it. When the branch is deeper than
+ * the depth cap from there, the nearest root that still draws it (it sits at
+ * the cap, not behind "continue from here"). `parentOf` looks a branch's
+ * parent up (null for a stack root); cycle-safe.
+ */
+export function stackViewRoot(
+  id: string,
+  parentOf: (id: string) => string | null,
+  max: number = MAX_VISIBLE_DEPTH,
+): string {
+  const chain: string[] = []; // the ancestors, parent first
+  const seen = new Set<string>([id]);
+  for (let p = parentOf(id); p && !seen.has(p); p = parentOf(p)) {
+    chain.push(p);
+    seen.add(p);
+  }
+  if (chain.length === 0) return id;
+  return chain[Math.min(chain.length, max) - 1];
+}
+
+/**
  * Drops the entries deeper than `max` and marks each entry at depth `max`
  * that has some below it (`hidden`: how many more levels, and how many
  * branches). Entries are in depth-first order.

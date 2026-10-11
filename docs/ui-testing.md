@@ -52,7 +52,9 @@ without the other fails:
   (`flex-shrink >= 1`, `min-width: 0`), the slots inside a group flow into
   columns capped by the group's own width, and the timeline's full-row rule is
   not outranked by another flex rule. The boxes of a row stretch to the tallest
-  (`align-items: stretch`, no `align-self` on a group).
+  (`align-items: stretch`, no `align-self` on a group), and the timeline's
+  button row (Expand, Hide commits, ?) wraps, so a narrow, deeply indented card
+  is not made wider than its column by its buttons.
 - `tests/test_ui_api_types.py` and `pnpm check:types` fail when the generated
   TS types no longer match the pydantic models.
 

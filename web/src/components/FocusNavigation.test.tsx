@@ -254,9 +254,6 @@ describe("the other views", () => {
     const card = document.querySelector('.card[data-id="1:l5"]') as HTMLElement;
     const open = within(card).getByRole("link", { name: "open in stacked view →" });
     expect(open).toHaveAttribute("href", "?view=stacked&root=1%3Al5");
-    // A leaf has nothing stacked on it: no link.
-    const leaf = document.querySelector('.card[data-id="1:l19"]') as HTMLElement;
-    expect(within(leaf).queryByRole("link", { name: "open in stacked view →" })).toBeNull();
 
     fireEvent.click(open);
 
@@ -270,10 +267,75 @@ describe("the other views", () => {
     expect(cardNames()).toHaveLength(20);
   });
 
-  test("the stacked view's links are not offered (the stack is already drawn)", () => {
+  test("a leaf in the grouped view opens its whole stack, with the leaf highlighted", () => {
+    const { url } = show(linear(4));
+
+    const leaf = document.querySelector('.card[data-id="1:l3"]') as HTMLElement;
+    const open = within(leaf).getByRole("link", { name: "open in stacked view →" });
+    // The stack's root, not the leaf.
+    expect(open).toHaveAttribute("href", "?view=stacked&root=1%3Al0");
+
+    fireEvent.click(open);
+
+    expect(url.location.search).toBe("?view=stacked&root=1%3Al0");
+    expect(cardNames()).toEqual(["l0", "l1", "l2", "l3"]);
+    expect(document.querySelector('.card[data-id="1:l3"]')).toHaveClass("highlight");
+    expect(document.querySelectorAll(".card.highlight")).toHaveLength(1);
+  });
+
+  test("a leaf deeper than the depth cap is rooted so that it is still drawn", () => {
+    show(linear(20));
+
+    const leaf = document.querySelector('.card[data-id="1:l19"]') as HTMLElement;
+    fireEvent.click(within(leaf).getByRole("link", { name: "open in stacked view →" }));
+
+    expect(cardNames()).toEqual(["l13", "l14", "l15", "l16", "l17", "l18", "l19"]);
+    expect(document.querySelector('.card[data-id="1:l19"]')).toHaveClass("highlight");
+  });
+
+  test("a lone branch has no stack to open", () => {
+    show([branch(1, "solo", { status: pr() })]);
+
+    expect(screen.queryByRole("link", { name: "open in stacked view →" })).toBeNull();
+  });
+
+  test("the stacked view does not offer 'open in stacked view' (the stack is already drawn)", () => {
     show(linear(4), "?view=stacked");
 
     expect(screen.queryByRole("link", { name: "open in stacked view →" })).toBeNull();
+  });
+
+  test("the stacked view's cards with children can focus on their subtree; leaves and the root cannot", () => {
+    const { url } = show(linear(4), "?view=stacked");
+    const focus = (n: string) =>
+      within(document.querySelector(`.card[data-id="1:${n}"]`) as HTMLElement).queryByRole("link", {
+        name: "focus on this subtree →",
+      });
+
+    expect(focus("l0")).toHaveAttribute("href", "?view=stacked&root=1%3Al0");
+    expect(focus("l1")).toHaveAttribute("href", "?view=stacked&root=1%3Al1");
+    expect(focus("l3")).toBeNull(); // a leaf: nothing to focus on
+
+    fireEvent.click(focus("l1") as HTMLElement);
+
+    expect(url.location.search).toBe("?view=stacked&root=1%3Al1");
+    expect(url.pushes).toHaveLength(1);
+    expect(cardNames()).toEqual(["l1", "l2", "l3"]);
+    // The link is not offered on the current root, still is below it.
+    expect(focus("l1")).toBeNull();
+    expect(focus("l2")).not.toBeNull();
+  });
+
+  test("the grouped view does not offer 'focus on this subtree'", () => {
+    show(linear(4));
+
+    expect(screen.queryByRole("link", { name: "focus on this subtree →" })).toBeNull();
+  });
+
+  test("the focus bar counts what the filters leave: 'N of M branches'", () => {
+    show(linear(20), "?view=stacked&root=1%3Al3&q=l15");
+
+    expect(within(crumbs()).getByText("Focused on l3 (1 of 17 branches)")).toBeInTheDocument();
   });
 
   test("the table's tree shows the subtree, caps it, and has the same navigation", () => {

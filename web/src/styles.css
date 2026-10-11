@@ -210,10 +210,10 @@ a.stack-link[data-gone]::after { content: " (not shown)"; font-size: 11px; font-
            border: 1px solid var(--tone, var(--gray)); border-radius: 10px; white-space: nowrap;
            color: var(--tone, var(--gray)); background: var(--card); }
 .tl-chip-label { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
-.tl-ends { display: flex; justify-content: space-between; align-items: center; gap: 8px;
+.tl-ends { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 2px 8px;
            font-size: 11px; color: var(--muted); }
 .tl-ends button, .tl-buttons button { font-size: 11px; padding: 0 6px; border-radius: 4px; }
-.tl-buttons { display: inline-flex; gap: 6px; }
+.tl-buttons { display: inline-flex; flex-wrap: wrap; gap: 4px 6px; }
 .tl-legend-toggle[aria-pressed=true] { background: var(--accent); border-color: var(--accent); color: #fff; }
 .tl-track { position: relative; height: var(--tl-height, 34px); margin: 0 6px;
             container-type: inline-size; }

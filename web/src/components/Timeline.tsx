@@ -155,16 +155,14 @@ export const Timeline = memo(function Timeline({ id, status, startedAt, catalog,
               >
                 {logOpen ? "Collapse" : "Expand"}
               </button>
-              {logOpen && (
-                <button
-                  type="button"
-                  className="tl-commits"
-                  aria-pressed={hideCommits}
-                  onClick={() => patchCardUi(id, { hideCommits: !hideCommits })}
-                >
-                  {hideCommits ? "Show commits" : "Hide commits"}
-                </button>
-              )}
+              <button
+                type="button"
+                className="tl-commits"
+                aria-pressed={hideCommits}
+                onClick={() => patchCardUi(id, { hideCommits: !hideCommits })}
+              >
+                {hideCommits ? "Show commits" : "Hide commits"}
+              </button>
               {legendButton}
             </span>
             <span className="tl-end">{layout.endLabel}</span>

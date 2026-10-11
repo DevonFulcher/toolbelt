@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from "react";
-import { breadcrumbs, focusSize, knownRoot, upTarget } from "../logic/focus";
+import { branchCountText, breadcrumbs, focusCounts, knownRoot, upTarget } from "../logic/focus";
+import { matches } from "../logic/layout";
 import type { Row } from "../logic/rows";
 import { serializeState } from "../logic/viewState";
 import { useApp, useAppStore } from "../store/StoreContext";
@@ -22,7 +23,7 @@ export function FocusBar({ rows }: { rows: Row[] }) {
 
   if (!root || !crumbs) return null;
   const up = upTarget(rows, root);
-  const size = focusSize(rows, root);
+  const counts = focusCounts(rows, root, (row) => matches(row, view));
   const hrefTo = (id: string): string => serializeState({ ...view, root: id });
   const go = (id: string) => (event: { preventDefault(): void }) => {
     event.preventDefault();
@@ -62,7 +63,7 @@ export function FocusBar({ rows }: { rows: Row[] }) {
         </li>
       </ol>
       <span className="focus-size">
-        {`Focused on ${crumbs.current.name} (${size} ${size === 1 ? "branch" : "branches"})`}
+        {`Focused on ${crumbs.current.name} (${branchCountText(counts)})`}
       </span>
       <span className="focus-actions">
         <button type="button" onClick={go(up)}>
