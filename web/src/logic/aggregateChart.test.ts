@@ -135,8 +135,19 @@ describe("day labels", () => {
   });
 
   test("narrower bars use initials, and the narrowest only label Mondays", () => {
-    expect(dayLabels(days, "UTC", 20)).toEqual(["Oct 5", "T", "W", "T", "F", "S", "S"]);
+    expect(dayLabels(days, "UTC", 36)).toEqual(["Oct 5", "T", "W", "T", "F", "S", "S"]);
+    expect(dayLabels(days, "UTC", 20)).toEqual(["Oct 5", null, null, null, null, null, null]);
     expect(dayLabels(days, "UTC", 6)).toEqual(["Oct 5", null, null, null, null, null, null]);
+  });
+
+  test("when bars are so narrow that dates would collide, only every few Mondays are labelled", () => {
+    const four = Array.from({ length: 28 }, (_, i) => ({ start: monday + i * 86_400_000 }));
+
+    const labels = dayLabels(four, "UTC", 3).filter((label) => label !== null);
+
+    // 7 bars of 3px are 21px apart, a date needs 48: every third Monday.
+    expect(labels).toEqual(["Oct 5", "Oct 26"]);
+    expect(dayLabels(four, "UTC", 5).filter((l) => l !== null)).toEqual(["Oct 5", "Oct 19"]);
   });
 });
 

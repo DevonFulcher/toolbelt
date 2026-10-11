@@ -799,6 +799,7 @@ export function LeadTimeChart({
           </ChartTooltip>
         </div>
       )}
+      <div className="agg-summary-wrap">
       <table className="agg-table agg-summary-table">
         <caption>{`Over the whole window (${modeLabel})`}</caption>
         <thead>
@@ -824,6 +825,7 @@ export function LeadTimeChart({
           ))}
         </tbody>
       </table>
+      </div>
     </ChartFrame>
   );
 }

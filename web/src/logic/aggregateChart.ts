@@ -254,14 +254,25 @@ export function dayLabels(
   timeZone: string,
   slotPx: number,
 ): (string | null)[] {
+  // Mondays are 7 bars apart: when that is too tight for a date, only every
+  // few of them are labelled.
+  const everyNth = Math.max(1, Math.ceil(MONDAY_LABEL_PX / (7 * slotPx)));
+  let monday = -1;
   return buckets.map(({ start }) => {
     const { weekday } = localParts(start, timeZone);
-    if (weekday === 1) return formatLocalDate(start, timeZone);
-    if (slotPx >= 40) return WEEKDAY_SHORT[weekday - 1];
-    if (slotPx >= 14) return WEEKDAY_SHORT[weekday - 1][0];
+    if (weekday === 1) {
+      monday++;
+      return monday % everyNth === 0 ? formatLocalDate(start, timeZone) : null;
+    }
+    // An initial or a name must not run into the Monday date before it.
+    if (slotPx >= 46) return WEEKDAY_SHORT[weekday - 1];
+    if (slotPx >= 34) return WEEKDAY_SHORT[weekday - 1][0];
     return null;
   });
 }
+
+/** Room a date label ("Oct 5") needs beside the next one, in pixels. */
+const MONDAY_LABEL_PX = 48;
 
 /**
  * The Saturday-and-Sunday spans between `from` and `to`, as `[start, end]`

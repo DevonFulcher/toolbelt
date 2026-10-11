@@ -336,6 +336,7 @@ def history_node(spec):
             )
     return {
         "id": spec["node_id"],
+        "url": f"https://github.com/devon/{spec['repo']}/pull/{spec['number']}",
         "number": spec["number"],
         "title": spec["title"],
         "state": spec["state"],

@@ -10,6 +10,7 @@
              padding: 12px 14px; min-width: 0; display: grid; gap: 8px; }
 .agg-chart > header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .agg-chart h2 { margin: 0; font-size: 14px; }
+.agg-chart > * { min-width: 0; }
 .agg-description { margin: 0; color: var(--muted); font-size: 12px; max-width: 70ch; }
 .agg-table-toggle { font-size: 12px; padding: 1px 8px; color: var(--muted); }
 .agg-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0; padding: 0;
@@ -38,7 +39,8 @@
 .agg-dot:hover { fill-opacity: 1; }
 .agg-lead-controls { display: grid; gap: 6px; }
 .agg-legend-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
-                     padding: 0 6px; border-radius: 4px; }
+                     padding: 0 6px; border-radius: 4px; text-align: left; }
+.agg-summary-wrap { overflow-x: auto; max-width: 100%; }
 .agg-legend-toggle[aria-pressed=false] { opacity: .5; text-decoration: line-through; }
 .agg-check { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); }
 .agg-summary-table { margin-top: 4px; }

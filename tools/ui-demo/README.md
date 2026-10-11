@@ -34,10 +34,19 @@ conflicts, ready for review with CI running, and branches with no PR.
   of `SCENARIOS`. The two searches the view makes (`updated:>=...` and
   `is:open`) are answered from them.
 * **The stack DB**: `removed_branches` holds the archived task facts (task
-  start, removal, whether it landed) of the cleaned-up branches, and
-  `archive_info.since` is set 9 weeks back, so older PRs show "no task start
-  recorded": the unknown intervals the view must not invent. Three tasks
-  never got a PR (worked on, then dropped).
+  id, PR number and node id when recorded, task start, removal, whether it
+  landed) of the cleaned-up branches: about two thirds carry their PR's
+  identity (joined by id), the rest do not (matched by branch name and
+  flagged), and one branch name is used by two tasks. Some tracked branches
+  have a recorded PR link too. `archive_info.since` is set 9 weeks back, and
+  so older PRs show "no task start recorded": the unknown intervals the view
+  must not invent. Three tasks never got a PR (worked on, then dropped).
+
+The fake `gh` gives every PR an `id`, `url` and `updatedAt` and answers the
+`updated:>=<time>` search the incremental fetch makes, so a second request
+re-queries only the open PRs and what changed. Commits carry check suite
+completion times (`suite=<minutes>` in `commit(...)`), so a card whose last
+commit failed (`devon/auth-docs`) shows "Waiting on CI" and then "CI failing".
 
 The history comes from a fixed random seed (`history.py`) and is placed
 relative to the time you seed. To see the empty state, run `tt ui` against a

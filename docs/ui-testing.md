@@ -22,15 +22,36 @@ own private repo.
 - **Web** (`web/src/**/*.test.ts(x)`, Vitest + React Testing Library): pure
   logic in `web/src/logic/` (timeline geometry, focus/cap, layout, sorting) and
   the components, rendered against a store seeded from `web/src/testing/`.
-- **The aggregate view** (`tests/test_ui_aggregate.py`,
-  `web/src/logic/aggregateChart.test.ts`,
-  `web/src/components/AggregateView.test.tsx`): the replay of a PR's history
-  into states, the lead-time and status-mix numbers (bucket shares sum to
-  100%, unknown intervals stay unknown), the GitHub fetch (paging, cache,
-  partial results) and `GET /api/aggregate` run on pure inputs with the `gh`
-  page runner, the stack DB and both clocks injected. The chart arithmetic is
-  pure TypeScript, and the component tests cover the legend, tooltip (by
-  keyboard), data table, and the empty and partial states.
+- **The aggregate view** is split by who owns the arithmetic:
+  - *Server* (`tests/test_ui_aggregate.py`, `tests/test_pr_link.py`): the
+    replay of a PR's history into states (and the CI phases), the status-mix
+    **snapshots** (at each sampled UTC instant every task in flight has one
+    state; shares sum to 100%, counts agree, an instant with nothing in
+    flight is a gap), the per-PR **milestones** (UTC instants), joining tasks
+    to PRs by recorded id (a reused branch name must not mismatch; name
+    matches are flagged), the repo filter, and the **incremental fetch** (no
+    TTL: open PRs and PRs updated since the newest cached `updatedAt` are
+    re-queried, changed ones replace cached ones, deletions and reopens are
+    handled), all with the `gh` page runner (`FakeGitHub`), the stack DB and
+    the clock injected. The server does no calendar arithmetic and takes no
+    time zone.
+  - *Client* (`web/src/logic/localTime.test.ts`, `leadTime.test.ts`,
+    `throughput.test.ts`, `aggregateChart.test.ts`, and the component tests in
+    `web/src/components/AggregateView.test.tsx`): what a day, a week (Monday
+    first) and a weekend are comes only from the browser's `Intl`, with the
+    IANA zone injected so tests run in `America/Chicago` and `UTC` (the web
+    test environment is `TZ=UTC`). They cover a Friday 19:00 Central merge
+    landing on Friday, DST weeks (23/25-hour days), daily vs weekly
+    throughput, weekend bands and label thinning, medians/p75/p90 per bucket
+    (linear interpolation; buckets with no known value are gaps; unknown is
+    counted), and **excluding weekends** (elapsed time minus the time on
+    Saturday/Sunday in the viewer's zone, no holiday calendar: Friday 17:00 to
+    Monday 09:00 is 64h elapsed, 16h without weekends).
+- **The stack DB** (`tests/test_stack_store.py`,
+  `tests/test_stack_store_migrations.py`): the migration list is applied from
+  scratch and from every historical `user_version` with rows in place.
+  `tests/test_pr_link.py` covers recording a task's PR identity (`tt git pr`,
+  sync, merge, branch-clean) and that a recorded link is never replaced.
 - **The state catalog** (`src/toolbelt/ui/pr_states.py`) is the single
   declaration of every state a card can show and how the timeline represents
   it. Its exhaustiveness tests fail when a state is added without a timeline
@@ -61,8 +82,12 @@ without the other fails:
 - `web/src/testing/phaseVectors.json` is read by both
   `web/src/logic/phaseVectors.test.ts` (the card timeline's `phaseSpans`) and
   `tests/test_ui_aggregate.py` (the aggregate view's Python replay): the
-  draft, waiting, approved and CI-failing spans must be the same on the card
-  and in the aggregate. Add a case there when a phase rule changes.
+  draft, waiting, approved, **waiting-on-CI** and CI-failing spans must be the
+  same on the card and in the aggregate. CI follows one rule
+  (`pr_activity.commit_ci_phases`): a push waits on CI until its check suites
+  complete, whatever the outcome (`ciDone` in a vector), and only a failing
+  commit then fails, until the next push; without a completion time a failed
+  commit fails from its push. Add a case there when a phase rule changes.
 
 When you fix a layout bug, add a guard like these. It is the only automated
 protection for CSS, see below.
@@ -88,8 +113,10 @@ tools/ui-demo/run.sh --deep 14        # plus a 14-deep stack: depth cap, re-root
 ```
 
 `?view=aggregate` shows about 12 weeks of seeded history (about 35 PRs, task
-starts recorded for the last 9 weeks only, two stacked pairs): see the demo's
-README.
+starts recorded for the last 9 weeks only, about two thirds of them with a
+recorded PR id and the rest matched by branch name, a reused branch name, two
+stacked pairs, check suite completion times and `updatedAt` for the incremental
+fetch): see the demo's README.
 
 See [`tools/ui-demo/README.md`](../tools/ui-demo/README.md). It seeds a temp
 `TOOLBELT_HOME` and puts a fake `gh` first on `PATH`. To cover a new state, add
@@ -101,7 +128,8 @@ a `pr(...)` entry to `SCENARIOS` in `tools/ui-demo/gh` and a row to `STACKS` in
 1. Run the demo, open the page in a real browser tab (a background tab is
    deliberately paused: "paused (tab hidden)"; bring it to the front).
 2. Look at **all four views** (Grouped, Stacked, Table, Aggregate) at several
-   widths: about 400, 830, 1200, 1500 and 1700px, in light and dark. The card
+   widths (the view selector is its own row and must not move between views:
+   compare its `getBoundingClientRect()` in each): about 400, 830, 1200, 1500 and 1700px, in light and dark. The card
    has no breakpoint: its Git/PR/Task boxes wrap onto further rows as the width
    shrinks, so look at where they wrap and that the timeline is always the full
    row below them.
@@ -145,6 +173,10 @@ that measurement is wrong):
   return { viewport: innerWidth, docWidth: document.documentElement.scrollWidth, bad };
 })();
 ```
+
+The aggregate's weekend bands, daily labels and lead-time dots follow the
+browser's time zone, so check it in a zone that is not UTC (the page states the
+zone it used). Throughput is daily at 4 and 12 weeks and weekly beyond.
 
 Also check the empty state (a fresh `TOOLBELT_HOME`, or a `gh` that finds no
 PRs: "None of your PRs were updated...", every lead-time step "no data" with
