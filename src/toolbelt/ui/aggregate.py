@@ -107,15 +107,16 @@ NOTES: tuple[tuple[str, str], ...] = (
         "Days, weeks and weekends",
         "The server sends UTC instants and the status-mix samples; the page "
         "decides what a day, a week (Monday first) and a weekend are from "
-        "your browser's time zone, so throughput and lead-time buckets, the "
+        "your browser's time zone, so throughput buckets, lead-time dates, the "
         "weekend bands and the day labels all follow it (a Friday 7pm merge "
         "in US/Central is a Friday, not a Saturday).",
     ),
     (
         "Lead time",
-        "Each PR is placed at the time it merged, and a step's value is the "
-        "median over the PRs merged in each bucket (linear interpolation "
-        "between ranks; p75 and p90 likewise). A step is unknown for a PR "
+        "Each PR is placed at the time it merged. The 4- and 12-week views "
+        "show each PR's value; longer windows show the median over the PRs "
+        "merged in each week (linear interpolation between ranks; p75 and "
+        "p90 likewise). A step is unknown for a PR "
         "when its start was not recorded or the request or review it is "
         "measured from does not exist: unknown is counted, never guessed. "
         "'Excluding weekends' drops the time that falls on a Saturday or "

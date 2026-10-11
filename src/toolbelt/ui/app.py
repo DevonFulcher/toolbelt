@@ -28,7 +28,8 @@ A background ``StatusRefresher`` (``live_status.py``) keeps the status cache
 current by polling GitHub (one GraphQL call per branch, see ``pr_fetch.py``)
 while any browser is connected; a ``TaskFeed`` does the same for tasks and
 an ``UntrackedPrFeed`` (slowly) for the PRs toolbelt does not track.
-``AggregateService`` refreshes its widest history window every five minutes.
+``AggregateService`` warms 12 weeks, then refreshes the widest requested
+window every fifteen minutes.
 
 The status lookup (``fetch``), the task tracker and the clocks are
 ``create_app`` arguments, so tests can inject them.

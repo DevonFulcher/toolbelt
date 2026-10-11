@@ -42,9 +42,10 @@ own private repo.
     IANA zone injected so tests run in `America/Chicago` and `UTC` (the web
     test environment is `TZ=UTC`). They cover a Friday 19:00 Central merge
     landing on Friday, DST weeks (23/25-hour days), daily vs weekly
-    throughput, weekend bands and label thinning, medians/p75/p90 per bucket
-    (linear interpolation; buckets with no known value are gaps; unknown is
-    counted), and **excluding weekends** (elapsed time minus the time on
+    throughput, weekend bands and label thinning, individual merged PRs at
+    4 and 12 weeks, medians/p75/p90 per week at 26 and 52 weeks (linear
+    interpolation; buckets with no known value are gaps; unknown is counted),
+    and **excluding weekends** (elapsed time minus the time on
     Saturday/Sunday in the viewer's zone, no holiday calendar: Friday 17:00 to
     Monday 09:00 is 64h elapsed, 16h without weekends).
 - **The stack DB** (`tests/test_stack_store.py`,
@@ -177,6 +178,11 @@ that measurement is wrong):
 The aggregate's weekend bands, daily labels and lead-time dots follow the
 browser's time zone, so check it in a zone that is not UTC (the page states the
 zone it used). Throughput is daily at 4 and 12 weeks and weekly beyond.
+Lead time shows each merged PR at 4 and 12 weeks and weekly medians beyond;
+status mix and who is waiting on keep their stacked charts and mark each
+transition time on the x-axis at 4 and 12 weeks.
+Reload a 4-week view in the same tab and check that its saved result appears
+while the server response is pending.
 
 Also check the empty state (a fresh `TOOLBELT_HOME`, or a `gh` that finds no
 PRs: "None of your PRs were updated...", every lead-time step "no data" with

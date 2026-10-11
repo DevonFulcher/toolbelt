@@ -18,6 +18,27 @@ type Load =
   | { weeks: number; repo: string; state: "ready"; data: Aggregate }
   | { weeks: number; repo: string; state: "error"; message: string };
 
+const storedKey = (weeks: number, repo: string): string => `toolbelt:aggregate:v1:${weeks}:${repo}`;
+
+function storedAggregate(weeks: number, repo: string): Aggregate | null {
+  if (weeks > 12) return null;
+  try {
+    const value = sessionStorage.getItem(storedKey(weeks, repo));
+    return value ? JSON.parse(value) as Aggregate : null;
+  } catch {
+    return null;
+  }
+}
+
+function storeAggregate(weeks: number, repo: string, data: Aggregate): void {
+  if (weeks > 12) return;
+  try {
+    sessionStorage.setItem(storedKey(weeks, repo), JSON.stringify(data));
+  } catch {
+    // Browser storage is optional; the server cache still serves this view.
+  }
+}
+
 /** A fetch older than this is repeated when the page becomes visible again. */
 export const STALE_AFTER_MS = 60_000;
 
@@ -40,28 +61,33 @@ export function useAggregate(
   repo: string,
   fetchImpl: typeof fetch = fetch,
 ): AggregateHandle {
-  const [load, setLoad] = useState<Load | null>(null);
+  const [load, setLoad] = useState<Load | null>(() => {
+    const data = storedAggregate(weeks, repo);
+    return data ? { weeks, repo, state: "ready", data } : null;
+  });
   const [refreshing, setRefreshing] = useState(false);
   const fetchedAt = useRef(0);
   const latest = useRef(0);
   const run = useCallback((force = false) => {
     const id = ++latest.current;
+    if (!force) {
+      const data = storedAggregate(weeks, repo);
+      if (data) setLoad({ weeks, repo, state: "ready", data });
+    }
     setRefreshing(true);
     fetchAggregate(weeks, repo, fetchImpl, force).then(
       (data) => {
         if (id !== latest.current) return;
         fetchedAt.current = Date.now();
+        storeAggregate(weeks, repo, data);
         setLoad({ weeks, repo, state: "ready", data });
         setRefreshing(false);
       },
       (error: unknown) => {
         if (id !== latest.current) return;
-        setLoad({
-          weeks,
-          repo,
-          state: "error",
-          message: error instanceof Error ? error.message : String(error),
-        });
+        setLoad((previous) => previous?.state === "ready" && previous.weeks === weeks && previous.repo === repo
+          ? previous
+          : { weeks, repo, state: "error", message: error instanceof Error ? error.message : String(error) });
         setRefreshing(false);
       },
     );
@@ -203,7 +229,7 @@ export function AggregatePanels({
       key,
       label,
       tone: LEAD_TONES[key],
-      legend: `${label}: the median over the PRs merged in each bucket.`,
+      legend: weeks <= 12 ? `${label}: one value per merged PR.` : `${label}: the median over the PRs merged in each week.`,
     })),
   ) as LeadStageStyle[];
   const startsAfterWindow = Date.parse(coverage.task_starts_since) > start;
@@ -257,7 +283,7 @@ export function AggregatePanels({
       />
       <MixChart
         title="Status mix"
-        description="A snapshot at every task state change, from the window start through now. Each task in flight has one state, so the shares sum to 100%. Gaps mean nothing was in flight. Merge conflicts and unresolved comments have no history, so they are not separated."
+        description="A stacked snapshot at every task state change, with each change at its exact time on the x-axis. Each task in flight has one state, so the shares sum to 100%. Gaps mean nothing was in flight. Merge conflicts and unresolved comments have no history, so they are not separated."
         series={stateSeries}
         shares={mix.series.map((s) => s.share)}
         counts={mix.series.map((s) => s.count)}
@@ -265,10 +291,11 @@ export function AggregatePanels({
         inflight={mix.inflight}
         timeZone={timeZone}
         empty={`No task was in flight in this window${startsAfterWindow ? ` (task starts are recorded since ${formatBucketDate(coverage.task_starts_since)})` : ""}.`}
+        transitionTicks={weeks <= 12}
       />
       <MixChart
         title="Who is it waiting on"
-        description="The same snapshots at every task state change, grouped by who the next action waits on: you (open, publish, fix, address review, merge), CI, or others (a reviewer, or a parent PR that waits on one). Derived with the rules of the Next column."
+        description="Stacked snapshots at every task state change, placed at their exact times on the x-axis and grouped by who the next action waits on: you (open, publish, fix, address review, merge), CI, or others (a reviewer, or a parent PR that waits on one). Derived with the rules of the Next column."
         series={whoSeries}
         shares={mix.who.map((s) => s.share)}
         counts={mix.who.map((s) => s.count)}
@@ -276,6 +303,7 @@ export function AggregatePanels({
         inflight={mix.inflight}
         timeZone={timeZone}
         empty="No task was in flight in this window."
+        transitionTicks={weeks <= 12}
       />
       <details className="agg-notes">
         <summary>What is approximated or not reconstructable</summary>

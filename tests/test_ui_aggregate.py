@@ -1091,6 +1091,24 @@ def test_a_cached_request_does_not_wait_for_github_refresh():
     assert [pr_.number for pr_ in cached.prs] == [1]
 
 
+def test_background_warms_twelve_weeks_without_fetching_fifty_two():
+    github = FakeGitHub(pr_node(1, "2026-10-06T09:00:00Z"))
+    svc = service(github)
+
+    async def check() -> None:
+        running = asyncio.create_task(svc.run(interval=3600))
+        try:
+            while svc._cache is None:
+                await asyncio.sleep(0)
+            assert svc._cache.weeks == 12
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+    asyncio.run(asyncio.wait_for(check(), timeout=2))
+    assert any("updated:>=2026-07-19" in call for call in github.calls)
+
+
 def test_a_changed_pr_replaces_its_cached_record_and_deletions_are_dropped():
     github = FakeGitHub(
         pr_node(1, "2026-10-06T09:00:00Z"),

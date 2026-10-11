@@ -1,6 +1,6 @@
 // Lead time over time: the per-PR milestones the server sends, turned into
-// per-stage durations, bucketed by the day/week a PR merged in the viewer's
-// time zone, with a median and percentiles per bucket and over the window.
+// per-stage durations, one point per merged PR for short windows or medians
+// by merge-date bucket for long windows.
 //
 // Pure functions over `PrMilestones` and an injected IANA time zone.
 import type { PrMilestones } from "../api/generated";
@@ -112,40 +112,43 @@ export interface StageSeries {
 }
 
 export interface LeadTimeSeries {
-  buckets: Bucket[];
+  buckets: (Bucket & { pr?: PrMilestones })[];
   stages: StageSeries[];
+  granularity: "event" | "bucket";
   /** PRs merged in the window. */
   merged: number;
 }
 
-/** Bucket length in days: 3 for the 4-week window (enough points), else 7. */
-export function bucketDays(weeks: number): number {
-  return weeks <= 4 ? 3 : 7;
+/** Short windows show each merge; long windows retain weekly medians. */
+export function bucketDays(weeks: number): number | null {
+  return weeks <= 12 ? null : 7;
 }
 
 /**
- * Every PR merged in `[windowStart, now]`, per stage and bucket. A bucket
- * with no PR whose stage is known has null statistics (a gap, never zero).
+ * Every PR merged in `[windowStart, now]`, per stage. Short windows have one
+ * value per PR; long windows group by local merge week.
  */
 export function leadTimeSeries(
   prs: readonly PrMilestones[],
-  options: DurationOptions & { windowStart: number; now: number; days: number },
+  options: DurationOptions & { windowStart: number; now: number; days: number | null },
 ): LeadTimeSeries {
   const { windowStart, now, days, timeZone } = options;
-  const buckets = localBuckets(windowStart, now, days, timeZone);
   const merged = prs.filter((pr) => {
     if (pr.state !== "MERGED" || pr.ended === null) return false;
     const at = Date.parse(pr.ended);
     return at >= windowStart && at <= now;
-  });
+  }).sort((a, b) => Date.parse(a.ended as string) - Date.parse(b.ended as string));
+  const buckets = days === null
+    ? merged.map((pr) => ({ start: Date.parse(pr.ended as string), end: Date.parse(pr.ended as string) + 1, weekend: false, pr }))
+    : localBuckets(windowStart, now, days, timeZone);
   const stages = STAGES.map(({ key, label }): StageSeries => {
     const values: number[][] = buckets.map(() => []);
     const unknown: number[] = buckets.map(() => 0);
     const points: LeadPoint[] = [];
     let unknownAll = 0;
-    for (const pr of merged) {
+    for (const [mergedIndex, pr] of merged.entries()) {
       const at = Date.parse(pr.ended as string);
-      const index = bucketIndex(buckets, at);
+      const index = days === null ? mergedIndex : bucketIndex(buckets, at);
       const seconds = stageSeconds(pr, key, options);
       if (seconds === null) {
         unknownAll++;
@@ -166,5 +169,5 @@ export function leadTimeSeries(
       points,
     };
   });
-  return { buckets, stages, merged: merged.length };
+  return { buckets, stages, merged: merged.length, granularity: days === null ? "event" : "bucket" };
 }

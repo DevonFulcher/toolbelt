@@ -531,9 +531,10 @@ export function LeadTimeChart({
   const plotW = Math.max(width - MARGIN.left - MARGIN.right, 50);
   const plotH = height - MARGIN.top - MARGIN.bottom;
   const total = series.stages.find((s) => s.key === TOTAL_STAGE);
-  const bandShown = band && total !== undefined && !hidden.has(TOTAL_STAGE);
+  const eventMode = series.granularity === "event";
+  const bandShown = !eventMode && band && total !== undefined && !hidden.has(TOTAL_STAGE);
   const values = [
-    ...visible.flatMap((s) => s.buckets.map((b) => b.median ?? 0)),
+    ...visible.flatMap((s) => eventMode ? s.points.map((p) => p.seconds) : s.buckets.map((b) => b.median ?? 0)),
     ...(bandShown && total ? total.buckets.map((b) => b.p90 ?? 0) : []),
   ];
   const axis = durationAxis(Math.max(0, ...values));
@@ -541,12 +542,13 @@ export function LeadTimeChart({
   const pointY = (seconds: number): number => y(Math.min(seconds, axis.top));
   const span = Math.max(now - windowStart, 1);
   const xMs = (ms: number): number => MARGIN.left + (Math.min(Math.max(ms - windowStart, 0), span) / span) * plotW;
-  const centres = series.buckets.map((b) => xMs((b.start + Math.min(b.end, now)) / 2));
+  const centres = series.buckets.map((b) => xMs(eventMode ? b.start : (b.start + Math.min(b.end, now)) / 2));
   const bucketX = (i: number): number => centres[i];
   const style = (key: StageKey): LeadStageStyle => styles.find((x) => x.key === key) as LeadStageStyle;
   const label = (ms: number): string => formatLocalDate(ms, timeZone);
   const rangeLabel = (i: number): string => {
     const b = series.buckets[i];
+    if (eventMode) return `${formatLocalInstant(b.start, timeZone)}${b.pr ? ` · ${b.pr.repo}#${b.pr.number}` : ""}`;
     const last = addLocalDays(b.end, -1, timeZone);
     return b.end - b.start > 24 * 3_600_000 * 1.5 ? `${label(b.start)} - ${label(last)}` : label(b.start);
   };
@@ -566,7 +568,7 @@ export function LeadTimeChart({
   const move = (event: PointerEvent<SVGRectElement>): void => {
     const box = event.currentTarget.getBoundingClientRect();
     const ms = windowStart + ((event.clientX - box.left) / Math.max(box.width, 1)) * span;
-    const index = Math.max(0, bucketIndex(series.buckets, ms));
+    const index = eventMode ? nearestIndex(series.buckets.map((b) => b.start), ms) : Math.max(0, bucketIndex(series.buckets, ms));
     setHover({ type: "bucket", index, x: centres[index] });
   };
   const toggle = (stage: StageKey): void => {
@@ -588,13 +590,9 @@ export function LeadTimeChart({
     <ChartFrame
       title={`Lead time over time (${modeLabel})`}
       description={
-        <>
-          Each PR is placed at the time it merged ({timeZone}), and each line is the median of a step over the PRs that
-          merged in each {series.buckets.length > 0 && series.buckets[0].end - series.buckets[0].start < 4 * 86_400_000 ? "3-day" : "week"}{" "}
-          bucket, using {modeLabel.toLowerCase()}. A bucket with no PR whose step is known is a gap. The dots are
-          single PRs; hover one for its details. The scale follows the medians; longer individual PRs appear at the
-          top edge with their full duration in the tooltip.
-        </>
+        eventMode
+          ? `Each point is one PR at its exact merge time (${timeZone}), using ${modeLabel.toLowerCase()}. Lines connect known values for each step; missing milestones leave gaps. Hover a point for its PR and duration.`
+          : `Each PR is placed at the time it merged (${timeZone}), and each line is the median of a step over the PRs that merged in each week, using ${modeLabel.toLowerCase()}. A bucket with no PR whose step is known is a gap. The dots are single PRs; hover one for its details. The scale follows the medians; longer individual PRs appear at the top edge with their full duration in the tooltip.`
       }
       legend={
         <div className="agg-lead-controls">
@@ -629,16 +627,16 @@ export function LeadTimeChart({
                 {text}
               </button>
             ))}
-            <label className="agg-check">
+            {!eventMode && <label className="agg-check">
               <input type="checkbox" checked={band} onChange={(event) => setBand(event.target.checked)} />
               p75 to p90 band (total)
-            </label>
+            </label>}
           </div>
         </div>
       }
       table={
         <table className="agg-table">
-          <caption>{`Lead time (${modeLabel}) per ${series.buckets.length ? "bucket" : "bucket"}: median (PRs known / unknown)`}</caption>
+          <caption>{eventMode ? `Lead time (${modeLabel}) per merged PR` : `Lead time (${modeLabel}) per bucket: median (PRs known / unknown)`}</caption>
           <thead>
             <tr>
               <th scope="col">Merged in</th>
@@ -655,9 +653,7 @@ export function LeadTimeChart({
                 <th scope="row">{rangeLabel(i)}</th>
                 {series.stages.map((s) => {
                   const b = s.buckets[i];
-                  return (
-                    <td key={s.key}>{b.n > 0 ? `${dur(b.median)} (${b.n} / ${b.unknown})` : `- (0 / ${b.unknown})`}</td>
-                  );
+                  return <td key={s.key}>{eventMode ? dur(b.median) : b.n > 0 ? `${dur(b.median)} (${b.n} / ${b.unknown})` : `- (0 / ${b.unknown})`}</td>;
                 })}
               </tr>
             ))}
@@ -782,9 +778,11 @@ export function LeadTimeChart({
                       <Swatch id={id} series={style(stage.key)} />
                       <span>{style(stage.key).label}</span>
                       <span className="agg-tip-value">
-                        {b.n > 0
-                          ? `median ${dur(b.median)}, p75 ${dur(b.p75)}, n=${b.n}${b.unknown ? ` (${b.unknown} unknown)` : ""}`
-                          : `no data${b.unknown ? ` (${b.unknown} unknown)` : ""}`}
+                        {eventMode
+                          ? dur(b.median)
+                          : b.n > 0
+                            ? `median ${dur(b.median)}, p75 ${dur(b.p75)}, n=${b.n}${b.unknown ? ` (${b.unknown} unknown)` : ""}`
+                            : `no data${b.unknown ? ` (${b.unknown} unknown)` : ""}`}
                       </span>
                     </div>
                   );
@@ -859,6 +857,7 @@ export function MixChart({
   inflight,
   timeZone,
   empty,
+  transitionTicks,
 }: {
   title: string;
   description: ReactNode;
@@ -875,6 +874,8 @@ export function MixChart({
   timeZone: string;
   /** Said when nothing was in flight in the whole window. */
   empty: ReactNode;
+  /** Mark each exact transition time on the x-axis for short windows. */
+  transitionTicks: boolean;
 }) {
   const [ref, width] = useWidth();
   const id = useId();
@@ -932,7 +933,10 @@ export function MixChart({
   const stripY = linearScale([0, stripMax], [stripHeight - 6, 4]);
   const barW = Math.max(plotW / count, 1);
   const ticks = [0, 0.25, 0.5, 0.75, 1];
-  const labels = labelIndexes(count, Math.max(2, Math.floor(plotW / 80)));
+  const labels: number[] = [];
+  xs.forEach((at, i) => {
+    if (labels.length === 0 || at - xs[labels[labels.length - 1]] >= 80) labels.push(i);
+  });
 
   return (
     <ChartFrame
@@ -1009,6 +1013,9 @@ export function MixChart({
               d={bandPath(bands[i], x, y, Math.max(barW, 2))}
               fill={fillOf(id, s)}
             />
+          ))}
+          {transitionTicks && xs.slice(1, -1).map((at, i) => (
+            <line key={starts[i + 1]} className="agg-transition-tick" x1={at} x2={at} y1={MARGIN.top + plotH} y2={MARGIN.top + plotH + 5} />
           ))}
           {/* Tasks in flight: n at each sample, on the same time axis. */}
           <g transform={`translate(0 ${height})`}>

@@ -366,11 +366,15 @@ class AggregateService:
                     del cache.records[key]
         return len(fresh), open_cut or cut, max(open_hidden, hidden)
 
-    async def run(self, interval: float = 300.0) -> None:
-        """Warm the widest window and refresh it while the server runs."""
+    async def run(self, interval: float = 900.0) -> None:
+        """Warm 12 weeks, then refresh the widest window requested."""
         while True:
             try:
-                await self.get(max(aggregate.WINDOWS))
+                await self.get(
+                    max(
+                        aggregate.DEFAULT_WEEKS, self._cache.weeks if self._cache else 0
+                    )
+                )
             except Exception:
                 logging.exception("Could not refresh aggregate history")
             await asyncio.sleep(interval)

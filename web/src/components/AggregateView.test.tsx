@@ -8,6 +8,7 @@ import { App } from "./App";
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  sessionStorage.clear();
 });
 
 function serve(data: Aggregate | ((weeks: number) => Aggregate) | Error) {
@@ -25,6 +26,17 @@ function show(search = "?view=aggregate", branches = [branch(1, "devon/a", { sta
 }
 
 describe("the aggregate view", () => {
+  test("a page refresh shows the saved short-window result while the server request is pending", () => {
+    sessionStorage.setItem("toolbelt:aggregate:v1:4:", JSON.stringify(aggregate({ weeks: 4 })));
+    const fetchMock = vi.fn(() => new Promise<Response>(() => {}));
+    vi.stubGlobal("fetch", fetchMock);
+    show("?view=aggregate&weeks=4");
+
+    expect(screen.getByRole("heading", { name: "Status mix" })).toBeInTheDocument();
+    expect(screen.queryByText(/Loading the last 4 weeks/)).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("/api/aggregate?weeks=4", expect.anything());
+  });
+
   test("fetches the default window and draws every chart with its legend", async () => {
     const fetchMock = serve(aggregate());
     show();
@@ -165,27 +177,35 @@ describe("the aggregate view", () => {
     expect(within(mix).queryByRole("status")).not.toBeInTheDocument();
   });
 
-  test("the status mix is a stacked area only: there is no lines mode", async () => {
+  test("the 12-week status mix keeps its stacked chart and marks exact transition times", async () => {
     serve(aggregate());
     show();
     const mix = await screen.findByRole("region", { name: "Status mix" });
 
     expect(mix.querySelectorAll("path.agg-band").length).toBeGreaterThan(0);
     expect(mix.querySelectorAll("path.agg-line")).toHaveLength(0);
-    expect(within(mix).queryByRole("button", { name: "Lines" })).toBeNull();
-    expect(within(mix).queryByRole("button", { name: "Stacked area" })).toBeNull();
-    // The tasks-in-flight strip is drawn for the sampled instants with tasks.
+    expect(mix.querySelectorAll("line.agg-transition-tick")).toHaveLength(2);
+    // The tasks-in-flight strip still follows the exact instants.
     expect(mix.querySelectorAll("rect.agg-inflight")).toHaveLength(3);
   });
 
-  test("who the work is waiting on is a stacked area only too", async () => {
+  test("who the work is waiting on keeps its stacked chart and exact transition times", async () => {
     serve(aggregate());
     show();
     const who = await screen.findByRole("region", { name: "Who is it waiting on" });
 
     expect(who.querySelectorAll("path.agg-band").length).toBeGreaterThan(0);
     expect(who.querySelectorAll("path.agg-line")).toHaveLength(0);
-    expect(within(who).queryByRole("button", { name: "Lines" })).toBeNull();
+    expect(who.querySelectorAll("line.agg-transition-tick")).toHaveLength(2);
+  });
+
+  test("the 26-week mix keeps its area view", async () => {
+    serve(aggregate({ weeks: 26 }));
+    show("?view=aggregate&weeks=26");
+    const mix = await screen.findByRole("region", { name: "Status mix" });
+    expect(mix.querySelectorAll("path.agg-band").length).toBeGreaterThan(0);
+    expect(mix.querySelectorAll("path.agg-line")).toHaveLength(0);
+    expect(mix.querySelectorAll("line.agg-transition-tick")).toHaveLength(0);
   });
 
   test("weekends on the stacked charts are only a thin strip on the axis, described on hover", async () => {

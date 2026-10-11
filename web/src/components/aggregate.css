@@ -32,6 +32,7 @@
 .agg-col-active { opacity: 1; }
 .agg-col-active rect { stroke: var(--fg); stroke-width: 1; }
 .agg-band { stroke: var(--card); stroke-width: .5; }
+.agg-transition-tick { stroke: var(--muted); stroke-width: 1; }
 .agg-weekend-line { fill: var(--muted); fill-opacity: .28; }
 /* Stacked charts: weekends are only a thin strip on the time axis (hover for the dates). */
 .agg-weekend-strip { fill: var(--muted); fill-opacity: .5; }

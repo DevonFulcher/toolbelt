@@ -147,9 +147,18 @@ describe("lead time over time", () => {
     expect(weekdays.summary.median).toBe(16 * HOUR);
   });
 
-  test("the 4-week window uses 3-day buckets, the others 7", () => {
-    expect([4, 12, 26, 52].map(bucketDays)).toEqual([3, 7, 7, 7]);
-    const series = leadTimeSeries([], { ...options, days: 3 });
-    expect(series.buckets[1].start - series.buckets[0].start).toBe(3 * 24 * HOUR * 1000);
+  test("4 and 12 weeks show every merge, while 26 and 52 keep weekly buckets", () => {
+    expect([4, 12, 26, 52].map(bucketDays)).toEqual([null, null, 7, 7]);
+    const sameDay = [
+      pr(1, { task_started: "2026-10-08T10:00:00Z", ended: "2026-10-08T12:00:00Z" }),
+      pr(2, { task_started: "2026-10-08T11:00:00Z", ended: "2026-10-08T13:00:00Z" }),
+    ];
+    const events = leadTimeSeries(sameDay, { ...options, days: null });
+    expect(events.granularity).toBe("event");
+    expect(events.buckets.map((b) => b.start)).toEqual(sameDay.map((p) => Date.parse(p.ended as string)));
+    expect(events.stages[4].buckets.map((b) => b.n)).toEqual([1, 1]);
+    const weekly = leadTimeSeries(sameDay, options);
+    expect(weekly.granularity).toBe("bucket");
+    expect(weekly.stages[4].buckets.filter((b) => b.n > 0)).toHaveLength(1);
   });
 });
