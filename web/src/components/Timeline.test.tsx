@@ -40,13 +40,45 @@ describe("a card's timeline", () => {
     expect(screen.getByText("now")).toBeInTheDocument();
   });
 
-  test("shows the state as labelled chips at the right end", () => {
+  test("the collapsed card has no chip row: the slots above already say it", () => {
     show();
 
-    const chips = screen.getByLabelText("Current state");
+    expect(document.querySelector(".tl-chips")).toBeNull();
+    expect(screen.queryByText("State now")).toBeNull();
+    expect(document.querySelector(".tl-collapsed .tl-chip")).toBeNull();
+  });
+
+  test("the end cap's tooltip lists the current states with the time", () => {
+    show();
+    const cap = track().querySelector<HTMLElement>(".tl-now") as HTMLElement;
+    expect(cap).toHaveAttribute("tabindex", "0");
+
+    fireEvent.mouseEnter(cap);
+
+    const tip = screen.getByRole("tooltip");
+    expect(tip).toHaveTextContent("Now");
+    expect(tip).toHaveTextContent("Ago");
+    for (const text of ["PR: open", "CI: passing", "Review: approved", "Comments: 0 unresolved", "Merge: clean"]) {
+      expect(tip).toHaveTextContent(text);
+    }
+  });
+
+  test("the expanded card shows the chips in a labelled State now row next to the legend toggle", () => {
+    show();
+    fireEvent.click(screen.getByRole("button", { name: "Expand" }));
+
+    const row = document.querySelector(".tl-state-row") as HTMLElement;
+    expect(row).toHaveTextContent("State now");
+    const chips = within(row).getByLabelText("State now");
     for (const text of ["PR open", "CI passing", "Review approved", "Comments 0 unresolved", "Merge clean"]) {
       expect(chips).toHaveTextContent(text);
     }
+    expect(within(row).getByRole("button", { name: "?" })).toBeInTheDocument();
+    // Beneath the track, not at its right end.
+    expect(row.compareDocumentPosition(track()) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Collapse" }));
+    expect(document.querySelector(".tl-chips")).toBeNull();
   });
 
   test("expands to labelled events and a chronological table, and collapses again", () => {
@@ -93,6 +125,7 @@ describe("a card's timeline", () => {
     for (const item of catalog.not_represented) {
       expect(legend.getAllByText(item.label).length).toBeGreaterThan(0);
     }
+    expect(legend.getByText("State now (chips in the expanded view)")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "?" })).toHaveAttribute("aria-pressed", "true");
   });
 
@@ -192,6 +225,10 @@ describe("a merged PR", () => {
 
     expect(screen.getByText("merged 2d ago")).toBeInTheDocument();
     expect(track().querySelector(".tl-now")).toBeNull();
+    const cap = track().querySelector(".tl-end-cap") as HTMLElement;
+    fireEvent.mouseEnter(cap);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Merged");
+    expect(screen.getByRole("tooltip")).toHaveTextContent("PR: merged");
   });
 });
 

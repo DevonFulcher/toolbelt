@@ -1,7 +1,7 @@
 // The geometry of a card's timeline: a task's life as a horizontal,
 // time-scaled track from when it started (when known; else from the PR's
 // creation) to now (or to its merge/close), with shaded phases, event markers (plain commits clustered where they would
-// overlap), axis ticks, a "now" group of state chips, hover tooltips and the
+// overlap), axis ticks, an end cap whose tooltip lists the current state, the expanded "State now" chips, hover tooltips and the
 // legend.
 //
 // Everything the track can draw (glyphs, labels, tones, chip texts, the
@@ -267,6 +267,8 @@ export type Tip =
       ms: number;
     }
   | { type: "cluster"; label: string; items: TipItem[]; first: number; last: number }
+  /** The track's end cap: the current states at that moment. */
+  | { type: "state"; title: string; ms: number; items: string[] }
   | {
       type: "phase";
       kind: PhaseKind;
@@ -314,6 +316,8 @@ export interface TrackLayout {
   /** 1 (the right end) while the PR is open, else null. */
   now: number | null;
   startLabel: string;
+  /** How the PR ended (null while open). */
+  endKind: "merged" | "closed" | null;
   endLabel: string;
   ticks: Tick[];
 }
@@ -522,6 +526,7 @@ export function trackLayout(track: Track, options: LayoutOptions): TrackLayout {
     lanes: Math.max(1, lastX.length),
     now: ended ? null : 1,
     startLabel: `started ${age(start)}`,
+    endKind,
     endLabel: endKind ? `${endKind} ${age(end)}` : "now",
     ticks: axisTicks(start, end, now),
   };
@@ -608,6 +613,17 @@ export function tooltipContent(
       subtitle: tip.detail && tip.detail !== tip.label ? tip.detail : "",
       rows,
       items: [],
+    };
+  }
+  if (tip.type === "state") {
+    return {
+      title: tip.title,
+      subtitle: "",
+      rows: [
+        ["When", abs(tip.ms)],
+        ["Ago", relative(tip.ms, now)],
+      ],
+      items: tip.items,
     };
   }
   if (tip.type === "cluster") {

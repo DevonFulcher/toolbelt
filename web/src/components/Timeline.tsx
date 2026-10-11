@@ -9,6 +9,7 @@ import {
   phaseInfo,
   trackLayout,
   trackStart,
+  type Tip,
   type Track,
 } from "../logic/timeline";
 import { useApp } from "../store/StoreContext";
@@ -51,10 +52,11 @@ interface TimelineProps {
 }
 
 /**
- * One card's timeline. Collapsed: a slim track with the prominent events.
- * Expanded: a taller track with labelled events, faint commit dots (unless
- * hidden) and the chronological table. The "now" chips are at the right end
- * in both; the legend toggles with "?".
+ * One card's timeline. Collapsed: a slim track with the prominent events and
+ * nothing else (the card's slots above it already show the current state; the
+ * end cap's tooltip lists it). Expanded: a taller track with labelled
+ * events, faint commit dots (unless hidden), a labelled "State now" row of
+ * chips with the legend toggle ("?") beside it, and the chronological table.
  */
 export const Timeline = memo(function Timeline({ id, status, startedAt, catalog, now }: TimelineProps) {
   const ui = useApp((s) => s.cardUi[id]);
@@ -76,17 +78,23 @@ export const Timeline = memo(function Timeline({ id, status, startedAt, catalog,
       ?
     </button>
   );
-  const chipRow = (
-    <div className="tl-chips" aria-label="Current state">
-      {chips.map((chip) => (
-        <span
-          key={chip.dimension}
-          className={`tl-chip tone-${chip.tone} tl-chip-${chip.dimension}`}
-          title={chip.title}
-        >
-          <span className="tl-chip-label">{chip.group}</span> {chip.text}
-        </span>
-      ))}
+  // Expanded only: the labelled chips of the current state, and the legend
+  // toggle next to them.
+  const stateRow = (
+    <div className="tl-state-row">
+      <span className="tl-state-label">State now</span>
+      <div className="tl-chips" aria-label="State now">
+        {chips.map((chip) => (
+          <span
+            key={chip.dimension}
+            className={`tl-chip tone-${chip.tone} tl-chip-${chip.dimension}`}
+            title={chip.title}
+          >
+            <span className="tl-chip-label">{chip.group}</span> {chip.text}
+          </span>
+        ))}
+      </div>
+      {legendButton}
     </div>
   );
 
@@ -100,9 +108,9 @@ export const Timeline = memo(function Timeline({ id, status, startedAt, catalog,
             <div className="tl-ends">
               {track.state === "none" ? "no PR yet: no history to draw" : "PR history unavailable"}
             </div>
-            <span className="tl-buttons">{legendButton}</span>
+            {!expanded && <span className="tl-buttons">{legendButton}</span>}
           </div>
-          {chipRow}
+          {expanded && stateRow}
         </div>
         {legend && <Legend catalog={catalog} />}
       </div>
@@ -120,6 +128,14 @@ export const Timeline = memo(function Timeline({ id, status, startedAt, catalog,
   const laneStep = expanded ? 20 : 8;
   const base = expanded ? 34 : 24;
   const height = base + (layout.lanes - 1) * laneStep;
+  // The end cap (the "now" line, or the end of a merged/closed PR) says what
+  // the state is at that moment.
+  const endTip: Extract<Tip, { type: "state" }> = {
+    type: "state",
+    title: layout.endKind === null ? "Now" : layout.endKind === "merged" ? "Merged" : "Closed",
+    ms: layout.end,
+    items: chips.map((chip) => `${chip.group}: ${chip.text}`),
+  };
   const entries = expanded ? listEntries(track, { now, catalog, commits }) : [];
   const hasCi = entries.some((entry) => entry.ci);
 
@@ -151,7 +167,7 @@ export const Timeline = memo(function Timeline({ id, status, startedAt, catalog,
                   {hideCommits ? "Show commits" : "Hide commits"}
                 </button>
               )}
-              {legendButton}
+              {!expanded && legendButton}
             </span>
             <span className="tl-end">{layout.endLabel}</span>
           </div>
@@ -205,10 +221,14 @@ export const Timeline = memo(function Timeline({ id, status, startedAt, catalog,
                 </TipSource>
               );
             })}
-            {layout.now !== null && <span className="tl-now" />}
+            <TipSource
+              tip={endTip}
+              label={`${endTip.title}: ${chips.map((c) => `${c.group} ${c.text}`).join(", ")}`}
+              className={layout.now !== null ? "tl-now" : "tl-end-cap"}
+            />
           </div>
+          {expanded && stateRow}
         </div>
-        {chipRow}
       </div>
       {legend && <Legend catalog={catalog} />}
       {expanded && (
@@ -281,7 +301,7 @@ export function Legend({ catalog }: { catalog: Catalog }) {
         ))}
       </section>
       <section className="tl-legend-part tl-legend-chips">
-        <h4>Now (chips at the right end)</h4>
+        <h4>State now (chips in the expanded view)</h4>
         {model.chips.flatMap((group) =>
           group.values.map((value) => (
             <div className="tl-legend-row" key={`${group.dimension}-${value.text}`}>

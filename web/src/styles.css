@@ -205,8 +205,10 @@ a.stack-link[data-gone]::after { content: " (not shown)"; font-size: 11px; font-
 .tl { display: grid; gap: 4px; }
 .tl-body { display: flex; gap: 6px 16px; align-items: flex-start; flex-wrap: wrap; }
 .tl-left { flex: 1 1 24rem; min-width: 0; display: grid; gap: 2px; }
-.tl-chips { flex: 0 1 auto; display: flex; flex-wrap: wrap; gap: 3px 4px; justify-content: flex-end;
-            max-width: 24rem; }
+.tl-state-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin-top: 4px; }
+.tl-state-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.tl-state-row button { font-size: 11px; padding: 0 6px; border-radius: 4px; }
+.tl-chips { display: flex; flex-wrap: wrap; gap: 3px 4px; }
 .tl-chip { display: inline-flex; gap: 4px; align-items: baseline; padding: 0 7px; font-size: 11px;
            border: 1px solid var(--tone, var(--gray)); border-radius: 10px; white-space: nowrap;
            color: var(--tone, var(--gray)); background: var(--card); }
@@ -238,7 +240,12 @@ a.stack-link[data-gone]::after { content: " (not shown)"; font-size: 11px; font-
 .tl-faint { opacity: .55; font-size: 10px; }
 .tl-collapsed .tl-faint { display: none; }
 .tl-k-commits { border: 1px solid var(--gray); border-radius: 8px; padding: 1px 4px; background: var(--card); }
-.tl-now { position: absolute; right: -1px; top: 2px; bottom: 2px; border-right: 2px solid var(--accent); }
+.tl-now, .tl-end-cap { position: absolute; right: -1px; top: 2px; bottom: 2px; width: 8px;
+                       border-right: 2px solid var(--accent); box-sizing: border-box; }
+.tl-end-cap { border-right-color: var(--line); }
+.tl-track .tl-mark { z-index: 1; }
+.tl-now:hover, .tl-now:focus-visible, .tl-end-cap:hover, .tl-end-cap:focus-visible {
+  outline: none; border-right-color: var(--fg); }
 .tl-label { position: absolute; left: 100%; top: 50%; transform: translateY(-50%);
             margin-left: 4px; font-size: 11px; color: var(--fg); pointer-events: none; }
 .tl-label.tl-flip { left: auto; right: 100%; margin-left: 0; margin-right: 4px; }

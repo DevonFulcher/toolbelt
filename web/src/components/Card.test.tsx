@@ -150,12 +150,12 @@ describe("a card's labelled slots", () => {
     for (const key of ["ci", "review", "comments", "merge", "pr_age", "in_draft", "review_requested", "ci_failures", "reviewers", "title"]) {
       expect(found[key].slice(1), key).toEqual(["na", "no PR"]);
     }
-    // No history to draw, but the track still carries the now chips.
+    // No start recorded and no PR: nothing to draw, and no chip row repeating
+    // the slots above.
     expect(found.timeline[1]).toBe("ok");
     expect(found.timeline[2]).toContain("no PR yet: no history to draw");
     expect(found.task_age).toEqual(["Task age", "gap", "no start recorded"]);
-    expect(found.timeline[2]).toContain("PR no PR");
-    expect(found.timeline[2]).toContain("Next Open PR");
+    expect(found.timeline[2]).not.toContain("Open PR");
     // Missing but settable reads as a gap, not as "not applicable".
     expect(found.task).toEqual(["Task", "gap", "no task linked"]);
     expect(found.session).toEqual(["Session", "gap", "no session linked"]);

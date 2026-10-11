@@ -8,7 +8,8 @@ value of each dimension, how it appears on the track:
 
 * ``event``: a marker at the moment it happened (kind from ``EVENTS``);
 * ``phase``: a shaded span of the PR's life (kind from ``PHASES``);
-* ``now_state``: a labelled chip at the track's right end, for what has no
+* ``now_state``: a labelled chip in the expanded card's "State now" row (and
+  listed in the end cap's tooltip), for what has no
   event timestamp GitHub gives us (unresolved threads, conflicts) or is only
   meaningful now (current CI, the next action).
 
