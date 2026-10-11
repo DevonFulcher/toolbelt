@@ -257,7 +257,7 @@ export function AggregatePanels({
       />
       <MixChart
         title="Status mix"
-        description={`A snapshot, not an average: at each instant (every ${mix.step_hours} hours) every task in flight has exactly one state, and each line is the share of those tasks in that state, so the lines sum to 100%. Gaps are instants with nothing in flight. Merge conflicts and unresolved comments have no history, so they are not separated.`}
+        description={`A snapshot, not an average: at each instant (every ${mix.step_hours} hours) every task in flight has exactly one state, and each state's share of those tasks is shown, so the shares sum to 100% at every instant. Gaps are instants with nothing in flight. Merge conflicts and unresolved comments have no history, so they are not separated.`}
         series={stateSeries}
         shares={mix.series.map((s) => s.share)}
         counts={mix.series.map((s) => s.count)}
