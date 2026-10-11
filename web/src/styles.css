@@ -194,14 +194,16 @@ a.stack-link[data-gone]::after { content: " (not shown)"; font-size: 11px; font-
 @media (max-width: 92rem) {
   .card { display: flex; flex-wrap: wrap; gap: 6px 16px; }
   .card .slot { flex: 0 1 auto; padding-left: 0; }
-  .s-title, .s-timeline { flex: 1 0 100%; order: 9; }
+  /* `.card .slot` outranks a bare `.s-timeline`, so repeat `.card` or the
+     timeline would stay as narrow as its own content. */
+  .card .s-title, .card .s-timeline { flex: 1 0 100%; order: 9; }
   .s-task, .s-session { order: 5; }
   .s-stack, .s-task_age, .s-pr_age, .s-in_draft, .s-review_requested, .s-ci_failures, .s-reviewers { order: 6; }
 }
 @media (max-width: 101rem) {
   .cards-stacked .card { display: flex; flex-wrap: wrap; gap: 6px 16px; }
   .cards-stacked .card .slot { flex: 0 1 auto; padding-left: 0; }
-  .cards-stacked .s-title, .cards-stacked .s-timeline { flex: 1 0 100%; order: 9; }
+  .cards-stacked .card .s-title, .cards-stacked .card .s-timeline { flex: 1 0 100%; order: 9; }
   .cards-stacked .s-task, .cards-stacked .s-session { order: 5; }
   .cards-stacked .s-stack, .cards-stacked .s-task_age, .cards-stacked .s-pr_age,
   .cards-stacked .s-in_draft, .cards-stacked .s-review_requested,

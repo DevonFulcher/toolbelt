@@ -45,4 +45,15 @@ describe("card layout breakpoints", () => {
       gridRem() + MAX_VISIBLE_DEPTH * step,
     );
   });
+
+  test("the wrapping layout lets the timeline take the whole row", () => {
+    // `.card .slot { flex: 0 1 auto }` outranks a bare `.s-timeline`, which left
+    // every timeline as narrow as its own content in the wrapping layout.
+    for (const block of css.match(/@media \(max-width: [\d.]+rem\)\s*\{[\s\S]*?\n\}/g) ?? []) {
+      const rule = block.match(/([^{}\n]*\.s-timeline[^{}]*)\{\s*flex:\s*1 0 100%/);
+      if (!rule) continue;
+      expect(rule[1], "timeline row rule must be at least as specific as `.card .slot`").toMatch(/\.card\s+\.s-timeline/);
+    }
+    expect(css).toMatch(/\.card \.s-timeline\s*\{\s*flex:\s*1 0 100%/);
+  });
 });
