@@ -144,15 +144,7 @@ a.pill:hover { text-decoration: none; background: color-mix(in srgb, currentColo
 .card-stub { display: flex; gap: 8px; align-items: baseline; padding: 3px 12px; font-size: 12px;
              color: var(--muted); border: 1px dashed var(--line); border-radius: 6px; opacity: .75; }
 .card-stub .branch { font-size: 12px; }
-.s-stack .slot-value { white-space: normal; overflow: visible; }
-.stack-chip-muted { background: none; color: var(--muted); border: 1px dashed var(--line); }
-.stack-chip { display: inline-block; font-size: 12px; padding: 0 7px; border-radius: 10px;
-              background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--fg); }
-a.stack-link { color: var(--accent); }
-a.stack-link[data-in]::after { content: " in: " attr(data-in); color: var(--muted); font-size: 11px;
-                               font-family: system-ui, sans-serif; }
-a.stack-link[data-gone] { color: var(--muted); pointer-events: none; }
-a.stack-link[data-gone]::after { content: " (not shown)"; font-size: 11px; font-family: system-ui, sans-serif; }
+.s-branch .slot-value { white-space: normal; overflow: visible; }
 @keyframes highlight { 0%, 60% { box-shadow: 0 0 0 3px var(--accent); } }
 .highlight { animation: highlight 1.8s ease-out; }
 /* A card is a wrapping row of boxes: Git, PR and Task side by side when there
@@ -189,15 +181,12 @@ a.stack-link[data-gone]::after { content: " (not shown)"; font-size: 11px; font-
 .v-na .slot-value { color: var(--muted); opacity: .8; }
 .v-gap .slot-value { color: var(--fg); font-style: italic;
                      text-decoration: underline dashed var(--amber); text-underline-offset: 3px; }
-.s-branch, .s-stack, .s-next, .s-task, .s-session, .s-reviewers, .s-title { grid-column: 1 / -1; }
-/* The table-row indentation of `.branch` has no meaning inside a card; a long
-   parent name wraps rather than pushing past its group. */
-.s-branch .branch, .s-stack .branch { margin-left: 0; }
-.s-stack .branch { overflow-wrap: anywhere; }
+.s-branch, .s-next, .s-task, .s-session, .s-reviewers, .s-title { grid-column: 1 / -1; }
+/* The table-row indentation of `.branch` has no meaning inside a card. */
+.s-branch .branch { margin-left: 0; overflow-wrap: anywhere; }
 .s-title .slot-value { color: var(--fg); }
 .repo-chip { font-size: 11px; color: var(--muted); border: 1px solid var(--line);
              border-radius: 4px; padding: 0 6px; margin-right: 4px; }
-.card-next { font-weight: 600; }
 .card-next-who { font-size: 11px; margin-left: 4px; }
 .card .task-title { margin: 0 4px; }
 

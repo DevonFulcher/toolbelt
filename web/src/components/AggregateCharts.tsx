@@ -533,11 +533,12 @@ export function LeadTimeChart({
   const total = series.stages.find((s) => s.key === TOTAL_STAGE);
   const bandShown = band && total !== undefined && !hidden.has(TOTAL_STAGE);
   const values = [
-    ...visible.flatMap((s) => s.points.map((p) => p.seconds)),
+    ...visible.flatMap((s) => s.buckets.map((b) => b.median ?? 0)),
     ...(bandShown && total ? total.buckets.map((b) => b.p90 ?? 0) : []),
   ];
   const axis = durationAxis(Math.max(0, ...values));
   const y = linearScale([0, axis.top], [MARGIN.top + plotH, MARGIN.top]);
+  const pointY = (seconds: number): number => y(Math.min(seconds, axis.top));
   const span = Math.max(now - windowStart, 1);
   const xMs = (ms: number): number => MARGIN.left + (Math.min(Math.max(ms - windowStart, 0), span) / span) * plotW;
   const centres = series.buckets.map((b) => xMs((b.start + Math.min(b.end, now)) / 2));
@@ -590,8 +591,9 @@ export function LeadTimeChart({
         <>
           Each PR is placed at the time it merged ({timeZone}), and each line is the median of a step over the PRs that
           merged in each {series.buckets.length > 0 && series.buckets[0].end - series.buckets[0].start < 4 * 86_400_000 ? "3-day" : "week"}{" "}
-          bucket, in a {modeLabel.toLowerCase()} view. A bucket with no PR whose step is known is a gap. The dots are
-          single PRs; hover one for its details.
+          bucket, using {modeLabel.toLowerCase()}. A bucket with no PR whose step is known is a gap. The dots are
+          single PRs; hover one for its details. The scale follows the medians; longer individual PRs appear at the
+          top edge with their full duration in the tooltip.
         </>
       }
       legend={
@@ -737,7 +739,7 @@ export function LeadTimeChart({
                       key={`${point.pr.repo}#${point.pr.number}-${i}`}
                       className="agg-dot"
                       cx={xMs(point.ms)}
-                      cy={y(point.seconds)}
+                      cy={pointY(point.seconds)}
                       r={2.5}
                       onPointerEnter={() =>
                         setHover({ type: "point", stage: stage.key, index: i, x: xMs(point.ms) })
@@ -861,15 +863,15 @@ export function MixChart({
   title: string;
   description: ReactNode;
   series: SeriesStyle[];
-  /** Per series, the share (0..1) of the tasks in flight at each sampled
+  /** Per series, the share (0..1) of the tasks in flight at each transition
    * instant, or null where none was in flight. */
   shares: (number | null)[][];
   /** Per series, how many tasks that is. */
   counts: number[][];
-  /** The sampled instants (ISO) and how many tasks were in flight at each. */
+  /** The transition instants (ISO) and how many tasks were in flight at each. */
   starts: string[];
   inflight: number[];
-  /** The viewer's zone: labels and weekend bands (the samples are UTC instants). */
+  /** The viewer's zone: labels and weekend bands (the instants are UTC). */
   timeZone: string;
   /** Said when nothing was in flight in the whole window. */
   empty: ReactNode;
@@ -922,7 +924,7 @@ export function MixChart({
   series.forEach((s, i) => {
     latest[s.key] = last >= 0 ? pct(shares[i][last]) : "-";
   });
-  const summary = `${title}, ${formatLocalDate(times[0], timeZone)} to ${formatLocalDate(times[count - 1], timeZone)}. At the latest sample with tasks in flight (${inflight[last]} tasks): ${series
+  const summary = `${title}, ${formatLocalDate(times[0], timeZone)} to ${formatLocalDate(times[count - 1], timeZone)}. At the latest change with tasks in flight (${inflight[last]} tasks): ${series
     .map((s) => `${s.label} ${latest[s.key]}`)
     .join(", ")}.`;
   const bands = stackShares(shares);
@@ -939,7 +941,7 @@ export function MixChart({
       legend={<Legend id={id} series={series} values={latest} />}
       table={
         <table className="agg-table">
-          <caption>{`${title}: share (and number) of the tasks in flight at each sampled instant`}</caption>
+          <caption>{`${title}: share (and number) of the tasks in flight at each state change`}</caption>
           <thead>
             <tr>
               <th scope="col">{`Instant (${timeZone})`}</th>
@@ -1025,9 +1027,9 @@ export function MixChart({
                 <rect
                   key={starts[i]}
                   className="agg-inflight"
-                  x={xs[i] - barW / 2}
+                  x={xs[i]}
                   y={stripY(n)}
-                  width={barW}
+                  width={i + 1 < count ? Math.max(xs[i + 1] - xs[i], 0) : 2}
                   height={stripY(0) - stripY(n)}
                 />
               ) : null,

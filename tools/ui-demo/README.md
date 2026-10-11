@@ -32,7 +32,8 @@ conflicts, ready for review with CI running, and branches with no PR.
   changes requested, failing CI, drafts, a few closed unmerged, two stacked
   pairs whose child is approved before its parent merges), plus the open PRs
   of `SCENARIOS`. The two searches the view makes (`updated:>=...` and
-  `is:open`) are answered from them.
+  `is:open`) are answered from them. The server warms this history in the
+  background and the page reads its cache.
 * **The stack DB**: `removed_branches` holds the archived task facts (task
   id, PR number and node id when recorded, task start, removal, whether it
   landed) of the cleaned-up branches: about two thirds carry their PR's
@@ -43,8 +44,8 @@ conflicts, ready for review with CI running, and branches with no PR.
   must not invent. Three tasks never got a PR (worked on, then dropped).
 
 The fake `gh` gives every PR an `id`, `url` and `updatedAt` and answers the
-`updated:>=<time>` search the incremental fetch makes, so a second request
-re-queries only the open PRs and what changed. Commits carry check suite
+`updated:>=<time>` search the background refresh makes, which re-queries only
+the open PRs and what changed. Commits carry check suite
 completion times (`suite=<minutes>` in `commit(...)`), so a card whose last
 commit failed (`devon/auth-docs`) shows "Waiting on CI" and then "CI failing".
 

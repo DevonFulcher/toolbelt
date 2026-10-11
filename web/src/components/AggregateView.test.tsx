@@ -71,6 +71,7 @@ describe("the aggregate view", () => {
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(fetchMock).toHaveBeenLastCalledWith("/api/aggregate?weeks=12&refresh=true", expect.anything());
     // The previous result stays up while it refreshes.
     expect(screen.getByRole("heading", { name: "Throughput" })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled());

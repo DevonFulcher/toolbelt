@@ -599,7 +599,11 @@ def test_the_milestones_cover_the_window_and_a_little_more():
 
 
 def _column(mix, instant: datetime) -> dict[str, int]:
-    index = mix.starts.index(instant.strftime("%Y-%m-%dT%H:%M:%SZ"))
+    index = max(
+        i
+        for i, start in enumerate(mix.starts)
+        if start <= instant.strftime("%Y-%m-%dT%H:%M:%SZ")
+    )
     return {s.key: s.count[index] for s in mix.series if s.count[index]}
 
 
@@ -612,7 +616,7 @@ def test_every_sample_sums_to_one_and_has_counts_that_agree():
 
     mix = compute([record], facts=[fact("branch-1", 12), fact("idea", 1)]).mix
 
-    assert mix.step_hours == 6
+    assert mix.step_hours == 0
     for index in range(len(mix.starts)):
         column = [s.share[index] for s in mix.series]
         counts = [s.count[index] for s in mix.series]
@@ -636,9 +640,9 @@ def test_an_instant_with_nothing_in_flight_is_a_gap_not_zero():
     mix = compute([], facts=[fact("idea", 12, removed=36)], now=at(60)).mix
 
     working = {s.key: s for s in mix.series}["working"]
-    before = mix.starts.index("2026-10-05T06:00:00Z")
-    during = mix.starts.index("2026-10-05T18:00:00Z")
-    after = mix.starts.index("2026-10-06T18:00:00Z")
+    before = mix.starts.index("2026-09-14T00:00:00Z")
+    during = mix.starts.index("2026-10-05T12:00:00Z")
+    after = mix.starts.index("2026-10-06T12:00:00Z")
     assert working.share[before] is None and mix.inflight[before] == 0
     assert working.share[during] == 1 and working.count[during] == 1
     assert working.share[after] is None
@@ -654,7 +658,8 @@ def test_a_sample_is_a_snapshot_of_each_tasks_state_at_that_instant():
     assert _column(mix, at(6)) == {"draft": 1, "working": 1}
     assert _column(mix, at(12)) == {"draft": 1, "working": 1}
     assert _column(mix, at(18)) == {"ready": 1, "working": 1}
-    index = mix.starts.index("2026-10-05T18:00:00Z")
+    assert "2026-10-05T13:00:00Z" in mix.starts
+    index = mix.starts.index("2026-10-05T13:00:00Z")
     shares = {s.key: s.share[index] for s in mix.series}
     assert shares["ready"] == 0.5 and shares["working"] == 0.5
 
@@ -666,26 +671,24 @@ def test_a_task_that_ended_at_the_instant_is_no_longer_in_flight():
     assert _column(mix, at(6)) == {}
 
 
-def test_the_window_is_sampled_from_its_first_instant_to_now():
+def test_the_window_includes_its_start_each_transition_and_now():
     now = at(24 * 4 + 5)  # Friday 05:00
     mix = compute([pr(created=0)], now=now, weeks=4).mix
 
     assert mix.starts[0] == "2026-09-14T00:00:00Z"  # four weeks back, Monday
     assert mix.starts[-1] == "2026-10-09T05:00:00Z"
-    gaps = {
-        datetime.fromisoformat(b.replace("Z", "+00:00"))
-        - datetime.fromisoformat(a.replace("Z", "+00:00"))
-        for a, b in zip(mix.starts, mix.starts[1:])
-    }
-    assert gaps <= {timedelta(hours=6), timedelta(hours=5)}
-    assert len(mix.starts) == 3 * 7 * 4 + 4 * 4 + 1 + 1
+    assert mix.starts == [
+        "2026-09-14T00:00:00Z",
+        "2026-10-05T00:00:00Z",
+        "2026-10-09T05:00:00Z",
+    ]
 
 
-def test_a_task_that_began_after_the_last_sample_is_in_flight_only_at_now():
+def test_a_task_that_began_recently_appears_at_its_start():
     mix = compute([pr(created=24 * 4 + 4.5)], now=at(24 * 4 + 5), weeks=4).mix
 
     assert mix.inflight[-1] == 1
-    assert sum(mix.inflight[:-1]) == 0
+    assert mix.inflight == [0, 1, 1]
 
 
 def test_the_working_time_before_a_pr_counts_as_in_flight():
@@ -701,18 +704,18 @@ def test_who_classes_follow_the_state_rules():
     record = pr(created=0, items=(request(1), commit(2, "PENDING", "c")))
     mix = compute([record], now=at(10), weeks=4).mix
     who = {s.key: s for s in mix.who}
-    at_hour = mix.starts.index("2026-10-05T06:00:00Z")  # CI running since 2h
+    at_hour = mix.starts.index("2026-10-05T02:00:00Z")
 
     assert who["ci"].count[at_hour] == 1 and who["ci"].share[at_hour] == 1
     assert who["you"].count[at_hour] == 0
     assert who["others"].count[at_hour] == 0
 
 
-def test_daily_samples_beyond_twelve_weeks():
+def test_a_long_window_uses_transitions_too():
     result = compute([pr(created=0)], weeks=26, now=at(24 * 4))
 
-    assert result.mix.step_hours == 24
-    assert len(result.mix.starts) == 25 * 7 + 4 + 1
+    assert result.mix.step_hours == 0
+    assert len(result.mix.starts) == 3
 
 
 def test_milestones_carry_the_instants_lead_times_are_measured_between():
@@ -1075,6 +1078,19 @@ def test_a_later_request_re_fetches_only_open_and_recently_updated_prs():
     assert "updated:>=2026-10-08T10:55:00Z" in updated_query  # newest - 5 min
 
 
+def test_a_cached_request_does_not_wait_for_github_refresh():
+    github = FakeGitHub(pr_node(1, "2026-10-06T09:00:00Z"))
+    svc = service(github)
+    first = asyncio.run(svc.get(52))
+    github.calls.clear()
+
+    cached = asyncio.run(svc.get(4, refresh=False))
+
+    assert github.calls == []
+    assert cached.fetched_at == first.fetched_at
+    assert [pr_.number for pr_ in cached.prs] == [1]
+
+
 def test_a_changed_pr_replaces_its_cached_record_and_deletions_are_dropped():
     github = FakeGitHub(
         pr_node(1, "2026-10-06T09:00:00Z"),
@@ -1409,7 +1425,7 @@ def test_the_aggregate_endpoint_serves_the_computed_view(client_and_pages):
     assert (pr_["number"], pr_["state"]) == (1, "MERGED")
     assert pr_["opened"] == "2026-10-06T09:00:00Z"
     assert pr_["ended"] == "2026-10-07T09:00:00Z"
-    assert body["mix"]["step_hours"] == 6
+    assert body["mix"]["step_hours"] == 0
     assert body["mix"]["states"][0]["label"] == pr_states.PHASES["working"].label
     assert body["notes"]
 

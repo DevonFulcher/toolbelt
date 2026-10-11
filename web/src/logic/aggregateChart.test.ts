@@ -72,7 +72,7 @@ describe("stacking", () => {
     }
   });
 
-  test("a band's path is one closed area per run, and a lone bucket is a column", () => {
+  test("a band's path is constant between transition instants", () => {
     const band = { spans: [[0, 0.5], [0, 0.5], null, [0.5, 1]] as ([number, number] | null)[] };
     const path = bandPath(
       band,
@@ -81,7 +81,7 @@ describe("stacking", () => {
       4,
     );
 
-    expect(path).toBe("M0,50L10,50L10,100L0,100Z" + "M28,0L32,0L32,50L28,50Z");
+    expect(path).toBe("M0,50L10,50L10,100L0,100Z" + "M10,50L20,50L20,100L10,100Z" + "M30,0L34,0L34,50L30,50Z");
   });
 });
 

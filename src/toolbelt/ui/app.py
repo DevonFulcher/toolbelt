@@ -8,7 +8,7 @@ The server is a JSON API plus the built web client (``web/``, served from
   in-memory caches (no network on the request path); see ``snapshot.py`` and
   ``api_models.py``;
 * ``GET /api/aggregate?weeks=N[&repo=<id or name>]``: how work has flowed over the last N weeks
-  (throughput, lead times, status mix), computed when asked; see
+  (throughput, lead times, status mix), computed from cached history; see
   ``aggregate.py`` and ``aggregate_feed.py``;
 * ``GET /api/events``: a Server-Sent Events stream of typed events that keep a
   snapshot current:
@@ -28,6 +28,7 @@ A background ``StatusRefresher`` (``live_status.py``) keeps the status cache
 current by polling GitHub (one GraphQL call per branch, see ``pr_fetch.py``)
 while any browser is connected; a ``TaskFeed`` does the same for tasks and
 an ``UntrackedPrFeed`` (slowly) for the PRs toolbelt does not track.
+``AggregateService`` refreshes its widest history window every five minutes.
 
 The status lookup (``fetch``), the task tracker and the clocks are
 ``create_app`` arguments, so tests can inject them.
@@ -308,6 +309,7 @@ def create_app(
             asyncio.create_task(task_feed.run()),
             asyncio.create_task(untracked_feed.run()),
             asyncio.create_task(watcher.run()),
+            asyncio.create_task(aggregates.run()),
         ]
         try:
             yield
@@ -389,16 +391,16 @@ def create_app(
     async def aggregate(
         weeks: int = Query(aggregate_view.DEFAULT_WEEKS),
         repo: str | None = Query(None),
+        refresh: bool = Query(False),
     ) -> api.Aggregate:
-        # Computed on demand, not part of the live poll loop: GitHub is asked
-        # (for what changed) on each request, only while the view is open.
+        # Use the background-refreshed history; an early request can warm it.
         if weeks not in aggregate_view.WINDOWS:
             raise HTTPException(
                 status_code=400,
                 detail=f"weeks must be one of {list(aggregate_view.WINDOWS)}",
             )
         try:
-            return await aggregates.get(weeks, repo or None)
+            return await aggregates.get(weeks, repo or None, refresh=refresh)
         except LookupError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 

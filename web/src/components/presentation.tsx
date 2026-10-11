@@ -35,6 +35,7 @@ export const WHO_TEXT: Record<Who, string> = {
   ci: "waiting on CI",
   none: "done",
 };
+export const WHO_TONE: Record<Who, Tone> = { you: "accent", ci: "amber", others: "gray", none: "gray" };
 
 export function Pill({ tone, title, children }: { tone: Tone; title?: string; children: string }) {
   return (

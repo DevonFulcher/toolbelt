@@ -5,6 +5,7 @@ import {
   layout,
   matches,
   NEXT_SECTIONS,
+  prioritiesLayout,
   railGuides,
   stackedLayout,
 } from "./layout";
@@ -207,15 +208,20 @@ describe("done branches", () => {
     expect(view({ next: "you" })).toEqual(["a"]);
   });
 
-  test("a done parent stays as context for an open child", () => {
+  test("the tree table hides a done parent while keeping the child's tree depth", () => {
     const rows = [row("a", null, 1, withNext("none")), row("b", "a", 2, withNext("you"))];
     const out = layout(rows, state({ view: "table" }));
-    expect(out.map((e) => [e.id, e.depth, e.context])).toEqual([
-      ["a", 0, true],
-      ["b", 1, false],
-    ]);
+    expect(out.map((e) => [e.id, e.depth, e.context])).toEqual([["b", 1, false]]);
     expect(matches(rows[0], state())).toBe(false);
   });
+});
+
+test("priorities omit descendants of any task that needs me", () => {
+  const next = (id: string, parent: string | null, order: number, who: string) =>
+    row(id, parent, order, { next: { value: who, sort: "" } });
+  const rows = [next("a", null, 1, "you"), next("b", "a", 2, "ci"), next("c", "b", 3, "you"),
+    next("d", null, 4, "others"), next("e", "d", 5, "you")];
+  expect(ids(prioritiesLayout(rows, state({ view: "priorities" }))[0].entries)).toEqual(["a", "e"]);
 });
 
 describe("the card views", () => {

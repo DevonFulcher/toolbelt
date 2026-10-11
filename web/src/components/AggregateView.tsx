@@ -1,6 +1,6 @@
 // The aggregate view: how work has been flowing over a window. Fetches
-// `/api/aggregate` when opened (and when the window changes); it is not part
-// of the live stream.
+// `/api/aggregate` when opened (and when the window changes); the server
+// refreshes its history in the background.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchAggregate } from "../api/client";
 import type { Aggregate, MixWho, Tone } from "../api/generated";
@@ -30,8 +30,8 @@ export interface AggregateHandle {
 }
 
 /**
- * The aggregate for `weeks`. The server keeps its answer fresh on every
- * request (there is no cache to wait out), so this fetches when mounted and
+ * The aggregate for `weeks`. The server refreshes its cache in the background,
+ * so this reads it when mounted and
  * when the window changes, again when the page becomes visible after more
  * than `STALE_AFTER_MS`, and on `refresh()`.
  */
@@ -44,10 +44,10 @@ export function useAggregate(
   const [refreshing, setRefreshing] = useState(false);
   const fetchedAt = useRef(0);
   const latest = useRef(0);
-  const run = useCallback(() => {
+  const run = useCallback((force = false) => {
     const id = ++latest.current;
     setRefreshing(true);
-    fetchAggregate(weeks, repo, fetchImpl).then(
+    fetchAggregate(weeks, repo, fetchImpl, force).then(
       (data) => {
         if (id !== latest.current) return;
         fetchedAt.current = Date.now();
@@ -83,7 +83,7 @@ export function useAggregate(
   }, [run]);
   // A result for another window is stale: say "loading" until this one's in.
   const current = load && load.weeks === weeks && load.repo === repo;
-  return { load: current ? load : null, refresh: run, refreshing };
+  return { load: current ? load : null, refresh: () => run(true), refreshing };
 }
 
 /** The coarse classes: the sections of the grouped view, so the legend reads
@@ -257,7 +257,7 @@ export function AggregatePanels({
       />
       <MixChart
         title="Status mix"
-        description={`A snapshot, not an average: at each instant (every ${mix.step_hours} hours) every task in flight has exactly one state, and each state's share of those tasks is shown, so the shares sum to 100% at every instant. Gaps are instants with nothing in flight. Merge conflicts and unresolved comments have no history, so they are not separated.`}
+        description="A snapshot at every task state change, from the window start through now. Each task in flight has one state, so the shares sum to 100%. Gaps mean nothing was in flight. Merge conflicts and unresolved comments have no history, so they are not separated."
         series={stateSeries}
         shares={mix.series.map((s) => s.share)}
         counts={mix.series.map((s) => s.count)}
@@ -268,7 +268,7 @@ export function AggregatePanels({
       />
       <MixChart
         title="Who is it waiting on"
-        description="The same snapshots, grouped by who the next action waits on: you (open, publish, fix, address review, merge), CI, or others (a reviewer, or a parent PR that waits on one). Derived with the rules of the Next column."
+        description="The same snapshots at every task state change, grouped by who the next action waits on: you (open, publish, fix, address review, merge), CI, or others (a reviewer, or a parent PR that waits on one). Derived with the rules of the Next column."
         series={whoSeries}
         shares={mix.who.map((s) => s.share)}
         counts={mix.who.map((s) => s.count)}

@@ -6,7 +6,7 @@ import { serializeState } from "../logic/viewState";
 import { LOADING } from "../store/selectors";
 import { useApp, useAppStore } from "../store/StoreContext";
 import { Timeline } from "./Timeline";
-import { Age, CI_TONE, ExternalLink, PR_TONE, Pill, REVIEW_TONE, TaskValue, WHO_TEXT } from "./presentation";
+import { Age, CI_TONE, ExternalLink, PR_TONE, Pill, REVIEW_TONE, TaskValue, WHO_TEXT, WHO_TONE } from "./presentation";
 import { useNow } from "./useNow";
 import { formatAge } from "../logic/format";
 
@@ -71,16 +71,6 @@ export interface CardProps {
   moved: boolean;
   /** Scrolled to by a stack link: highlighted for a moment. */
   highlighted: boolean;
-  /** Where the parent card is when not in this section ("Needs me"). */
-  parentIn: string | null;
-  /** The parent is not shown at all (filtered out, or collapsed away). */
-  parentGone: boolean;
-  /**
-   * This card is the focus root and its parent is outside the view: the
-   * parent link re-roots there instead of scrolling.
-   */
-  parentOutside: boolean;
-  onJump(target: string, from: string): void;
   /**
    * Grouped view, a leaf card: open the stacked view rooted at `root` (its
    * stack's root) and bring this card (`id`) into view.
@@ -109,13 +99,13 @@ const sameRails = (a: RailSegment[], b: RailSegment[]): boolean =>
 
 export const Card = memo(
   function Card(props: CardProps) {
-    const { id, depth, rails, moved, highlighted, parentIn, parentGone, parentOutside, onJump, onOpenInStack } = props;
+    const { id, depth, rails, moved, highlighted, onOpenInStack } = props;
     const store = useAppStore();
-    // Grouped view only: where the stacked view is rooted from this card.
+    // Card views without stack rails: where to show this card in its stack.
     // A branch with children: at itself (it and what is stacked on it). A
     // leaf: at its stack's root, so the whole stack is drawn around it.
     const stackedRoot = useApp((s) => {
-      if (s.view.view !== "grouped") return null;
+      if (s.view.view !== "grouped" && s.view.view !== "priorities") return null;
       if ((s.branchesById[id]?.children.length ?? 0) > 0) return id;
       return stackViewRoot(id, (parent) => s.branchesById[parent]?.parent_id ?? null);
     });
@@ -128,6 +118,17 @@ export const Card = memo(
       s.view.view === "stacked" && s.view.root !== id ? serializeState({ ...s.view, root: id }) : null,
     );
     const branch = useApp((s) => s.branchesById[id]);
+    const descendants = useApp((s) => {
+      const seen = new Set<string>([id]);
+      const pending = [...(s.branchesById[id]?.children ?? [])];
+      while (pending.length) {
+        const child = pending.pop();
+        if (!child || seen.has(child.id)) continue;
+        seen.add(child.id);
+        pending.push(...(s.branchesById[child.id]?.children ?? []));
+      }
+      return seen.size - 1;
+    });
     const repo = useApp((s) => (branch ? s.reposById[branch.repo_id] : undefined));
     const status = useApp((s) => s.statuses[id]) ?? LOADING;
     const task = useApp((s) => s.tasks[id]) ?? null;
@@ -139,7 +140,7 @@ export const Card = memo(
     const classes = ["card"];
     if (flashed || moved) classes.push("flash");
     if (highlighted) classes.push("highlight");
-    const childNames = branch.children.map((child) => child.name);
+    const hasChildren = branch.children.length > 0;
     // A merged PR means the task is done: its age stops being interesting.
     const taskDone = status.load === "loaded" && status.pr === "merged";
     // Why every live slot is empty while there is no status to show.
@@ -159,39 +160,9 @@ export const Card = memo(
             </span>
           </Slot>
           <Slot id="branch" label="Branch">
-            <span className={`branch${branch.current ? " current" : ""}`}>{branch.name}</span>
-          </Slot>
-          <Slot id="stack" label="Stack">
-            {branch.parent && branch.parent_id ? (
-              <a
-                className="branch stack-link"
-                href={`#${branch.parent_id}`}
-                title={
-                  parentOutside
-                    ? `stacked on ${branch.parent}, which is outside this view: focus there`
-                    : `stacked on ${branch.parent}`
-                }
-                data-target={branch.parent_id}
-                data-in={parentIn ?? undefined}
-                data-gone={parentGone ? "1" : undefined}
-                data-outside={parentOutside ? "1" : undefined}
-                onClick={(event) => {
-                  event.preventDefault();
-                  onJump(branch.parent_id as string, id);
-                }}
-              >
-                {branch.parent}
-              </a>
-            ) : (
-              <span className="stack-chip stack-chip-muted">stack root</span>
-            )}{" "}
-            <span className="stack-chip">
-              {branch.stack_height > 1
-                ? `stack ${branch.stack_pos} of ${branch.stack_height}`
-                : "single branch"}
-            </span>{" "}
+            <span className={`branch${branch.current ? " current" : ""}`}>{branch.name}</span>{" "}
             {/* Not for a lone branch: there is no stack to see. */}
-            {stackedHref !== null && stackedRoot !== null && (stackedRoot !== id || childNames.length > 0) && (
+            {stackedHref !== null && stackedRoot !== null && (stackedRoot !== id || hasChildren) && (
               <a
                 className="stack-open"
                 href={stackedHref}
@@ -209,7 +180,7 @@ export const Card = memo(
                 open in stacked view →
               </a>
             )}{" "}
-            {focusHref !== null && childNames.length > 0 && (
+            {focusHref !== null && hasChildren && (
               <a
                 className="stack-open"
                 href={focusHref}
@@ -221,16 +192,10 @@ export const Card = memo(
               >
                 focus on this subtree →
               </a>
-            )}{" "}
-            <span
-              className={`stack-chip${childNames.length ? "" : " stack-chip-muted"}`}
-              title={childNames.length ? `stacked on it: ${childNames.join(", ")}` : "nothing stacked on it"}
-            >
-              {childNames.length === 0
-                ? "no children"
-                : `${childNames.length} ${childNames.length === 1 ? "child" : "children"}`}
-            </span>
+            )}
           </Slot>
+          <Slot id="ancestors" label="Ancestors">{String(branch.depth)}</Slot>
+          <Slot id="descendants" label="Descendants">{String(descendants)}</Slot>
         </Group>
         <Group id="pr" title="PR">
           <PrSlots status={status} note={note} />
@@ -286,10 +251,6 @@ export const Card = memo(
     a.depth === b.depth &&
     a.moved === b.moved &&
     a.highlighted === b.highlighted &&
-    a.parentIn === b.parentIn &&
-    a.parentGone === b.parentGone &&
-    a.parentOutside === b.parentOutside &&
-    a.onJump === b.onJump &&
     a.onOpenInStack === b.onOpenInStack &&
     sameRails(a.rails, b.rails),
 );
@@ -320,9 +281,9 @@ function NextSlot({ status, note }: { status: LiveStatus; note: ReactNode }) {
   }
   return (
     <Slot id="next" label="Next">
-      <span className={`card-next next-${status.next.who}`} title={status.next.kind}>
+      <Pill tone={WHO_TONE[status.next.who]} title={status.next.kind}>
         {status.next.label}
-      </span>{" "}
+      </Pill>{" "}
       <span className="card-next-who muted">{WHO_TEXT[status.next.who]}</span>
     </Slot>
   );
@@ -332,6 +293,7 @@ function NextSlot({ status, note }: { status: LiveStatus; note: ReactNode }) {
 function PrSlots({ status, note }: { status: LiveStatus; note: ReactNode }) {
   if (status.load !== "loaded") {
     const unloaded: [SlotKey, string][] = [
+      ["title", "PR title"],
       ["pr", "PR"],
       ["ci", "CI"],
       ["review", "Review"],
@@ -342,7 +304,6 @@ function PrSlots({ status, note }: { status: LiveStatus; note: ReactNode }) {
       ["review_requested", "Review requested"],
       ["ci_failures", "CI failures"],
       ["reviewers", "Reviewers"],
-      ["title", "PR title"],
     ];
     return (
       <>
@@ -389,6 +350,9 @@ function LoadedPrSlots({ status }: { status: LoadedStatus }) {
   const hasPr = status.pr !== "none";
   return (
     <>
+      <Slot id="title" label="PR title" state={detail && hasPr ? "ok" : "na"}>
+        {detail && hasPr ? <span title={detail.title}>{detail.title}</span> : hasPr ? "PR details unavailable" : "no PR"}
+      </Slot>
       {hasPr ? (
         <>
           <Slot id="pr" label="PR">
@@ -407,7 +371,7 @@ function LoadedPrSlots({ status }: { status: LoadedStatus }) {
             </Slot>
           ) : (
             <Slot id="ci" label="CI" state="na">
-              no CI configured
+              <Pill tone="gray">no CI configured</Pill>
             </Slot>
           )}
           {status.review !== "none" ? (
@@ -416,7 +380,7 @@ function LoadedPrSlots({ status }: { status: LoadedStatus }) {
             </Slot>
           ) : (
             <Slot id="review" label="Review" state="gap">
-              no review requested
+              <Pill tone="gray">no review requested</Pill>
             </Slot>
           )}
           {status.open_comments > 0 ? (
@@ -426,8 +390,8 @@ function LoadedPrSlots({ status }: { status: LoadedStatus }) {
               </Pill>
             </Slot>
           ) : (
-            <Slot id="comments" label="Comments" state="na">
-              0 comments
+            <Slot id="comments" label="Comments">
+              <Pill tone="green">0 comments</Pill>
             </Slot>
           )}
           {status.merge === "conflicts" ? (
@@ -436,7 +400,7 @@ function LoadedPrSlots({ status }: { status: LoadedStatus }) {
             </Slot>
           ) : status.merge === "clean" ? (
             <Slot id="merge" label="Merge">
-              clean
+              <Pill tone="green">clean</Pill>
             </Slot>
           ) : (
             <Slot id="merge" label="Merge" state="na">
@@ -455,7 +419,7 @@ function LoadedPrSlots({ status }: { status: LoadedStatus }) {
                 </Slot>
               ) : (
                 <Slot id="in_draft" label="In draft" state="na">
-                  not a draft
+                  <Pill tone="gray">not a draft</Pill>
                 </Slot>
               )}
               {detail.review_request_age ? (
@@ -464,13 +428,13 @@ function LoadedPrSlots({ status }: { status: LoadedStatus }) {
                 </Slot>
               ) : (
                 <Slot id="review_requested" label="Review requested" state="na">
-                  not requested
+                  <Pill tone="gray">not requested</Pill>
                 </Slot>
               )}
-              <Slot id="ci_failures" label="CI failures" state={detail.ci_failures ? "ok" : "na"}>
-                <span className={detail.ci_failures ? "ci-failed" : undefined}>
+              <Slot id="ci_failures" label="CI failures">
+                <Pill tone={detail.ci_failures ? "red" : "green"}>
                   {`${detail.ci_failures} failure${detail.ci_failures === 1 ? "" : "s"}`}
-                </span>
+                </Pill>
               </Slot>
               {detail.reviewers.length > 0 ? (
                 <Slot id="reviewers" label="Reviewers">
@@ -478,12 +442,9 @@ function LoadedPrSlots({ status }: { status: LoadedStatus }) {
                 </Slot>
               ) : (
                 <Slot id="reviewers" label="Reviewers" state="na">
-                  none requested
+                  <Pill tone="gray">none requested</Pill>
                 </Slot>
               )}
-              <Slot id="title" label="PR title">
-                <span title={detail.title}>{detail.title}</span>
-              </Slot>
             </>
           ) : (
             <UnavailableSlots note="PR details unavailable" />
@@ -521,7 +482,6 @@ function UnavailableSlots({ note }: { note: string }) {
     ["review_requested", "Review requested"],
     ["ci_failures", "CI failures"],
     ["reviewers", "Reviewers"],
-    ["title", "PR title"],
   ];
   return (
     <>

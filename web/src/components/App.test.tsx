@@ -39,6 +39,16 @@ const tableRows = () =>
   }));
 
 describe("the table", () => {
+  test("hides done ancestors in tree and flat until Include done is selected", () => {
+    const rows = [branch(1, "devon/done", { status: merged }), branch(1, "devon/child", { parent: "devon/done", status: needsMe })];
+    const { store } = show(rows, "?view=table");
+    expect(tableRows()).toEqual([{ name: "devon/child", depth: "1", context: false }]);
+    fireEvent.click(screen.getByRole("button", { name: "Flat" }));
+    expect(tableRows()).toEqual([{ name: "devon/child", depth: "0", context: false }]);
+    fireEvent.click(screen.getByRole("button", { name: "Include done" }));
+    expect(store.getState().view.done).toBe("1");
+    expect(tableRows().map((row) => row.name)).toEqual(["devon/done", "devon/child"]);
+  });
   test("lists branches as a tree: depth-first, children indented", () => {
     show(stack(), "?view=table");
 
@@ -204,6 +214,22 @@ describe("the view selector", () => {
       unmount();
     }
   });
+});
+
+test("the Priorities view shows only the first task needing me on each stack path", () => {
+  const rows = [
+    branch(1, "devon/root", { status: needsMe }),
+    branch(1, "devon/middle", { parent: "devon/root", status: waiting }),
+    branch(1, "devon/child", { parent: "devon/middle", status: needsMe }),
+    branch(1, "devon/other", { status: waiting }),
+    branch(1, "devon/other-child", { parent: "devon/other", status: needsMe }),
+  ];
+  const { url } = show(rows, "?view=priorities");
+  expect(screen.getByRole("button", { name: "Priorities" })).toHaveAttribute("aria-pressed", "true");
+  expect([...document.querySelectorAll<HTMLElement>(".card[data-id]")].map((card) => card.dataset.id)).toEqual([
+    "1:devon/root", "1:devon/other-child",
+  ]);
+  expect(url.location.search).toBe("?view=priorities");
 });
 
 describe("the controls and the address bar", () => {

@@ -43,11 +43,6 @@ from toolbelt.ui.pr_activity import PrFacts, TimelineItem
 
 WINDOWS = (4, 12, 26, 52)
 DEFAULT_WEEKS = 12
-#: The status mix is sampled every ``SAMPLE_HOURS`` hours for windows up to
-#: ``SAMPLE_HOURS_UP_TO_WEEKS`` weeks (at most 336 samples), daily beyond
-#: (at most 364): a small payload either way.
-SAMPLE_HOURS = 6
-SAMPLE_HOURS_UP_TO_WEEKS = 12
 
 WHO_YOU = "you"
 WHO_CI = "ci"
@@ -129,8 +124,8 @@ NOTES: tuple[tuple[str, str], ...] = (
     ),
     (
         "Status mix is a snapshot",
-        "At each sampled instant (every 6 hours for windows up to 12 weeks, "
-        "daily beyond) every task in flight is in exactly one state, and the "
+        "At the start of the window, at every task state change, and now, "
+        "every task in flight is in exactly one state, and the "
         "chart shows each state's share of those tasks. It is not averaged "
         "over time. An instant with no task in flight is a gap, and with only "
         "a few tasks the percentages are coarse: the number of tasks in "
@@ -776,7 +771,7 @@ def compute(
             for task in with_pr
             if task.pr is not None and _in_window(task.pr, margin_start, now)
         ],
-        mix=_mix(lives, sample_instants(start, now, weeks), weeks),
+        mix=_mix(lives, sample_instants(start, now, lives)),
         coverage=api.AggregateCoverage(
             task_starts_since=_iso(archive_since),
             tasks_without_pr=tasks_without_pr,
@@ -794,27 +789,25 @@ def _in_window(record: PrRecord, start: datetime, now: datetime) -> bool:
     )
 
 
-def sample_instants(start: datetime, now: datetime, weeks: int) -> list[datetime]:
-    """The instants the status mix is sampled at: every ``SAMPLE_HOURS`` hours
-    from the window's start (daily beyond ``HOURLY_UP_TO_WEEKS``), and ``now``
-    last."""
-    step = (
-        timedelta(hours=SAMPLE_HOURS)
-        if weeks <= SAMPLE_HOURS_UP_TO_WEEKS
-        else timedelta(days=1)
+def sample_instants(
+    start: datetime, now: datetime, lives: Sequence[Sequence[Segment]]
+) -> list[datetime]:
+    """Every boundary where a task joins, leaves, or changes state."""
+    return sorted(
+        {start, now}
+        | {
+            instant
+            for life in lives
+            for segment in life
+            for instant in (segment.start, segment.end)
+            if start < instant < now
+        }
     )
-    instants = [start]
-    while instants[-1] + step < now:
-        instants.append(instants[-1] + step)
-    if now > instants[-1]:
-        instants.append(now)
-    return instants
 
 
 def _mix(
     lives: Sequence[Sequence[Segment]],
     instants: Sequence[datetime],
-    weeks: int,
 ) -> api.StatusMix:
     """A snapshot of the tasks in flight at each instant: every task has
     exactly one state then, and the series are each state's share of them
@@ -844,7 +837,7 @@ def _mix(
         return [c / n if n else None for c, n in zip(counts, inflight, strict=True)]
 
     return api.StatusMix(
-        step_hours=SAMPLE_HOURS if weeks <= SAMPLE_HOURS_UP_TO_WEEKS else 24,
+        step_hours=0,
         starts=[_iso(instant) for instant in instants],
         inflight=inflight,
         states=mix_state_infos(),

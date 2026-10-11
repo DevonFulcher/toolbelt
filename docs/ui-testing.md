@@ -25,13 +25,13 @@ own private repo.
 - **The aggregate view** is split by who owns the arithmetic:
   - *Server* (`tests/test_ui_aggregate.py`, `tests/test_pr_link.py`): the
     replay of a PR's history into states (and the CI phases), the status-mix
-    **snapshots** (at each sampled UTC instant every task in flight has one
+    **snapshots** (at each UTC task transition every task in flight has one
     state; shares sum to 100%, counts agree, an instant with nothing in
     flight is a gap), the per-PR **milestones** (UTC instants), joining tasks
     to PRs by recorded id (a reused branch name must not mismatch; name
-    matches are flagged), the repo filter, and the **incremental fetch** (no
-    TTL: open PRs and PRs updated since the newest cached `updatedAt` are
-    re-queried, changed ones replace cached ones, deletions and reopens are
+    matches are flagged), the repo filter, and the **incremental fetch** (a
+    background loop re-queries open PRs and PRs updated since the newest
+    cached `updatedAt`; page loads read the cache, and reopens are
     handled), all with the `gh` page runner (`FakeGitHub`), the stack DB and
     the clock injected. The server does no calendar arithmetic and takes no
     time zone.

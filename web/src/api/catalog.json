@@ -156,7 +156,8 @@
     "branch": null,
     "task": null,
     "session": null,
-    "stack": null
+    "ancestors": null,
+    "descendants": null
   },
   "states": [
     {

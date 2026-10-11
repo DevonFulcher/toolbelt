@@ -1,6 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { knownRoot } from "../logic/focus";
-import { groupedLayout, railGuides, stackedLayout, type Section } from "../logic/layout";
+import { groupedLayout, prioritiesLayout, railGuides, stackedLayout, type Section } from "../logic/layout";
 import type { Row } from "../logic/rows";
 import { useApp, useAppStore } from "../store/StoreContext";
 import { Card, Stub } from "./Card";
@@ -19,26 +18,20 @@ export function CardList({ rows }: { rows: Row[] }) {
   const view = useApp((s) => s.view);
   const collapsed = useApp((s) => s.collapsed);
   const stacked = view.view === "stacked";
-  // The branch the view is focused on (a root that is no branch is ignored).
-  const focusRoot = stacked ? knownRoot(rows, view.root) : "";
-  const byId = useMemo(() => new Map(rows.map((row) => [row.id, row])), [rows]);
   const sections = useMemo(
-    () => (stacked ? stackedLayout(rows, view) : groupedLayout(rows, view)),
+    () => stacked ? stackedLayout(rows, view) : view.view === "priorities" ? prioritiesLayout(rows, view) : groupedLayout(rows, view),
     [rows, view, stacked],
   );
 
-  // Where each card is placed (section key), and which sections hold a stub
-  // for which branch.
+  // Where each card is placed (section key).
   const placement = useMemo(() => {
     const placed = new Map<string, Section>();
-    const stubs = new Set<string>();
     for (const section of sections) {
       for (const entry of section.entries) {
-        if (entry.context) stubs.add(`${section.key}|${entry.id}`);
-        else placed.set(entry.id, section);
+        if (!entry.context) placed.set(entry.id, section);
       }
     }
-    return { placed, stubs };
+    return { placed };
   }, [sections]);
 
   // A card that was in another section last time moved because its next
@@ -65,33 +58,8 @@ export function CardList({ rows }: { rows: Row[] }) {
     };
   }, [placement, view.view]);
 
-  // Scrolling to a related card (or the stub standing for it in the same
-  // section), opening its section if collapsed, and highlighting it.
+  // Highlighting a card opened in its stack.
   const [jump, setJump] = useState<{ id: string; section: string; n: number } | null>(null);
-  // The handler is stable (the cards are memoised on it); it reads the
-  // placement of the latest layout.
-  const placementRef = useRef(placement);
-  useEffect(() => {
-    placementRef.current = placement;
-  }, [placement]);
-  const onJump = useCallback(
-    (target: string, from: string) => {
-      // The focus root's parent is not in the view: go there instead.
-      if (from === store.getState().view.root) {
-        store.getState().focusRoot(target);
-        return;
-      }
-      const { placed, stubs } = placementRef.current;
-      const own = placed.get(target);
-      const fromSection = placed.get(from);
-      const sectionKey =
-        own?.key ?? (fromSection && stubs.has(`${fromSection.key}|${target}`) ? fromSection.key : null);
-      if (!sectionKey) return;
-      store.getState().expandSection(sectionKey);
-      setJump((previous) => ({ id: target, section: sectionKey, n: (previous?.n ?? 0) + 1 }));
-    },
-    [store],
-  );
   // A leaf card's "open in stacked view": once the stacked layout is there,
   // scroll to the card and highlight it among its stack.
   const reveal = useRef<string | null>(null);
@@ -165,13 +133,6 @@ export function CardList({ rows }: { rows: Row[] }) {
                         />
                       );
                     }
-                    const row = byId.get(entry.id);
-                    const parentId = row?.parent ?? null;
-                    const parentSection = parentId ? placement.placed.get(parentId) : undefined;
-                    const parentStub = parentId
-                      ? placement.stubs.has(`${section.key}|${parentId}`)
-                      : false;
-                    const outside = Boolean(parentId) && entry.id === focusRoot;
                     return (
                       <Fragment key={entry.id}>
                         <Card
@@ -180,12 +141,6 @@ export function CardList({ rows }: { rows: Row[] }) {
                           rails={rails}
                           moved={moved.has(entry.id)}
                           highlighted={jump?.id === entry.id}
-                          parentIn={
-                            parentSection && parentSection.key !== section.key ? parentSection.label : null
-                          }
-                          parentGone={Boolean(parentId) && !parentSection && !parentStub && !outside}
-                          parentOutside={outside}
-                          onJump={onJump}
                           onOpenInStack={onOpenInStack}
                         />
                         {entry.hidden && (

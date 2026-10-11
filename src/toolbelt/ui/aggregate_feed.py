@@ -6,10 +6,10 @@
   plus every PR still open (a quiet open PR is in flight for the whole window
   but was not "updated"), each with the timeline items the card timeline
   uses. Paginated GraphQL searches (``author:@me``, archived repos left out).
-  There is no time-to-live: the PRs are kept in memory keyed by
-  ``(repo, number)`` with GitHub's ``updatedAt``, and every request re-fetches
-  the open PRs and whatever was updated since the newest one held (see
-  ``AggregateService``). A larger cached window serves a smaller one. A page
+  The PRs are kept in memory keyed by ``(repo, number)`` with GitHub's
+  ``updatedAt``. A background loop refreshes the open PRs and whatever was
+  updated since the newest one held (see ``AggregateService``). A larger
+  cached window serves a smaller one. A page
   that fails after the first, or an organization the token is not authorized
   for, yields a partial result that is flagged, as the untracked-PR callout
   does.
@@ -24,6 +24,7 @@ injected, so tests drive it with canned payloads.
 """
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -259,6 +260,8 @@ class _Cache:
     #: PRs missing from it are never fetched by the incremental ones.
     truncated: bool
     hidden: int
+    fetched_at: datetime
+    refreshed: int
 
 
 def _find_repo(repos: list[RepoRecord], wanted: str) -> RepoRecord:
@@ -278,16 +281,15 @@ def _key(record: aggregate.PrRecord) -> tuple[str, int]:
 
 
 class AggregateService:
-    """Serves the aggregate view from PRs it keeps in memory and keeps fresh
-    on every request (there is no time-to-live).
+    """Serves the aggregate view from PRs kept in memory.
 
-    The first request (or one for a wider window than any before) pages
-    through the whole window. Every later one asks GitHub for (a) all PRs
+    The first refresh (or one for a wider window than any before) pages
+    through the whole window. Every later refresh asks GitHub for (a) all PRs
     that are open now and (b) those updated since the newest ``updatedAt``
     held (less a small margin), and merges them by key: so only PRs that
     changed are queried again, a PR that was closed, merged, reopened or
-    commented on is replaced, and the answer is never older than the request.
-    The cache is not persisted: a restart is a first request again.
+    commented on is replaced at each refresh.
+    The cache is not persisted: the background loop warms it after a restart.
     """
 
     def __init__(
@@ -344,7 +346,7 @@ class AggregateService:
             hidden = max(hidden, errors)
             for record in records:
                 by_id[_key(record)] = record
-        return _Cache(weeks, by_id, truncated, hidden), len(by_id)
+        return _Cache(weeks, by_id, truncated, hidden, now, len(by_id)), len(by_id)
 
     async def _refresh(self, cache: _Cache, since: datetime) -> tuple[int, bool, int]:
         """Re-fetches the open PRs and those updated since ``since``, merging
@@ -364,38 +366,60 @@ class AggregateService:
                     del cache.records[key]
         return len(fresh), open_cut or cut, max(open_hidden, hidden)
 
-    async def get(self, weeks: int, repo: str | None = None) -> api.Aggregate:
+    async def run(self, interval: float = 300.0) -> None:
+        """Warm the widest window and refresh it while the server runs."""
+        while True:
+            try:
+                await self.get(max(aggregate.WINDOWS))
+            except Exception:
+                logging.exception("Could not refresh aggregate history")
+            await asyncio.sleep(interval)
+
+    async def get(
+        self, weeks: int, repo: str | None = None, *, refresh: bool = True
+    ) -> api.Aggregate:
         """The aggregate of the last ``weeks`` weeks; ``repo`` (a stack DB
         repo id or a repo's name) narrows it to that repo's PRs and tasks.
         Raises ``LookupError`` for a repo that is not known."""
         history = self._history()
         chosen = _find_repo(history.repos, repo) if repo else None
-        async with self._lock:
-            now = self._wall_clock()
-            cache = self._cache
-            newest = (
-                max(
-                    (
-                        r.updated_at
-                        for r in cache.records.values()
-                        if r.updated_at is not None
-                    ),
-                    default=None,
+        ready = self._cache
+        if not refresh and ready is not None and ready.weeks >= weeks:
+            # A background GitHub request may be in flight. Its cache update
+            # is synchronous, so this snapshot never waits on network I/O.
+            prs = list(ready.records.values())
+            truncated, hidden = ready.truncated, ready.hidden
+            fetched_at, refreshed = ready.fetched_at, ready.refreshed
+        else:
+            async with self._lock:
+                now = self._wall_clock()
+                cache = self._cache
+                newest = (
+                    max(
+                        (
+                            r.updated_at
+                            for r in cache.records.values()
+                            if r.updated_at is not None
+                        ),
+                        default=None,
+                    )
+                    if cache is not None
+                    else None
                 )
-                if cache is not None
-                else None
-            )
-            if cache is None or cache.weeks < weeks or newest is None:
-                cache, refreshed = await self._first_fetch(weeks, now)
-                self._cache = cache
+                if cache is None or cache.weeks < weeks or (refresh and newest is None):
+                    cache, refreshed = await self._first_fetch(weeks, now)
+                    self._cache = cache
+                elif refresh and newest is not None:
+                    refreshed, cut, errors = await self._refresh(
+                        cache, newest - self._margin
+                    )
+                    cache.truncated = cache.truncated or cut
+                    cache.hidden = max(cache.hidden, errors)
+                    cache.fetched_at = now
+                    cache.refreshed = refreshed
                 truncated, hidden = cache.truncated, cache.hidden
-            else:
-                refreshed, cut, errors = await self._refresh(
-                    cache, newest - self._margin
-                )
-                truncated = cache.truncated or cut
-                hidden = max(cache.hidden, errors)
-            prs = list(cache.records.values())
+                prs = list(cache.records.values())
+                fetched_at, refreshed = cache.fetched_at, cache.refreshed
         facts = await task_facts(history, self._remote_of, self._finished)
         if chosen is not None:
             slug = repo_slug(chosen.remote_url) or repo_slug(
@@ -410,7 +434,7 @@ class AggregateService:
             now=self._wall_clock(),
             weeks=weeks,
             archive_since=history.since,
-            fetched_at=now,
+            fetched_at=fetched_at,
             refreshed=refreshed,
             truncated=truncated,
             hidden=hidden,

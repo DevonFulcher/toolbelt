@@ -106,7 +106,7 @@ export interface AggregateCoverage {
   truncated: boolean;
 }
 /**
- * A snapshot of the tasks in flight at each sampled instant (not an
+ * A snapshot of the tasks in flight at each transition instant (not an
  * average over time).
  */
 export interface StatusMix {
@@ -434,10 +434,12 @@ export interface Span {
   tone: Tone;
 }
 export interface SlotDimensions {
+  ancestors: CatalogDimension | null;
   branch: CatalogDimension | null;
   ci: CatalogDimension | null;
   ci_failures: CatalogDimension | null;
   comments: CatalogDimension | null;
+  descendants: CatalogDimension | null;
   in_draft: CatalogDimension | null;
   merge: CatalogDimension | null;
   next: CatalogDimension | null;
@@ -448,7 +450,6 @@ export interface SlotDimensions {
   review_requested: CatalogDimension | null;
   reviewers: CatalogDimension | null;
   session: CatalogDimension | null;
-  stack: CatalogDimension | null;
   task: CatalogDimension | null;
   task_age: CatalogDimension | null;
   timeline: CatalogDimension | null;

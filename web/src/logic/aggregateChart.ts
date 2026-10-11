@@ -74,39 +74,19 @@ export function stackShares(shares: (number | null)[][]): Band[] {
   return bands;
 }
 
-/**
- * The SVG path of one band: a closed area per run of consecutive buckets
- * with data. `x(i)` is a bucket's centre; a single-bucket run is drawn as a
- * column of width `columnWidth` so it is not invisible.
- */
+/** One constant-width-in-time band per state interval. */
 export function bandPath(
   band: Band,
   x: (index: number) => number,
   y: (share: number) => number,
   columnWidth: number,
 ): string {
-  const parts: string[] = [];
-  let run: number[] = [];
-  const flush = (): void => {
-    if (run.length === 0) return;
-    const points: [number, number][] =
-      run.length === 1
-        ? [
-            [x(run[0]) - columnWidth / 2, run[0]],
-            [x(run[0]) + columnWidth / 2, run[0]],
-          ]
-        : run.map((i) => [x(i), i]);
-    const top = points.map(([px, i]) => `${px},${y(band.spans[i]![1])}`);
-    const bottom = [...points].reverse().map(([px, i]) => `${px},${y(band.spans[i]![0])}`);
-    parts.push(`M${[...top, ...bottom].join("L")}Z`);
-    run = [];
-  };
-  band.spans.forEach((span, i) => {
-    if (span === null) flush();
-    else run.push(i);
-  });
-  flush();
-  return parts.join("");
+  return band.spans.map((span, i) => {
+    if (span === null) return "";
+    const left = x(i);
+    const right = i + 1 < band.spans.length ? x(i + 1) : left + columnWidth;
+    return `M${left},${y(span[1])}L${right},${y(span[1])}L${right},${y(span[0])}L${left},${y(span[0])}Z`;
+  }).join("");
 }
 
 // ---- lines over sampled instants -----------------------------------------------

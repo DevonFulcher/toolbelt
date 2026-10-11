@@ -106,50 +106,15 @@ describe("the grouped view", () => {
     expect(document.querySelector('article[data-id="1:devon/d"]')).not.toHaveClass("flash");
   });
 
-  test("the stack slot says where the parent card is", () => {
-    show([
+  test("a child can open its stack from the branch slot", () => {
+    const { url } = show([
       branch(1, "devon/a", { status: waiting }),
       branch(1, "devon/b", { parent: "devon/a", status: needsMe }),
     ]);
-
-    const link = within(document.querySelector('article[data-id="1:devon/b"]') as HTMLElement).getByRole("link", {
-      name: "devon/a",
-    });
-
-    expect(link).toHaveAttribute("data-in", "Waiting on others / team");
-  });
-
-  test("a parent that is not shown at all is marked gone", () => {
-    show([
-      branch(1, "devon/a", { status: needsMe }),
-      branch(1, "devon/b", { parent: "devon/a", status: needsMe }),
-    ], "?q=devon/b");
-
-    const link = within(document.querySelector('article[data-id="1:devon/b"]') as HTMLElement).getByRole("link", {
-      name: "devon/a",
-    });
-
-    // devon/a is a stub (context) in the same section, so it is not "gone".
-    expect(link).not.toHaveAttribute("data-gone");
-    expect(namesIn("you")).toEqual(["devon/a", "devon/b"]);
-  });
-
-  test("a stack link scrolls to the parent and opens its collapsed section", () => {
-    const { preferences } = show(
-      [
-        branch(1, "devon/a", { status: waiting }),
-        branch(1, "devon/b", { parent: "devon/a", status: needsMe }),
-      ],
-      "",
-      { collapsed: ["others"] },
-    );
-    expect(namesIn("others")).toEqual([]);
-
-    fireEvent.click(screen.getByRole("link", { name: "devon/a" }));
-
-    expect(namesIn("others")).toEqual(["devon/a"]);
-    expect(preferences.saved.collapsed).toEqual([]);
-    expect(document.querySelector('article[data-id="1:devon/a"]')).toHaveClass("highlight");
+    const card = document.querySelector('article[data-id="1:devon/b"]') as HTMLElement;
+    fireEvent.click(within(card).getByRole("link", { name: "open in stacked view →" }));
+    expect(url.location.search).toBe("?view=stacked&root=1%3Adevon%2Fa");
+    expect(document.querySelector('article[data-id="1:devon/b"]')).toHaveClass("highlight");
   });
 
   test("a branch whose status is not in yet is under Loading", () => {
@@ -180,16 +145,15 @@ describe("the stacked view", () => {
     expect(screen.getByRole("button", { name: "Stacked" })).toHaveAttribute("aria-pressed", "true");
   });
 
-  test("says how tall the stack is and how many children each has", () => {
+  test("shows separate ancestor and descendant counts", () => {
     show(stack(), "?view=stacked");
 
     const a = document.querySelector('article[data-id="1:devon/a"]') as HTMLElement;
-    expect(a).toHaveTextContent("stack root");
-    expect(a).toHaveTextContent("stack 1 of 2");
-    expect(a).toHaveTextContent("2 children");
+    expect(a.querySelector('[data-slot="ancestors"]')).toHaveTextContent("0");
+    expect(a.querySelector('[data-slot="descendants"]')).toHaveTextContent("2");
     const b = document.querySelector('article[data-id="1:devon/b"]') as HTMLElement;
-    expect(b).toHaveTextContent("no children");
-    expect(within(b).getByText("no children")).toHaveClass("stack-chip-muted");
+    expect(b.querySelector('[data-slot="ancestors"]')).toHaveTextContent("1");
+    expect(b.querySelector('[data-slot="descendants"]')).toHaveTextContent("0");
   });
 
   test("keeps a finished parent as a stub", () => {

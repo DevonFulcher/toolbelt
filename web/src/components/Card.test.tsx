@@ -30,7 +30,8 @@ const SLOT_LABELS: Record<string, string> = {
   merge: "Merge",
   task: "Task",
   session: "Session",
-  stack: "Stack",
+  ancestors: "Ancestors",
+  descendants: "Descendants",
   task_age: "Task age",
   pr_age: "PR age",
   in_draft: "In draft",
@@ -117,8 +118,11 @@ describe("a card's labelled slots", () => {
     expect(b.in_draft).toEqual(["In draft", "na", "not a draft"]);
     expect(b.review_requested).toEqual(["Review requested", "ok", "1d"]);
     expect(b.ci_failures[2]).toBe("2 failures");
+    expect(document.querySelector('article[data-id="1:devon/b"] [data-slot="ci_failures"] .pill')).toHaveClass("tone-red");
     expect(b.reviewers).toEqual(["Reviewers", "ok", "sam, lee"]);
-    expect(b.stack[2]).toBe("devon/a stack 2 of 2 open in stacked view → no children");
+    expect(b.ancestors[2]).toBe("1");
+    expect(b.descendants[2]).toBe("0");
+    expect(within(document.querySelector('article[data-id="1:devon/b"]') as HTMLElement).getByRole("link", { name: "open in stacked view →" })).toBeInTheDocument();
     // The title is text, never markup.
     expect(b.title[2]).toBe("Add <b>the</b> thing");
     expect(b.task[1]).toBe("gap");
@@ -127,7 +131,8 @@ describe("a card's labelled slots", () => {
     expect(a.task).toEqual(["Task", "ok", "ABC-1"]);
     expect(a.session[1]).toBe("ok");
     expect(a.in_draft[2]).toBe("5d");
-    expect(a.stack[2]).toBe("stack root stack 1 of 2 open in stacked view → 1 child");
+    expect(a.ancestors[2]).toBe("0");
+    expect(a.descendants[2]).toBe("1");
   });
 
   test("the task age counts from when the task started, and says so when unknown", () => {
@@ -174,7 +179,8 @@ describe("a card's labelled slots", () => {
     // Missing but settable reads as a gap, not as "not applicable".
     expect(found.task).toEqual(["Task", "gap", "no task linked"]);
     expect(found.session).toEqual(["Session", "gap", "no session linked"]);
-    expect(found.stack[2]).toBe("stack root single branch no children");
+    expect(found.ancestors[2]).toBe("0");
+    expect(found.descendants[2]).toBe("0");
   });
 
   test("zero and empty values are explicit", () => {
@@ -195,11 +201,15 @@ describe("a card's labelled slots", () => {
     expect(labels(found)).toEqual(SLOT_LABELS);
     expect(found.ci).toEqual(["CI", "na", "no CI configured"]);
     expect(found.review).toEqual(["Review", "gap", "no review requested"]);
-    expect(found.comments).toEqual(["Comments", "na", "0 comments"]);
+    expect(found.comments).toEqual(["Comments", "ok", "0 comments"]);
     expect(found.merge).toEqual(["Merge", "ok", "clean"]);
     expect(found.in_draft).toEqual(["In draft", "na", "not a draft"]);
     expect(found.review_requested).toEqual(["Review requested", "na", "not requested"]);
-    expect(found.ci_failures).toEqual(["CI failures", "na", "0 failures"]);
+    expect(found.ci_failures).toEqual(["CI failures", "ok", "0 failures"]);
+    const card = document.querySelector('article[data-id="1:devon/q"]') as HTMLElement;
+    for (const key of ["comments", "merge", "ci_failures"]) {
+      expect(card.querySelector(`[data-slot="${key}"] .pill`)).toHaveClass("tone-green");
+    }
     expect(found.reviewers).toEqual(["Reviewers", "na", "none requested"]);
     // A merged PR's merge slot says why it is empty.
     expect(slotsOf("devon/m").merge).toEqual(["Merge", "na", "n/a (PR merged)"]);
@@ -227,8 +237,8 @@ describe("a card's labelled slots", () => {
       expect(groups.map((g) => g.querySelector(".group-title")?.textContent)).toEqual(["Git", "PR", "Task"]);
       const keys = groups.map((g) => [...g.querySelectorAll<HTMLElement>(".slot")].map((s) => s.dataset.slot));
       expect(keys).toEqual([
-        ["repo", "branch", "stack"],
-        ["pr", "ci", "review", "comments", "merge", "pr_age", "in_draft", "review_requested", "ci_failures", "reviewers", "title"],
+        ["repo", "branch", "ancestors", "descendants"],
+        ["title", "pr", "ci", "review", "comments", "merge", "pr_age", "in_draft", "review_requested", "ci_failures", "reviewers"],
         ["next", "task_age", "task", "session"],
       ]);
       // The timeline is its own box, the last child, not one of the groups.
@@ -246,7 +256,7 @@ describe("a card's labelled slots", () => {
 
     expect(labels(found)).toEqual(SLOT_LABELS);
     for (const key of Object.keys(SLOT_LABELS)) {
-      if (["repo", "branch", "task", "session", "stack", "task_age"].includes(key)) continue;
+      if (["repo", "branch", "ancestors", "descendants", "task", "session", "task_age"].includes(key)) continue;
       expect(found[key].slice(1), key).toEqual(["na", "loading…"]);
     }
   });

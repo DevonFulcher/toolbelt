@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import type { LiveStatus } from "../api/generated";
-import { hiddenAsDone, inScope, matches } from "../logic/layout";
+import { hiddenAsDone, inScope, matches, prioritiesLayout } from "../logic/layout";
 import { rowOf, type Row } from "../logic/rows";
 import { useApp } from "./StoreContext";
 
@@ -35,7 +35,9 @@ export function useCounts(rows: Row[]): Counts {
   return useMemo(() => {
     const inRepo = rows.filter((row) => inScope(row, view));
     return {
-      visible: rows.filter((row) => matches(row, view)).length,
+      visible: view.view === "priorities"
+        ? prioritiesLayout(rows, view).reduce((total, section) => total + section.entries.length, 0)
+        : rows.filter((row) => matches(row, view)).length,
       inRepo: inRepo.length,
       doneHidden: inRepo.filter((row) => hiddenAsDone(row, view)).length,
     };

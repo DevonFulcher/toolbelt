@@ -504,7 +504,8 @@ SLOT_STATES: dict[str, str | None] = {
     "branch": None,
     "task": None,
     "session": None,
-    "stack": None,
+    "ancestors": None,
+    "descendants": None,
 }
 
 NOT_REPRESENTED: tuple[tuple[str, str], ...] = (

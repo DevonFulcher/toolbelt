@@ -11,15 +11,17 @@ export async function fetchSnapshot(fetchImpl: typeof fetch = fetch): Promise<Sn
 
 export const AGGREGATE_URL = "/api/aggregate";
 
-/** The aggregate view's numbers for the last `weeks` weeks. Computed by the
- * server on demand: it asks GitHub what changed on every request. */
+/** The aggregate view's numbers for the last `weeks` weeks, from the server's
+ * background cache unless `refresh` asks GitHub for changes now. */
 export async function fetchAggregate(
   weeks: number,
   repo: string,
   fetchImpl: typeof fetch = fetch,
+  refresh = false,
 ): Promise<Aggregate> {
   const query = new URLSearchParams({ weeks: String(weeks) });
   if (repo) query.set("repo", repo);
+  if (refresh) query.set("refresh", "true");
   const response = await fetchImpl(`${AGGREGATE_URL}?${query}`, {
     headers: { Accept: "application/json" },
   });

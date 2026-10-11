@@ -167,7 +167,37 @@ export function layout(allRows: Row[], state: ViewState): Entry[] {
   for (const group of repoGroups) {
     for (const row of [...group].sort(compare)) visit(row, 0);
   }
+  if (state.view === "table") {
+    // A finished ancestor is context in card views, but the table's
+    // Include done toggle should also govern its tree rows.
+    return out.filter((entry) => !entry.context || !hiddenAsDone(byId.get(entry.id) as Row, state));
+  }
   return out;
+}
+
+/** The first task that needs me in each stack path. */
+export function prioritiesLayout(rows: Row[], state: ViewState): Section[] {
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const selected = rows.filter((row) => {
+    if (row.cells.next?.value !== "you" || !matches(row, state)) return false;
+    const seen = new Set<string>([row.id]);
+    for (let parent = row.parent; parent && !seen.has(parent); ) {
+      seen.add(parent);
+      const ancestor = byId.get(parent);
+      if (!ancestor) break;
+      if (ancestor.cells.next?.value === "you") return false;
+      parent = ancestor.parent;
+    }
+    return true;
+  });
+  if (!selected.length) return [];
+  return [{
+    key: "priorities",
+    label: "Priorities",
+    tone: "you",
+    meaning: "Tasks that need me, with no task below them in the stack that needs me.",
+    entries: selected.sort(rowComparator(state)).map((row) => ({ id: row.id, depth: 0, context: false })),
+  }];
 }
 
 // ---- card views --------------------------------------------------------------------

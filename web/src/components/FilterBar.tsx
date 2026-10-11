@@ -12,9 +12,10 @@ import type { Counts } from "../store/selectors";
 import { useApp, useAppStore } from "../store/StoreContext";
 
 // The default view first.
-const ORDER: View[] = ["grouped", "stacked", "table", "aggregate"];
+const ORDER: View[] = ["priorities", "grouped", "stacked", "table", "aggregate"];
 
 const VIEW_LABELS: Record<View, { label: string; title: string }> = {
+  priorities: { label: "Priorities", title: "Tasks that need me without a parent task that needs me" },
   grouped: { label: "Grouped", title: "Cards grouped by what happens next" },
   stacked: { label: "Stacked", title: "Cards by repo and stack, with the stack drawn" },
   table: { label: "Table", title: "One row per branch" },

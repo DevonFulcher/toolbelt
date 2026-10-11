@@ -11,6 +11,7 @@ function linear(n: number): Branch[] {
   return Array.from({ length: n }, (_, i) =>
     branch(1, `l${i}`, {
       parent: i ? `l${i - 1}` : null,
+      depth: i,
       children: i < n - 1 ? [{ id: `1:l${i + 1}`, name: `l${i + 1}` }] : [],
       status: pr({ pr_number: i + 1 }),
     }),
@@ -159,27 +160,22 @@ describe("the way back up", () => {
     expect(cardNames()[0]).toBe("l0");
   });
 
-  test("the focus root's parent link re-roots to the parent instead of scrolling", () => {
+  test("the focused stack uses breadcrumbs for parent navigation", () => {
     show(linear(20), "?view=stacked&root=1%3Al4");
 
     const root = document.querySelector('.card[data-id="1:l4"]') as HTMLElement;
-    const parent = within(root).getByRole("link", { name: "l3" });
-    expect(parent).toHaveAttribute("data-outside", "1");
-    expect(parent).not.toHaveAttribute("data-gone");
-
-    fireEvent.click(parent);
+    expect(root.querySelector('[data-slot="ancestors"]')).toHaveTextContent("4");
+    expect(root.querySelector('[data-slot="descendants"]')).toHaveTextContent("15");
+    fireEvent.click(within(crumbs()).getByRole("link", { name: "l3" }));
 
     expect(cardNames()[0]).toBe("l3");
   });
 
-  test("a card inside the view still scrolls to its parent", () => {
-    const { url } = show(linear(20), "?view=stacked&root=1%3Al4");
-
+  test("the card leaves parent names to the stacked layout", () => {
+    show(linear(20), "?view=stacked&root=1%3Al4");
     const card = document.querySelector('.card[data-id="1:l6"]') as HTMLElement;
-    fireEvent.click(within(card).getByRole("link", { name: "l5" }));
-
-    expect(cardNames()[0]).toBe("l4");
-    expect(url.pushes).toEqual([]);
+    expect(within(card).queryByRole("link", { name: "l5" })).toBeNull();
+    expect(card.querySelector('[data-slot="ancestors"]')).toHaveTextContent("6");
   });
 });
 

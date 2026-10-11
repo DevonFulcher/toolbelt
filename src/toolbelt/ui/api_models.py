@@ -535,12 +535,12 @@ class MixWhoSeries(Model):
 
 
 class StatusMix(Model):
-    """A snapshot of the tasks in flight at each sampled instant (not an
+    """A snapshot of the tasks in flight at each transition instant (not an
     average over time)."""
 
-    #: Hours between samples (the last sample is now, so it may be nearer).
+    #: Zero for event-driven instants.
     step_hours: int
-    #: ISO time of each sampled instant.
+    #: ISO time of each task transition, plus the window start and now.
     starts: list[str]
     #: How many tasks were in flight at each instant.
     inflight: list[int]
@@ -597,10 +597,8 @@ class Aggregate(Model):
     weeks: int
     window_start: str
     window_end: str
-    #: When the GitHub history was fetched: on every request, so this is
-    #: that request's time, and ``refreshed`` how many PRs were queried again
-    #: (the open ones and those updated since the last request; the first
-    #: request fetches the whole window).
+    #: When the cached GitHub history was last refreshed, and how many PRs
+    #: were queried in that refresh.
     fetched_at: str
     refreshed: int
     #: The repo this is narrowed to (its name), ``None`` for all of them.
