@@ -139,6 +139,20 @@ describe("a card's labelled slots", () => {
     expect(slotsOf("devon/b").task_age).toEqual(["Task age", "gap", "no start recorded"]);
   });
 
+  test("the task age is not shown once the PR is merged", () => {
+    showCards(
+      [
+        branch(1, "devon/m", {
+          started_at: new Date(NOW - 8 * DAY).toISOString(),
+          status: pr({ pr: "merged", merge: "none", review: "approved", next: { label: "Done", who: "none", kind: "done" } }),
+        }),
+      ],
+      { search: "?done=1" },
+    );
+
+    expect(slotsOf("devon/m").task_age).toEqual(["Task age", "na", "n/a (PR merged)"]);
+  });
+
   test("a card without a PR still has every slot, each saying why it is empty", () => {
     showCards([branch(1, "devon/a", { status: noPr() })]);
 

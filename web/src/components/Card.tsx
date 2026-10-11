@@ -101,6 +101,8 @@ export const Card = memo(
     if (flashed || moved) classes.push("flash");
     if (highlighted) classes.push("highlight");
     const childNames = branch.children.map((child) => child.name);
+    // A merged PR means the task is done: its age stops being interesting.
+    const taskDone = status.load === "loaded" && status.pr === "merged";
 
     return (
       <article
@@ -115,8 +117,14 @@ export const Card = memo(
           </span>
           <span className={`branch${branch.current ? " current" : ""}`}>{branch.name}</span>
         </Slot>
-        <Slot id="task_age" label="Task age" state={branch.started_at ? "ok" : "gap"}>
-          {branch.started_at ? (
+        <Slot
+          id="task_age"
+          label="Task age"
+          state={taskDone ? "na" : branch.started_at ? "ok" : "gap"}
+        >
+          {taskDone ? (
+            "n/a (PR merged)"
+          ) : branch.started_at ? (
             <Age
               text={formatAge((now - Date.parse(branch.started_at)) / 1000)}
               since={branch.started_at}
