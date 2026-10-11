@@ -1,0 +1,238 @@
+#!/usr/bin/env python3
+"""A fake `gh` for the `tt ui` demo: canned GitHub data, no network.
+
+Answers only what the UI asks of `gh`:
+  * `gh api graphql ... -f branch=<name>`: the single per-PR lookup (state, CI,
+    reviews, review threads, timeline events). Branch names in SCENARIOS below
+    have a PR; every other branch has none.
+  * `gh api graphql` with a `search(` query: the "open PRs not tracked by
+    toolbelt" callout; always an empty list here.
+Timestamps are relative to now, so the demo always looks recent. Anything else
+exits 1, like `gh pr view` for a branch without a PR.
+"""
+
+import json
+import sys
+from datetime import datetime, timedelta, timezone
+
+a = sys.argv[1:]
+if a[:2] != ["api", "graphql"]:
+    sys.exit(1)
+if any("search(" in x for x in a):
+    print(json.dumps({"data": {"search": {"nodes": [], "issueCount": 0}}}))
+    sys.exit(0)
+branch = next((x.split("=", 1)[1] for x in a if x.startswith("branch=")), None)
+if branch is None:
+    print(json.dumps({"data": {"repository": {"pullRequests": {"nodes": []}}}}))
+    sys.exit(0)
+NOW = datetime.now(timezone.utc)
+
+
+def t(**kw):
+    return (NOW - timedelta(**kw)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def user(login):
+    return {"login": login}
+
+
+def req(login, **kw):
+    return {
+        "__typename": "ReviewRequestedEvent",
+        "createdAt": t(**kw),
+        "actor": user("devon"),
+        "requestedReviewer": {"__typename": "User", "login": login},
+    }
+
+
+def review(login, st, **kw):
+    return {
+        "__typename": "PullRequestReview",
+        "submittedAt": t(**kw),
+        "state": st,
+        "author": user(login),
+    }
+
+
+def commit(oid, msg, ci, **kw):
+    return {
+        "__typename": "PullRequestCommit",
+        "commit": {
+            "oid": oid,
+            "messageHeadline": msg,
+            "committedDate": t(**kw),
+            "author": {"user": user("devon"), "name": "Devon"},
+            "statusCheckRollup": {"state": ci} if ci else None,
+        },
+    }
+
+
+def ev(kind, **kw):
+    return {"__typename": kind, "createdAt": t(**kw), "actor": user("devon")}
+
+
+def ctx(c, s="COMPLETED"):
+    return {"__typename": "CheckRun", "conclusion": c, "status": s}
+
+
+def pr(n, title, **o):
+    ci = o.pop("ci", "SUCCESS")
+    items = o.pop("items", [])
+    threads = o.pop("threads", 0)
+    reqs = o.pop("reqs", [])
+    recent = o.pop("recent", None)
+    contexts = {
+        "SUCCESS": [ctx("SUCCESS")],
+        "FAILURE": [ctx("FAILURE")],
+        "RUNNING": [ctx(None, "IN_PROGRESS")],
+        None: [],
+    }[ci]
+    state = {"RUNNING": "PENDING"}.get(ci, ci)
+    node = {
+        "number": n,
+        "url": f"https://github.com/devon/demo/pull/{n}",
+        "title": title,
+        "state": "OPEN",
+        "isDraft": False,
+        "createdAt": t(days=5),
+        "mergedAt": None,
+        "closedAt": None,
+        "headRefOid": f"{n:07x}",
+        "baseRefName": "main",
+        "mergeable": "MERGEABLE",
+        "reviewDecision": None,
+        "author": user("devon"),
+        "reviewRequests": {
+            "nodes": [
+                {"requestedReviewer": {"__typename": "User", "login": r}} for r in reqs
+            ]
+        },
+        "reviewThreads": {
+            "nodes": [{"isResolved": False}] * threads + [{"isResolved": True}]
+        },
+        "head": {
+            "nodes": [
+                {
+                    "commit": {
+                        "statusCheckRollup": {
+                            "state": state,
+                            "contexts": {"nodes": contexts},
+                        }
+                        if ci
+                        else None
+                    }
+                }
+            ]
+        },
+        "recent": {
+            "nodes": recent
+            if recent is not None
+            else [
+                {
+                    "commit": {
+                        "oid": f"{n:07x}",
+                        "statusCheckRollup": {"state": state} if ci else None,
+                    }
+                }
+            ]
+        },
+        "timelineItems": {"nodes": items},
+    }
+    node.update(o)
+    return node
+
+
+SCENARIOS = {
+    "devon/auth-models": pr(
+        101,
+        "Add auth models",
+        reqs=[],
+        reviewDecision="APPROVED",
+        createdAt=t(days=6),
+        items=[
+            commit("a1", "Add user model", "SUCCESS", days=6),
+            req("sam", days=5),
+            review("sam", "APPROVED", days=2),
+        ],
+    ),
+    "devon/auth-api": pr(
+        102,
+        "Auth API endpoints",
+        reqs=["sam"],
+        threads=3,
+        createdAt=t(days=4),
+        recent=[
+            {"commit": {"oid": "b1", "statusCheckRollup": {"state": "FAILURE"}}},
+            {"commit": {"oid": "b2", "statusCheckRollup": {"state": "SUCCESS"}}},
+        ],
+        items=[
+            commit("b1", "Add login endpoint", "FAILURE", days=4),
+            commit("b2", "Fix lint", "SUCCESS", days=3, hours=20),
+            req("sam", days=2),
+            review("sam", "COMMENTED", days=1),
+        ],
+    ),
+    "devon/auth-ui": pr(
+        103,
+        "Auth UI",
+        isDraft=True,
+        ci="RUNNING",
+        createdAt=t(days=2),
+        items=[
+            ev("ConvertToDraftEvent", days=1),
+            commit("c1", "Login form", None, hours=3),
+        ],
+    ),
+    "devon/auth-docs": pr(
+        104,
+        "Auth docs",
+        ci="FAILURE",
+        reviewDecision="CHANGES_REQUESTED",
+        threads=1,
+        createdAt=t(days=3),
+        recent=[
+            {"commit": {"oid": f"d{i}", "statusCheckRollup": {"state": "FAILURE"}}}
+            for i in range(2)
+        ],
+        items=[
+            commit("d0", "Write docs", "FAILURE", days=3),
+            commit("d1", "Fix links", "FAILURE", days=2),
+            req("lee", days=2),
+            review("lee", "CHANGES_REQUESTED", hours=20),
+        ],
+    ),
+    "devon/cache-layer": pr(
+        88,
+        "Cache layer",
+        state="MERGED",
+        mergedAt=t(days=1),
+        createdAt=t(days=9),
+        reviewDecision="APPROVED",
+        items=[
+            commit("e1", "Add cache", "SUCCESS", days=9),
+            review("sam", "APPROVED", days=2),
+            ev("MergedEvent", days=1),
+        ],
+    ),
+    "devon/cache-metrics": pr(
+        91,
+        "Cache metrics",
+        mergeable="CONFLICTING",
+        createdAt=t(days=2),
+        items=[commit("f1", "Metrics", "SUCCESS", days=2)],
+    ),
+    "devon/search-index": pr(
+        57,
+        "Search index",
+        ci="RUNNING",
+        reqs=["lee"],
+        createdAt=t(days=1),
+        items=[
+            commit("g1", "Index builder", None, days=1),
+            ev("ReadyForReviewEvent", hours=7),
+            req("lee", hours=6),
+        ],
+    ),
+}
+nodes = [SCENARIOS[branch]] if branch in SCENARIOS else []
+print(json.dumps({"data": {"repository": {"pullRequests": {"nodes": nodes}}}}))
