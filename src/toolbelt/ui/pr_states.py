@@ -8,13 +8,15 @@ value of each dimension, how it appears on the track:
 
 * ``event``: a marker at the moment it happened (kind from ``EVENTS``);
 * ``phase``: a shaded span of the PR's life (kind from ``PHASES``);
-* ``now_state``: a labelled chip in the expanded card's "State now" row (and
-  listed in the end cap's tooltip), for what has no
+* ``now_state``: a line ("Group: value") in the tooltip of the track's end
+  cap (the "now" line, or the end of a merged/closed PR), for what has no
   event timestamp GitHub gives us (unresolved threads, conflicts) or is only
-  meaningful now (current CI, the next action).
+  meaningful now (current CI, the next action). The card's labelled slots
+  show the same values; the timeline does not repeat them as a row of its
+  own.
 
 A value may have several representations (a failed CI is a ``commit_failed``
-event, a ``ci_failing`` phase and a chip). ``absent=True`` marks a value that
+event, a ``ci_failing`` phase and a line in the end cap's tooltip). ``absent=True`` marks a value that
 is shown by *not* drawing a phase at the track's end ("not a draft").
 
 The catalog is served to the page inside the snapshot (``api_models.Catalog``,
@@ -94,7 +96,7 @@ class Span:
 @dataclass(frozen=True)
 class Rep:
     """One way a value appears on the timeline. ``kind`` names an entry of
-    ``EVENTS`` / ``PHASES``, or (for ``now_state``) a chip dimension."""
+    ``EVENTS`` / ``PHASES``, or (for ``now_state``) a ``CHIPS`` dimension."""
 
     how: str
     kind: str
@@ -105,7 +107,7 @@ class Rep:
 class StateValue:
     dimension: str
     value: str
-    #: What a chip says; ``{n}`` are filled from the
+    #: What the end cap's tooltip says for it; ``{n}`` is filled from the
     #: current state's args.
     label: str
     tone: Tone
@@ -124,9 +126,7 @@ EVENTS: dict[str, Marker] = {
         "The task started: its branch was created.",
     ),
     "opened": Marker("opened", "◆", GREEN, "The PR was opened."),
-    "commit": Marker(
-        "commit", "•", GRAY, "A commit was pushed (faint dot, expanded view)."
-    ),
+    "commit": Marker("commit", "•", GRAY, "A commit was pushed (faint dot)."),
     "commits": Marker(
         "commits",
         "",
@@ -182,7 +182,8 @@ PHASES: dict[str, Span] = {
     ),
 }
 
-#: Chip groups (one chip each, in this order) and their labels.
+#: The groups of the "now" state (one line each in the end cap's tooltip, in
+#: this order) and their labels.
 CHIPS: dict[str, str] = {
     "pr": "PR",
     "ci": "CI",
@@ -447,7 +448,7 @@ STATES: tuple[StateValue, ...] = (
         "yes",
         "blocked",
         GRAY,
-        "Approved but its parent is unmerged: the Next chip says so.",
+        "Approved but its parent is unmerged: the Next line says so.",
         _now("next"),
     ),
     _v(
@@ -494,11 +495,11 @@ SLOT_STATES: dict[str, str | None] = {
 NOT_REPRESENTED: tuple[tuple[str, str], ...] = (
     (
         "Comment threads opening or resolving",
-        "GitHub has no timeline event for it; only the current unresolved count is shown (Comments chip).",
+        "GitHub has no timeline event for it; only the current unresolved count is shown (Comments, in the Now tooltip).",
     ),
     (
         "A PR becoming conflicting",
-        "Not an event; only whether it conflicts now is shown (Merge chip).",
+        "Not an event; only whether it conflicts now is shown (Merge, in the Now tooltip).",
     ),
     (
         "CI progress between commits",
@@ -510,7 +511,7 @@ NOT_REPRESENTED: tuple[tuple[str, str], ...] = (
     ),
     (
         "History of being blocked on a parent",
-        "Derived from the parent's state now (Next chip), not recorded.",
+        "Derived from the parent's state now (Next, in the Now tooltip), not recorded.",
     ),
     (
         "Conversation comments, edits, labels, assignees",
@@ -563,7 +564,7 @@ def current_states(
     next_who: str,
     next_label: str,
 ) -> list[dict]:
-    """The chips of a card's "now" group: references into the catalog (each
+    """The card's current state (listed in the end cap's tooltip): references into the catalog (each
     looked up here, so an unknown value raises), with the actual label of the
     next action (it names the parent when blocked)."""
     has_pr = pr != PrState.NONE.value

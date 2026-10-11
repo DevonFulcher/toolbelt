@@ -121,6 +121,21 @@ describe("preferences", () => {
     expect(createAppStore({ preferences: localPreferences(storage) }).getState().collapsed).toEqual(["ci"]);
   });
 
+  test("remember which cards have their log open, by card id", () => {
+    const storage = memory();
+    const store = createAppStore({ preferences: localPreferences(storage) });
+
+    store.getState().toggleLog("1:devon/a");
+    store.getState().toggleLog("1:devon/b");
+    store.getState().toggleLog("1:devon/a");
+
+    expect(store.getState().logOpen).toEqual(["1:devon/b"]);
+    expect(JSON.parse(storage.getItem("tt-ui-log-open") as string)).toEqual(["1:devon/b"]);
+    expect(createAppStore({ preferences: localPreferences(storage) }).getState().logOpen).toEqual([
+      "1:devon/b",
+    ]);
+  });
+
   test("a blocked or garbled store is just not remembered", () => {
     const blocked = {
       getItem: () => {
@@ -134,7 +149,9 @@ describe("preferences", () => {
 
     expect(prefs.loadCompact()).toBeNull();
     expect(prefs.loadCollapsed()).toEqual([]);
+    expect(prefs.loadLogOpen()).toEqual([]);
     expect(() => prefs.saveCompact("1")).not.toThrow();
+    expect(() => prefs.saveLogOpen(["1:devon/a"])).not.toThrow();
 
     const garbled = memory();
     garbled.setItem("tt-ui-collapsed", "{not json");

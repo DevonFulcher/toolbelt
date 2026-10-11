@@ -37,10 +37,10 @@ def test_every_representation_names_something_the_renderer_can_draw():
             assert rep.kind in known, (state.dimension, state.value, rep)
 
 
-def test_the_core_dimensions_are_drawn_as_now_state_chips():
-    chipped = {s.dimension for s in STATES if any(r.how == NOW_STATE for r in s.reps)}
-    assert {"pr", "ci", "review", "comments", "merge", "next"} <= chipped
-    assert set(CHIPS) <= chipped
+def test_the_core_dimensions_are_listed_in_the_end_caps_tooltip():
+    listed = {s.dimension for s in STATES if any(r.how == NOW_STATE for r in s.reps)}
+    assert {"pr", "ci", "review", "comments", "merge", "next"} <= listed
+    assert set(CHIPS) <= listed
 
 
 def all_statuses():
@@ -90,7 +90,7 @@ def test_current_states_look_every_value_up_in_the_catalog():
         )
         for state in states:
             assert pr_states.lookup(state["dimension"], state["value"])
-        # The next action is always a chip; a PR-less branch has only PR + Next.
+        # The next action is always listed; a PR-less branch has only PR + Next.
         assert states[-1]["dimension"] == "next"
         if status.pr is PrState.NONE:
             assert [s["dimension"] for s in states] == ["pr", "next"]

@@ -16,7 +16,7 @@
       "label": "commit",
       "glyph": "•",
       "tone": "gray",
-      "legend": "A commit was pushed (faint dot, expanded view)."
+      "legend": "A commit was pushed (faint dot)."
     },
     "commits": {
       "label": "commits",
@@ -577,7 +577,7 @@
     {
       "label": "blocked",
       "tone": "gray",
-      "legend": "Approved but its parent is unmerged: the Next chip says so.",
+      "legend": "Approved but its parent is unmerged: the Next line says so.",
       "reps": [
         {
           "how": "now_state",
@@ -774,11 +774,11 @@
   "not_represented": [
     {
       "label": "Comment threads opening or resolving",
-      "why": "GitHub has no timeline event for it; only the current unresolved count is shown (Comments chip)."
+      "why": "GitHub has no timeline event for it; only the current unresolved count is shown (Comments, in the Now tooltip)."
     },
     {
       "label": "A PR becoming conflicting",
-      "why": "Not an event; only whether it conflicts now is shown (Merge chip)."
+      "why": "Not an event; only whether it conflicts now is shown (Merge, in the Now tooltip)."
     },
     {
       "label": "CI progress between commits",
@@ -790,7 +790,7 @@
     },
     {
       "label": "History of being blocked on a parent",
-      "why": "Derived from the parent's state now (Next chip), not recorded."
+      "why": "Derived from the parent's state now (Next, in the Now tooltip), not recorded."
     },
     {
       "label": "Conversation comments, edits, labels, assignees",

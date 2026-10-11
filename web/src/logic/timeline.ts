@@ -1,8 +1,8 @@
 // The geometry of a card's timeline: a task's life as a horizontal,
 // time-scaled track from when it started (when known; else from the PR's
-// creation) to now (or to its merge/close), with shaded phases, event markers (plain commits clustered where they would
-// overlap), axis ticks, an end cap whose tooltip lists the current state, the expanded "State now" chips, hover tooltips and the
-// legend.
+// creation) to now (or to its merge/close), with shaded phases, event markers
+// (plain commits clustered where they would overlap), axis ticks, an end cap
+// whose tooltip lists the current state, hover tooltips and the legend.
 //
 // Everything the track can draw (glyphs, labels, tones, chip texts, the
 // legend) comes from the state catalog the server sends, so a card state
@@ -27,7 +27,7 @@ import { DAY, formatAbsolute, formatAge, formatSpan, HOUR, MINUTE, relative } fr
 /**
  * What a track is drawn from: when the task started (`null`: not recorded),
  * a PR's history (`created: null` is a branch with no PR, or no history) and
- * the "now" chips. A track needs a start or a creation time to be drawn.
+ * the current state ("now"). A track needs a start or a creation time to be drawn.
  */
 export interface Track {
   /** When the task started (the branch was created); null when unknown. */
@@ -532,7 +532,7 @@ export function trackLayout(track: Track, options: LayoutOptions): TrackLayout {
   };
 }
 
-// ---- now chips ---------------------------------------------------------------------------
+// ---- current state ---------------------------------------------------------------------------
 
 export interface NowChip {
   dimension: Chip["dimension"];
@@ -546,7 +546,7 @@ export interface NowChip {
 const WHO_TONES: Record<Who, Tone> = { you: "accent", ci: "amber", others: "gray", none: "gray" };
 
 /**
- * The "now" chips of a track, each looked up in the catalog (an unknown
+ * The current state of a track (what the end cap's tooltip lists), each looked up in the catalog (an unknown
  * value throws). The Next chip says the action's own label (which names a
  * parent) and is toned by who it waits on.
  */
@@ -580,6 +580,23 @@ export function nowChips(track: Pick<Track, "current">, catalog: Catalog): NowCh
         return assertNever(chip, "chip dimension");
     }
   });
+}
+
+/**
+ * The tooltip of the track's end cap (the "now" line, or the end of a
+ * merged/closed PR): the current state, one "Group: value" line per state.
+ * Every catalog state that has a `now_state` representation appears here.
+ */
+export function endTip(
+  layout: Pick<TrackLayout, "endKind" | "end">,
+  states: NowChip[],
+): Extract<Tip, { type: "state" }> {
+  return {
+    type: "state",
+    title: layout.endKind === null ? "Now" : layout.endKind === "merged" ? "Merged" : "Closed",
+    ms: layout.end,
+    items: states.map((state) => `${state.group}: ${state.text}`),
+  };
 }
 
 // ---- tooltips -------------------------------------------------------------------------------
@@ -699,7 +716,7 @@ export interface LegendModel {
   notRepresented: Catalog["not_represented"];
 }
 
-/** Everything the track and chips can show, from the catalog. */
+/** Everything the track and its end-cap tooltip can show, from the catalog. */
 export function legendModel(catalog: Catalog): LegendModel {
   return {
     events: (Object.entries(catalog.events) as [EventKind, Catalog["events"][EventKind]][]).map(

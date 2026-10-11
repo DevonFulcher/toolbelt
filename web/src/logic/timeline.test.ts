@@ -3,6 +3,7 @@ import type { Chip, EventKind, TimelineEvent } from "../api/generated";
 import { ago, catalog, DAY, event as ev, HOUR, MIN, NOW } from "../testing/fixtures";
 import { formatAbsolute, formatAge, formatSpan } from "./format";
 import {
+  endTip,
   legendModel,
   listEntries,
   markerKind,
@@ -439,7 +440,7 @@ describe("catalog exhaustiveness: the renderer draws whatever the catalog says",
     }
   });
 
-  test("every catalog state is representable: its kinds exist and it can be a chip", () => {
+  test("every catalog state is representable: its kinds exist and it is listed in the end cap's tooltip", () => {
     for (const state of catalog.states) {
       expect(state.reps.length, `${state.dimension}=${state.value}`).toBeGreaterThan(0);
       for (const rep of state.reps) {
@@ -452,8 +453,12 @@ describe("catalog exhaustiveness: the renderer draws whatever the catalog says",
       }
       if (state.dimension in catalog.chips) {
         const chip = { dimension: state.dimension, value: state.value, n: 2, text: "label", who: "you" } as Chip;
-        const [made] = nowChips({ current: [chip] }, catalog);
-        expect(made.text && made.group, `${state.dimension}=${state.value}`).toBeTruthy();
+        const made = nowChips({ current: [chip] }, catalog);
+        const tip = tooltipContent(endTip({ endKind: null, end: 0 }, made), 0);
+        expect(tip.items, `${state.dimension}=${state.value}`).toEqual([
+          `${made[0].group}: ${made[0].text}`,
+        ]);
+        expect(made[0].text && made[0].group).toBeTruthy();
       }
     }
   });

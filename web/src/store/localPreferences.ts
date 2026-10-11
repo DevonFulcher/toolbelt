@@ -4,6 +4,8 @@ import type { Preferences } from "./appStore";
 // remembered between visits (the same keys as before the React client).
 const COMPACT_KEY = "tt-ui-compact";
 const COLLAPSED_KEY = "tt-ui-collapsed";
+// The cards (by id: repo id and branch) whose chronological log is open.
+const LOG_OPEN_KEY = "tt-ui-log-open";
 
 /**
  * Preferences in `localStorage`. Remembering is a convenience: a blocked or
@@ -24,18 +26,21 @@ export function localPreferences(storage: Storage | null): Preferences {
       // see above
     }
   };
+  const readList = (key: string): string[] => {
+    try {
+      const parsed: unknown = JSON.parse(read(key) ?? "[]");
+      return Array.isArray(parsed) ? parsed.filter((k): k is string => typeof k === "string") : [];
+    } catch {
+      return [];
+    }
+  };
   return {
     loadCompact: () => read(COMPACT_KEY),
     saveCompact: (value) => write(COMPACT_KEY, value ? "1" : "0"),
-    loadCollapsed: () => {
-      try {
-        const parsed: unknown = JSON.parse(read(COLLAPSED_KEY) ?? "[]");
-        return Array.isArray(parsed) ? parsed.filter((k): k is string => typeof k === "string") : [];
-      } catch {
-        return [];
-      }
-    },
+    loadCollapsed: () => readList(COLLAPSED_KEY),
     saveCollapsed: (keys) => write(COLLAPSED_KEY, JSON.stringify(keys)),
+    loadLogOpen: () => readList(LOG_OPEN_KEY),
+    saveLogOpen: (ids) => write(LOG_OPEN_KEY, JSON.stringify(ids)),
   };
 }
 

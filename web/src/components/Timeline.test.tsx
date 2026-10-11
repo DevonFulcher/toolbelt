@@ -28,9 +28,10 @@ describe("a card's timeline", () => {
   test("draws prominent events as focusable, labelled markers", () => {
     show();
 
-    const markers = [...track().querySelectorAll<HTMLElement>(".tl-mark")];
-    // Opened, the failed commit, the request and the approval; plain commits are faint.
-    expect(markers.map((m) => m.textContent)).toEqual(["◆", "●", "▸", "✓"]);
+    const markers = [...track().querySelectorAll<HTMLElement>(".tl-mark:not(.tl-faint)")];
+    // Opened, the failed commit, the request and the approval; plain commits are faint dots.
+    expect(markers.map((m) => m.firstChild?.textContent)).toEqual(["◆", "●", "▸", "✓"]);
+    expect(track().querySelectorAll(".tl-faint")).toHaveLength(1);
     for (const marker of markers) {
       expect(marker).toHaveAttribute("tabindex", "0");
       expect(marker.getAttribute("aria-label")).toMatch(/ago$/);
@@ -40,12 +41,17 @@ describe("a card's timeline", () => {
     expect(screen.getByText("now")).toBeInTheDocument();
   });
 
-  test("the collapsed card has no chip row: the slots above already say it", () => {
+  test("there is one track: always labelled, with no chip row repeating the slots above", () => {
     show();
 
     expect(document.querySelector(".tl-chips")).toBeNull();
+    expect(document.querySelector(".tl-state-row")).toBeNull();
     expect(screen.queryByText("State now")).toBeNull();
-    expect(document.querySelector(".tl-collapsed .tl-chip")).toBeNull();
+    expect(track().querySelectorAll(".tl-label").length).toBeGreaterThan(0);
+    expect(track().querySelectorAll(".tl-tick").length).toBeGreaterThan(0);
+    expect(track().querySelector(".tl-faint")).toBeTruthy();
+    // The log is not part of the track: closed until asked for.
+    expect(document.querySelector(".tl-list")).toBeNull();
   });
 
   test("the end cap's tooltip lists the current states with the time", () => {
@@ -63,50 +69,50 @@ describe("a card's timeline", () => {
     }
   });
 
-  test("the expanded card shows the chips in a labelled State now row next to the legend toggle", () => {
-    show();
-    fireEvent.click(screen.getByRole("button", { name: "Expand" }));
-
-    const row = document.querySelector(".tl-state-row") as HTMLElement;
-    expect(row).toHaveTextContent("State now");
-    const chips = within(row).getByLabelText("State now");
-    for (const text of ["PR open", "CI passing", "Review approved", "Comments 0 unresolved", "Merge clean"]) {
-      expect(chips).toHaveTextContent(text);
-    }
-    expect(within(row).getByRole("button", { name: "?" })).toBeInTheDocument();
-    // Beneath the track, not at its right end.
-    expect(row.compareDocumentPosition(track()) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
-
-    fireEvent.click(screen.getByRole("button", { name: "Collapse" }));
-    expect(document.querySelector(".tl-chips")).toBeNull();
-  });
-
-  test("expands to labelled events and a chronological table, and collapses again", () => {
+  test("Expand shows the chronological log under the track, Collapse hides it again", () => {
     show();
     expect(document.querySelector(".tl-list")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Hide commits" })).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Expand" }));
 
-    expect(document.querySelector(".tl")).toHaveClass("tl-expanded");
     const rows = [...document.querySelectorAll(".tl-list tbody tr")].map((tr) => tr.children[1].textContent);
     expect(rows).toEqual(["opened", "commit (CI failed)", "commit", "review requested", "approved"]);
     expect(document.querySelector(".tl-list thead")).toHaveTextContent("CI");
-    expect(track().querySelector(".tl-label")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Collapse" })).toHaveAttribute("aria-expanded", "true");
 
     fireEvent.click(screen.getByRole("button", { name: "Hide commits" }));
     expect([...document.querySelectorAll(".tl-list tbody tr")]).toHaveLength(3);
+    expect(track().querySelector(".tl-faint")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Collapse" }));
     expect(document.querySelector(".tl-list")).toBeNull();
   });
 
-  test("clicking the collapsed track expands it", () => {
-    show();
+  test("whether the log is open is remembered per card", () => {
+    const first = show();
+    fireEvent.click(screen.getByRole("button", { name: "Expand" }));
+    expect(first.preferences.saved.logOpen).toEqual(["1:devon/a"]);
+    first.unmount();
 
-    fireEvent.click(track());
+    renderWith(
+      <App clock={() => NOW} />,
+      snapshot([branch(1, "devon/a", { status: pr({ review: "approved", detail: history }) })]),
+      { logOpen: ["1:devon/a"] },
+    );
 
-    expect(document.querySelector(".tl")).toHaveClass("tl-expanded");
+    expect(document.querySelector(".tl-list")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Collapse" })).toBeInTheDocument();
+  });
+
+  test("another card's remembered log does not open this one", () => {
+    renderWith(
+      <App clock={() => NOW} />,
+      snapshot([branch(1, "devon/a", { status: pr({ review: "approved", detail: history }) })]),
+      { logOpen: ["2:devon/a", "1:devon/other"] },
+    );
+
+    expect(document.querySelector(".tl-list")).toBeNull();
   });
 
   test("the legend is generated from the catalog and toggles with ?", () => {
@@ -125,7 +131,7 @@ describe("a card's timeline", () => {
     for (const item of catalog.not_represented) {
       expect(legend.getAllByText(item.label).length).toBeGreaterThan(0);
     }
-    expect(legend.getByText("State now (chips in the expanded view)")).toBeInTheDocument();
+    expect(legend.getByText(/^State now \(listed in the tooltip of the track's right end/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "?" })).toHaveAttribute("aria-pressed", "true");
   });
 
@@ -164,7 +170,7 @@ describe("a card's timeline", () => {
     expect(screen.getByRole("tooltip")).toHaveTextContent("Duration");
   });
 
-  test("the expanded state survives a live update of the card", () => {
+  test("the open log survives a live update of the card", () => {
     const { store } = show();
     fireEvent.click(screen.getByRole("button", { name: "Expand" }));
 
@@ -179,7 +185,6 @@ describe("a card's timeline", () => {
       );
     });
 
-    expect(document.querySelector(".tl")).toHaveClass("tl-expanded");
     expect(document.querySelectorAll(".tl-list tbody tr")).toHaveLength(6);
   });
 
@@ -255,7 +260,7 @@ describe("a task that started before its PR", () => {
 
     expect(screen.getByText("started 10d ago")).toBeInTheDocument();
     const markers = [...track().querySelectorAll<HTMLElement>(".tl-mark")];
-    expect(markers.map((m) => m.textContent)).toEqual(["◇", "●", "◆"]);
+    expect(markers.map((m) => m.firstChild?.textContent)).toEqual(["◇", "●", "◆"]);
     const working = track().querySelector<HTMLElement>(".tl-phase-working");
     expect(working).toBeTruthy();
     expect(working?.style.left).toBe("0%");
@@ -265,7 +270,7 @@ describe("a task that started before its PR", () => {
     expect(screen.getByRole("tooltip")).toHaveTextContent("Working (no PR yet)");
   });
 
-  test("lists the start in the expanded table", () => {
+  test("lists the start in the log", () => {
     showStarted();
 
     fireEvent.click(screen.getByRole("button", { name: "Expand" }));
@@ -310,7 +315,7 @@ describe("the weekday lines and weekend bands", () => {
   const lines = () => [...document.querySelectorAll<HTMLElement>(".tl-daygrid .tl-day")];
   const bands = () => document.querySelectorAll(".tl-daygrid .tl-weekend");
 
-  test("every midnight gets a line and each weekend a band, labelled when expanded", () => {
+  test("every midnight gets a line (labelled with its weekday) and each weekend a band", () => {
     trackWidth(600);
     showDays(10);
 
@@ -319,10 +324,6 @@ describe("the weekday lines and weekend bands", () => {
       "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun", "Mon", "Tue",
     ]);
     expect(bands()).toHaveLength(2);
-    expect(document.querySelectorAll(".tl-day-label")).toHaveLength(0);
-
-    fireEvent.click(screen.getByRole("button", { name: "Expand" }));
-
     expect([...document.querySelectorAll(".tl-day-label")].map((l) => l.textContent)).toEqual([
       "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun", "Mon", "Tue",
     ]);
@@ -357,7 +358,6 @@ describe("the weekday lines and weekend bands", () => {
   test("initials where three letters would collide", () => {
     trackWidth(150);
     showDays(8);
-    fireEvent.click(screen.getByRole("button", { name: "Expand" }));
 
     // 150px over 8 days is 19px a day.
     expect(lines().length).toBeGreaterThan(0);

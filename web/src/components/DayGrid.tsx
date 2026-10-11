@@ -6,11 +6,10 @@ const UNMEASURED_PX = 600;
 
 /**
  * The calendar decoration behind a track's phases and markers: a band per
- * weekend and a line at each local midnight, labelled with its weekday when
- * the track is expanded. It fills the track, ignores the pointer and is
+ * weekend and a line at each local midnight, labelled with its weekday. It fills the track, ignores the pointer and is
  * hidden from assistive tech (the timeline's list has the real times).
  */
-export function DayGrid({ start, end, labelled }: { start: number; end: number; labelled: boolean }) {
+export function DayGrid({ start, end }: { start: number; end: number }) {
   const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   useLayoutEffect(() => {
@@ -43,9 +42,7 @@ export function DayGrid({ start, end, labelled }: { start: number; end: number; 
           data-weekday={day.label}
           style={{ left: `${day.x * 100}%` }}
         >
-          {labelled && (
-            <span className="tl-day-label">{density.letters === 3 ? day.label : day.label[0]}</span>
-          )}
+          <span className="tl-day-label">{density.letters === 3 ? day.label : day.label[0]}</span>
         </div>
       ))}
     </div>

@@ -2,6 +2,7 @@ import { memo, useMemo, type CSSProperties } from "react";
 import type { Catalog, LoadedStatus, CiResult } from "../api/generated";
 import { formatAbsolute } from "../logic/format";
 import {
+  endTip,
   eventInfo,
   legendModel,
   listEntries,
@@ -9,7 +10,6 @@ import {
   phaseInfo,
   trackLayout,
   trackStart,
-  type Tip,
   type Track,
 } from "../logic/timeline";
 import { useApp } from "../store/StoreContext";
@@ -35,6 +35,12 @@ export function trackOf(status: LoadedStatus, startedAt: string | null): Track {
   };
 }
 
+/** The track's height with one lane of markers, and what each further lane adds (px). */
+const TRACK_BASE = 34;
+const LANE_STEP = 20;
+/** Where the first lane's markers sit from the track's top (px). */
+const MARKER_TOP = 14;
+
 const CI_WORDS: Record<Exclude<CiResult, "">, string> = {
   failed: "failed",
   success: "passed",
@@ -53,16 +59,16 @@ interface TimelineProps {
 }
 
 /**
- * One card's timeline. Collapsed: a slim track with the prominent events and
- * nothing else (the card's slots above it already show the current state; the
- * end cap's tooltip lists it). Expanded: a taller track with labelled
- * events, faint commit dots (unless hidden), a labelled "State now" row of
- * chips with the legend toggle ("?") beside it, and the chronological table.
+ * One card's timeline: a labelled track (events in lanes, faint commit dots
+ * unless hidden, axis ticks, phases, weekday lines) whose end cap's tooltip
+ * lists the current state, the legend toggle ("?") and, behind the
+ * Expand/Collapse button, the chronological log table.
  */
 export const Timeline = memo(function Timeline({ id, status, startedAt, catalog, now }: TimelineProps) {
   const ui = useApp((s) => s.cardUi[id]);
   const patchCardUi = useApp((s) => s.patchCardUi);
-  const expanded = Boolean(ui?.expanded);
+  const logOpen = useApp((s) => s.logOpen.includes(id));
+  const toggleLog = useApp((s) => s.toggleLog);
   const hideCommits = Boolean(ui?.hideCommits);
   const legend = Boolean(ui?.legend);
   const track = useMemo(() => trackOf(status, startedAt), [status, startedAt]);
@@ -79,70 +85,36 @@ export const Timeline = memo(function Timeline({ id, status, startedAt, catalog,
       ?
     </button>
   );
-  // Expanded only: the labelled chips of the current state, and the legend
-  // toggle next to them.
-  const stateRow = (
-    <div className="tl-state-row">
-      <span className="tl-state-label">State now</span>
-      <div className="tl-chips" aria-label="State now">
-        {chips.map((chip) => (
-          <span
-            key={chip.dimension}
-            className={`tl-chip tone-${chip.tone} tl-chip-${chip.dimension}`}
-            title={chip.title}
-          >
-            <span className="tl-chip-label">{chip.group}</span> {chip.text}
-          </span>
-        ))}
-      </div>
-      {legendButton}
-    </div>
-  );
-
   if (trackStart(track) === null) {
     // No start recorded and no PR yet, or no history for it: nothing to put on
     // a time axis.
     return (
-      <div className={`tl ${expanded ? "tl-expanded" : "tl-collapsed"}`}>
+      <div className="tl">
         <div className="tl-body">
           <div className="tl-left">
             <div className="tl-ends">
               {track.state === "none" ? "no PR yet: no history to draw" : "PR history unavailable"}
+              <span className="tl-buttons">{legendButton}</span>
             </div>
-            {!expanded && <span className="tl-buttons">{legendButton}</span>}
           </div>
-          {expanded && stateRow}
         </div>
         {legend && <Legend catalog={catalog} />}
       </div>
     );
   }
 
-  const commits = hideCommits ? "none" : expanded ? "all" : "significant";
-  const layout = trackLayout(track, {
-    now,
-    catalog,
-    commits,
-    laneGap: expanded ? 0.15 : 0.015,
-    maxLanes: expanded ? 4 : 2,
-  });
-  const laneStep = expanded ? 20 : 8;
-  const base = expanded ? 34 : 24;
-  const height = base + (layout.lanes - 1) * laneStep;
+  const commits = hideCommits ? "none" : "all";
+  const layout = trackLayout(track, { now, catalog, commits, laneGap: 0.15, maxLanes: 4 });
+  const height = TRACK_BASE + (layout.lanes - 1) * LANE_STEP;
   // The end cap (the "now" line, or the end of a merged/closed PR) says what
   // the state is at that moment.
-  const endTip: Extract<Tip, { type: "state" }> = {
-    type: "state",
-    title: layout.endKind === null ? "Now" : layout.endKind === "merged" ? "Merged" : "Closed",
-    ms: layout.end,
-    items: chips.map((chip) => `${chip.group}: ${chip.text}`),
-  };
-  const entries = expanded ? listEntries(track, { now, catalog, commits }) : [];
+  const capTip = endTip(layout, chips);
+  const entries = logOpen ? listEntries(track, { now, catalog, commits }) : [];
   const hasCi = entries.some((entry) => entry.ci);
 
   return (
     <div
-      className={`tl ${expanded ? "tl-expanded" : "tl-collapsed"}`}
+      className="tl"
       style={{ "--tl-height": `${height}px` } as CSSProperties}
     >
       <div className="tl-body">
@@ -153,12 +125,12 @@ export const Timeline = memo(function Timeline({ id, status, startedAt, catalog,
               <button
                 type="button"
                 className="tl-expand"
-                aria-expanded={expanded}
-                onClick={() => patchCardUi(id, { expanded: !expanded })}
+                aria-expanded={logOpen}
+                onClick={() => toggleLog(id)}
               >
-                {expanded ? "Collapse" : "Expand"}
+                {logOpen ? "Collapse" : "Expand"}
               </button>
-              {expanded && (
+              {logOpen && (
                 <button
                   type="button"
                   className="tl-commits"
@@ -168,22 +140,16 @@ export const Timeline = memo(function Timeline({ id, status, startedAt, catalog,
                   {hideCommits ? "Show commits" : "Hide commits"}
                 </button>
               )}
-              {!expanded && legendButton}
+              {legendButton}
             </span>
             <span className="tl-end">{layout.endLabel}</span>
           </div>
-          <div
-            className="tl-track"
-            style={{ height }}
-            onClick={() => {
-              if (!expanded) patchCardUi(id, { expanded: true });
-            }}
-          >
-            <DayGrid start={layout.start} end={layout.end} labelled={expanded} />
+          <div className="tl-track" style={{ height }}>
+            <DayGrid start={layout.start} end={layout.end} />
             <div className="tl-axis" />
             {layout.ticks.map((tick) => (
               <span key={tick.x} className="tl-tick" style={{ left: `${tick.x * 100}%` }}>
-                {expanded ? tick.label : ""}
+                {tick.label}
               </span>
             ))}
             {layout.phases.map((phase) => (
@@ -213,27 +179,26 @@ export const Timeline = memo(function Timeline({ id, status, startedAt, catalog,
                   className={`tl-mark tl-k-${marker.kind} tone-${info.tone}${faint ? " tl-faint" : ""}`}
                   style={{
                     left: `${marker.x * 100}%`,
-                    ...(faint ? {} : { top: `${(expanded ? 14 : 12) + marker.lane * laneStep}px` }),
+                    ...(faint ? {} : { top: `${MARKER_TOP + marker.lane * LANE_STEP}px` }),
                   }}
                 >
                   {marker.kind === "commits" ? String(marker.count) : info.glyph}
-                  {expanded && !faint && (
+                  {!faint && (
                     <span className={`tl-label${marker.x > 0.78 ? " tl-flip" : ""}`}>{label}</span>
                   )}
                 </TipSource>
               );
             })}
             <TipSource
-              tip={endTip}
-              label={`${endTip.title}: ${chips.map((c) => `${c.group} ${c.text}`).join(", ")}`}
+              tip={capTip}
+              label={`${capTip.title}: ${chips.map((c) => `${c.group} ${c.text}`).join(", ")}`}
               className={layout.now !== null ? "tl-now" : "tl-end-cap"}
             />
           </div>
-          {expanded && stateRow}
         </div>
       </div>
       {legend && <Legend catalog={catalog} />}
-      {expanded && (
+      {logOpen && (
         <div className={`tl-list-wrap${hasCi ? " tl-has-ci" : ""}`}>
           <table className="tl-list">
             <thead>
@@ -273,7 +238,7 @@ export const Timeline = memo(function Timeline({ id, status, startedAt, catalog,
   );
 });
 
-/** Everything the track and chips can show, generated from the catalog. */
+/** Everything the track and its end-cap tooltip can show, generated from the catalog. */
 export function Legend({ catalog }: { catalog: Catalog }) {
   const model = useMemo(() => legendModel(catalog), [catalog]);
   return (
@@ -316,7 +281,7 @@ export function Legend({ catalog }: { catalog: Catalog }) {
         </div>
       </section>
       <section className="tl-legend-part tl-legend-chips">
-        <h4>State now (chips in the expanded view)</h4>
+        <h4>State now (listed in the tooltip of the track's right end: Now, Merged or Closed)</h4>
         {model.chips.flatMap((group) =>
           group.values.map((value) => (
             <div className="tl-legend-row" key={`${group.dimension}-${value.text}`}>

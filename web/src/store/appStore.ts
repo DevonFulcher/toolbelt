@@ -25,7 +25,6 @@ export type StaticBranch = Omit<Branch, "status" | "task_live">;
 
 /** Per-card timeline UI state, kept across live updates. */
 export interface CardUi {
-  expanded?: boolean;
   hideCommits?: boolean;
   legend?: boolean;
 }
@@ -36,6 +35,9 @@ export interface Preferences {
   saveCompact(value: "" | "1"): void;
   loadCollapsed(): string[];
   saveCollapsed(keys: string[]): void;
+  /** The ids of the cards whose chronological log is open. */
+  loadLogOpen(): string[];
+  saveLogOpen(ids: string[]): void;
 }
 
 export interface AppState {
@@ -65,6 +67,8 @@ export interface AppState {
   cardUi: Record<string, CardUi>;
   /** Keys of the collapsed card sections. */
   collapsed: string[];
+  /** Ids of the cards whose chronological log is open (remembered). */
+  logOpen: string[];
 
   // -- actions --
   applySnapshot(snapshot: Snapshot, now?: number): void;
@@ -78,6 +82,7 @@ export interface AppState {
   /** Replaces the view state (the URL follows). */
   setView(view: ViewState): void;
   patchCardUi(id: string, patch: CardUi): void;
+  toggleLog(id: string): void;
   toggleSection(key: string): void;
   expandSection(key: string): void;
 }
@@ -98,6 +103,8 @@ export const noPreferences: Preferences = {
   saveCompact: () => {},
   loadCollapsed: () => [],
   saveCollapsed: () => {},
+  loadLogOpen: () => [],
+  saveLogOpen: () => {},
 };
 
 export interface StoreInit {
@@ -129,6 +136,7 @@ export function createAppStore(init: StoreInit = {}): AppStore {
     view: init.view ?? DEFAULT_STATE,
     cardUi: {},
     collapsed: preferences.loadCollapsed(),
+    logOpen: preferences.loadLogOpen(),
 
     applySnapshot(snapshot, now = clock()) {
       const prev = get();
@@ -217,6 +225,13 @@ export function createAppStore(init: StoreInit = {}): AppStore {
 
     patchCardUi(id, patch) {
       set((state) => ({ cardUi: { ...state.cardUi, [id]: { ...state.cardUi[id], ...patch } } }));
+    },
+
+    toggleLog(id) {
+      const open = get().logOpen;
+      const next = open.includes(id) ? open.filter((k) => k !== id) : [...open, id];
+      preferences.saveLogOpen(next);
+      set({ logOpen: next });
     },
 
     toggleSection(key) {
