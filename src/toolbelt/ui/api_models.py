@@ -506,13 +506,6 @@ type MixState = Literal[
 ]
 #: The coarse classes the Next rules fall into (``Who`` without ``none``).
 type MixWho = Literal["you", "ci", "others"]
-type LeadStageKey = Literal[
-    "start_to_open",
-    "open_to_request",
-    "request_to_review",
-    "review_to_merge",
-    "start_to_merge",
-]
 
 
 class MixStateInfo(Model):
@@ -556,39 +549,33 @@ class StatusMix(Model):
     who: list[MixWhoSeries]
 
 
-class Throughput(Model):
-    #: ISO start (Monday, UTC) of each week; the last one is the current,
-    #: partial, week.
-    starts: list[str]
-    opened: list[int]
-    merged: list[int]
-    #: Closed without merging.
-    closed: list[int]
+class PrMilestones(Model):
+    """One PR of the user's and the UTC instants its lead times are measured
+    between. The server does no calendar arithmetic (day, week and weekend
+    are the viewer's time zone's): the client buckets and subtracts."""
 
-
-class LeadStage(Model):
-    key: LeadStageKey
-    label: str
-    #: PRs merged in the window with this interval known / unknown (the
-    #: start or the request/review it is measured from was not recorded).
-    n: int
-    unknown: int
-    median_s: float | None
-    p75_s: float | None
-    p90_s: float | None
-    #: Every known interval in seconds, ascending.
-    values_s: list[float]
+    #: Lower-case ``owner/name``, and the PR's number, title and URL.
+    repo: str
+    number: int
+    title: str
+    url: str
+    state: Literal["OPEN", "MERGED", "CLOSED"]
+    opened: str
+    #: When it was merged or closed; ``None`` while open.
+    ended: str | None
+    #: When the task began, if recorded, and how it was tied to this PR:
+    #: ``id`` (the PR's recorded identity) or ``name`` (the branch name and
+    #: the times, for a task that never recorded its PR).
+    task_started: str | None
+    matched_by: Literal["id", "name"] | None
+    first_review_requested: str | None
+    #: The first review by someone other than the author, and the first one
+    #: at or after the first request.
+    first_review: str | None
+    first_review_after_request: str | None
 
 
 class AggregateCoverage(Model):
-    #: PRs of the user's in the window, and how many of them have a recorded
-    #: task start.
-    prs: int
-    prs_with_start: int
-    #: Of ``prs_with_start``, how many were tied to their task by the branch
-    #: name (and the times) because the task never recorded its PR; the rest
-    #: were joined by the PR's id.
-    starts_by_name: int
     #: Task starts are recorded from this time on (when the stack DB began
     #: archiving removed branches); earlier tasks have no start unless their
     #: branch is still tracked.
@@ -619,8 +606,8 @@ class Aggregate(Model):
     #: The repo this is narrowed to (its name), ``None`` for all of them.
     #: Sample sizes shrink per repo: ``coverage`` says how many PRs.
     repo: str | None
-    throughput: Throughput
-    lead_time: list[LeadStage]
+    #: The PRs of (a little more than) the window, with their milestones.
+    prs: list[PrMilestones]
     mix: StatusMix
     coverage: AggregateCoverage
     #: What could not be reconstructed or is approximated.

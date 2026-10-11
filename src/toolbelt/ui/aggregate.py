@@ -32,7 +32,6 @@ truncated at its newest end.
 """
 
 import bisect
-import math
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -99,13 +98,34 @@ NOTES: tuple[tuple[str, str], ...] = (
     (
         "Tasks before their PR",
         "Only tasks whose start was recorded (a branch created with toolbelt) "
-        "have a working span; others begin when their PR opened.",
+        "have a working span; others begin when their PR opened. A start is "
+        "tied to its PR by the recorded PR id; only a task that never "
+        "recorded its PR falls back to the branch name.",
     ),
     (
         "Blocked on a parent",
         "Rebuilt from each PR's base branch over time and the parent PR's "
         "state, with the same rule as Next: it waits on you when the parent "
         "does.",
+    ),
+    (
+        "Days, weeks and weekends",
+        "The server sends UTC instants and the status-mix samples; the page "
+        "decides what a day, a week (Monday first) and a weekend are from "
+        "your browser's time zone, so throughput and lead-time buckets, the "
+        "weekend bands and the day labels all follow it (a Friday 7pm merge "
+        "in US/Central is a Friday, not a Saturday).",
+    ),
+    (
+        "Lead time",
+        "Each PR is placed at the time it merged, and a step's value is the "
+        "median over the PRs merged in each bucket (linear interpolation "
+        "between ranks; p75 and p90 likewise). A step is unknown for a PR "
+        "when its start was not recorded or the request or review it is "
+        "measured from does not exist: unknown is counted, never guessed. "
+        "'Excluding weekends' drops the time that falls on a Saturday or "
+        "Sunday in your zone (no holiday calendar); it changes lead times "
+        "only, not throughput, the status mix or the cards.",
     ),
     (
         "Status mix is a snapshot",
@@ -121,15 +141,6 @@ NOTES: tuple[tuple[str, str], ...] = (
         "Only a PR's first 100 timeline entries are fetched; a PR with more "
         "is truncated at its newest end.",
     ),
-)
-
-#: The lead-time intervals, in the order of a PR's life.
-LEAD_STAGES: tuple[tuple[str, str], ...] = (
-    ("start_to_open", "Task started to PR opened"),
-    ("open_to_request", "PR opened to review requested"),
-    ("request_to_review", "Review requested to first review"),
-    ("review_to_merge", "First review to merged"),
-    ("start_to_merge", "Task started to merged"),
 )
 
 
@@ -151,6 +162,7 @@ class PrRecord:
     node_id: str = ""
     #: GitHub's ``updatedAt`` of the PR (``None`` when the payload had none).
     updated_at: datetime | None = None
+    url: str = ""
 
 
 @dataclass(frozen=True)
@@ -609,18 +621,6 @@ def match_tasks(
 # ---- statistics ------------------------------------------------------------------------
 
 
-def percentile(sorted_values: Sequence[float], fraction: float) -> float | None:
-    """Linear interpolation between closest ranks; ``None`` when empty."""
-    if not sorted_values:
-        return None
-    position = (len(sorted_values) - 1) * fraction
-    low = math.floor(position)
-    high = math.ceil(position)
-    return sorted_values[low] + (sorted_values[high] - sorted_values[low]) * (
-        position - low
-    )
-
-
 def _iso(when: datetime) -> str:
     return when.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -643,14 +643,14 @@ def _first(items: Iterable[TimelineItem], kind: str) -> datetime | None:
     return min(times) if times else None
 
 
-def lead_intervals(task: Task) -> dict[str, float | None]:
-    """The lead-time intervals of a merged PR in seconds; ``None`` where the
-    start or the request/review it is measured from does not exist."""
+def milestones(task: Task, matched_by: str | None) -> api.PrMilestones:
+    """The instants of a PR's life the client derives its lead times from
+    (UTC; what is a day, a week or a weekend is the viewer's, so the server
+    does no such arithmetic). ``None`` where the start, or the request or
+    review a step is measured from, does not exist."""
     pr = task.pr
-    assert pr is not None and pr.facts.merged_at is not None
+    assert pr is not None
     facts = pr.facts
-    merged = facts.merged_at
-    assert merged is not None
     requested = _first(facts.items, act.REVIEW_REQUESTED)
     # The author's own review comments are not the review being waited for.
     reviews = [
@@ -658,25 +658,34 @@ def lead_intervals(task: Task) -> dict[str, float | None]:
         for item in facts.items
         if item.kind == act.REVIEW and (item.subject or item.actor) != facts.author
     ]
-    first_review = min(reviews) if reviews else None
     after_request = (
-        [t for t in reviews if requested is not None and t >= requested]
-        if requested
-        else []
+        [t for t in reviews if t >= requested] if requested is not None else []
+    )
+    ended = (
+        facts.merged_at
+        if facts.state == "MERGED"
+        else facts.closed_at
+        if facts.state == "CLOSED"
+        else None
     )
 
-    def seconds(a: datetime | None, b: datetime | None) -> float | None:
-        if a is None or b is None:
-            return None
-        return max((b - a).total_seconds(), 0.0)
+    def iso(when: datetime | None) -> str | None:
+        return _iso(when) if when is not None else None
 
-    return {
-        "start_to_open": seconds(task.started, facts.created_at),
-        "open_to_request": seconds(facts.created_at, requested),
-        "request_to_review": seconds(requested, min(after_request, default=None)),
-        "review_to_merge": seconds(first_review, merged),
-        "start_to_merge": seconds(task.started, merged),
-    }
+    return api.PrMilestones(
+        repo=pr.repo,
+        number=facts.number,
+        title=facts.title,
+        url=pr.url,
+        state=facts.state,  # type: ignore[arg-type]
+        opened=_iso(facts.created_at),
+        ended=iso(ended),
+        task_started=iso(task.started),
+        matched_by=matched_by if task.started is not None else None,  # type: ignore[arg-type]
+        first_review_requested=iso(requested),
+        first_review=iso(min(reviews, default=None)),
+        first_review_after_request=iso(min(after_request, default=None)),
+    )
 
 
 # ---- the aggregate -----------------------------------------------------------------------
@@ -727,6 +736,9 @@ def compute(
     """The aggregate view of the last ``weeks`` weeks (calendar weeks from
     Monday, UTC, the last one partial)."""
     start = window_start(now, weeks)
+    # The client's window starts at its own Monday, up to a day before this
+    # one (UTC): hand it the PRs of a little more than the window.
+    margin_start = start - timedelta(days=2)
     tasks = match_tasks(prs, facts, now)
     with_pr = [task for task in tasks if task.pr is not None]
     records = [task.pr for task in with_pr if task.pr is not None]
@@ -759,26 +771,13 @@ def compute(
         fetched_at=_iso(fetched_at),
         refreshed=refreshed,
         repo=repo,
-        throughput=_throughput(records, start, now),
-        lead_time=_lead_time(with_pr, start),
+        prs=[
+            milestones(task, task.matched_by)
+            for task in with_pr
+            if task.pr is not None and _in_window(task.pr, margin_start, now)
+        ],
         mix=_mix(lives, sample_instants(start, now, weeks), weeks),
         coverage=api.AggregateCoverage(
-            prs=sum(1 for r in records if _in_window(r, start, now)),
-            prs_with_start=sum(
-                1
-                for task in with_pr
-                if task.started is not None
-                and task.pr is not None
-                and _in_window(task.pr, start, now)
-            ),
-            starts_by_name=sum(
-                1
-                for task in with_pr
-                if task.started is not None
-                and task.matched_by == "name"
-                and task.pr is not None
-                and _in_window(task.pr, start, now)
-            ),
             task_starts_since=_iso(archive_since),
             tasks_without_pr=tasks_without_pr,
             truncated=truncated,
@@ -793,69 +792,6 @@ def _in_window(record: PrRecord, start: datetime, now: datetime) -> bool:
     return start <= facts.created_at <= now or any(
         t is not None and start <= t <= now for t in (facts.merged_at, facts.closed_at)
     )
-
-
-def _throughput(
-    records: Sequence[PrRecord], start: datetime, now: datetime
-) -> api.Throughput:
-    weeks = []
-    when = start
-    while when <= now:
-        weeks.append(when)
-        when += timedelta(weeks=1)
-    opened = [0] * len(weeks)
-    merged = [0] * len(weeks)
-    closed = [0] * len(weeks)
-
-    def bucket(at: datetime) -> int | None:
-        if at < start or at > now:
-            return None
-        return bisect.bisect_right(weeks, at) - 1
-
-    for record in records:
-        facts = record.facts
-        index = bucket(facts.created_at)
-        if index is not None:
-            opened[index] += 1
-        if facts.state == "MERGED" and facts.merged_at is not None:
-            index = bucket(facts.merged_at)
-            if index is not None:
-                merged[index] += 1
-        elif facts.state == "CLOSED" and facts.closed_at is not None:
-            index = bucket(facts.closed_at)
-            if index is not None:
-                closed[index] += 1
-    return api.Throughput(
-        starts=[_iso(w) for w in weeks], opened=opened, merged=merged, closed=closed
-    )
-
-
-def _lead_time(tasks: Sequence[Task], start: datetime) -> list[api.LeadStage]:
-    merged_in_window = [
-        task
-        for task in tasks
-        if task.pr is not None
-        and task.pr.facts.state == "MERGED"
-        and task.pr.facts.merged_at is not None
-        and task.pr.facts.merged_at >= start
-    ]
-    intervals = [lead_intervals(task) for task in merged_in_window]
-    stages = []
-    for key, label in LEAD_STAGES:
-        values = sorted(v for i in intervals if (v := i[key]) is not None)
-        stages.append(
-            api.LeadStage(
-                key=key,  # type: ignore[arg-type]
-                label=label,
-                n=len(values),
-                unknown=len(intervals) - len(values),
-                median_s=percentile(values, 0.5),
-                p75_s=percentile(values, 0.75),
-                p90_s=percentile(values, 0.9),
-                values_s=values,
-            )
-        )
-    return stages
 
 
 def sample_instants(start: datetime, now: datetime, weeks: int) -> list[datetime]:

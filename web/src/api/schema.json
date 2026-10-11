@@ -50,18 +50,18 @@
         "fetched_at": {
           "type": "string"
         },
-        "lead_time": {
-          "items": {
-            "$ref": "#/$defs/LeadStage"
-          },
-          "type": "array"
-        },
         "mix": {
           "$ref": "#/$defs/StatusMix"
         },
         "notes": {
           "items": {
             "$ref": "#/$defs/AggregateNote"
+          },
+          "type": "array"
+        },
+        "prs": {
+          "items": {
+            "$ref": "#/$defs/PrMilestones"
           },
           "type": "array"
         },
@@ -77,9 +77,6 @@
               "type": "null"
             }
           ]
-        },
-        "throughput": {
-          "$ref": "#/$defs/Throughput"
         },
         "weeks": {
           "type": "integer"
@@ -98,8 +95,7 @@
         "fetched_at",
         "refreshed",
         "repo",
-        "throughput",
-        "lead_time",
+        "prs",
         "mix",
         "coverage",
         "notes"
@@ -113,15 +109,6 @@
         "hidden": {
           "type": "integer"
         },
-        "prs": {
-          "type": "integer"
-        },
-        "prs_with_start": {
-          "type": "integer"
-        },
-        "starts_by_name": {
-          "type": "integer"
-        },
         "task_starts_since": {
           "type": "string"
         },
@@ -133,9 +120,6 @@
         }
       },
       "required": [
-        "prs",
-        "prs_with_start",
-        "starts_by_name",
         "task_starts_since",
         "tasks_without_pr",
         "truncated",
@@ -916,81 +900,6 @@
       "title": "HelloEvent",
       "type": "object"
     },
-    "LeadStage": {
-      "additionalProperties": false,
-      "properties": {
-        "key": {
-          "$ref": "#/$defs/LeadStageKey"
-        },
-        "label": {
-          "type": "string"
-        },
-        "median_s": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "n": {
-          "type": "integer"
-        },
-        "p75_s": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "p90_s": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "unknown": {
-          "type": "integer"
-        },
-        "values_s": {
-          "items": {
-            "type": "number"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "key",
-        "label",
-        "n",
-        "unknown",
-        "median_s",
-        "p75_s",
-        "p90_s",
-        "values_s"
-      ],
-      "title": "LeadStage",
-      "type": "object"
-    },
-    "LeadStageKey": {
-      "enum": [
-        "start_to_open",
-        "open_to_request",
-        "request_to_review",
-        "review_to_merge",
-        "start_to_merge"
-      ],
-      "type": "string"
-    },
     "Link": {
       "additionalProperties": false,
       "description": "``href`` is ``None`` when the value cannot (or should not) be linked.",
@@ -1669,6 +1578,115 @@
         "events"
       ],
       "title": "PrDetail",
+      "type": "object"
+    },
+    "PrMilestones": {
+      "additionalProperties": false,
+      "description": "One PR of the user's and the UTC instants its lead times are measured\nbetween. The server does no calendar arithmetic (day, week and weekend\nare the viewer's time zone's): the client buckets and subtracts.",
+      "properties": {
+        "ended": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "first_review": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "first_review_after_request": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "first_review_requested": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "matched_by": {
+          "anyOf": [
+            {
+              "enum": [
+                "id",
+                "name"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "number": {
+          "type": "integer"
+        },
+        "opened": {
+          "type": "string"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "OPEN",
+            "MERGED",
+            "CLOSED"
+          ],
+          "type": "string"
+        },
+        "task_started": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo",
+        "number",
+        "title",
+        "url",
+        "state",
+        "opened",
+        "ended",
+        "task_started",
+        "matched_by",
+        "first_review_requested",
+        "first_review",
+        "first_review_after_request"
+      ],
+      "title": "PrMilestones",
       "type": "object"
     },
     "PrState": {
@@ -2413,43 +2431,6 @@
         "reason"
       ],
       "title": "TaskUnavailable",
-      "type": "object"
-    },
-    "Throughput": {
-      "additionalProperties": false,
-      "properties": {
-        "closed": {
-          "items": {
-            "type": "integer"
-          },
-          "type": "array"
-        },
-        "merged": {
-          "items": {
-            "type": "integer"
-          },
-          "type": "array"
-        },
-        "opened": {
-          "items": {
-            "type": "integer"
-          },
-          "type": "array"
-        },
-        "starts": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "starts",
-        "opened",
-        "merged",
-        "closed"
-      ],
-      "title": "Throughput",
       "type": "object"
     },
     "TimelineEvent": {

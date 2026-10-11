@@ -31,6 +31,17 @@
 .agg-col-active { opacity: 1; }
 .agg-col-active rect { stroke: var(--fg); stroke-width: 1; }
 .agg-band { stroke: var(--card); stroke-width: .5; }
+.agg-weekend-line { fill: var(--muted); fill-opacity: .28; }
+.agg-line-total { stroke-width: 3.5; }
+.agg-range { fill: var(--accent); fill-opacity: .15; stroke: none; }
+.agg-dot { fill: var(--tone); fill-opacity: .4; }
+.agg-dot:hover { fill-opacity: 1; }
+.agg-lead-controls { display: grid; gap: 6px; }
+.agg-legend-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
+                     padding: 0 6px; border-radius: 4px; }
+.agg-legend-toggle[aria-pressed=false] { opacity: .5; text-decoration: line-through; }
+.agg-check { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); }
+.agg-summary-table { margin-top: 4px; }
 .agg-line { stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .agg-inflight { fill: var(--muted); fill-opacity: .55; }
 .agg-mode { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; }
@@ -47,21 +58,6 @@
 .agg-tip-value { margin-left: auto; padding-left: 12px; font-variant-numeric: tabular-nums; }
 .agg-empty { color: var(--muted); padding: 24px 12px; text-align: center; font-size: 13px;
              border: 1px dashed var(--line); border-radius: 6px; }
-
-/* Lead time: a label column and a strip per step. */
-.agg-lead { display: grid; gap: 2px; min-width: 0; }
-.agg-lead-row { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 8px;
-                align-items: center; border-top: 1px solid var(--line); padding: 4px 0; }
-.agg-lead-row.agg-lead-axis { border-top: 0; }
-.agg-lead-narrow .agg-lead-row { grid-template-columns: minmax(0, 1fr); gap: 2px; }
-.agg-lead-label { display: grid; gap: 1px; font-size: 12px; min-width: 0; }
-.agg-lead-stats { color: var(--muted); font-variant-numeric: tabular-nums; }
-.agg-lead-strip { min-width: 0; }
-.agg-lead-strip svg { display: block; }
-.agg-lead-empty { color: var(--muted); font-size: 12px; }
-.agg-dot { fill: var(--tone); fill-opacity: .6; }
-.agg-mark-heavy { stroke: var(--fg); stroke-width: 2; }
-.agg-mark-light { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 2 2; }
 
 /* The data table behind each chart. */
 .agg-table-wrap { max-height: 22rem; overflow: auto; border: 1px solid var(--line); border-radius: 6px; }

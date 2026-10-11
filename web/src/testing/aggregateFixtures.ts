@@ -1,7 +1,5 @@
 // A small `Aggregate` payload for the aggregate view's tests.
-import type { Aggregate, LeadStage, MixState, MixWho } from "../api/generated";
-
-const HOUR = 3600;
+import type { Aggregate, MixState, MixWho, PrMilestones } from "../api/generated";
 
 const STATES: { key: MixState; label: string; tone: Aggregate["mix"]["states"][number]["tone"] }[] = [
   { key: "working", label: "Working (no PR yet)", tone: "accent" },
@@ -15,23 +13,66 @@ const STATES: { key: MixState; label: string; tone: Aggregate["mix"]["states"][n
   { key: "blocked", label: "Blocked on parent", tone: "gray" },
 ];
 
-function stage(key: LeadStage["key"], label: string, values: number[], unknown = 0): LeadStage {
-  const sorted = [...values].sort((a, b) => a - b);
-  const at = (f: number): number | null => (sorted.length ? sorted[Math.round((sorted.length - 1) * f)] : null);
+function milestones(number: number, parts: Partial<PrMilestones>): PrMilestones {
   return {
-    key,
-    label,
-    n: sorted.length,
-    unknown,
-    median_s: at(0.5),
-    p75_s: at(0.75),
-    p90_s: at(0.9),
-    values_s: sorted,
+    repo: "o/api",
+    number,
+    title: `PR ${number}`,
+    url: `https://github.com/o/api/pull/${number}`,
+    state: "OPEN",
+    opened: "2026-10-06T09:00:00Z",
+    ended: null,
+    task_started: null,
+    matched_by: null,
+    first_review_requested: null,
+    first_review: null,
+    first_review_after_request: null,
+    ...parts,
   };
 }
 
-/** Four sampled instants of status mix over three weeks of throughput. The
- * third has nothing in flight. */
+/** Merged: 1 and 2 (known starts, requests and reviews), 3 (request and review,
+ * no start) and 4 (nothing known). Closed: 5. Open: 6 (start matched by name),
+ * 7, 8, 9. */
+const PRS: PrMilestones[] = [
+  milestones(1, {
+    state: "MERGED",
+    opened: "2026-09-24T09:00:00Z",
+    ended: "2026-09-25T15:00:00Z",
+    task_started: "2026-09-24T04:00:00Z",
+    matched_by: "id",
+    first_review_requested: "2026-09-24T10:00:00Z",
+    first_review: "2026-09-24T18:00:00Z",
+    first_review_after_request: "2026-09-24T18:00:00Z",
+  }),
+  milestones(2, {
+    state: "MERGED",
+    opened: "2026-09-29T09:00:00Z",
+    ended: "2026-10-01T09:00:00Z",
+    task_started: "2026-09-29T03:00:00Z",
+    matched_by: "id",
+    first_review_requested: "2026-09-29T11:00:00Z",
+    first_review: "2026-09-30T11:00:00Z",
+    first_review_after_request: "2026-09-30T11:00:00Z",
+  }),
+  milestones(3, {
+    state: "MERGED",
+    opened: "2026-10-02T09:00:00Z",
+    ended: "2026-10-05T10:00:00Z",
+    first_review_requested: "2026-10-02T10:00:00Z",
+    first_review: "2026-10-03T09:00:00Z",
+    first_review_after_request: "2026-10-03T09:00:00Z",
+  }),
+  milestones(4, { state: "MERGED", opened: "2026-10-05T08:00:00Z", ended: "2026-10-06T10:00:00Z" }),
+  milestones(5, { state: "CLOSED", opened: "2026-09-30T09:00:00Z", ended: "2026-10-01T09:00:00Z" }),
+  milestones(6, { task_started: "2026-10-05T20:00:00Z", matched_by: "name" }),
+  milestones(7, { opened: "2026-10-06T10:00:00Z" }),
+  milestones(8, { opened: "2026-10-07T10:00:00Z" }),
+  milestones(9, { opened: "2026-09-22T10:00:00Z" }),
+];
+
+/** Nine PRs, and four sampled instants of status mix. The third has nothing
+ * in flight. Dates are UTC (the tests run in it); window end is a Thursday. */
 export function aggregate(overrides: Partial<Aggregate> = {}): Aggregate {
   const days = ["2026-10-05T00:00:00Z", "2026-10-05T06:00:00Z", "2026-10-05T12:00:00Z", "2026-10-05T18:00:00Z"];
   const inflight = [2, 4, 0, 10];
@@ -55,19 +96,7 @@ export function aggregate(overrides: Partial<Aggregate> = {}): Aggregate {
     fetched_at: "2026-10-08T11:58:00Z",
     refreshed: 4,
     repo: null,
-    throughput: {
-      starts: ["2026-09-21T00:00:00Z", "2026-09-28T00:00:00Z", "2026-10-05T00:00:00Z"],
-      opened: [2, 4, 3],
-      merged: [1, 3, 2],
-      closed: [0, 1, 0],
-    },
-    lead_time: [
-      stage("start_to_open", "Task started to PR opened", [2 * HOUR, 5 * HOUR, 26 * HOUR], 3),
-      stage("open_to_request", "PR opened to review requested", [0.5 * HOUR, 2 * HOUR, 3 * HOUR, 30 * HOUR]),
-      stage("request_to_review", "Review requested to first review", [4 * HOUR, 9 * HOUR, 50 * HOUR]),
-      stage("review_to_merge", "First review to merged", [6 * HOUR, 20 * HOUR, 24 * HOUR, 70 * HOUR]),
-      stage("start_to_merge", "Task started to merged", []),
-    ],
+    prs: PRS,
     mix: {
       step_hours: 6,
       starts: days,
@@ -85,9 +114,6 @@ export function aggregate(overrides: Partial<Aggregate> = {}): Aggregate {
       })),
     },
     coverage: {
-      prs: 9,
-      prs_with_start: 3,
-      starts_by_name: 1,
       task_starts_since: "2026-09-30T08:00:00Z",
       tasks_without_pr: 1,
       truncated: false,

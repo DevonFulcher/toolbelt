@@ -33,7 +33,7 @@ describe("the aggregate view", () => {
     await screen.findByRole("heading", { name: "Throughput" });
 
     expect(fetchMock).toHaveBeenCalledWith("/api/aggregate?weeks=12", expect.anything());
-    for (const name of ["Throughput", "Lead time", "Status mix", "Who is it waiting on"]) {
+    for (const name of ["Throughput", "Lead time over time (All time)", "Status mix", "Who is it waiting on"]) {
       expect(screen.getByRole("heading", { name })).toBeInTheDocument();
     }
     // The status legend carries the catalog's labels (as served), and the
@@ -152,12 +152,12 @@ describe("the aggregate view", () => {
     fireEvent.keyDown(chart, { key: "ArrowRight" });
 
     const tip = within(mix).getByRole("status");
-    expect(tip).toHaveTextContent("Oct 5, 00:00 UTC");
+    expect(tip).toHaveTextContent("Mon Oct 5, 00:00");
     expect(tip).toHaveTextContent("2 tasks in flight");
     expect(within(tip).getByText("In draft").nextSibling).toHaveTextContent("50% (1 of 2)");
 
     fireEvent.keyDown(chart, { key: "ArrowRight" });
-    expect(within(mix).getByRole("status")).toHaveTextContent("Oct 5, 06:00 UTC");
+    expect(within(mix).getByRole("status")).toHaveTextContent("Mon Oct 5, 06:00");
     fireEvent.keyDown(chart, { key: "ArrowRight" });
     expect(within(mix).getByRole("status")).toHaveTextContent("nothing in flight");
     fireEvent.keyDown(chart, { key: "Escape" });
@@ -202,13 +202,13 @@ describe("the aggregate view", () => {
     const throughput = await screen.findByRole("region", { name: "Throughput" });
 
     expect(within(throughput).getByRole("img")).toHaveAccessibleName(
-      "9 PRs opened and 6 merged over 3 weeks, from the week of Sep 21.",
+      "9 PRs opened and 4 merged over 81 days, from Mon Jul 20.",
     );
     const mix = screen.getByRole("region", { name: "Status mix" });
     expect(within(mix).getByRole("img").getAttribute("aria-label")).toMatch(/\(10 tasks\): .*Approved 40%/);
   });
 
-  test("the data table toggle shows exact values", async () => {
+  test("the data table toggle shows exact values, per local day", async () => {
     serve(aggregate());
     show();
     const throughput = await screen.findByRole("region", { name: "Throughput" });
@@ -218,28 +218,81 @@ describe("the aggregate view", () => {
 
     const table = within(throughput).getByRole("table");
     const rows = within(table).getAllByRole("row").map((row) => row.textContent);
-    expect(rows).toEqual([
-      "Week ofOpenedMergedClosed unmerged",
-      "Sep 21210",
-      "Sep 28431",
-      "Oct 5320",
-    ]);
+    expect(rows[0]).toBe("DayWeekendOpenedMergedClosed unmerged");
+    expect(rows).toContain("Thu Sep 24100");
+    expect(rows).toContain("Fri Sep 25010");
+    expect(rows).toContain("Sat Sep 26yes000");
     fireEvent.click(within(throughput).getByRole("button", { name: "Hide data table" }));
     expect(within(throughput).queryByRole("table")).not.toBeInTheDocument();
   });
 
-  test("lead times show their medians and which intervals are unknown", async () => {
+  test("lead times are medians over time with a summary of each step and what is unknown", async () => {
     serve(aggregate());
     show();
-    const lead = await screen.findByRole("region", { name: "Lead time" });
+    const lead = await screen.findByRole("region", { name: "Lead time over time (All time)" });
+    const summary = within(lead).getByRole("table", { name: "Over the whole window (All time)" });
+    const row = (step: string): string =>
+      within(summary).getByText(step).closest("tr")!.textContent ?? "";
 
-    const first = within(lead).getByText("Task started to PR opened").parentElement!;
-    expect(first).toHaveTextContent("median 5h");
-    expect(first).toHaveTextContent("n=3 (3 unknown)");
-    // No data: says why, instead of inventing a value.
-    const last = within(lead).getByText("Task started to merged").parentElement!;
-    expect(last).toHaveTextContent("no data");
-    expect(lead).toHaveTextContent("No task start was recorded for these PRs (starts are recorded since Sep 30)");
+    // PRs 1 and 2 have a start (5h and 6h before opening); 3 and 4 do not.
+    expect(row("Task started to PR opened")).toBe("Task started to PR opened225.5h5.8h5.9h");
+    expect(row("Task started to merged")).toMatch(/^Task started to merged221\.9d/);
+    // Reviewed: PRs 1 (8h), 2 (24h) and 3 (23h); PR 4 has no review.
+    expect(row("Review requested to first review")).toMatch(/^Review requested to first review3123h/);
+    // The line chart has an accessible summary naming the mode.
+    expect(within(lead).getByRole("img").getAttribute("aria-label")).toMatch(
+      /^Lead time \(All time\), Jul 20 to Oct 8, by merge date:/,
+    );
+  });
+
+  test("a step can be hidden from the legend so the total reads on its own", async () => {
+    serve(aggregate());
+    show();
+    const lead = await screen.findByRole("region", { name: "Lead time over time (All time)" });
+    const steps = lead.querySelectorAll("path.agg-line");
+    expect(steps.length).toBeGreaterThan(1);
+
+    fireEvent.click(within(lead).getByRole("button", { name: "Task started to PR opened" }));
+
+    expect(lead.querySelectorAll("path.agg-line")).toHaveLength(steps.length - 1);
+    expect(within(lead).getByRole("button", { name: "Task started to PR opened" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+  });
+
+  test("excluding weekends switches every lead-time number, in the URL and the title", async () => {
+    const fetchMock = serve(aggregate());
+    const { url } = show();
+    const lead = await screen.findByRole("region", { name: "Lead time over time (All time)" });
+    const review = (): string =>
+      within(within(lead).getByRole("table", { name: /Over the whole window/ }))
+        .getByText("Review requested to first review")
+        .closest("tr")!.textContent!;
+    expect(review()).toContain("23h");
+
+    fireEvent.click(within(lead).getByRole("button", { name: "Excluding weekends" }));
+
+    const excluded = await screen.findByRole("region", { name: "Lead time over time (Excluding weekends)" });
+    expect(url.location.search).toBe("?view=aggregate&weekends=exclude");
+    // PR 3's review came Saturday morning: Friday's 14 hours remain of its 23.
+    expect(
+      within(within(excluded).getByRole("table", { name: "Over the whole window (Excluding weekends)" }))
+        .getByText("Review requested to first review")
+        .closest("tr")!.textContent,
+    ).toContain("14h");
+    // No refetch: both modes come from the same response.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    fireEvent.click(within(excluded).getByRole("button", { name: "All time" }));
+    await screen.findByRole("region", { name: "Lead time over time (All time)" });
+    expect(url.location.search).toBe("?view=aggregate");
+  });
+
+  test("the weekends parameter in the URL selects the mode", async () => {
+    serve(aggregate());
+    show("?view=aggregate&weekends=exclude");
+
+    await screen.findByRole("region", { name: "Lead time over time (Excluding weekends)" });
   });
 
   test("says when task starts are only recorded from a date inside the window", async () => {
@@ -254,7 +307,7 @@ describe("the aggregate view", () => {
     empty.mix.inflight = empty.mix.inflight.map(() => 0);
     empty.mix.series = empty.mix.series.map((s) => ({ ...s, share: s.share.map(() => null), count: s.count.map(() => 0) }));
     empty.mix.who = empty.mix.who.map((s) => ({ ...s, share: s.share.map(() => null), count: s.count.map(() => 0) }));
-    empty.coverage.prs = 0;
+    empty.prs = [];
     serve(empty);
     show();
 

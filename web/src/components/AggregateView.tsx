@@ -5,9 +5,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchAggregate } from "../api/client";
 import type { Aggregate, MixWho, Tone } from "../api/generated";
 import { formatBucketDate } from "../logic/aggregateChart";
+import { bucketDays, leadTimeSeries, STAGES, type StageKey } from "../logic/leadTime";
+import { browserTimeZone, formatLocalDate, windowStart } from "../logic/localTime";
+import { throughput } from "../logic/throughput";
 import { NEXT_SECTIONS } from "../logic/layout";
-import { useApp } from "../store/StoreContext";
-import { LeadTimeChart, MixChart, ThroughputChart, withHatches } from "./AggregateCharts";
+import { useApp, useAppStore } from "../store/StoreContext";
+import { LeadTimeChart, MixChart, ThroughputChart, withHatches, type LeadStageStyle } from "./AggregateCharts";
 
 type Load =
   | { weeks: number; repo: string; state: "ready"; data: Aggregate }
@@ -85,9 +88,20 @@ export function useAggregate(
  * as the cards do. */
 const WHO_TONE: Record<MixWho, Tone> = { you: "accent", ci: "amber", others: "gray" };
 
+/** The lead-time steps' lines use the page's existing tones. */
+const LEAD_TONES: Record<StageKey, Tone> = {
+  start_to_open: "amber",
+  open_to_request: "green",
+  request_to_review: "purple",
+  review_to_merge: "gray",
+  start_to_merge: "accent",
+};
+
 export function AggregateView({ fetchImpl = fetch }: { fetchImpl?: typeof fetch }) {
   const weeks = useApp((s) => s.view.weeks);
   const repo = useApp((s) => s.view.repo);
+  const weekends = useApp((s) => s.view.weekends);
+  const store = useAppStore();
   const { load, refresh, refreshing } = useAggregate(weeks, repo, fetchImpl);
   if (load === null) {
     return <div className="empty">{`Loading the last ${weeks} weeks…`}</div>;
@@ -95,22 +109,56 @@ export function AggregateView({ fetchImpl = fetch }: { fetchImpl?: typeof fetch 
   if (load.state === "error") {
     return <div className="empty error">{`Could not load the aggregate: ${load.message}`}</div>;
   }
-  return <AggregatePanels data={load.data} onRefresh={refresh} refreshing={refreshing} />;
+  return (
+    <AggregatePanels
+      data={load.data}
+      onRefresh={refresh}
+      refreshing={refreshing}
+      excludeWeekends={weekends === "exclude"}
+      onExcludeWeekends={(exclude) =>
+        store.getState().setView({ ...store.getState().view, weekends: exclude ? "exclude" : "" })
+      }
+    />
+  );
 }
 
 export function AggregatePanels({
   data,
   onRefresh,
   refreshing = false,
+  timeZone = browserTimeZone(),
+  excludeWeekends = false,
+  onExcludeWeekends,
 }: {
   data: Aggregate;
   onRefresh?: () => void;
   refreshing?: boolean;
+  /** The viewer's IANA zone: what a day, a week and a weekend are. */
+  timeZone?: string;
+  excludeWeekends?: boolean;
+  onExcludeWeekends?: (exclude: boolean) => void;
 }) {
   const catalog = useApp((s) => s.catalog);
-  const { throughput, mix, coverage } = data;
+  const { mix, coverage } = data;
   const opened = catalog?.events.opened;
   const merged = catalog?.events.merged;
+  const now = Date.parse(data.window_end);
+  const weeks = data.weeks;
+  const start = windowStart(now, weeks, timeZone);
+  const inWindow = data.prs.filter((pr) => {
+    const times = [pr.opened, pr.ended].filter((t): t is string => t !== null).map((t) => Date.parse(t));
+    return times.some((t) => t >= start && t <= now);
+  });
+  const flow = throughput(data.prs, { windowStart: start, now, weeks, timeZone });
+  const lead = leadTimeSeries(data.prs, {
+    windowStart: start,
+    now,
+    days: bucketDays(weeks),
+    timeZone,
+    excludeWeekends,
+  });
+  const withStart = inWindow.filter((pr) => pr.task_started !== null);
+  const byName = withStart.filter((pr) => pr.matched_by === "name").length;
 
   const stateSeries = withHatches(
     mix.states.map((s) => ({ key: s.key, label: s.label, tone: s.tone, legend: s.legend })),
@@ -130,16 +178,23 @@ export function AggregatePanels({
     { key: "opened", label: "PRs opened", tone: opened?.tone ?? "green", legend: opened?.legend ?? "" },
     { key: "merged", label: "PRs merged", tone: merged?.tone ?? "purple", legend: merged?.legend ?? "" },
   ]);
-  const mergedPrs = throughput.merged.reduce((a, b) => a + b, 0);
-  const startsAfterWindow = Date.parse(coverage.task_starts_since) > Date.parse(data.window_start);
+  const leadStyles = withHatches(
+    STAGES.map(({ key, label }) => ({
+      key,
+      label,
+      tone: LEAD_TONES[key],
+      legend: `${label}: the median over the PRs merged in each bucket.`,
+    })),
+  ) as LeadStageStyle[];
+  const startsAfterWindow = Date.parse(coverage.task_starts_since) > start;
 
   return (
     <section className="aggregate" aria-label="Aggregate">
       <p className="agg-summary">
         {data.repo !== null && (
-          <strong className="agg-repo-n">{`${data.repo}: n = ${coverage.prs} PR${coverage.prs === 1 ? "" : "s"}. `}</strong>
+          <strong className="agg-repo-n">{`${data.repo}: n = ${inWindow.length} PR${inWindow.length === 1 ? "" : "s"}. `}</strong>
         )}
-        {`${formatBucketDate(data.window_start)} to ${formatBucketDate(data.window_end)} (${data.weeks} weeks): ${coverage.prs} of your PRs`}
+        {`${formatLocalDate(start, timeZone)} to ${formatLocalDate(now, timeZone)} (${data.weeks} weeks, ${timeZone}): ${inWindow.length} of your PRs`}
         {coverage.tasks_without_pr > 0 && `, ${coverage.tasks_without_pr} task${coverage.tasks_without_pr === 1 ? "" : "s"} without a PR yet`}
         {`. Fetched ${new Date(data.fetched_at).toLocaleTimeString()}, ${data.refreshed} PR${data.refreshed === 1 ? "" : "s"} refreshed from GitHub. `}
         {onRefresh && (
@@ -149,17 +204,17 @@ export function AggregatePanels({
         )}
       </p>
       <div className="agg-notices">
-        {coverage.prs === 0 && (
+        {inWindow.length === 0 && (
           <div className="notice">{`None of your PRs were updated in the last ${data.weeks} weeks.`}</div>
         )}
-        {startsAfterWindow && coverage.prs > 0 && (
+        {startsAfterWindow && inWindow.length > 0 && (
           <div className="notice">
-            {`Task starts are only recorded since ${formatBucketDate(coverage.task_starts_since)}: ${coverage.prs_with_start} of ${coverage.prs} PRs have one. Earlier PRs begin when they were opened, and their "task started" intervals are unknown rather than guessed.`}
+            {`Task starts are only recorded since ${formatBucketDate(coverage.task_starts_since)}: ${withStart.length} of ${inWindow.length} PRs have one. Earlier PRs begin when they were opened, and their "task started" intervals are unknown rather than guessed.`}
           </div>
         )}
-        {coverage.starts_by_name > 0 && (
+        {byName > 0 && (
           <div className="notice">
-            {`${coverage.starts_by_name} of ${coverage.prs_with_start} task starts matched by branch name (their PR was never recorded, so a reused branch name could be mismatched). The rest are tied to their PR by id.`}
+            {`${byName} of ${withStart.length} task starts matched by branch name (their PR was never recorded, so a reused branch name could be mismatched). The rest are tied to their PR by id.`}
           </div>
         )}
         {coverage.truncated && (
@@ -170,17 +225,20 @@ export function AggregatePanels({
         )}
       </div>
       <ThroughputChart
-        starts={throughput.starts}
-        opened={throughput.opened}
-        merged={throughput.merged}
-        closed={throughput.closed}
+        data={flow}
+        timeZone={timeZone}
         styles={{ opened: throughputStyles[0], merged: throughputStyles[1] }}
       />
       <LeadTimeChart
-        stages={data.lead_time}
-        mergedPrs={mergedPrs}
+        series={lead}
+        styles={leadStyles}
+        timeZone={timeZone}
+        windowStart={start}
+        now={now}
+        modeLabel={excludeWeekends ? "Excluding weekends" : "All time"}
+        excludeWeekends={excludeWeekends}
+        onModeChange={(exclude) => onExcludeWeekends?.(exclude)}
         startsSince={coverage.task_starts_since}
-        tone="accent"
       />
       <MixChart
         title="Status mix"
@@ -190,6 +248,7 @@ export function AggregatePanels({
         counts={mix.series.map((s) => s.count)}
         starts={mix.starts}
         inflight={mix.inflight}
+        timeZone={timeZone}
         empty={`No task was in flight in this window${startsAfterWindow ? ` (task starts are recorded since ${formatBucketDate(coverage.task_starts_since)})` : ""}.`}
       />
       <MixChart
@@ -200,6 +259,7 @@ export function AggregatePanels({
         counts={mix.who.map((s) => s.count)}
         starts={mix.starts}
         inflight={mix.inflight}
+        timeZone={timeZone}
         empty="No task was in flight in this window."
       />
       <details className="agg-notes">

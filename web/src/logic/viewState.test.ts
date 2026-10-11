@@ -129,6 +129,14 @@ describe("the aggregate view's state", () => {
   test("carries a non-default window in the URL, and only for that view", () => {
     expect(serializeState(state({ view: "aggregate", weeks: 26 }))).toBe("?view=aggregate&weeks=26");
     expect(parseState("?view=aggregate&weeks=52").weeks).toBe(52);
+    expect(parseState("?view=aggregate").weekends).toBe("");
+    expect(parseState("?view=aggregate&weekends=exclude").weekends).toBe("exclude");
+    expect(parseState("?view=aggregate&weekends=nope").weekends).toBe("");
+    expect(serializeState(state({ view: "aggregate", weekends: "exclude" }))).toBe(
+      "?view=aggregate&weekends=exclude",
+    );
+    // Only for the aggregate view.
+    expect(serializeState(state({ view: "table", weekends: "exclude" }))).toBe("?view=table");
     // Another view's URL does not keep it.
     expect(serializeState(state({ view: "table", weeks: 26 }))).toBe("?view=table");
   });

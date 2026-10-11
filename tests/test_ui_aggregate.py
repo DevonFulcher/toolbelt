@@ -520,7 +520,7 @@ def test_a_recorded_task_never_matches_another_pr_by_name():
     assert [(t.pr is not None, t.started) for t in tasks] == [(True, None)]
 
 
-def test_coverage_counts_the_starts_matched_by_name():
+def test_each_pr_says_how_its_task_start_was_matched():
     result = compute(
         [
             pr(1, created=10, head="a", node_id="N1"),
@@ -533,8 +533,13 @@ def test_coverage_counts_the_starts_matched_by_name():
         ],
     )
 
-    assert result.coverage.prs_with_start == 2
-    assert result.coverage.starts_by_name == 1
+    assert {
+        m.number: (m.matched_by, m.task_started is not None) for m in result.prs
+    } == {
+        1: ("id", True),
+        2: ("name", True),
+        3: (None, False),
+    }
 
 
 def test_facts_without_a_pr_are_tasks_unless_landed_or_known_finished():
@@ -572,23 +577,25 @@ def compute(prs, facts=(), *, now=at(24 * 4), weeks=4, since=at(-1000)):
     )
 
 
-def test_throughput_counts_prs_per_week_across_the_window():
+def test_the_milestones_cover_the_window_and_a_little_more():
     last_week = -24 * 3  # the Friday before MONDAY
     result = compute(
         [
             pr(1, created=last_week),
             pr(2, created=10, merged_at=30, items=(merged(30),)),
             pr(3, created=12, closed_at=40, items=(item(act.CLOSED, 40),)),
-            pr(4, created=-24 * 40),  # before the 4-week window
+            pr(4, created=-24 * 40),  # long before the 4-week window
+            pr(5, created=-24 * 40, merged_at=-24 * 39, items=(merged(-24 * 39),)),
         ]
     )
 
-    t = result.throughput
-    assert len(t.starts) == 4
-    assert t.starts[-1] == "2026-10-05T00:00:00Z"
-    assert t.opened[-2:] == [1, 2]
-    assert t.merged == [0, 0, 0, 1]
-    assert t.closed == [0, 0, 0, 1]
+    by_number = {m.number: m for m in result.prs}
+    assert sorted(by_number) == [1, 2, 3]
+    assert [by_number[n].state for n in (1, 2, 3)] == ["OPEN", "MERGED", "CLOSED"]
+    assert by_number[2].opened == "2026-10-05T10:00:00Z"
+    assert by_number[2].ended == "2026-10-06T06:00:00Z"
+    assert by_number[1].ended is None
+    assert by_number[3].ended == "2026-10-06T16:00:00Z"
 
 
 def _column(mix, instant: datetime) -> dict[str, int]:
@@ -708,7 +715,7 @@ def test_daily_samples_beyond_twelve_weeks():
     assert len(result.mix.starts) == 25 * 7 + 4 + 1
 
 
-def test_lead_time_stats_and_unknown_intervals():
+def test_milestones_carry_the_instants_lead_times_are_measured_between():
     complete = pr(
         1,
         created=10,
@@ -717,7 +724,7 @@ def test_lead_time_stats_and_unknown_intervals():
         items=(request(12), review(20, "commented"), merged(60)),
     )
     no_request = pr(2, created=10, merged_at=40, head="b", items=(merged(40),))
-    # An unrequested review of its own is not "waiting for a review".
+    # The author's own review comment is not "waiting for a review".
     own_comment = pr(
         3,
         created=10,
@@ -730,41 +737,43 @@ def test_lead_time_stats_and_unknown_intervals():
         [complete, no_request, own_comment],
         facts=[fact("a", 4), fact("b", 6)],
     )
-    stages = {s.key: s for s in result.lead_time}
+    m = {x.number: x for x in result.prs}
 
-    # started -> opened: only the PRs with a recorded start (6h and 4h).
-    assert stages["start_to_open"].values_s == [4 * 3600, 6 * 3600]
-    assert stages["start_to_open"].unknown == 1
-    assert stages["start_to_open"].median_s == 5 * 3600
-    # opened -> requested: only `complete` has a request (2h).
-    assert stages["open_to_request"].values_s == [2 * 3600]
-    assert stages["open_to_request"].unknown == 2
-    # requested -> first review: 8h.
-    assert stages["request_to_review"].values_s == [8 * 3600]
-    # first review -> merged: complete 40h; the author's own comment is no
-    # review, so the others are unknown.
-    assert stages["review_to_merge"].values_s == [40 * 3600]
-    assert stages["review_to_merge"].unknown == 2
-    # started -> merged: a: 56h, b: 34h.
-    assert stages["start_to_merge"].values_s == [34 * 3600, 56 * 3600]
-    assert stages["start_to_merge"].p90_s == pytest.approx(
-        (34 + (56 - 34) * 0.9) * 3600
-    )
+    def hours(value):
+        return (
+            None
+            if value is None
+            else (
+                datetime.fromisoformat(value.replace("Z", "+00:00")) - MONDAY
+            ).total_seconds()
+            / 3600
+        )
+
+    assert hours(m[1].task_started) == 4 and hours(m[1].opened) == 10
+    assert hours(m[1].first_review_requested) == 12
+    assert hours(m[1].first_review) == 20
+    assert hours(m[1].first_review_after_request) == 20
+    assert hours(m[1].ended) == 60
+    # No recorded start / no request / no review stay None, never guessed.
+    assert m[2].task_started == "2026-10-05T06:00:00Z"
+    assert m[2].first_review_requested is None and m[2].first_review is None
+    assert m[3].task_started is None
+    assert m[3].first_review is None
 
 
-def test_a_pr_with_no_merged_prs_has_empty_stats_not_invented_ones():
+def test_an_open_pr_has_no_end():
     result = compute([pr(1, created=3)])
 
-    for stage in result.lead_time:
-        assert (stage.n, stage.median_s, stage.values_s) == (0, None, [])
+    [only] = result.prs
+    assert (only.state, only.ended, only.task_started) == ("OPEN", None, None)
 
 
-def test_lead_time_only_counts_prs_merged_inside_the_window():
+def test_a_pr_that_ended_long_before_the_window_is_not_sent():
     old = pr(1, created=-24 * 60, merged_at=-24 * 59, items=(merged(-24 * 59),))
 
     result = compute([old])
 
-    assert {s.n for s in result.lead_time} == {0}
+    assert result.prs == []
 
 
 def test_tasks_without_a_pr_are_working_until_removed():
@@ -784,7 +793,7 @@ def test_coverage_says_how_much_has_a_recorded_start():
         since=at(-5),
     )
 
-    assert (result.coverage.prs, result.coverage.prs_with_start) == (2, 1)
+    assert len(result.prs) == 2
     assert result.coverage.task_starts_since == "2026-10-04T19:00:00Z"
 
 
@@ -797,13 +806,6 @@ def test_the_legend_is_taken_from_the_state_catalog():
     assert infos["changes"].label == pr_states.lookup("review", "reviewed").label
     assert infos["blocked"].tone == pr_states.lookup("next", "blocked").tone
     assert [s.key for s in agg.STATES] == [i.key for i in agg.mix_state_infos()]
-
-
-def test_percentile_interpolates():
-    assert agg.percentile([], 0.5) is None
-    assert agg.percentile([7.0], 0.9) == 7.0
-    assert agg.percentile([1.0, 2.0, 3.0, 4.0], 0.5) == 2.5
-    assert agg.percentile([0.0, 10.0], 0.75) == 7.5
 
 
 # ---- fetching and the endpoint ------------------------------------------------------------------
@@ -1032,7 +1034,7 @@ def test_the_first_request_pages_through_the_whole_window_and_dedupes():
 
     result = asyncio.run(svc.get(12))
 
-    assert result.throughput.opened[-1] == 3  # 1, 2, 3 once each
+    assert sorted(m.number for m in result.prs) == [1, 2, 3]  # once each
     assert result.refreshed == 3
     assert any("updated:>=2026-07-19" in call for call in github.calls)
     assert all("author:@me" in c and "archived:false" in c for c in github.calls)
@@ -1068,7 +1070,7 @@ def test_a_later_request_re_fetches_only_open_and_recently_updated_prs():
     # The open PRs (2, 3) and what changed since the newest one held (4).
     assert sorted(sum(github.returned, [])) == [2, 3, 4]
     assert result.refreshed == 3
-    assert result.throughput.opened[-1] + sum(result.throughput.opened[:-1]) == 4
+    assert len(result.prs) == 4
     updated_query = next(c for c in github.calls if "is:open" not in c)
     assert "updated:>=2026-10-08T10:55:00Z" in updated_query  # newest - 5 min
 
@@ -1080,7 +1082,7 @@ def test_a_changed_pr_replaces_its_cached_record_and_deletions_are_dropped():
     )
     svc = service(github)
     first = asyncio.run(svc.get(12))
-    assert first.throughput.merged == [0] * len(first.throughput.merged)
+    assert [m.state for m in first.prs] == ["OPEN", "OPEN"]
 
     github.put(
         pr_node(
@@ -1093,8 +1095,7 @@ def test_a_changed_pr_replaces_its_cached_record_and_deletions_are_dropped():
     github.drop(2)  # deleted / transferred away
     result = asyncio.run(svc.get(12))
 
-    assert sum(result.throughput.merged) == 1
-    assert sum(result.throughput.opened) == 1  # PR 2 is gone
+    assert [(m.number, m.state) for m in result.prs] == [(1, "MERGED")]  # 2 is gone
 
 
 def test_a_closed_pr_that_is_reopened_is_open_again():
@@ -1108,12 +1109,12 @@ def test_a_closed_pr_that_is_reopened_is_open_again():
     )
     svc = service(github)
     closed = asyncio.run(svc.get(12))
-    assert sum(closed.throughput.closed) == 1
+    assert [m.state for m in closed.prs] == ["CLOSED"]
 
     github.put(pr_node(1, "2026-10-08T09:00:00Z"))
     reopened = asyncio.run(svc.get(12))
 
-    assert sum(reopened.throughput.closed) == 0
+    assert [m.state for m in reopened.prs] == ["OPEN"]
     assert github.returned[-2] == [1]  # found by the open search
 
 
@@ -1177,7 +1178,7 @@ def test_a_failure_after_the_first_page_gives_a_partial_flagged_result():
     result = asyncio.run(service(pages).get(12))
 
     assert result.coverage.truncated
-    assert result.coverage.prs == 1
+    assert len(result.prs) == 1
 
 
 def test_a_failure_of_the_first_page_propagates():
@@ -1233,9 +1234,8 @@ def test_stored_task_starts_reach_the_prs_through_the_repo_remote():
 
     result = asyncio.run(service(pages, history=read_history).get(12))
 
-    assert result.coverage.prs_with_start == 2
-    stages = {s.key: s for s in result.lead_time}
-    assert stages["start_to_open"].values_s == [8 * 3600]  # PR 2, merged
+    started = {m.number: m.task_started for m in result.prs}
+    assert started == {1: "2026-10-05T08:00:00Z", 2: "2026-10-06T01:00:00Z"}
     assert result.coverage.task_starts_since.endswith("Z")
 
 
@@ -1295,11 +1295,11 @@ def test_recorded_pr_ids_tie_stored_tasks_to_prs_even_when_a_name_was_reused():
 
     result = asyncio.run(service(pages, history=read_history).get(12))
 
-    assert result.coverage.prs_with_start == 2
-    assert result.coverage.starts_by_name == 0
-    stages = {s.key: s for s in result.lead_time}
-    assert stages["start_to_open"].n == 1  # PR 1 merged, its own start (1h)
-    assert stages["start_to_open"].values_s == [3600]
+    by_number = {m.number: m for m in result.prs}
+    # Each PR got its own task's start though both are branch "reused".
+    assert by_number[1].task_started == "2026-10-01T08:00:00Z"
+    assert by_number[2].task_started == "2026-10-06T01:00:00Z"
+    assert {m.matched_by for m in result.prs} == {"id"}
 
 
 def _two_repos():
@@ -1348,14 +1348,13 @@ def test_the_repo_filter_narrows_prs_and_tasks_to_one_repo():
     by_id = asyncio.run(svc.get(12, str(web_id)))
     by_name = asyncio.run(svc.get(12, "API"))
 
-    assert (everything.repo, everything.coverage.prs) == (None, 3)
-    assert (by_id.repo, by_id.coverage.prs, by_id.coverage.prs_with_start) == (
-        "web",
-        2,
-        1,
-    )
-    assert sum(by_id.throughput.opened) == 2
-    assert (by_name.repo, by_name.coverage.prs) == ("api", 1)
+    assert (everything.repo, len(everything.prs)) == (None, 3)
+    assert by_id.repo == "web"
+    assert sorted((m.number, m.task_started is not None) for m in by_id.prs) == [
+        (2, True),
+        (3, False),
+    ]
+    assert (by_name.repo, [m.number for m in by_name.prs]) == ("api", [1])
     # The task without a PR of the other repo is not counted for this one.
     assert by_name.coverage.tasks_without_pr == 0
     assert by_id.coverage.tasks_without_pr == 1
@@ -1406,9 +1405,10 @@ def test_the_aggregate_endpoint_serves_the_computed_view(client_and_pages):
 
     assert body["weeks"] == 4
     assert body["window_end"] == "2026-10-08T12:00:00Z"
-    assert body["throughput"]["opened"][-1] == 1
-    assert body["throughput"]["merged"][-1] == 1
-    assert [s["key"] for s in body["lead_time"]][0] == "start_to_open"
+    [pr_] = body["prs"]
+    assert (pr_["number"], pr_["state"]) == (1, "MERGED")
+    assert pr_["opened"] == "2026-10-06T09:00:00Z"
+    assert pr_["ended"] == "2026-10-07T09:00:00Z"
     assert body["mix"]["step_hours"] == 6
     assert body["mix"]["states"][0]["label"] == pr_states.PHASES["working"].label
     assert body["notes"]

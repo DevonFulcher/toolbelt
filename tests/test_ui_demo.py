@@ -104,4 +104,4 @@ def test_the_fake_gh_answers_the_aggregate_search_in_the_shape_the_view_parses(
         archive_since=NOW - timedelta(weeks=9),
         fetched_at=NOW,
     )
-    assert sum(result.throughput.merged) >= 25
+    assert sum(1 for m in result.prs if m.state == "MERGED") >= 25

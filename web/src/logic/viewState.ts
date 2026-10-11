@@ -1,6 +1,7 @@
 // The view state (view, filters, sort) and its URL query string. Same
 // parameters as the previous page: `view=table|stacked|grouped|aggregate`
-// (`weeks=4|26|52` for the aggregate's window; 12 is the default), `mode=flat`,
+// (`weeks=4|26|52` for the aggregate's window; 12 is the default, and
+// `weekends=exclude` for its lead times), `mode=flat`,
 // `compact=1`, `done=1`, `sort`/`dir`, `q`, `repo`, `root` (the branch id the
 // stacked view and the table's tree are focused on) and the per-column
 // filters. Only non-default values are written, so the default view is a
@@ -61,6 +62,8 @@ export interface ViewState {
   done: "" | "1";
   /** Aggregate view only: how many weeks back it looks. */
   weeks: Weeks;
+  /** Aggregate view only: "exclude" drops Saturdays and Sundays from lead times. */
+  weekends: "" | "exclude";
   /** "1" collapses the PR/CI/Review/Comments/Merge columns into one. */
   compact: "" | "1";
   /**
@@ -86,6 +89,7 @@ export const DEFAULT_STATE: ViewState = {
   merge: "",
   done: "",
   weeks: 12,
+  weekends: "",
   compact: "",
   root: "",
 };
@@ -125,6 +129,7 @@ export function parseState(search: string): ViewState {
   if (params.get("compact") === "1") state.compact = "1";
   const weeks = Number(params.get("weeks"));
   if ((WINDOWS as readonly number[]).includes(weeks)) state.weeks = weeks as Weeks;
+  if (params.get("weekends") === "exclude") state.weekends = "exclude";
   state.root = params.get("root") ?? "";
   return state;
 }
@@ -161,6 +166,7 @@ export function serializeState(state: ViewState): string {
   if (state.view === "aggregate" && state.weeks !== DEFAULT_STATE.weeks) {
     params.set("weeks", String(state.weeks));
   }
+  if (state.view === "aggregate" && state.weekends) params.set("weekends", state.weekends);
   // Table-only, like `mode`: a card view's URL does not carry it.
   if (state.view === "table" && state.compact) params.set("compact", "1");
   // The views that draw a tree; the grouped view and the flat table ignore it.

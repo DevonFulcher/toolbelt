@@ -18,6 +18,9 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
+    // Days, weeks and weekends are the viewer's time zone's: tests that do not
+    // pass one see UTC (the ones about zones pass theirs explicitly).
+    env: { TZ: "UTC" },
     setupFiles: ["./src/testing/setup.ts"],
     include: ["src/**/*.test.{ts,tsx}"],
   },

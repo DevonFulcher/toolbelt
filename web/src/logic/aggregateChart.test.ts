@@ -10,12 +10,12 @@ import {
   labelIndexes,
   linePath,
   linearScale,
-  logScale,
   medianPositive,
   nearestIndex,
   niceMax,
-  packStrip,
-  rowOffset,
+  rangePath,
+  dayLabels,
+  weekendSpans,
   stackShares,
 } from "./aggregateChart";
 
@@ -24,12 +24,6 @@ describe("scales", () => {
     const scale = linearScale([0, 10], [100, 200]);
     expect([scale(0), scale(5), scale(10)]).toEqual([100, 150, 200]);
     expect(linearScale([3, 3], [0, 50])(3)).toBe(0);
-  });
-
-  test("log puts each decade the same distance apart and clamps below the domain", () => {
-    const scale = logScale([1, 1000], [0, 300]);
-    expect([scale(1), scale(10), scale(100), scale(1000)]).toEqual([0, 100, 200, 300]);
-    expect(scale(0)).toBe(0);
   });
 });
 
@@ -100,35 +94,77 @@ describe("durations", () => {
     expect(formatDuration(3 * 7 * 86400)).toBe("3w");
   });
 
-  test("the axis spans the ladder rungs around the data", () => {
-    const axis = durationAxis([2 * 3600, 5 * 86400]);
+  test("the axis starts at 0 and picks minutes, hours or days from the range", () => {
+    const minutes = durationAxis(40 * 60);
+    const hours = durationAxis(30 * 3600);
+    const days = durationAxis(9 * 86400);
 
-    expect(axis.domain).toEqual([3600, 7 * 86400]);
-    expect(axis.ticks).toEqual([3600, 4 * 3600, 12 * 3600, 86400, 3 * 86400, 7 * 86400]);
+    expect([minutes.unit, hours.unit, days.unit]).toEqual(["m", "h", "d"]);
+    expect(minutes.ticks[0]).toEqual({ value: 0, label: "0m" });
+    expect(minutes.top).toBeGreaterThanOrEqual(40 * 60);
+    expect(hours.ticks.map((t) => t.label)).toEqual(["0h", "10h", "20h", "30h", "40h", "50h"]);
+    expect(days.top).toBe(10 * 86400);
+    expect(days.ticks.every((t) => Number.isInteger(t.value / 86400))).toBe(true);
   });
 
-  test("an empty or single-valued axis still has two rungs", () => {
-    expect(durationAxis([]).ticks.length).toBeGreaterThanOrEqual(2);
-    expect(durationAxis([86400]).ticks.length).toBeGreaterThanOrEqual(2);
+  test("an empty axis still has a scale", () => {
+    expect(durationAxis(0).ticks.length).toBeGreaterThanOrEqual(2);
   });
 });
 
-describe("strips", () => {
-  test("dots that would overlap go to different rows, far ones share a row", () => {
-    const { rows, used } = packStrip([10, 12, 40, 100], 6, 5);
+describe("ranges", () => {
+  test("a band is one closed shape per run of buckets and breaks at a gap", () => {
+    const path = rangePath(
+      [1, 2, null, 3],
+      [2, 4, 5, 6],
+      (i) => i * 10,
+      (v) => 100 - v * 10,
+      4,
+    );
 
-    expect(rows).toEqual([0, 1, 0, 0]);
-    expect(used).toBe(2);
+    expect(path).toBe("M0,80L10,60L10,80L0,90Z" + "M28,40L32,40L32,70L28,70Z");
+  });
+});
+
+describe("day labels", () => {
+  const monday = Date.UTC(2026, 9, 5);
+  const days = Array.from({ length: 7 }, (_, i) => ({ start: monday + i * 86_400_000 }));
+
+  test("wide bars name the day, Mondays carry the date", () => {
+    expect(dayLabels(days, "UTC", 50)).toEqual(["Oct 5", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]);
   });
 
-  test("rows alternate above and below the middle", () => {
-    expect([0, 1, 2, 3, 4].map((r) => rowOffset(r, 6))).toEqual([0, -6, 6, -12, 12]);
+  test("narrower bars use initials, and the narrowest only label Mondays", () => {
+    expect(dayLabels(days, "UTC", 20)).toEqual(["Oct 5", "T", "W", "T", "F", "S", "S"]);
+    expect(dayLabels(days, "UTC", 6)).toEqual(["Oct 5", null, null, null, null, null, null]);
+  });
+});
+
+describe("weekend bands", () => {
+  test("Saturday and Sunday merge into one band, clipped to the range", () => {
+    const monday = Date.UTC(2026, 9, 5);
+    const day = 86_400_000;
+
+    expect(weekendSpans(monday, monday + 14 * day, "UTC")).toEqual([
+      [monday + 5 * day, monday + 7 * day],
+      [monday + 12 * day, monday + 14 * day],
+    ]);
+    // Starting on a Sunday afternoon: only the rest of that Sunday.
+    expect(weekendSpans(monday + 6.5 * day, monday + 9 * day, "UTC")).toEqual([
+      [monday + 6.5 * day, monday + 7 * day],
+    ]);
   });
 
-  test("the number of rows is capped", () => {
-    const { used } = packStrip([1, 1, 1, 1, 1, 1, 1], 6, 3);
+  test("follow the viewer's zone, so Friday evening in Chicago is not a weekend", () => {
+    const friday7pmChicago = Date.UTC(2026, 9, 10, 0, 0); // Saturday 00:00 UTC
+    const end = friday7pmChicago + 86_400_000;
 
-    expect(used).toBe(3);
+    const utc = weekendSpans(friday7pmChicago, end, "UTC");
+    const chicago = weekendSpans(friday7pmChicago, end, "America/Chicago");
+
+    expect(utc).toEqual([[friday7pmChicago, end]]);
+    // Chicago: the weekend starts at its Saturday 00:00 (05:00 UTC).
+    expect(chicago).toEqual([[Date.UTC(2026, 9, 10, 5), end]]);
   });
 });
 

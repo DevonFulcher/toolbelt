@@ -72,7 +72,7 @@ query($search: String!, $after: String) {{
     pageInfo {{ hasNextPage endCursor }}
     nodes {{
       ... on PullRequest {{
-        id number title state isDraft createdAt updatedAt mergedAt closedAt
+        id number url title state isDraft createdAt updatedAt mergedAt closedAt
         headRefName baseRefName reviewDecision
         author {{ login }}
         repository {{ nameWithOwner isArchived }}
@@ -164,6 +164,7 @@ def parse_pr(node: dict) -> aggregate.PrRecord:
         base_changes=tuple(changes),
         node_id=node.get("id") or "",
         updated_at=_time(node["updatedAt"]) if node.get("updatedAt") else None,
+        url=node.get("url") or "",
     )
 
 

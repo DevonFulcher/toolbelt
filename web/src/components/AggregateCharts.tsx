@@ -15,25 +15,33 @@ import {
   type PointerEvent,
   type ReactNode,
 } from "react";
-import type { LeadStage, Tone } from "../api/generated";
+import type { Tone } from "../api/generated";
 import {
   bandPath,
   countTicks,
+  dayLabels,
   durationAxis,
   formatBucketDate,
-  formatInstant,
   formatDuration,
   labelIndexes,
-  linearScale,
   linePath,
-  logScale,
+  linearScale,
   medianPositive,
   nearestIndex,
   niceMax,
-  packStrip,
-  rowOffset,
+  rangePath,
   stackShares,
+  weekendSpans,
 } from "../logic/aggregateChart";
+import { TOTAL_STAGE, type LeadTimeSeries, type StageKey } from "../logic/leadTime";
+import {
+  addLocalDays,
+  bucketIndex,
+  formatLocalDate,
+  formatLocalDay,
+  formatLocalInstant,
+} from "../logic/localTime";
+import type { Throughput } from "../logic/throughput";
 import "./aggregate.css";
 
 const MARGIN = { left: 44, right: 12, top: 10, bottom: 30 };
@@ -215,6 +223,61 @@ function ChartTooltip({
   );
 }
 
+// ---- weekends ---------------------------------------------------------------------------------
+
+/** The hatched pattern weekend bands are filled with (the card timeline's
+ * weekend look: the muted tone, faintly). */
+function WeekendPattern({ id }: { id: string }) {
+  return (
+    <defs>
+      <pattern
+        id={`${id}-weekend`}
+        patternUnits="userSpaceOnUse"
+        width="5"
+        height="5"
+        patternTransform="rotate(135)"
+      >
+        <rect width="2" height="5" className="agg-weekend-line" />
+      </pattern>
+    </defs>
+  );
+}
+
+/** Weekend bands over a plot of `[from, to]` (ms) drawn between `top` and `bottom`. */
+function WeekendBands({
+  id,
+  from,
+  to,
+  timeZone,
+  x,
+  top,
+  bottom,
+}: {
+  id: string;
+  from: number;
+  to: number;
+  timeZone: string;
+  x: (ms: number) => number;
+  top: number;
+  bottom: number;
+}) {
+  return (
+    <g aria-hidden="true">
+      {weekendSpans(from, to, timeZone).map(([start, end]) => (
+        <rect
+          key={start}
+          className="agg-weekend"
+          x={x(start)}
+          y={top}
+          width={Math.max(x(end) - x(start), 0)}
+          height={bottom - top}
+          fill={`url(#${id}-weekend)`}
+        />
+      ))}
+    </g>
+  );
+}
+
 // ---- throughput ----------------------------------------------------------------------------
 
 export interface ThroughputSeries {
@@ -223,21 +286,19 @@ export interface ThroughputSeries {
 }
 
 export function ThroughputChart({
-  starts,
-  opened,
-  merged,
-  closed,
+  data,
+  timeZone,
   styles,
 }: {
-  starts: string[];
-  opened: number[];
-  merged: number[];
-  closed: number[];
+  data: Throughput;
+  timeZone: string;
   styles: ThroughputSeries;
 }) {
   const [ref, width] = useWidth();
   const id = useId();
   const [hover, setHover] = useState<Hover | null>(null);
+  const { buckets, opened, merged, closed, granularity } = data;
+  const daily = granularity === "day";
   const height = 220;
   const plotW = Math.max(width - MARGIN.left - MARGIN.right, 50);
   const plotH = height - MARGIN.top - MARGIN.bottom;
@@ -245,16 +306,28 @@ export function ThroughputChart({
   const ticks = countTicks(max);
   const top = niceMax(ticks[ticks.length - 1]);
   const y = linearScale([0, top], [MARGIN.top + plotH, MARGIN.top]);
-  const slot = plotW / Math.max(starts.length, 1);
-  const barW = Math.max(Math.min(slot * 0.4, 22), 2);
+  const slot = plotW / Math.max(buckets.length, 1);
+  const barW = Math.max(Math.min(slot * 0.4, 22), 1);
   const centre = (i: number): number => MARGIN.left + slot * (i + 0.5);
   const totalOpened = opened.reduce((a, b) => a + b, 0);
   const totalMerged = merged.reduce((a, b) => a + b, 0);
   const labelled = slot >= 14;
+  const first = buckets[0].start;
+  const lastEnd = buckets[buckets.length - 1].end;
+  const bucketX = (ms: number): number => MARGIN.left + ((ms - first) / Math.max(lastEnd - first, 1)) * plotW;
+  const dates = daily
+    ? dayLabels(buckets, timeZone, slot)
+    : buckets.map((b, i) =>
+        labelIndexes(buckets.length, Math.max(2, Math.floor(plotW / 70))).includes(i)
+          ? formatLocalDate(b.start, timeZone)
+          : null,
+      );
+  const title = (i: number): string =>
+    daily ? formatLocalDay(buckets[i].start, timeZone) : `Week of ${formatLocalDay(buckets[i].start, timeZone)}`;
 
   const move = (event: PointerEvent<SVGRectElement>): void => {
     const box = event.currentTarget.getBoundingClientRect();
-    const index = Math.min(starts.length - 1, Math.max(0, Math.floor((event.clientX - box.left) / slot)));
+    const index = Math.min(buckets.length - 1, Math.max(0, Math.floor((event.clientX - box.left) / slot)));
     setHover({ index, x: centre(index) });
   };
   const key = (event: KeyboardEvent): void => {
@@ -262,16 +335,23 @@ export function ThroughputChart({
     if (event.key === "Escape") setHover(null);
     if (!step) return;
     event.preventDefault();
-    const next = Math.min(starts.length - 1, Math.max(0, (hover?.index ?? (step > 0 ? -1 : starts.length)) + step));
+    const next = Math.min(
+      buckets.length - 1,
+      Math.max(0, (hover?.index ?? (step > 0 ? -1 : buckets.length)) + step),
+    );
     setHover({ index: next, x: centre(next) });
   };
 
-  const summary = `${totalOpened} PRs opened and ${totalMerged} merged over ${starts.length} weeks, from the week of ${formatBucketDate(starts[0])}.`;
+  const summary = `${totalOpened} PRs opened and ${totalMerged} merged over ${buckets.length} ${daily ? "days" : "weeks"}, from ${formatLocalDay(first, timeZone)}.`;
   const both = [styles.opened, styles.merged];
   return (
     <ChartFrame
       title="Throughput"
-      description="PRs opened and merged per week (weeks start on Monday, UTC; the last is the current week so far)."
+      description={
+        daily
+          ? `PRs opened and merged per day in your time zone (${timeZone}); Saturdays and Sundays are hatched. The last day is today so far.`
+          : `PRs opened and merged per week in your time zone (${timeZone}); weeks start on Monday and each spans a weekend, so no weekends are marked. The last is the current week so far.`
+      }
       legend={
         <Legend
           id={id}
@@ -281,19 +361,21 @@ export function ThroughputChart({
       }
       table={
         <table className="agg-table">
-          <caption>PRs per week</caption>
+          <caption>{`PRs per ${daily ? "day" : "week"} (${timeZone})`}</caption>
           <thead>
             <tr>
-              <th scope="col">Week of</th>
+              <th scope="col">{daily ? "Day" : "Week of"}</th>
+              {daily && <th scope="col">Weekend</th>}
               <th scope="col">Opened</th>
               <th scope="col">Merged</th>
               <th scope="col">Closed unmerged</th>
             </tr>
           </thead>
           <tbody>
-            {starts.map((start, i) => (
-              <tr key={start}>
-                <th scope="row">{formatBucketDate(start)}</th>
+            {buckets.map((bucket, i) => (
+              <tr key={bucket.start}>
+                <th scope="row">{formatLocalDay(bucket.start, timeZone)}</th>
+                {daily && <td>{bucket.weekend ? "yes" : ""}</td>}
                 <td>{opened[i]}</td>
                 <td>{merged[i]}</td>
                 <td>{closed[i]}</td>
@@ -314,6 +396,18 @@ export function ThroughputChart({
           onBlur={() => setHover(null)}
         >
           <Patterns id={id} series={both} />
+          <WeekendPattern id={id} />
+          {daily && (
+            <WeekendBands
+              id={id}
+              from={first}
+              to={lastEnd}
+              timeZone={timeZone}
+              x={bucketX}
+              top={MARGIN.top}
+              bottom={MARGIN.top + plotH}
+            />
+          )}
           {ticks.map((t) => (
             <g key={t}>
               <line className="agg-grid" x1={MARGIN.left} x2={MARGIN.left + plotW} y1={y(t)} y2={y(t)} />
@@ -322,16 +416,18 @@ export function ThroughputChart({
               </text>
             </g>
           ))}
-          {labelIndexes(starts.length, Math.max(2, Math.floor(plotW / 70))).map((i) => (
-            <text key={i} className="agg-tick" x={centre(i)} y={height - 10} textAnchor="middle">
-              {formatBucketDate(starts[i])}
-            </text>
-          ))}
+          {dates.map((label, i) =>
+            label === null ? null : (
+              <text key={i} className="agg-tick" x={centre(i)} y={height - 10} textAnchor="middle">
+                {label}
+              </text>
+            ),
+          )}
           <text className="agg-axis-title" transform={`translate(11 ${MARGIN.top + plotH / 2}) rotate(-90)`} textAnchor="middle">
-            PRs per week
+            {`PRs per ${daily ? "day" : "week"}`}
           </text>
-          {starts.map((start, i) => (
-            <g key={start} className={hover?.index === i ? "agg-col agg-col-active" : "agg-col"}>
+          {buckets.map((bucket, i) => (
+            <g key={bucket.start} className={hover?.index === i ? "agg-col agg-col-active" : "agg-col"}>
               {([
                 [styles.opened, opened[i], -barW],
                 [styles.merged, merged[i], 0],
@@ -367,7 +463,8 @@ export function ThroughputChart({
         <ChartTooltip hover={hover} width={width}>
           {hover && (
             <>
-              <strong>{`Week of ${formatBucketDate(starts[hover.index])}`}</strong>
+              <strong>{title(hover.index)}</strong>
+              {buckets[hover.index].weekend && <div className="agg-tip-sub">weekend</div>}
               <div>{`${opened[hover.index]} opened`}</div>
               <div>{`${merged[hover.index]} merged`}</div>
               <div>{`${closed[hover.index]} closed unmerged`}</div>
@@ -379,195 +476,355 @@ export function ThroughputChart({
   );
 }
 
-// ---- lead time --------------------------------------------------------------------------------
+// ---- lead time over time ------------------------------------------------------------------------
 
-/** Width of the lead-time label column and the width below which the labels
- * sit above their strips (the stylesheet's `.agg-lead` uses the same). */
-const LEAD_LABEL = 280;
-const LEAD_NARROW = 560;
-const START_STAGES = new Set(["start_to_open", "start_to_merge"]);
+export interface LeadStageStyle extends SeriesStyle {
+  key: StageKey;
+}
 
 export function LeadTimeChart({
-  stages,
-  mergedPrs,
+  series,
+  styles,
+  timeZone,
+  windowStart,
+  now,
+  modeLabel,
+  excludeWeekends,
+  onModeChange,
   startsSince,
-  tone,
 }: {
-  stages: LeadStage[];
-  /** PRs merged in the window (what every stage is out of). */
-  mergedPrs: number;
-  /** When task starts began to be recorded (ISO). */
+  series: LeadTimeSeries;
+  styles: LeadStageStyle[];
+  timeZone: string;
+  windowStart: number;
+  now: number;
+  /** "All time" or "Excluding weekends": said in the title, aria text and table. */
+  modeLabel: string;
+  excludeWeekends: boolean;
+  onModeChange: (excludeWeekends: boolean) => void;
+  /** When task starts began to be recorded (ISO), for the empty-stage reason. */
   startsSince: string;
-  tone: Tone;
 }) {
   const [ref, width] = useWidth();
-  const all = stages.flatMap((s) => s.values_s);
-  const axis = durationAxis(all);
-  // Label column beside the strips, or above them on a narrow chart.
-  const narrow = width < LEAD_NARROW;
-  const plotW = Math.max(width - (narrow ? 0 : LEAD_LABEL) - 8, 60);
-  const x = logScale(axis.domain, [6, plotW - 6]);
-  const dot = 6;
-  const aria = stages
+  const id = useId();
+  const [hover, setHover] = useState<
+    | { type: "bucket"; index: number; x: number }
+    | { type: "point"; stage: StageKey; index: number; x: number }
+    | null
+  >(null);
+  const [hidden, setHidden] = useState<ReadonlySet<StageKey>>(new Set());
+  const [band, setBand] = useState(false);
+  const visible = series.stages.filter((s) => !hidden.has(s.key));
+  const height = 260;
+  const plotW = Math.max(width - MARGIN.left - MARGIN.right, 50);
+  const plotH = height - MARGIN.top - MARGIN.bottom;
+  const total = series.stages.find((s) => s.key === TOTAL_STAGE);
+  const bandShown = band && total !== undefined && !hidden.has(TOTAL_STAGE);
+  const values = [
+    ...visible.flatMap((s) => s.points.map((p) => p.seconds)),
+    ...(bandShown && total ? total.buckets.map((b) => b.p90 ?? 0) : []),
+  ];
+  const axis = durationAxis(Math.max(0, ...values));
+  const y = linearScale([0, axis.top], [MARGIN.top + plotH, MARGIN.top]);
+  const span = Math.max(now - windowStart, 1);
+  const xMs = (ms: number): number => MARGIN.left + (Math.min(Math.max(ms - windowStart, 0), span) / span) * plotW;
+  const centres = series.buckets.map((b) => xMs((b.start + Math.min(b.end, now)) / 2));
+  const bucketX = (i: number): number => centres[i];
+  const style = (key: StageKey): LeadStageStyle => styles.find((x) => x.key === key) as LeadStageStyle;
+  const label = (ms: number): string => formatLocalDate(ms, timeZone);
+  const rangeLabel = (i: number): string => {
+    const b = series.buckets[i];
+    const last = addLocalDays(b.end, -1, timeZone);
+    return b.end - b.start > 24 * 3_600_000 * 1.5 ? `${label(b.start)} - ${label(last)}` : label(b.start);
+  };
+  const dur = (seconds: number | null): string => (seconds === null ? "-" : formatDuration(seconds));
+  const noneKnown = series.stages.every((s) => s.points.length === 0);
+
+  const key = (event: KeyboardEvent): void => {
+    if (event.key === "Escape") setHover(null);
+    const step = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+    if (!step) return;
+    event.preventDefault();
+    const count = series.buckets.length;
+    const from = hover?.type === "bucket" ? hover.index : step > 0 ? -1 : count;
+    const next = Math.min(count - 1, Math.max(0, from + step));
+    setHover({ type: "bucket", index: next, x: centres[next] });
+  };
+  const move = (event: PointerEvent<SVGRectElement>): void => {
+    const box = event.currentTarget.getBoundingClientRect();
+    const ms = windowStart + ((event.clientX - box.left) / Math.max(box.width, 1)) * span;
+    const index = Math.max(0, bucketIndex(series.buckets, ms));
+    setHover({ type: "bucket", index, x: centres[index] });
+  };
+  const toggle = (stage: StageKey): void => {
+    const next = new Set(hidden);
+    if (next.has(stage)) next.delete(stage);
+    else if (visible.length > 1) next.add(stage);
+    setHidden(next);
+  };
+
+  const aria = `Lead time (${modeLabel}), ${label(windowStart)} to ${label(now)}, by merge date: ${series.stages
     .map((s) =>
-      s.n > 0
-        ? `${s.label}: median ${formatDuration(s.median_s ?? 0)} over ${s.n} PRs`
-        : `${s.label}: no data`,
+      s.summary.n > 0
+        ? `${s.label} median ${dur(s.summary.median)} over ${s.summary.n} PRs`
+        : `${s.label} no data`,
     )
-    .join("; ");
+    .join("; ")}.`;
+
   return (
     <ChartFrame
-      title="Lead time"
+      title={`Lead time over time (${modeLabel})`}
       description={
         <>
-          How long each step took, for the {mergedPrs} PR{mergedPrs === 1 ? "" : "s"} merged in this window. Each dot is
-          a PR; the heavy mark is the median, the lighter ones the 75th and 90th percentiles. Log scale.
+          Each PR is placed at the time it merged ({timeZone}), and each line is the median of a step over the PRs that
+          merged in each {series.buckets.length > 0 && series.buckets[0].end - series.buckets[0].start < 4 * 86_400_000 ? "3-day" : "week"}{" "}
+          bucket, in a {modeLabel.toLowerCase()} view. A bucket with no PR whose step is known is a gap. The dots are
+          single PRs; hover one for its details.
         </>
+      }
+      legend={
+        <div className="agg-lead-controls">
+          <ul className="agg-legend">
+            {styles.map((s) => (
+              <li key={s.key} title={s.legend}>
+                <button
+                  type="button"
+                  className="agg-legend-toggle"
+                  aria-pressed={!hidden.has(s.key)}
+                  onClick={() => toggle(s.key)}
+                >
+                  <Swatch id={id} series={s} />
+                  <span>{s.label}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+          <div className="agg-mode" role="group" aria-label="Lead time weekends">
+            {(
+              [
+                [false, "All time"],
+                [true, "Excluding weekends"],
+              ] as const
+            ).map(([value, text]) => (
+              <button
+                key={text}
+                type="button"
+                aria-pressed={excludeWeekends === value}
+                onClick={() => onModeChange(value)}
+              >
+                {text}
+              </button>
+            ))}
+            <label className="agg-check">
+              <input type="checkbox" checked={band} onChange={(event) => setBand(event.target.checked)} />
+              p75 to p90 band (total)
+            </label>
+          </div>
+        </div>
       }
       table={
         <table className="agg-table">
-          <caption>Lead time by step</caption>
+          <caption>{`Lead time (${modeLabel}) per ${series.buckets.length ? "bucket" : "bucket"}: median (PRs known / unknown)`}</caption>
           <thead>
             <tr>
-              <th scope="col">Step</th>
-              <th scope="col">PRs</th>
-              <th scope="col">Unknown</th>
-              <th scope="col">Median</th>
-              <th scope="col">p75</th>
-              <th scope="col">p90</th>
+              <th scope="col">Merged in</th>
+              {series.stages.map((s) => (
+                <th key={s.key} scope="col">
+                  {s.label}
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
-            {stages.map((s) => (
-              <tr key={s.key}>
-                <th scope="row">{s.label}</th>
-                <td>{s.n}</td>
-                <td>{s.unknown}</td>
-                <td>{s.median_s === null ? "-" : formatDuration(s.median_s)}</td>
-                <td>{s.p75_s === null ? "-" : formatDuration(s.p75_s)}</td>
-                <td>{s.p90_s === null ? "-" : formatDuration(s.p90_s)}</td>
+            {series.buckets.map((bucket, i) => (
+              <tr key={bucket.start}>
+                <th scope="row">{rangeLabel(i)}</th>
+                {series.stages.map((s) => {
+                  const b = s.buckets[i];
+                  return (
+                    <td key={s.key}>{b.n > 0 ? `${dur(b.median)} (${b.n} / ${b.unknown})` : `- (0 / ${b.unknown})`}</td>
+                  );
+                })}
               </tr>
             ))}
           </tbody>
         </table>
       }
     >
-      <div
-        className={`agg-lead tone-${tone}${narrow ? " agg-lead-narrow" : ""}`}
-        role="group"
-        aria-label={aria}
-        ref={ref}
-      >
-        {stages.map((stage) => (
-          <LeadRow
-            key={stage.key}
-            stage={stage}
-            x={x}
-            width={plotW}
-            dot={dot}
-            reason={
-              START_STAGES.has(stage.key)
-                ? `No task start was recorded for these PRs (starts are recorded since ${formatBucketDate(startsSince)}).`
-                : "No PR merged in this window has this step."
-            }
-          />
-        ))}
-        <div className="agg-lead-row agg-lead-axis">
-          <div className="agg-lead-label" />
-          <div className="agg-lead-strip">
-            <svg width={plotW} height={36} aria-hidden="true">
-              {axis.ticks.map((t) => (
-                <g key={t}>
-                  <line className="agg-grid" x1={x(t)} x2={x(t)} y1={0} y2={5} />
-                  <text className="agg-tick" x={x(t)} y={18} textAnchor="middle">
-                    {formatDuration(t)}
-                  </text>
-                </g>
-              ))}
-              <text className="agg-axis-title" x={plotW / 2} y={32} textAnchor="middle">
-                time (log scale)
+      {noneKnown ? (
+        <EmptyChart>
+          {series.merged === 0
+            ? "No PR merged in this window."
+            : `No merged PR has a known step (task starts are recorded since ${formatBucketDate(startsSince)}).`}
+        </EmptyChart>
+      ) : (
+        <div className="agg-plot" ref={ref}>
+          <svg
+            width={width}
+            height={height}
+            role="img"
+            aria-label={aria}
+            tabIndex={0}
+            onKeyDown={key}
+            onBlur={() => setHover(null)}
+          >
+            <Patterns id={id} series={styles} />
+            <WeekendPattern id={id} />
+            <WeekendBands
+              id={id}
+              from={windowStart}
+              to={now}
+              timeZone={timeZone}
+              x={xMs}
+              top={MARGIN.top}
+              bottom={MARGIN.top + plotH}
+            />
+            {axis.ticks.map((t) => (
+              <g key={t.value}>
+                <line className="agg-grid" x1={MARGIN.left} x2={MARGIN.left + plotW} y1={y(t.value)} y2={y(t.value)} />
+                <text className="agg-tick" x={MARGIN.left - 6} y={y(t.value)} textAnchor="end" dominantBaseline="middle">
+                  {t.label}
+                </text>
+              </g>
+            ))}
+            {labelIndexes(series.buckets.length, Math.max(2, Math.floor(plotW / 70))).map((i) => (
+              <text key={i} className="agg-tick" x={xMs(series.buckets[i].start)} y={height - 10} textAnchor="start">
+                {label(series.buckets[i].start)}
               </text>
-            </svg>
-          </div>
-        </div>
-      </div>
-    </ChartFrame>
-  );
-}
-
-function LeadRow({
-  stage,
-  x,
-  width,
-  dot,
-  reason,
-}: {
-  stage: LeadStage;
-  x: (seconds: number) => number;
-  width: number;
-  dot: number;
-  reason: string;
-}) {
-  const xs = stage.values_s.map(x);
-  const { rows, used } = packStrip(xs, dot, 5);
-  const height = Math.max(used, 1) * dot + 14;
-  const mid = height / 2;
-  const stat = (label: string, value: number | null): string =>
-    value === null ? "" : `${label} ${formatDuration(value)}`;
-  return (
-    <div className="agg-lead-row">
-      <div className="agg-lead-label">
-        <strong>{stage.label}</strong>
-        {stage.n > 0 ? (
-          <span className="agg-lead-stats">
-            {[stat("median", stage.median_s), stat("p75", stage.p75_s), stat("p90", stage.p90_s)]
-              .filter(Boolean)
-              .join(" · ")}
-            {` · n=${stage.n}`}
-            {stage.unknown > 0 && ` (${stage.unknown} unknown)`}
-          </span>
-        ) : (
-          <span className="agg-lead-stats">{`no data${stage.unknown > 0 ? ` (${stage.unknown} unknown)` : ""}`}</span>
-        )}
-      </div>
-      <div className="agg-lead-strip">
-        {stage.n > 0 ? (
-          <svg width={width} height={height} aria-hidden="true">
-            {stage.median_s !== null && (
+            ))}
+            <text className="agg-axis-title" transform={`translate(11 ${MARGIN.top + plotH / 2}) rotate(-90)`} textAnchor="middle">
+              {`time (${axis.unit === "m" ? "minutes" : axis.unit === "h" ? "hours" : "days"})`}
+            </text>
+            <rect
+              className="agg-hit agg-hit-under"
+              x={MARGIN.left}
+              y={MARGIN.top}
+              width={plotW}
+              height={plotH}
+              onPointerMove={move}
+              onPointerLeave={() => setHover(null)}
+            />
+            {bandShown && total && (
+              <path
+                className="agg-range"
+                d={rangePath(
+                  total.buckets.map((b) => b.p75),
+                  total.buckets.map((b) => b.p90),
+                  bucketX,
+                  y,
+                  8,
+                )}
+              />
+            )}
+            {visible.map((stage) => {
+              const st = style(stage.key);
+              return (
+                <g key={stage.key} className={`tone-${st.tone}`}>
+                  {stage.points.map((point, i) => (
+                    <circle
+                      key={`${point.pr.repo}#${point.pr.number}-${i}`}
+                      className="agg-dot"
+                      cx={xMs(point.ms)}
+                      cy={y(point.seconds)}
+                      r={2.5}
+                      onPointerEnter={() =>
+                        setHover({ type: "point", stage: stage.key, index: i, x: xMs(point.ms) })
+                      }
+                      onPointerLeave={() => setHover(null)}
+                    />
+                  ))}
+                </g>
+              );
+            })}
+            {visible.map((stage) => {
+              const st = style(stage.key);
+              return (
+                <path
+                  key={stage.key}
+                  className={`tone-${st.tone} agg-line${stage.key === TOTAL_STAGE ? " agg-line-total" : ""}`}
+                  d={linePath(
+                    stage.buckets.map((b) => b.median),
+                    bucketX,
+                    y,
+                  )}
+                  fill="none"
+                  stroke="var(--tone)"
+                  strokeDasharray={st.hatch ? "5 3" : undefined}
+                />
+              );
+            })}
+            {hover && (
+              <line className="agg-cursor" x1={hover.x} x2={hover.x} y1={MARGIN.top} y2={MARGIN.top + plotH} />
+            )}
+          </svg>
+          <ChartTooltip hover={hover} width={width}>
+            {hover?.type === "bucket" && (
               <>
-                {[
-                  [stage.p90_s, "agg-mark-light"],
-                  [stage.p75_s, "agg-mark-light"],
-                  [stage.median_s, "agg-mark-heavy"],
-                ].map(([value, cls]) => (
-                  <line
-                    key={`${cls}${value}`}
-                    className={cls as string}
-                    x1={x(value as number)}
-                    x2={x(value as number)}
-                    y1={1}
-                    y2={height - 1}
-                  />
-                ))}
+                <strong>{`Merged ${rangeLabel(hover.index)}`}</strong>
+                {visible.map((stage) => {
+                  const b = stage.buckets[hover.index];
+                  return (
+                    <div key={stage.key} className="agg-tip-row">
+                      <Swatch id={id} series={style(stage.key)} />
+                      <span>{style(stage.key).label}</span>
+                      <span className="agg-tip-value">
+                        {b.n > 0
+                          ? `median ${dur(b.median)}, p75 ${dur(b.p75)}, n=${b.n}${b.unknown ? ` (${b.unknown} unknown)` : ""}`
+                          : `no data${b.unknown ? ` (${b.unknown} unknown)` : ""}`}
+                      </span>
+                    </div>
+                  );
+                })}
               </>
             )}
-            {stage.values_s.map((value, i) => (
-              <circle
-                key={i}
-                className="agg-dot"
-                cx={xs[i]}
-                cy={mid + rowOffset(rows[i], dot)}
-                r={dot / 2 - 0.5}
-              >
-                <title>{`${formatDuration(value)}`}</title>
-              </circle>
-            ))}
-          </svg>
-        ) : (
-          <span className="agg-lead-empty">{reason}</span>
-        )}
-      </div>
-    </div>
+            {hover?.type === "point" &&
+              (() => {
+                const point = series.stages.find((s) => s.key === hover.stage)?.points[hover.index];
+                if (!point) return null;
+                const pr = point.pr;
+                return (
+                  <>
+                    <strong>{`${pr.repo}#${pr.number}`}</strong>
+                    <div>{pr.title}</div>
+                    <div className="agg-tip-sub">{style(hover.stage).label}</div>
+                    <div>{`${formatDuration(point.seconds)} (${modeLabel.toLowerCase()})`}</div>
+                    <div className="agg-tip-sub">
+                      {`opened ${formatLocalInstant(Date.parse(pr.opened), timeZone)}`}
+                      <br />
+                      {`merged ${formatLocalInstant(point.ms, timeZone)}`}
+                    </div>
+                  </>
+                );
+              })()}
+          </ChartTooltip>
+        </div>
+      )}
+      <table className="agg-table agg-summary-table">
+        <caption>{`Over the whole window (${modeLabel})`}</caption>
+        <thead>
+          <tr>
+            <th scope="col">Step</th>
+            <th scope="col">PRs</th>
+            <th scope="col">Unknown</th>
+            <th scope="col">Median</th>
+            <th scope="col">p75</th>
+            <th scope="col">p90</th>
+          </tr>
+        </thead>
+        <tbody>
+          {series.stages.map((s) => (
+            <tr key={s.key}>
+              <th scope="row">{s.label}</th>
+              <td>{s.summary.n}</td>
+              <td>{s.summary.unknown}</td>
+              <td>{dur(s.summary.median)}</td>
+              <td>{dur(s.summary.p75)}</td>
+              <td>{dur(s.summary.p90)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </ChartFrame>
   );
 }
 
@@ -584,6 +841,7 @@ export function MixChart({
   counts,
   starts,
   inflight,
+  timeZone,
   empty,
 }: {
   title: string;
@@ -597,6 +855,8 @@ export function MixChart({
   /** The sampled instants (ISO) and how many tasks were in flight at each. */
   starts: string[];
   inflight: number[];
+  /** The viewer's zone: labels and weekend bands (the samples are UTC instants). */
+  timeZone: string;
   /** Said when nothing was in flight in the whole window. */
   empty: ReactNode;
 }) {
@@ -649,7 +909,7 @@ export function MixChart({
   series.forEach((s, i) => {
     latest[s.key] = last >= 0 ? pct(shares[i][last]) : "-";
   });
-  const summary = `${title}, ${formatBucketDate(starts[0])} to ${formatBucketDate(starts[count - 1])}. At the latest sample with tasks in flight (${inflight[last]} tasks): ${series
+  const summary = `${title}, ${formatLocalDate(times[0], timeZone)} to ${formatLocalDate(times[count - 1], timeZone)}. At the latest sample with tasks in flight (${inflight[last]} tasks): ${series
     .map((s) => `${s.label} ${latest[s.key]}`)
     .join(", ")}.`;
   const bands = stackShares(shares);
@@ -672,7 +932,7 @@ export function MixChart({
           <caption>{`${title}: share (and number) of the tasks in flight at each sampled instant`}</caption>
           <thead>
             <tr>
-              <th scope="col">Instant (UTC)</th>
+              <th scope="col">{`Instant (${timeZone})`}</th>
               <th scope="col">Tasks in flight</th>
               {series.map((s) => (
                 <th key={s.key} scope="col">
@@ -684,7 +944,7 @@ export function MixChart({
           <tbody>
             {starts.map((start, i) => (
               <tr key={start}>
-                <th scope="row">{formatInstant(start)}</th>
+                <th scope="row">{formatLocalInstant(Date.parse(start), timeZone)}</th>
                 <td>{inflight[i]}</td>
                 {series.map((s, k) => (
                   <td key={s.key}>{shares[k][i] === null ? "-" : `${pct(shares[k][i])} (${counts[k][i]})`}</td>
@@ -723,6 +983,16 @@ export function MixChart({
           onBlur={() => setHover(null)}
         >
           <Patterns id={id} series={series} />
+          <WeekendPattern id={id} />
+          <WeekendBands
+            id={id}
+            from={times[0]}
+            to={times[count - 1]}
+            timeZone={timeZone}
+            x={(ms) => MARGIN.left + ((ms - times[0]) / span) * plotW}
+            top={MARGIN.top}
+            bottom={MARGIN.top + plotH}
+          />
           {ticks.map((t) => (
             <g key={t}>
               <line className="agg-grid" x1={MARGIN.left} x2={MARGIN.left + plotW} y1={y(t)} y2={y(t)} />
@@ -733,7 +1003,7 @@ export function MixChart({
           ))}
           {labels.map((i) => (
             <text key={i} className="agg-tick" x={xs[i]} y={height - 10} textAnchor="middle">
-              {formatBucketDate(starts[i])}
+              {formatLocalDate(times[i], timeZone)}
             </text>
           ))}
           <text className="agg-axis-title" transform={`translate(11 ${MARGIN.top + plotH / 2}) rotate(-90)`} textAnchor="middle">
@@ -799,7 +1069,7 @@ export function MixChart({
         <ChartTooltip hover={hover} width={width}>
           {hover && (
             <>
-              <strong>{`${formatInstant(starts[hover.index])} UTC`}</strong>
+              <strong>{formatLocalInstant(times[hover.index], timeZone)}</strong>
               <div className="agg-tip-sub">
                 {inflight[hover.index] > 0
                   ? `${inflight[hover.index]} task${inflight[hover.index] === 1 ? "" : "s"} in flight`
