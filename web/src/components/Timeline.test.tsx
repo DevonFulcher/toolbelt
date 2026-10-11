@@ -1,5 +1,5 @@
 import { act, fireEvent, screen, within } from "@testing-library/react";
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeAll, describe, expect, test } from "vitest";
 import { ago, branch, catalog, DAY, detail, event, HOUR, MIN, noPr, NOW, pr, snapshot } from "../testing/fixtures";
 import { renderWith } from "../testing/render";
 import { App } from "./App";
@@ -284,5 +284,95 @@ describe("a task that started before its PR", () => {
     expect(screen.queryByText(/no history to draw/)).toBeNull();
     expect(track().querySelector(".tl-phase-working")).toBeTruthy();
     expect(screen.getByText("now")).toBeInTheDocument();
+  });
+});
+
+describe("the weekday lines and weekend bands", () => {
+  // The viewer's timezone is the process's: fix it so the calendar is known.
+  beforeAll(() => {
+    process.env.TZ = "America/Chicago";
+  });
+  afterEach(() => {
+    // jsdom lays nothing out: tests that need a width define one on the prototype.
+    delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth;
+  });
+
+  const trackWidth = (px: number) =>
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get: () => px });
+
+  function showDays(days: number) {
+    const long = detail({ created: ago(days * DAY), events: [event("opened", days * DAY)] });
+    return renderWith(
+      <App clock={() => NOW} />,
+      snapshot([branch(1, "devon/a", { status: pr({ detail: long }) })]),
+    );
+  }
+  const lines = () => [...document.querySelectorAll<HTMLElement>(".tl-daygrid .tl-day")];
+  const bands = () => document.querySelectorAll(".tl-daygrid .tl-weekend");
+
+  test("every midnight gets a line and each weekend a band, labelled when expanded", () => {
+    trackWidth(600);
+    showDays(10);
+
+    // Sat 10 Oct 07:00 to Tue 20 Oct 07:00 (Chicago): midnights of the 11th to the 20th.
+    expect(lines().map((l) => l.dataset.weekday)).toEqual([
+      "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun", "Mon", "Tue",
+    ]);
+    expect(bands()).toHaveLength(2);
+    expect(document.querySelectorAll(".tl-day-label")).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Expand" }));
+
+    expect([...document.querySelectorAll(".tl-day-label")].map((l) => l.textContent)).toEqual([
+      "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun", "Mon", "Tue",
+    ]);
+  });
+
+  test("the grid never takes the pointer and is hidden from assistive tech", () => {
+    showDays(10);
+    const grid = document.querySelector(".tl-daygrid") as HTMLElement;
+
+    expect(grid).toHaveAttribute("aria-hidden", "true");
+    expect(grid.closest(".tl-track")).not.toBeNull();
+    // The markers and phases are siblings drawn after it, so they stay on top.
+    expect(grid.nextElementSibling).toHaveClass("tl-axis");
+  });
+
+  test("crowded: only Mondays keep a line, weekends keep their bands", () => {
+    trackWidth(200);
+    showDays(21);
+
+    expect(lines().map((l) => l.dataset.weekday)).toEqual(["Mon", "Mon", "Mon"]);
+    expect(bands().length).toBeGreaterThanOrEqual(3);
+  });
+
+  test("very crowded: only the weekend bands", () => {
+    trackWidth(200);
+    showDays(60);
+
+    expect(lines()).toHaveLength(0);
+    expect(bands().length).toBeGreaterThanOrEqual(8);
+  });
+
+  test("initials where three letters would collide", () => {
+    trackWidth(150);
+    showDays(8);
+    fireEvent.click(screen.getByRole("button", { name: "Expand" }));
+
+    // 150px over 8 days is 19px a day.
+    expect(lines().length).toBeGreaterThan(0);
+    for (const label of document.querySelectorAll(".tl-day-label")) {
+      expect(label.textContent).toHaveLength(1);
+    }
+  });
+
+  test("the legend explains them as plain decoration", () => {
+    showDays(10);
+    fireEvent.click(screen.getByRole("button", { name: "?" }));
+
+    const legend = within(document.querySelector(".tl-legend") as HTMLElement);
+    expect(legend.getByText("Days (decoration)")).toBeInTheDocument();
+    expect(legend.getByText("Weekday line")).toBeInTheDocument();
+    expect(legend.getByText("Weekend")).toBeInTheDocument();
   });
 });

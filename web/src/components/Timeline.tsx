@@ -13,6 +13,7 @@ import {
   type Track,
 } from "../logic/timeline";
 import { useApp } from "../store/StoreContext";
+import { DayGrid } from "./DayGrid";
 import { TipSource } from "./Tooltip";
 
 /**
@@ -178,6 +179,7 @@ export const Timeline = memo(function Timeline({ id, status, startedAt, catalog,
               if (!expanded) patchCardUi(id, { expanded: true });
             }}
           >
+            <DayGrid start={layout.start} end={layout.end} labelled={expanded} />
             <div className="tl-axis" />
             {layout.ticks.map((tick) => (
               <span key={tick.x} className="tl-tick" style={{ left: `${tick.x * 100}%` }}>
@@ -299,6 +301,19 @@ export function Legend({ catalog }: { catalog: Catalog }) {
             <span>{info.legend}</span>
           </div>
         ))}
+      </section>
+      <section className="tl-legend-part">
+        <h4>Days (decoration)</h4>
+        <div className="tl-legend-row">
+          <span className="tl-sample tl-swatch-day" />
+          <b>Weekday line</b>
+          <span>A line at each local midnight, labelled with the weekday that starts there (every day, or only Mondays when crowded).</span>
+        </div>
+        <div className="tl-legend-row">
+          <span className="tl-sample tl-swatch-weekend" />
+          <b>Weekend</b>
+          <span>Saturday 00:00 to Monday 00:00, local time. Not a state; it only helps read durations.</span>
+        </div>
       </section>
       <section className="tl-legend-part tl-legend-chips">
         <h4>State now (chips in the expanded view)</h4>
