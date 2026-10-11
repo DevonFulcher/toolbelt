@@ -57,3 +57,9 @@ src/store/       the Zustand store, selectors, URL sync, localStorage preference
 src/components/  App shell, FilterBar, TableView, CardList, Card, Timeline, Tooltip, ...
 src/testing/     fixtures and render helpers for tests
 ```
+
+## Testing
+
+See [`docs/ui-testing.md`](../docs/ui-testing.md): what each layer of tests catches,
+the demo (`tools/ui-demo/run.sh`) and how to measure layout, which jsdom cannot
+check.

@@ -3,7 +3,8 @@
 `DevonFulcher/toolbelt-gh-stack-validation` (private) is a standing fixture for
 checking `tt ui` against real GitHub: the GraphQL payload parser
 (`src/toolbelt/ui/pr_fetch.py`), the next-action rules and the callout of
-untracked PRs. Only that repo is ever written to.
+untracked PRs. Only that repo is ever written to. For the other checks (unit tests, the fake-`gh`
+demo, layout measurement) see [`ui-testing.md`](ui-testing.md).
 
 ## What exists in it
 

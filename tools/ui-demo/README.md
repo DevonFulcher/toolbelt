@@ -33,3 +33,6 @@ States that need a second GitHub user (an approval, a requested change, a
 requested reviewer from someone else) are only reproducible with the fake `gh`.
 `docs/ui-validation-fixture.md` describes the real private GitHub repo used to
 check everything else against live data.
+
+How this fits with the other checks, and how to measure layout across widths:
+[`docs/ui-testing.md`](../../docs/ui-testing.md).
