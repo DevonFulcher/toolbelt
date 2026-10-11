@@ -239,3 +239,33 @@ class TestFormatAge:
         assert fmt(days=14) == "2w"
         assert fmt(days=75) == "10w"
         assert fmt(seconds=-5) == "<1m"
+
+
+class TestPreOpenCommits:
+    def test_commits_pushed_before_the_pr_was_opened_come_before_opened(self):
+        # The PR's commits are reported whatever their date; the client puts
+        # the ones before the PR opened inside the task's working phase.
+        activity = derive_activity(
+            facts(
+                items=(
+                    item(-30, pa.COMMIT, detail="aaa1111 first"),
+                    item(-2, pa.COMMIT, detail="bbb2222 second"),
+                    item(1, pa.COMMIT, detail="ccc3333 third"),
+                )
+            ),
+            NOW,
+        )
+
+        assert [(e.kind, e.detail) for e in activity.timeline] == [
+            ("commit", "aaa1111 first"),
+            ("commit", "bbb2222 second"),
+            ("opened", "Add the thing"),
+            ("commit", "ccc3333 third"),
+        ]
+
+    def test_the_pr_age_still_counts_from_the_pr_not_the_commits(self):
+        activity = derive_activity(
+            facts(items=(item(-30, pa.COMMIT, detail="aaa1111 first"),)), NOW
+        )
+
+        assert activity.pr_age == timedelta(days=5)

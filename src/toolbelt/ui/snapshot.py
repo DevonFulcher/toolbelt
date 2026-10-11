@@ -302,6 +302,7 @@ def build_snapshot(
             kids = lineage.children_map(parents)
             for name, depth in order:
                 links = store.get_links(repo.id, name)
+                started_at = store.get_started_at(repo.id, name)
                 owner = branch_links.owning_tracker(
                     links.task_tracker if links else None, tracker
                 )
@@ -333,6 +334,7 @@ def build_snapshot(
                         task_fetchable=fetchable,
                         task_live=task_feed.get(repo.id, name) if fetchable else None,
                         agent=_link(agent),
+                        started_at=_iso(started_at) if started_at else None,
                         status=live_status(
                             refresher.get(repo.id, name),
                             parent_context(repo.id, parents, name, refresher),

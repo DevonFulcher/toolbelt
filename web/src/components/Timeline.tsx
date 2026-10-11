@@ -8,15 +8,21 @@ import {
   nowChips,
   phaseInfo,
   trackLayout,
+  trackStart,
   type Track,
 } from "../logic/timeline";
 import { useApp } from "../store/StoreContext";
 import { TipSource } from "./Tooltip";
 
-/** What the track of a loaded status is drawn from. */
-export function trackOf(status: LoadedStatus): Track {
+/**
+ * What the track of a loaded status is drawn from. `startedAt` is when the
+ * task started (the branch's own, `null` when it predates tracking it).
+ */
+export function trackOf(status: LoadedStatus, startedAt: string | null): Track {
   const { detail } = status;
   return {
+    // A PR whose history is unavailable has nothing to put the start next to.
+    started: detail || status.pr === "none" ? startedAt : null,
     created: detail ? detail.created : null,
     ended: detail ? detail.ended : null,
     state: status.pr,
@@ -37,6 +43,8 @@ interface TimelineProps {
   /** The branch's card id (its UI state is kept in the store). */
   id: string;
   status: LoadedStatus;
+  /** When the branch's task started (null: not recorded). */
+  startedAt: string | null;
   catalog: Catalog;
   /** Current time (ms); a new minute re-draws. */
   now: number;
@@ -48,13 +56,13 @@ interface TimelineProps {
  * hidden) and the chronological table. The "now" chips are at the right end
  * in both; the legend toggles with "?".
  */
-export const Timeline = memo(function Timeline({ id, status, catalog, now }: TimelineProps) {
+export const Timeline = memo(function Timeline({ id, status, startedAt, catalog, now }: TimelineProps) {
   const ui = useApp((s) => s.cardUi[id]);
   const patchCardUi = useApp((s) => s.patchCardUi);
   const expanded = Boolean(ui?.expanded);
   const hideCommits = Boolean(ui?.hideCommits);
   const legend = Boolean(ui?.legend);
-  const track = useMemo(() => trackOf(status), [status]);
+  const track = useMemo(() => trackOf(status, startedAt), [status, startedAt]);
   const chips = useMemo(() => nowChips(track, catalog), [track, catalog]);
 
   const legendButton = (
@@ -82,8 +90,9 @@ export const Timeline = memo(function Timeline({ id, status, catalog, now }: Tim
     </div>
   );
 
-  if (track.created === null) {
-    // No PR yet, or no history for it: nothing to put on a time axis.
+  if (trackStart(track) === null) {
+    // No start recorded and no PR yet, or no history for it: nothing to put on
+    // a time axis.
     return (
       <div className={`tl ${expanded ? "tl-expanded" : "tl-collapsed"}`}>
         <div className="tl-body">
@@ -101,16 +110,13 @@ export const Timeline = memo(function Timeline({ id, status, catalog, now }: Tim
   }
 
   const commits = hideCommits ? "none" : expanded ? "all" : "significant";
-  const layout = trackLayout(
-    { ...track, created: track.created },
-    {
-      now,
-      catalog,
-      commits,
-      laneGap: expanded ? 0.15 : 0.015,
-      maxLanes: expanded ? 4 : 2,
-    },
-  );
+  const layout = trackLayout(track, {
+    now,
+    catalog,
+    commits,
+    laneGap: expanded ? 0.15 : 0.015,
+    maxLanes: expanded ? 4 : 2,
+  });
   const laneStep = expanded ? 20 : 8;
   const base = expanded ? 34 : 24;
   const height = base + (layout.lanes - 1) * laneStep;

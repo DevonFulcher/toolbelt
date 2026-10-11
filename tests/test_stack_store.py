@@ -4,6 +4,7 @@ multi-repo `tree`."""
 import shutil
 import sqlite3
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -250,3 +251,52 @@ def test_tree_marks_cwd_branch_and_skips_repos_whose_path_is_gone(
     assert "main *" in result.output
     assert "devon/docs" not in result.output
     assert f"gone-repo ({gone.resolve()})" not in result.output
+
+
+def test_started_at_is_now_on_first_insert_and_reparenting_keeps_it(tmp_path: Path):
+    s = StackStore(tmp_path / "stacks.db")
+    repo_id = s.ensure_repo(_identity(tmp_path))
+    first = datetime(2026, 10, 1, 9, 0, tzinfo=timezone.utc)
+    later = datetime(2026, 10, 5, 9, 0, tzinfo=timezone.utc)
+
+    assert s.get_started_at(repo_id, "feat") is None  # untracked
+    before = datetime.now(timezone.utc)
+    s.set_parent(repo_id, "now", "main")
+    s.import_parents(repo_id, {"imported": "main"})
+    after = datetime.now(timezone.utc)
+    s.set_parent(repo_id, "feat", "main", started_at=first)
+    s.set_parent(repo_id, "feat", "develop", started_at=later)  # reparent
+
+    assert s.get_started_at(repo_id, "feat") == first
+    assert s.get_parent(repo_id, "feat") == "develop"
+    for name in ("now", "imported"):
+        started = s.get_started_at(repo_id, name)
+        assert started is not None and before <= started <= after
+    registered = s.get_started_at(repo_id, "now")
+    s.set_parent(repo_id, "now", "develop")
+    assert s.get_started_at(repo_id, "now") == registered
+
+
+def test_started_at_migration_backfills_existing_rows_from_created_at(tmp_path: Path):
+    db = tmp_path / "stacks.db"
+    before = store._MIGRATIONS[:-1]
+    with sqlite3.connect(db) as conn:
+        for migration in before:
+            for statement in migration:
+                conn.execute(statement)
+        conn.execute(f"PRAGMA user_version = {len(before)}")
+        conn.execute(
+            "INSERT INTO repos (git_common_dir, path, name, created_at) "
+            "VALUES ('/r/.git', '/r', 'r', '2026-10-01T00:00:00+00:00')"
+        )
+        conn.execute(
+            "INSERT INTO branches (repo_id, name, parent, created_at, updated_at) "
+            "VALUES (1, 'old', 'main', '2026-10-02T00:00:00+00:00', 'now')"
+        )
+
+    s = StackStore(db)
+
+    assert s.schema_version() == len(store._MIGRATIONS)
+    assert s.get_started_at(1, "old") == datetime(2026, 10, 2, tzinfo=timezone.utc)
+    s.set_parent(1, "old", "develop")  # reparenting keeps it
+    assert s.get_started_at(1, "old") == datetime(2026, 10, 2, tzinfo=timezone.utc)

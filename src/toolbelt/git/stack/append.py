@@ -36,8 +36,8 @@ def create_stacked_branch(
     keeps its exact in-flight state — just committed rather than dirty —
     instead of having it moved out from under it onto the new branch. The
     new branch then forks from that checkpoint. Records the new branch's
-    parent (and ``task`` / ``task_tracker`` / ``agent_link``, when given) in lineage. Returns the
-    new branch name. Does not run repo setup
+    parent (and ``task`` / ``task_tracker`` / ``agent_link``, when given) in
+    lineage. Returns the new branch name. Does not run repo setup
     or open an editor.
     """
     if wt_path.exists():

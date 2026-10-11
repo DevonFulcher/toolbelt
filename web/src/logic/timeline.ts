@@ -1,6 +1,6 @@
-// The geometry of a card's timeline: one PR's life as a horizontal,
-// time-scaled track from its creation to now (or to its merge/close), with
-// shaded phases, event markers (plain commits clustered where they would
+// The geometry of a card's timeline: a task's life as a horizontal,
+// time-scaled track from when it started (when known; else from the PR's
+// creation) to now (or to its merge/close), with shaded phases, event markers (plain commits clustered where they would
 // overlap), axis ticks, a "now" group of state chips, hover tooltips and the
 // legend.
 //
@@ -25,10 +25,13 @@ import { assertNever } from "./exhaustive";
 import { DAY, formatAbsolute, formatAge, formatSpan, HOUR, MINUTE, relative } from "./format";
 
 /**
- * What a track is drawn from: a PR's history (`created: null` is a branch
- * with no PR, or no history: only the chips) and the "now" chips.
+ * What a track is drawn from: when the task started (`null`: not recorded),
+ * a PR's history (`created: null` is a branch with no PR, or no history) and
+ * the "now" chips. A track needs a start or a creation time to be drawn.
  */
 export interface Track {
+  /** When the task started (the branch was created); null when unknown. */
+  started: string | null;
   created: string | null;
   /** When it was merged/closed; null while open. */
   ended: string | null;
@@ -86,6 +89,32 @@ export function markerKind(event: Pick<TimelineEvent, "kind" | "ci" | "detail">)
   }
 }
 
+type StartFields = Pick<Track, "events"> & Partial<Pick<Track, "started" | "created">>;
+
+/**
+ * The ms a track begins at: the earliest of the task's start, the PR's
+ * creation and the earliest timeline event (the recorded start can be later
+ * than reality, e.g. a branch registered after its first commits). `null`
+ * when there is nothing to anchor a track to.
+ */
+export function trackStart(track: StartFields): number | null {
+  const times = [track.started, track.created, ...track.events.map((e) => e.t)]
+    .filter((t): t is string => typeof t === "string")
+    .map((t) => Date.parse(t));
+  return times.length ? Math.min(...times) : null;
+}
+
+/**
+ * The ms the "task started" marker sits at: the track's start, when it is
+ * before the PR was opened (or there is no PR); null when the PR's opening
+ * is the start.
+ */
+export function workingStart(track: StartFields): number | null {
+  const start = trackStart(track);
+  if (start === null) return null;
+  return !track.created || start < Date.parse(track.created) ? start : null;
+}
+
 const isCommit = (kind: EventKind): boolean => kind === "commit" || kind === "commit_failed";
 const clamp01 = (value: number): number => Math.min(1, Math.max(0, value));
 
@@ -96,6 +125,9 @@ interface TimedEvent extends TimelineEvent {
   seq: number;
 }
 
+/** The phases of a PR's life (the working phase is drawn before it). */
+type PrPhaseKind = Exclude<PhaseKind, "working">;
+
 export interface PhaseSpan {
   kind: PhaseKind;
   t0: number;
@@ -104,7 +136,8 @@ export interface PhaseSpan {
 
 /**
  * Which spans of the PR's life were spent in draft, waiting for a reviewer,
- * approved, or with failing CI, in ms.
+ * approved, or with failing CI, in ms. Nothing starts before `start` (the
+ * PR's creation): the working phase before it is added by `trackLayout`.
  *
  * - draft: from creation (when the first draft toggle is "ready for review",
  *   or the PR is a draft now and was never toggled) or each "back to draft",
@@ -133,14 +166,14 @@ export function phaseSpans(
   const pending = new Set<string>();
   const approvers = new Set<string>();
   let failing = false;
-  const open: Record<PhaseKind, number | null> = {
+  const open: Record<PrPhaseKind, number | null> = {
     draft: draft ? start : null,
     waiting: null,
     approved: null,
     ci_failing: null,
   };
   const spans: PhaseSpan[] = [];
-  const set = (kind: PhaseKind, on: boolean, ms: number): void => {
+  const set = (kind: PrPhaseKind, on: boolean, ms: number): void => {
     const t = Math.min(Math.max(ms, start), end);
     const began = open[kind];
     if (on && began === null) {
@@ -171,7 +204,7 @@ export function phaseSpans(
     set("approved", approvers.size > 0, event.ms);
     set("ci_failing", failing, event.ms);
   }
-  for (const kind of Object.keys(open) as PhaseKind[]) {
+  for (const kind of Object.keys(open) as PrPhaseKind[]) {
     const began = open[kind];
     if (began !== null && end > began) spans.push({ kind, t0: began, t1: end });
   }
@@ -307,14 +340,20 @@ export interface LayoutOptions {
  * Lays out a track. Every marker and phase carries `tip`, the data its hover
  * tooltip is built from.
  */
-export function trackLayout(track: Track & { created: string }, options: LayoutOptions): TrackLayout {
+export function trackLayout(track: Track, options: LayoutOptions): TrackLayout {
   const { now, catalog } = options;
   const commits = options.commits ?? "significant";
   const minGap = options.minGap ?? 0.012;
   const laneGap = options.laneGap ?? 0.015;
   const maxLanes = options.maxLanes ?? 3;
 
-  const start = Date.parse(track.created);
+  const trackStartMs = trackStart(track);
+  if (trackStartMs === null) throw new Error("timeline: a track needs a task start or a PR creation time");
+  const start = trackStartMs;
+  // The task's working phase runs from the start until the PR opened.
+  const startedMs = workingStart(track);
+  // When the PR was opened; none for a branch that has no PR yet.
+  const prStart = track.created === null ? null : Date.parse(track.created);
   const events: TimedEvent[] = track.events
     .map((event, seq) => ({ ...event, ms: Date.parse(event.t), seq }))
     .sort((a, b) => a.ms - b.ms || a.seq - b.seq);
@@ -335,6 +374,32 @@ export function trackLayout(track: Track & { created: string }, options: LayoutO
   // One marker per event, then drop and cluster plain commits.
   const prominent: Marker[] = [];
   const plain: Marker[] = [];
+  if (startedMs !== null) {
+    const info = eventInfo(catalog, "started");
+    prominent.push({
+      kind: "started",
+      x: 0,
+      ms: startedMs,
+      t: new Date(startedMs).toISOString(),
+      actor: "",
+      detail: "",
+      ci: "",
+      count: 1,
+      lane: 0,
+      items: [],
+      title: `${info.label} ${age(startedMs)}`,
+      tip: {
+        type: "event",
+        kind: "started",
+        label: info.label,
+        detail: "",
+        actor: "",
+        subject: "",
+        ci: "",
+        ms: startedMs,
+      },
+    });
+  }
   for (const event of events) {
     const kind = markerKind(event);
     const info = eventInfo(catalog, kind);
@@ -417,7 +482,14 @@ export function trackLayout(track: Track & { created: string }, options: LayoutO
     marker.lane = lane;
   }
 
-  const phases: Phase[] = phaseSpans(events, track, start, end).map((p) => {
+  const spans: PhaseSpan[] = [];
+  if (startedMs !== null) {
+    // Working: from the task's start until the PR opened (or until now).
+    const workingEnd = prStart === null ? end : Math.min(prStart, end);
+    if (workingEnd > startedMs) spans.push({ kind: "working", t0: startedMs, t1: workingEnd });
+  }
+  if (prStart !== null) spans.push(...phaseSpans(events, track, prStart, end));
+  const phases: Phase[] = spans.map((p) => {
     const info = phaseInfo(catalog, p.kind);
     return {
       kind: p.kind,
@@ -449,7 +521,7 @@ export function trackLayout(track: Track & { created: string }, options: LayoutO
     phases,
     lanes: Math.max(1, lastX.length),
     now: ended ? null : 1,
-    startLabel: `opened ${age(start)}`,
+    startLabel: `started ${age(start)}`,
     endLabel: endKind ? `${endKind} ${age(end)}` : "now",
     ticks: axisTicks(start, end, now),
   };
@@ -646,18 +718,37 @@ export interface ListEntry {
   age: string;
 }
 
-/** The plain chronological list: every event (commits unless "none"), oldest first. */
+/**
+ * The plain chronological list: every event (commits unless "none"), oldest
+ * first, starting with the task's start when it is known.
+ */
 export function listEntries(
-  track: Pick<Track, "events">,
+  track: StartFields,
   options: { now: number; catalog: Catalog; commits?: "none" | "significant" | "all" },
 ): ListEntry[] {
   const { now, catalog } = options;
   const hideCommits = options.commits === "none";
-  return track.events
+  const startedMs = workingStart(track);
+  const started: ListEntry[] =
+    startedMs === null
+      ? []
+      : [
+          {
+            t: new Date(startedMs).toISOString(),
+            ms: startedMs,
+            kind: "started",
+            label: eventInfo(catalog, "started").label,
+            actor: "",
+            detail: "",
+            ci: "",
+            age: relative(startedMs, now),
+          },
+        ];
+  const events = track.events
     .map((event, seq) => ({ event, seq, ms: Date.parse(event.t) }))
     .sort((a, b) => a.ms - b.ms || a.seq - b.seq)
     .filter(({ event }) => !(hideCommits && event.kind === "commit"))
-    .map(({ event, ms }) => {
+    .map(({ event, ms }): ListEntry => {
       const kind = markerKind(event);
       return {
         t: event.t,
@@ -670,4 +761,5 @@ export function listEntries(
         age: relative(ms, now),
       };
     });
+  return [...started, ...events].sort((a, b) => a.ms - b.ms);
 }

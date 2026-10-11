@@ -30,6 +30,7 @@ const SLOT_LABELS: Record<string, string> = {
   task: "Task",
   session: "Session",
   stack: "Stack",
+  task_age: "Task age",
   pr_age: "PR age",
   in_draft: "In draft",
   review_requested: "Review requested",
@@ -128,6 +129,16 @@ describe("a card's labelled slots", () => {
     expect(a.stack[2]).toBe("stack root stack 1 of 2 1 child");
   });
 
+  test("the task age counts from when the task started, and says so when unknown", () => {
+    showCards([
+      branch(1, "devon/a", { started_at: new Date(NOW - 8 * DAY).toISOString(), status: noPr() }),
+      branch(1, "devon/b", { status: noPr() }),
+    ]);
+
+    expect(slotsOf("devon/a").task_age).toEqual(["Task age", "ok", "8d"]);
+    expect(slotsOf("devon/b").task_age).toEqual(["Task age", "gap", "no start recorded"]);
+  });
+
   test("a card without a PR still has every slot, each saying why it is empty", () => {
     showCards([branch(1, "devon/a", { status: noPr() })]);
 
@@ -142,6 +153,7 @@ describe("a card's labelled slots", () => {
     // No history to draw, but the track still carries the now chips.
     expect(found.timeline[1]).toBe("ok");
     expect(found.timeline[2]).toContain("no PR yet: no history to draw");
+    expect(found.task_age).toEqual(["Task age", "gap", "no start recorded"]);
     expect(found.timeline[2]).toContain("PR no PR");
     expect(found.timeline[2]).toContain("Next Open PR");
     // Missing but settable reads as a gap, not as "not applicable".
@@ -195,7 +207,7 @@ describe("a card's labelled slots", () => {
 
     expect(labels(found)).toEqual(SLOT_LABELS);
     for (const key of Object.keys(SLOT_LABELS)) {
-      if (["branch", "task", "session", "stack"].includes(key)) continue;
+      if (["branch", "task", "session", "stack", "task_age"].includes(key)) continue;
       expect(found[key].slice(1), key).toEqual(["na", "loading…"]);
     }
   });

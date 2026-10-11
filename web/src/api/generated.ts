@@ -41,19 +41,21 @@ export type TaskLive = TaskLoading | TaskDetails | TaskUnavailable;
 export type UntrackedPrs = UntrackedLoading | UntrackedLoaded | UntrackedFailed;
 export type Tone = "green" | "red" | "amber" | "gray" | "purple" | "accent";
 export type CatalogDimension =
-  "pr" | "ci" | "review" | "comments" | "merge" | "draft" | "reviewers" | "blocked" | "next";
+  "pr" | "ci" | "review" | "comments" | "merge" | "task" | "draft" | "reviewers" | "blocked" | "next";
 export type CatalogState =
   | PrCatalogState
   | CiCatalogState
   | ReviewCatalogState
   | CommentsCatalogState
   | MergeCatalogState
+  | TaskCatalogState
   | DraftCatalogState
   | ReviewersCatalogState
   | BlockedCatalogState
   | NextCatalogState;
 export type Rep = EventRep | PhaseRep | NowRep;
 export type EventKind =
+  | "started"
   | "opened"
   | "commit"
   | "commits"
@@ -69,7 +71,7 @@ export type EventKind =
   | "merged"
   | "closed"
   | "reopened";
-export type PhaseKind = "draft" | "waiting" | "ci_failing" | "approved";
+export type PhaseKind = "working" | "draft" | "waiting" | "ci_failing" | "approved";
 export type ChipDimension = "pr" | "ci" | "review" | "comments" | "merge" | "next";
 export type FilterKey = "next" | "pr" | "ci" | "review" | "comments" | "merge";
 
@@ -276,6 +278,7 @@ export interface Branch {
   repo_id: number;
   stack_height: number;
   stack_pos: number;
+  started_at: string | null;
   status: LiveStatus;
   task: Link | null;
   task_fetchable: boolean;
@@ -327,6 +330,7 @@ export interface EventMarkers {
   review_commented: Marker;
   review_request_removed: Marker;
   review_requested: Marker;
+  started: Marker;
 }
 export interface Marker {
   glyph: string;
@@ -343,6 +347,7 @@ export interface PhaseSpans {
   ci_failing: Span;
   draft: Span;
   waiting: Span;
+  working: Span;
 }
 export interface Span {
   label: string;
@@ -365,6 +370,7 @@ export interface SlotDimensions {
   session: CatalogDimension | null;
   stack: CatalogDimension | null;
   task: CatalogDimension | null;
+  task_age: CatalogDimension | null;
   timeline: CatalogDimension | null;
   title: CatalogDimension | null;
 }
@@ -422,6 +428,14 @@ export interface MergeCatalogState {
   reps: Rep[];
   tone: Tone;
   value: MergeValue;
+}
+export interface TaskCatalogState {
+  dimension: "task";
+  label: string;
+  legend: string;
+  reps: Rep[];
+  tone: Tone;
+  value: "started" | "unknown";
 }
 export interface DraftCatalogState {
   dimension: "draft";

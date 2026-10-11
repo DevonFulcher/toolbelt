@@ -145,6 +145,16 @@
         "stack_pos": {
           "type": "integer"
         },
+        "started_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "status": {
           "$ref": "#/$defs/LiveStatus"
         },
@@ -188,6 +198,7 @@
         "task_fetchable",
         "task_live",
         "agent",
+        "started_at",
         "status"
       ],
       "title": "Branch",
@@ -239,6 +250,7 @@
         "review",
         "comments",
         "merge",
+        "task",
         "draft",
         "reviewers",
         "blocked",
@@ -257,7 +269,8 @@
           "next": "#/$defs/NextCatalogState",
           "pr": "#/$defs/PrCatalogState",
           "review": "#/$defs/ReviewCatalogState",
-          "reviewers": "#/$defs/ReviewersCatalogState"
+          "reviewers": "#/$defs/ReviewersCatalogState",
+          "task": "#/$defs/TaskCatalogState"
         },
         "propertyName": "dimension"
       },
@@ -276,6 +289,9 @@
         },
         {
           "$ref": "#/$defs/MergeCatalogState"
+        },
+        {
+          "$ref": "#/$defs/TaskCatalogState"
         },
         {
           "$ref": "#/$defs/DraftCatalogState"
@@ -569,6 +585,7 @@
     },
     "EventKind": {
       "enum": [
+        "started",
         "opened",
         "commit",
         "commits",
@@ -634,9 +651,13 @@
         },
         "review_requested": {
           "$ref": "#/$defs/Marker"
+        },
+        "started": {
+          "$ref": "#/$defs/Marker"
         }
       },
       "required": [
+        "started",
         "opened",
         "commit",
         "commits",
@@ -1144,6 +1165,7 @@
     },
     "PhaseKind": {
       "enum": [
+        "working",
         "draft",
         "waiting",
         "ci_failing",
@@ -1187,9 +1209,13 @@
         },
         "waiting": {
           "$ref": "#/$defs/Span"
+        },
+        "working": {
+          "$ref": "#/$defs/Span"
         }
       },
       "required": [
+        "working",
         "draft",
         "waiting",
         "ci_failing",
@@ -1697,6 +1723,16 @@
             }
           ]
         },
+        "task_age": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogDimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "timeline": {
           "anyOf": [
             {
@@ -1730,6 +1766,7 @@
         "reviewers",
         "ci_failures",
         "title",
+        "task_age",
         "pr_age",
         "timeline",
         "branch",
@@ -1858,6 +1895,47 @@
         "v"
       ],
       "title": "StructureEvent",
+      "type": "object"
+    },
+    "TaskCatalogState": {
+      "additionalProperties": false,
+      "properties": {
+        "dimension": {
+          "const": "task",
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "legend": {
+          "type": "string"
+        },
+        "reps": {
+          "items": {
+            "$ref": "#/$defs/Rep"
+          },
+          "type": "array"
+        },
+        "tone": {
+          "$ref": "#/$defs/Tone"
+        },
+        "value": {
+          "enum": [
+            "started",
+            "unknown"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "tone",
+        "legend",
+        "reps",
+        "dimension",
+        "value"
+      ],
+      "title": "TaskCatalogState",
       "type": "object"
     },
     "TaskDetails": {

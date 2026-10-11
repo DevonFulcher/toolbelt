@@ -10,12 +10,14 @@ import {
   positionTip,
   tooltipContent,
   trackLayout,
+  trackStart,
   type LayoutOptions,
   type Track,
 } from "./timeline";
 
 function track(createdAgoMs: number, events: TimelineEvent[] = [], extra: Partial<Track> = {}): Track & { created: string } {
   return {
+    started: null,
     created: ago(createdAgoMs),
     ended: null,
     state: "open",
@@ -26,7 +28,7 @@ function track(createdAgoMs: number, events: TimelineEvent[] = [], extra: Partia
   } as Track & { created: string };
 }
 
-const layout = (t: Track & { created: string }, options: Partial<LayoutOptions> = {}) =>
+const layout = (t: Track, options: Partial<LayoutOptions> = {}) =>
   trackLayout(t, { now: NOW, catalog, ...options });
 const kinds = (l: ReturnType<typeof layout>): EventKind[] => l.markers.map((m) => m.kind);
 const near = (actual: number, expected: number, eps = 1e-9) =>
@@ -38,7 +40,7 @@ describe("track layout", () => {
 
     near(l.markers.find((m) => m.kind === "review_requested")!.x, 0.5);
     near(l.markers.find((m) => m.kind === "opened")!.x, 0);
-    expect(l.startLabel).toBe("opened 10d ago");
+    expect(l.startLabel).toBe("started 10d ago");
     expect(l.endLabel).toBe("now");
     expect(l.now).toBe(1);
     expect(l.ended).toBe(false);
@@ -49,7 +51,7 @@ describe("track layout", () => {
 
     near(l.markers.find((m) => m.kind === "merged")!.x, 1);
     expect(l.endLabel).toBe("merged 2d ago");
-    expect(l.startLabel).toBe("opened 10d ago");
+    expect(l.startLabel).toBe("started 10d ago");
     expect(l.now).toBeNull();
     near(l.span, 8 * DAY);
   });
@@ -67,20 +69,20 @@ describe("track layout", () => {
 
   test("a very short PR still lays out: minutes, and a zero-length span", () => {
     const short = layout(track(3 * MIN, [ev("review_requested", MIN, { subject: "sam" })]));
-    expect(short.startLabel).toBe("opened 3m ago");
+    expect(short.startLabel).toBe("started 3m ago");
     near(short.markers.find((m) => m.kind === "review_requested")!.x, 2 / 3);
     expect(short.ticks.every((tick) => tick.x > 0 && tick.x < 1)).toBe(true);
 
     // Created this very instant: the span is floored, nothing is NaN.
     const instant = layout(track(0, [ev("commit", 0)]), { commits: "all" });
-    expect(instant.startLabel).toBe("opened <1m ago");
+    expect(instant.startLabel).toBe("started <1m ago");
     expect(instant.markers.every((m) => m.x >= 0 && m.x <= 1 && !Number.isNaN(m.x))).toBe(true);
   });
 
   test("a very long PR labels its age in weeks and keeps ticks off the ends", () => {
     const l = layout(track(45 * DAY, [ev("commit", 20 * DAY)]), { commits: "all" });
 
-    expect(l.startLabel).toBe("opened 6w ago");
+    expect(l.startLabel).toBe("started 6w ago");
     expect(l.ticks.length).toBeGreaterThanOrEqual(2);
     expect(l.ticks.length).toBeLessThanOrEqual(6);
     expect(l.ticks.every((tick) => tick.x > 0.06 && tick.x < 0.94)).toBe(true);
@@ -409,7 +411,7 @@ describe("catalog exhaustiveness: the renderer draws whatever the catalog says",
   // The server event that produces each marker kind ("opened" is implicit).
   // A Record over the generated EventKind: a kind added on the server does
   // not compile here until the renderer maps an event to it.
-  const SERVER_EVENTS: Record<Exclude<EventKind, "opened" | "commits">, Pick<TimelineEvent, "kind"> & Partial<TimelineEvent>> = {
+  const SERVER_EVENTS: Record<Exclude<EventKind, "opened" | "started" | "commits">, Pick<TimelineEvent, "kind"> & Partial<TimelineEvent>> = {
     commit: { kind: "commit" },
     commit_failed: { kind: "commit", ci: "failed" },
     force_push: { kind: "force_push" },
@@ -426,7 +428,9 @@ describe("catalog exhaustiveness: the renderer draws whatever the catalog says",
   };
 
   test("every catalog event kind is produced by some server event, and every one is in the catalog", () => {
-    const known = new Set<string>(["opened", "commits", ...Object.keys(SERVER_EVENTS)]);
+    // "opened" and "started" are not server events: the PR's creation and the
+    // branch's own start time.
+    const known = new Set<string>(["opened", "started", "commits", ...Object.keys(SERVER_EVENTS)]);
     expect(Object.keys(catalog.events).filter((k) => !known.has(k))).toEqual([]);
     expect([...known].filter((k) => !(k in catalog.events))).toEqual([]);
 
@@ -458,7 +462,7 @@ describe("catalog exhaustiveness: the renderer draws whatever the catalog says",
     // A Record over the card's slot keys: the same list the Card renders.
     const slots = [
       "branch", "next", "pr", "ci", "review", "comments", "merge", "task", "session",
-      "stack", "pr_age", "in_draft", "review_requested", "ci_failures", "reviewers", "title", "timeline",
+      "stack", "task_age", "pr_age", "in_draft", "review_requested", "ci_failures", "reviewers", "title", "timeline",
     ];
     expect(Object.keys(catalog.slots).sort()).toEqual([...slots].sort());
     const dimensions = new Set(catalog.states.map((s) => s.dimension));
@@ -479,5 +483,152 @@ describe("catalog exhaustiveness: the renderer draws whatever the catalog says",
     }
     expect(legend.notRepresented.some((n) => /conflict/i.test(n.label))).toBe(true);
     expect(legend.notRepresented.some((n) => /thread/i.test(n.label))).toBe(true);
+  });
+});
+
+describe("a track that starts before the PR", () => {
+  /** A task started 10d ago, its PR opened 4d ago. */
+  const started = (extra: Partial<Track> = {}, events: TimelineEvent[] = []): Track =>
+    ({ ...track(4 * DAY, events, extra), started: ago(10 * DAY) });
+
+  test("begins at the task's start, with the PR opening part-way along", () => {
+    const l = layout(started());
+
+    expect(l.startLabel).toBe("started 10d ago");
+    near(l.span, 10 * DAY);
+    near(l.markers.find((m) => m.kind === "started")!.x, 0);
+    near(l.markers.find((m) => m.kind === "opened")!.x, 0.6);
+    expect(l.now).toBe(1);
+  });
+
+  test("shades a working phase from the start until the PR opened", () => {
+    const working = layout(started()).phases.filter((p) => p.kind === "working");
+
+    expect(working).toHaveLength(1);
+    near(working[0].x0, 0);
+    near(working[0].x1, 0.6);
+    expect(working[0].label).toBe("Working (no PR yet)");
+    expect(tooltipContent(working[0].tip, NOW).rows[2][1]).toBe("6d");
+  });
+
+  test("a draft PR's draft phase begins when the PR opened, not at the task's start", () => {
+    const l = layout(started({ draft: true }));
+
+    const draft = l.phases.find((p) => p.kind === "draft")!;
+    near(draft.x0, 0.6);
+    near(draft.x1, 1);
+    expect(l.phases.map((p) => p.kind)).toEqual(["working", "draft"]);
+  });
+
+  test("commits made before the PR opened land inside the working phase", () => {
+    const l = layout(started({}, [ev("commit", 8 * DAY), ev("commit", 7 * DAY), ev("commit", 2 * DAY)]), {
+      commits: "all",
+    });
+
+    const commits = l.markers.filter((m) => m.kind === "commit");
+    expect(commits.map((m) => m.x)).toHaveLength(3);
+    near(commits[0].x, 0.2);
+    near(commits[1].x, 0.3);
+    near(commits[2].x, 0.8);
+    const working = l.phases.find((p) => p.kind === "working")!;
+    expect(commits.filter((m) => m.x > working.x0 && m.x < working.x1)).toHaveLength(2);
+    // Clustering still groups the burst that happened before the PR.
+    const burst: TimelineEvent[] = [];
+    for (let i = 0; i < 20; i += 1) burst.push(ev("commit", 8 * DAY - i * MIN, { detail: `c${i}` }));
+    const clustered = layout(started({}, burst), { commits: "all" }).markers.filter((m) => m.kind === "commits");
+    expect(clustered).toHaveLength(1);
+    expect(clustered[0].count).toBe(20);
+    near(clustered[0].x, 0.2, 0.001);
+    expect(tooltipContent(clustered[0].tip, NOW).items).toHaveLength(8 + 1);
+  });
+
+  test("a failed commit before the PR still draws as a prominent marker in the working phase", () => {
+    const l = layout(started({}, [ev("commit", 8 * DAY, { ci: "failed" })]));
+
+    const failed = l.markers.find((m) => m.kind === "commit_failed")!;
+    near(failed.x, 0.2);
+    // Its CI-failing phase belongs to the PR: it starts when the PR opened.
+    near(l.phases.find((p) => p.kind === "ci_failing")!.x0, 0.6);
+  });
+
+  test("a merged PR's track still ends at the merge", () => {
+    const l = layout(started({ state: "merged", ended: ago(DAY) }, [ev("merged", DAY)]));
+
+    near(l.span, 9 * DAY);
+    near(l.markers.find((m) => m.kind === "merged")!.x, 1);
+    near(l.phases.find((p) => p.kind === "working")!.x1, 6 / 9);
+    expect(l.now).toBeNull();
+  });
+
+  test("begins at the earliest of the start, the PR creation and the earliest event", () => {
+    // A recorded start later than the PR (e.g. a branch imported after the
+    // fact): the PR's opening begins the track, with no working phase.
+    const late = layout({ ...track(4 * DAY), started: ago(2 * DAY) });
+    expect(late.startLabel).toBe("started 4d ago");
+    expect(late.phases.some((p) => p.kind === "working")).toBe(false);
+    expect(kinds(late)).toEqual(["opened"]);
+
+    // A commit older than both the start and the PR moves the start back.
+    const early = layout({ ...track(4 * DAY, [ev("commit", 9 * DAY)]), started: ago(2 * DAY) }, { commits: "all" });
+    expect(early.startLabel).toBe("started 9d ago");
+    expect(kinds(early)).toEqual(["started", "commit", "opened"]);
+    near(early.phases.find((p) => p.kind === "working")!.x1, 5 / 9);
+  });
+
+  test("no recorded start draws just the PR: no started marker, no working phase", () => {
+    const l = layout(track(4 * DAY));
+
+    expect(l.startLabel).toBe("started 4d ago");
+    expect(kinds(l)).toEqual(["opened"]);
+    expect(l.phases).toEqual([]);
+  });
+});
+
+describe("a branch with no PR yet", () => {
+  const noPr = (extra: Partial<Track> = {}): Track => ({
+    started: ago(3 * DAY),
+    created: null,
+    ended: null,
+    state: "none",
+    draft: false,
+    events: [],
+    current: [],
+    ...extra,
+  });
+
+  test("has a track from its start to now holding the working phase", () => {
+    const l = layout(noPr());
+
+    expect(l.startLabel).toBe("started 3d ago");
+    expect(l.endLabel).toBe("now");
+    expect(kinds(l)).toEqual(["started"]);
+    expect(l.phases.map((p) => [p.kind, p.x0, p.x1])).toEqual([["working", 0, 1]]);
+    expect(tooltipContent(l.phases[0].tip, NOW).rows[1][1]).toBe("now");
+    expect(l.now).toBe(1);
+  });
+
+  test("has nothing to draw when the start is unknown too", () => {
+    expect(trackStart(noPr({ started: null }))).toBeNull();
+    expect(() => layout(noPr({ started: null }))).toThrow(/start or a PR creation/);
+  });
+
+  test("lists the task's start in the chronological list", () => {
+    expect(listEntries(noPr(), { now: NOW, catalog }).map((e) => [e.label, e.age])).toEqual([
+      ["Task started", "3d ago"],
+    ]);
+  });
+});
+
+describe("the chronological list with a task start", () => {
+  test("puts the start first and the commits before the PR between it and the opening", () => {
+    const entries = listEntries(
+      {
+        started: ago(10 * DAY),
+        events: [ev("opened", 4 * DAY), ev("commit", 8 * DAY, { detail: "abc1234 first" })],
+      },
+      { now: NOW, catalog, commits: "all" },
+    );
+
+    expect(entries.map((e) => e.label)).toEqual(["Task started", "commit", "opened"]);
   });
 });

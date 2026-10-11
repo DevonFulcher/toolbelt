@@ -6,6 +6,7 @@ import { useApp } from "../store/StoreContext";
 import { Timeline } from "./Timeline";
 import { Age, CI_TONE, ExternalLink, PR_TONE, Pill, REVIEW_TONE, TaskValue, WHO_TEXT } from "./presentation";
 import { useNow } from "./useNow";
+import { formatAge } from "../logic/format";
 
 /** Every labelled slot of a card; the catalog says which dimension each shows. */
 export type SlotKey = keyof SlotDimensions;
@@ -114,7 +115,24 @@ export const Card = memo(
           </span>
           <span className={`branch${branch.current ? " current" : ""}`}>{branch.name}</span>
         </Slot>
-        <StatusSlots status={status} pathMissing={repo.path_missing} catalog={catalog} id={id} now={now} />
+        <Slot id="task_age" label="Task age" state={branch.started_at ? "ok" : "gap"}>
+          {branch.started_at ? (
+            <Age
+              text={formatAge((now - Date.parse(branch.started_at)) / 1000)}
+              since={branch.started_at}
+            />
+          ) : (
+            "no start recorded"
+          )}
+        </Slot>
+        <StatusSlots
+          status={status}
+          startedAt={branch.started_at}
+          pathMissing={repo.path_missing}
+          catalog={catalog}
+          id={id}
+          now={now}
+        />
         <Slot id="task" label="Task" state={branch.task ? "ok" : "gap"}>
           {branch.task ? <TaskValue link={branch.task} task={task} /> : "no task linked"}
         </Slot>
@@ -181,12 +199,14 @@ const LOOKUP_FAILED = "gh could not look up this branch's PR";
 /** The live half of a card: everything that comes from the PR's status. */
 function StatusSlots({
   status,
+  startedAt,
   pathMissing,
   catalog,
   id,
   now,
 }: {
   status: LiveStatus;
+  startedAt: string | null;
   pathMissing: boolean;
   catalog: Catalog;
   id: string;
@@ -228,16 +248,18 @@ function StatusSlots({
       </>
     );
   }
-  return <LoadedSlots status={status} catalog={catalog} id={id} now={now} />;
+  return <LoadedSlots status={status} startedAt={startedAt} catalog={catalog} id={id} now={now} />;
 }
 
 function LoadedSlots({
   status,
+  startedAt,
   catalog,
   id,
   now,
 }: {
   status: LoadedStatus;
+  startedAt: string | null;
   catalog: Catalog;
   id: string;
   now: number;
@@ -374,7 +396,7 @@ function LoadedSlots({
         </>
       )}
       <Slot id="timeline" label="Timeline">
-        <Timeline id={id} status={status} catalog={catalog} now={now} />
+        <Timeline id={id} status={status} startedAt={startedAt} catalog={catalog} now={now} />
       </Slot>
     </>
   );

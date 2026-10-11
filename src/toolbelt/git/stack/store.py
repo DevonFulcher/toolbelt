@@ -95,6 +95,14 @@ _MIGRATIONS: list[tuple[str, ...]] = [
         "ALTER TABLE branches ADD COLUMN task_tracker TEXT",
         "UPDATE branches SET task_tracker = 'jira' WHERE task IS NOT NULL",
     ),
+    (
+        # When the task began: set once, when the branch is first registered
+        # (never changed by reparenting). Existing rows are backfilled from
+        # ``created_at`` (for ones imported from legacy git config that is
+        # the import time).
+        "ALTER TABLE branches ADD COLUMN started_at TEXT",
+        "UPDATE branches SET started_at = created_at",
+    ),
 ]
 
 
@@ -221,9 +229,9 @@ class StackStore:
             for branch, parent in parents.items():
                 conn.execute(
                     "INSERT OR IGNORE INTO branches "
-                    "(repo_id, name, parent, created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?)",
-                    (repo_id, branch, parent, now, now),
+                    "(repo_id, name, parent, started_at, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (repo_id, branch, parent, now, now, now),
                 )
 
     def get_parent(self, repo_id: int, branch: str) -> str | None:
@@ -242,17 +250,20 @@ class StackStore:
         task: str | None = None,
         task_tracker: str | None = None,
         agent_link: str | None = None,
+        started_at: datetime | None = None,
     ) -> None:
         """Record ``parent``; ``task``/``agent_link`` are only written when
         given, so repointing a branch never clears its links. ``task_tracker``
-        names the tracker ``task`` belongs to and is written along with it."""
+        names the tracker ``task`` belongs to and is written along with it.
+        ``started_at`` (default: now) is only used when the branch is first
+        inserted: an existing row keeps its own."""
         now = _now()
         with self._write() as conn:
             conn.execute(
                 "INSERT INTO branches "
                 "(repo_id, name, parent, task, task_tracker, agent_link, "
-                "created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                "started_at, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT (repo_id, name) DO UPDATE SET "
                 "parent = excluded.parent, "
                 "task_tracker = CASE WHEN excluded.task IS NULL "
@@ -260,8 +271,27 @@ class StackStore:
                 "task = COALESCE(excluded.task, task), "
                 "agent_link = COALESCE(excluded.agent_link, agent_link), "
                 "updated_at = excluded.updated_at",
-                (repo_id, branch, parent, task, task_tracker, agent_link, now, now),
+                (
+                    repo_id,
+                    branch,
+                    parent,
+                    task,
+                    task_tracker,
+                    agent_link,
+                    started_at.isoformat() if started_at else now,
+                    now,
+                    now,
+                ),
             )
+
+    def get_started_at(self, repo_id: int, branch: str) -> datetime | None:
+        """When ``branch``'s task started, or ``None`` if the branch is not
+        tracked."""
+        row = self._conn.execute(
+            "SELECT started_at FROM branches WHERE repo_id = ? AND name = ?",
+            (repo_id, branch),
+        ).fetchone()
+        return datetime.fromisoformat(row[0]) if row and row[0] else None
 
     def get_links(self, repo_id: int, branch: str) -> BranchLinks | None:
         """``branch``'s links, or ``None`` if the branch is not tracked."""

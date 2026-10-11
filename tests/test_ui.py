@@ -85,6 +85,7 @@ def seed_repo(
     *,
     links: dict[str, tuple[str | None, str | None]] | None = None,
     task_tracker: str | None = "fake",
+    started: dict[str, datetime] | None = None,
     exists: bool = True,
 ) -> int:
     path = root / name
@@ -104,6 +105,7 @@ def seed_repo(
                 task=task,
                 task_tracker=task_tracker if task else None,
                 agent_link=agent,
+                started_at=(started or {}).get(branch),
             )
         return repo_id
     finally:
@@ -235,6 +237,21 @@ def test_branches_carry_tree_data_for_the_client(tmp_path, make_client):
     assert a["parent"] is None
     assert data["branches"][1]["parent"] == "devon/a"
     assert "main" not in {b["name"] for b in data["branches"]}
+
+
+def test_branches_carry_when_their_task_started(tmp_path, make_client):
+    seed_repo(
+        tmp_path,
+        "api",
+        {"devon/a": "main", "devon/b": "main"},
+        started={"devon/a": datetime(2026, 9, 28, 14, 30, tzinfo=UTC)},
+    )
+
+    data = snap(make_client())
+
+    started = {b["name"]: b["started_at"] for b in data["branches"]}
+    assert started["devon/a"] == "2026-09-28T14:30:00Z"
+    assert started["devon/b"] is not None  # registered now
 
 
 def test_filters_list_every_value_with_friendly_next_labels(tmp_path, make_client):

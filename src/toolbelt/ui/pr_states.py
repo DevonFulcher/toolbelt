@@ -54,6 +54,7 @@ ACCENT: Tone = "accent"
 # (and the client's TypeScript) can say which kinds exist. ``_index`` checks
 # they are exactly those keys.
 type EventKind = Literal[
+    "started",
     "opened",
     "commit",
     "commits",
@@ -70,7 +71,7 @@ type EventKind = Literal[
     "closed",
     "reopened",
 ]
-type PhaseKind = Literal["draft", "waiting", "ci_failing", "approved"]
+type PhaseKind = Literal["working", "draft", "waiting", "ci_failing", "approved"]
 type ChipDimension = Literal["pr", "ci", "review", "comments", "merge", "next"]
 
 
@@ -115,6 +116,12 @@ class StateValue:
 #: server event (``commit`` + a failed CI is ``commit_failed``, a review is
 #: ``review_approved`` / ``review_changes`` / ``review_commented``).
 EVENTS: dict[str, Marker] = {
+    "started": Marker(
+        "Task started",
+        "◇",
+        ACCENT,
+        "The task started: its branch was created.",
+    ),
     "opened": Marker("opened", "◆", GREEN, "The PR was opened."),
     "commit": Marker(
         "commit", "•", GRAY, "A commit was pushed (faint dot, expanded view)."
@@ -155,6 +162,11 @@ EVENTS: dict[str, Marker] = {
 
 #: Shaded spans of the PR's life.
 PHASES: dict[str, Span] = {
+    "working": Span(
+        "Working (no PR yet)",
+        ACCENT,
+        "From the task's start until the PR was opened (or until now).",
+    ),
     "draft": Span("In draft", GRAY, "Not yet ready for review."),
     "waiting": Span(
         "Waiting for review", AMBER, "Ready, with a review request outstanding."
@@ -269,7 +281,8 @@ STATES: tuple[StateValue, ...] = (
         PrState.NONE.value,
         "no PR",
         GRAY,
-        "The branch has no PR yet; there is no history.",
+        "The branch has no PR yet (its working span is drawn from the task's "
+        "start, when that is known).",
         _now("pr"),
     ),
     # CI slot and the CI failures slot (one commit_failed marker per failure).
@@ -369,6 +382,26 @@ STATES: tuple[StateValue, ...] = (
         _now("merge"),
     ),
     _v("merge", "none", "n/a", GRAY, "Not applicable: no open PR.", _now("merge")),
+    # Task age slot: when the task started (when the branch was registered).
+    _v(
+        "task",
+        "started",
+        "task started",
+        ACCENT,
+        "The task's start is known: the track begins there, with a working "
+        "span until the PR opened.",
+        _ev("started"),
+        _ph("working"),
+    ),
+    _v(
+        "task",
+        "unknown",
+        "no start recorded",
+        GRAY,
+        "No start was recorded: the track begins at the PR's earliest activity.",
+        Rep(EVENT, "started", absent=True),
+        _ph("working", absent=True),
+    ),
     # In draft slot.
     _v(
         "draft",
@@ -447,6 +480,7 @@ SLOT_STATES: dict[str, str | None] = {
     "reviewers": "reviewers",
     "ci_failures": "ci",
     "title": "pr",
+    "task_age": "task",
     "pr_age": "pr",
     "timeline": "pr",
     # Not PR states: where the branch is and what it is linked to.

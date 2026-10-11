@@ -173,11 +173,12 @@ a.stack-link[data-gone]::after { content: " (not shown)"; font-size: 11px; font-
 .s-task { grid-area: 1 / 8; }
 .s-session { grid-area: 1 / 9; }
 .s-stack { grid-area: 2 / 1; }
-.s-pr_age { grid-area: 2 / 2; }
-.s-in_draft { grid-area: 2 / 3; }
-.s-review_requested { grid-area: 2 / 4 / auto / span 2; }
-.s-ci_failures { grid-area: 2 / 6; }
-.s-reviewers { grid-area: 2 / 7 / auto / span 3; }
+.s-task_age { grid-area: 2 / 2; }
+.s-pr_age { grid-area: 2 / 3; }
+.s-in_draft { grid-area: 2 / 4; }
+.s-review_requested { grid-area: 2 / 5 / auto / span 2; }
+.s-ci_failures { grid-area: 2 / 7; }
+.s-reviewers { grid-area: 2 / 8 / auto / span 2; }
 .s-title { grid-area: 3 / 1 / auto / -1; }
 .s-timeline { grid-area: 4 / 1 / auto / -1; }
 .s-title .slot-value { color: var(--fg); }
@@ -191,7 +192,7 @@ a.stack-link[data-gone]::after { content: " (not shown)"; font-size: 11px; font-
   .card .slot { flex: 0 1 auto; padding-left: 0; }
   .s-title, .s-timeline { flex: 1 0 100%; order: 9; }
   .s-task, .s-session { order: 5; }
-  .s-stack, .s-pr_age, .s-in_draft, .s-review_requested, .s-ci_failures, .s-reviewers { order: 6; }
+  .s-stack, .s-task_age, .s-pr_age, .s-in_draft, .s-review_requested, .s-ci_failures, .s-reviewers { order: 6; }
 }
 
 /* Per-card timeline track. Colours come from the catalog's tone tokens. */

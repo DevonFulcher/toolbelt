@@ -126,6 +126,7 @@ export function branch(
     task_fetchable: false,
     task_live: null,
     agent: null,
+    started_at: null,
     status: { load: "loading" },
     ...rest,
   };

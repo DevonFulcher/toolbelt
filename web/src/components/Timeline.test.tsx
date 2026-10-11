@@ -1,6 +1,6 @@
 import { act, fireEvent, screen, within } from "@testing-library/react";
 import { describe, expect, test } from "vitest";
-import { ago, branch, catalog, DAY, detail, event, HOUR, MIN, NOW, pr, snapshot } from "../testing/fixtures";
+import { ago, branch, catalog, DAY, detail, event, HOUR, MIN, noPr, NOW, pr, snapshot } from "../testing/fixtures";
 import { renderWith } from "../testing/render";
 import { App } from "./App";
 
@@ -36,7 +36,7 @@ describe("a card's timeline", () => {
       expect(marker.getAttribute("aria-label")).toMatch(/ago$/);
     }
     expect(markers[3]).toHaveAttribute("aria-label", "approved (sam) 2d ago");
-    expect(screen.getByText("opened 10d ago")).toBeInTheDocument();
+    expect(screen.getByText("started 10d ago")).toBeInTheDocument();
     expect(screen.getByText("now")).toBeInTheDocument();
   });
 
@@ -166,7 +166,7 @@ describe("a card's timeline", () => {
       ]),
     );
 
-    expect(screen.getByText("opened 1m ago")).toBeInTheDocument();
+    expect(screen.getByText("started 1m ago")).toBeInTheDocument();
   });
 });
 
@@ -192,5 +192,60 @@ describe("a merged PR", () => {
 
     expect(screen.getByText("merged 2d ago")).toBeInTheDocument();
     expect(track().querySelector(".tl-now")).toBeNull();
+  });
+});
+
+describe("a task that started before its PR", () => {
+  const events = [
+    event("commit", 8 * DAY, { ci: "failed", detail: "a1a1a1a Early work" }),
+    event("opened", 4 * DAY, { detail: "Add the thing" }),
+  ];
+
+  function showStarted() {
+    return renderWith(
+      <App clock={() => NOW} />,
+      snapshot([
+        branch(1, "devon/a", {
+          started_at: ago(10 * DAY),
+          status: pr({ detail: detail({ created: ago(4 * DAY), events }) }),
+        }),
+      ]),
+    );
+  }
+
+  test("starts the track at the task and shades the working phase", () => {
+    showStarted();
+
+    expect(screen.getByText("started 10d ago")).toBeInTheDocument();
+    const markers = [...track().querySelectorAll<HTMLElement>(".tl-mark")];
+    expect(markers.map((m) => m.textContent)).toEqual(["◇", "●", "◆"]);
+    const working = track().querySelector<HTMLElement>(".tl-phase-working");
+    expect(working).toBeTruthy();
+    expect(working?.style.left).toBe("0%");
+    expect(working?.style.width).toBe("60%");
+
+    fireEvent.focus(working as HTMLElement);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Working (no PR yet)");
+  });
+
+  test("lists the start in the expanded table", () => {
+    showStarted();
+
+    fireEvent.click(screen.getByRole("button", { name: "Expand" }));
+
+    const rows = [...document.querySelectorAll(".tl-list tbody tr")].map((tr) => tr.children[1].textContent);
+    expect(rows).toEqual(["Task started", "commit (CI failed)", "opened"]);
+  });
+
+  test("a branch with no PR yet still gets a track", () => {
+    renderWith(
+      <App clock={() => NOW} />,
+      snapshot([branch(1, "devon/a", { started_at: ago(3 * DAY), status: noPr() })]),
+    );
+
+    expect(screen.getByText("started 3d ago")).toBeInTheDocument();
+    expect(screen.queryByText(/no history to draw/)).toBeNull();
+    expect(track().querySelector(".tl-phase-working")).toBeTruthy();
+    expect(screen.getByText("now")).toBeInTheDocument();
   });
 });

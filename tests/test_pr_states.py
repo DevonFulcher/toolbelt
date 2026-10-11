@@ -150,3 +150,26 @@ def test_the_wire_literals_match_the_rules_they_describe():
         if name.isupper() and isinstance(value, str)
     }
     assert set(get_args(pr_activity.ActivityKind.__value__)) == kinds
+
+
+def test_the_task_start_marker_and_working_phase_are_represented():
+    event_kinds = {r.kind for s in STATES for r in s.reps if r.how == "event"}
+    phase_kinds = {r.kind for s in STATES for r in s.reps if r.how == "phase"}
+
+    assert "started" in event_kinds
+    assert set(PHASES) == phase_kinds
+
+
+def test_the_task_start_is_a_catalogued_marker_and_working_phase():
+    started = pr_states.lookup("task", "started")
+    unknown = pr_states.lookup("task", "unknown")
+
+    assert {(r.how, r.kind, r.absent) for r in started.reps} == {
+        ("event", "started", False),
+        ("phase", "working", False),
+    }
+    # An unknown start says so: nothing is drawn before the PR opened.
+    assert all(r.absent for r in unknown.reps)
+    assert EVENTS["started"].label == "Task started"
+    assert PHASES["working"].label == "Working (no PR yet)"
+    assert SLOT_STATES["task_age"] == "task"

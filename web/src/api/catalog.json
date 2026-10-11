@@ -1,5 +1,11 @@
 {
   "events": {
+    "started": {
+      "label": "Task started",
+      "glyph": "◇",
+      "tone": "accent",
+      "legend": "The task started: its branch was created."
+    },
     "opened": {
       "label": "opened",
       "glyph": "◆",
@@ -92,6 +98,11 @@
     }
   },
   "phases": {
+    "working": {
+      "label": "Working (no PR yet)",
+      "tone": "accent",
+      "legend": "From the task's start until the PR was opened (or until now)."
+    },
     "draft": {
       "label": "In draft",
       "tone": "gray",
@@ -133,6 +144,7 @@
     "reviewers": "reviewers",
     "ci_failures": "ci",
     "title": "pr",
+    "task_age": "task",
     "pr_age": "pr",
     "timeline": "pr",
     "branch": null,
@@ -220,7 +232,7 @@
     {
       "label": "no PR",
       "tone": "gray",
-      "legend": "The branch has no PR yet; there is no history.",
+      "legend": "The branch has no PR yet (its working span is drawn from the task's start, when that is known).",
       "reps": [
         {
           "how": "now_state",
@@ -447,6 +459,44 @@
       ],
       "dimension": "merge",
       "value": "none"
+    },
+    {
+      "label": "task started",
+      "tone": "accent",
+      "legend": "The task's start is known: the track begins there, with a working span until the PR opened.",
+      "reps": [
+        {
+          "how": "event",
+          "kind": "started",
+          "absent": false
+        },
+        {
+          "how": "phase",
+          "kind": "working",
+          "absent": false
+        }
+      ],
+      "dimension": "task",
+      "value": "started"
+    },
+    {
+      "label": "no start recorded",
+      "tone": "gray",
+      "legend": "No start was recorded: the track begins at the PR's earliest activity.",
+      "reps": [
+        {
+          "how": "event",
+          "kind": "started",
+          "absent": true
+        },
+        {
+          "how": "phase",
+          "kind": "working",
+          "absent": true
+        }
+      ],
+      "dimension": "task",
+      "value": "unknown"
     },
     {
       "label": "in draft",

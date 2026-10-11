@@ -112,6 +112,11 @@ class MergeCatalogState(_CatalogState):
     value: MergeValue
 
 
+class TaskCatalogState(_CatalogState):
+    dimension: Literal["task"]
+    value: Literal["started", "unknown"]
+
+
 class DraftCatalogState(_CatalogState):
     dimension: Literal["draft"]
     value: Literal["draft", "ready"]
@@ -138,6 +143,7 @@ type CatalogState = Annotated[
     | ReviewCatalogState
     | CommentsCatalogState
     | MergeCatalogState
+    | TaskCatalogState
     | DraftCatalogState
     | ReviewersCatalogState
     | BlockedCatalogState
@@ -176,6 +182,7 @@ type CatalogDimension = Literal[
     "review",
     "comments",
     "merge",
+    "task",
     "draft",
     "reviewers",
     "blocked",
@@ -407,6 +414,9 @@ class Branch(Model):
     task_fetchable: bool
     task_live: TaskLive | None
     agent: Link | None
+    #: ISO time the task started (the branch was registered); ``None`` only
+    #: if the database has none for it.
+    started_at: str | None
     status: LiveStatus
 
 
