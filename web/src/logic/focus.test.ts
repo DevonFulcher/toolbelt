@@ -1,12 +1,15 @@
 import { describe, expect, test } from "vitest";
 import {
   ancestorIds,
+  branchCountText,
   breadcrumbs,
   capEntries,
+  focusCounts,
   focusedRows,
   focusSize,
   knownRoot,
   MAX_VISIBLE_DEPTH,
+  stackViewRoot,
   upTarget,
 } from "./focus";
 import { layout, stackedLayout } from "./layout";
@@ -90,6 +93,51 @@ describe("the focus root", () => {
     expect(ancestorIds(rows, "r")).toEqual([]);
     const loop = [row("x", "y", 0), row("y", "x", 1)];
     expect(ancestorIds(loop, "x")).toEqual(["y"]);
+  });
+});
+
+describe("what the filters leave of the focused subtree", () => {
+  const rows = chain(5);
+
+  test("counts the subtree's branches that pass, out of all of them", () => {
+    expect(focusCounts(rows, "b1", (r) => r.id !== "b3")).toEqual({ shown: 3, total: 4 });
+    expect(focusCounts(rows, "b1", () => true)).toEqual({ shown: 4, total: 4 });
+    // Branches outside the subtree do not count, whether or not they pass.
+    expect(focusCounts(rows, "b4", () => false)).toEqual({ shown: 0, total: 1 });
+  });
+
+  test("reads 'M branches', or 'N of M branches' when filters narrow it", () => {
+    expect(branchCountText({ shown: 17, total: 17 })).toBe("17 branches");
+    expect(branchCountText({ shown: 1, total: 1 })).toBe("1 branch");
+    expect(branchCountText({ shown: 3, total: 17 })).toBe("3 of 17 branches");
+    expect(branchCountText({ shown: 0, total: 2 })).toBe("0 of 2 branches");
+  });
+});
+
+describe("where a branch's stack is rooted for the stacked view", () => {
+  const parents: Record<string, string | null> = {};
+  for (const r of chain(12)) parents[r.id] = r.parent;
+  const parentOf = (id: string): string | null => parents[id] ?? null;
+
+  test("a stack root is its own root", () => {
+    expect(stackViewRoot("b0", parentOf)).toBe("b0");
+  });
+
+  test("is the stack root, so the whole stack is drawn around the branch", () => {
+    expect(stackViewRoot("b3", parentOf)).toBe("b0");
+    expect(stackViewRoot(`b${MAX_VISIBLE_DEPTH}`, parentOf)).toBe("b0");
+  });
+
+  test("moves down just far enough to keep a deep branch inside the depth cap", () => {
+    // b11 is 11 below b0: rooted at b5 it is at the cap (6), not hidden below it.
+    expect(stackViewRoot("b11", parentOf)).toBe("b5");
+    const entries = capEntries(layout(chain(12), state({ view: "stacked", root: "b5" })));
+    expect(entries[entries.length - 1]).toEqual({ id: "b11", depth: 6, context: false });
+  });
+
+  test("does not hang on a cycle", () => {
+    const loop: Record<string, string> = { x: "y", y: "x" };
+    expect(stackViewRoot("x", (id) => loop[id] ?? null)).toBe("y");
   });
 });
 

@@ -92,6 +92,24 @@ export function CardList({ rows }: { rows: Row[] }) {
     },
     [store],
   );
+  // A leaf card's "open in stacked view": once the stacked layout is there,
+  // scroll to the card and highlight it among its stack.
+  const reveal = useRef<string | null>(null);
+  const onOpenInStack = useCallback(
+    (id: string, root: string) => {
+      reveal.current = id;
+      store.getState().focusRoot(root, "stacked");
+    },
+    [store],
+  );
+  useEffect(() => {
+    const id = reveal.current;
+    const section = id ? placement.placed.get(id) : undefined;
+    if (!id || !stacked || !section) return;
+    reveal.current = null;
+    store.getState().expandSection(section.key);
+    setJump((previous) => ({ id, section: section.key, n: (previous?.n ?? 0) + 1 }));
+  }, [placement, stacked, store]);
   useEffect(() => {
     if (!jump) return undefined;
     const section = [...document.querySelectorAll<HTMLElement>(".cards-section")].find(
@@ -168,6 +186,7 @@ export function CardList({ rows }: { rows: Row[] }) {
                           parentGone={Boolean(parentId) && !parentSection && !parentStub && !outside}
                           parentOutside={outside}
                           onJump={onJump}
+                          onOpenInStack={onOpenInStack}
                         />
                         {entry.hidden && (
                           <CapControl id={entry.id} depth={depth} hidden={entry.hidden} />

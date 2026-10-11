@@ -33,6 +33,23 @@ describe("card layout", () => {
     }
   });
 
+  test("the boxes of a row are as tall as the tallest, content at the top", () => {
+    // `stretch` (not `start`/`center`) makes the Git, PR and Task boxes read as
+    // one band, and each row of a wrapped card equal-height within itself.
+    expect(declarations(".card")).toMatch(/align-items:\s*stretch/);
+    // A box must not opt out of it, and its content is a block that starts
+    // at the top (not a centred or bottom-justified flex column).
+    expect(declarations(".card .group")).not.toMatch(/align-self|display:\s*flex|justify-content/);
+    expect(css).not.toMatch(/\.g-(?:git|pr|task)[^{]*\{[^}]*align-self/);
+  });
+
+  test("the timeline's button row wraps, so it never makes the track wider than the card", () => {
+    // Expand, Hide commits and ? beside the start and end labels did, at 400px
+    // in a card indented six levels.
+    expect(declarations(".tl-ends")).toMatch(/flex-wrap:\s*wrap/);
+    expect(declarations(".tl-buttons")).toMatch(/flex-wrap:\s*wrap/);
+  });
+
   test("a group can shrink below its preferred width, so it is never wider than the card", () => {
     const group = declarations(".card .group");
 

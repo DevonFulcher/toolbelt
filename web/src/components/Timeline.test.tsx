@@ -88,7 +88,6 @@ describe("a card's timeline", () => {
   test("Expand shows the chronological log under the track, Collapse hides it again", () => {
     show();
     expect(document.querySelector(".tl-list")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Hide commits" })).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Expand" }));
 
@@ -103,6 +102,22 @@ describe("a card's timeline", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Collapse" }));
     expect(document.querySelector(".tl-list")).toBeNull();
+  });
+
+  test("Hide commits is there with the log closed, since commit dots are always drawn", () => {
+    show();
+    const commitDots = () => track().querySelectorAll(".tl-faint").length;
+    expect(document.querySelector(".tl-list")).toBeNull();
+    expect(commitDots()).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide commits" }));
+
+    expect(screen.getByRole("button", { name: "Show commits" })).toHaveAttribute("aria-pressed", "true");
+    expect(commitDots()).toBe(0);
+    // The choice is the card's: it survives opening the log.
+    fireEvent.click(screen.getByRole("button", { name: "Expand" }));
+    expect(screen.getByRole("button", { name: "Show commits" })).toBeInTheDocument();
+    expect([...document.querySelectorAll(".tl-list tbody tr")]).toHaveLength(3);
   });
 
   test("whether the log is open is remembered per card", () => {

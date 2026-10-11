@@ -51,7 +51,10 @@ without the other fails:
   width-triggered media query, a group (Git, PR, Task) may shrink
   (`flex-shrink >= 1`, `min-width: 0`), the slots inside a group flow into
   columns capped by the group's own width, and the timeline's full-row rule is
-  not outranked by another flex rule.
+  not outranked by another flex rule. The boxes of a row stretch to the tallest
+  (`align-items: stretch`, no `align-self` on a group), and the timeline's
+  button row (Expand, Hide commits, ?) wraps, so a narrow, deeply indented card
+  is not made wider than its column by its buttons.
 - `tests/test_ui_api_types.py` and `pnpm check:types` fail when the generated
   TS types no longer match the pydantic models.
 
@@ -147,6 +150,11 @@ Also check the empty state (a fresh `TOOLBELT_HOME`, or a `gh` that finds no
 PRs: "None of your PRs were updated...", every lead-time step "no data" with
 its reason), a window switch (4 / 12 / 26 / 52 weeks: the URL gets `weeks=`)
 and a tooltip (hover a chart, or focus it and use the arrow keys).
+
+To check that the boxes of a row are equal-height, compare the heights of the
+card's `:scope > .group` elements that share a `top`: they differ by at most
+a pixel. In a stacked view with `--deep 8`, `?q=deep` leaves a depth-6 card to
+check a narrow width with (400px) against.
 
 `bad` should be empty at every width. A timeline track should also be close to
 the card's width (the wrapping layout once left it at 193px in a 1,260px card).
