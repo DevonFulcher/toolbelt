@@ -2,23 +2,34 @@
 
     uv run python tools/ui-demo/seed.py DEST [--deep N]
 
-Creates DEST/repos/{demo-app,demo-search} (empty git repos), DEST/home (a
-TOOLBELT_HOME with stacks.db) and DEST/config (an empty XDG_CONFIG_HOME), then
-registers the stacks the fake `gh` (tools/ui-demo/gh) has pull requests for.
-`--deep N` adds an N-branch linear chain under demo-search/search-ranking to
-exercise the depth cap and focus-root navigation.
+Creates DEST/repos/{demo-app,demo-search} (empty git repos with an origin
+URL, so the aggregate view can match their PRs), DEST/home (a TOOLBELT_HOME
+with stacks.db) and DEST/config (an empty XDG_CONFIG_HOME), then registers the
+stacks the fake `gh` (tools/ui-demo/gh) has pull requests for. `--deep N` adds
+an N-branch linear chain under demo-search/search-ranking to exercise the
+depth cap and focus-root navigation.
+
+It also writes the aggregate view's history (see history.py):
+DEST/history.json, which the fake `gh` serves to the aggregate search, and the
+archived task facts of cleaned-up branches in stacks.db (`removed_branches`).
 
 Run it with TOOLBELT_HOME pointing at DEST/home (run.sh does this).
 """
 
 import argparse
+import json
 import os
+import random
 import sqlite3
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from toolbelt import logged_process
-from toolbelt.git.stack import lineage
+sys.path.insert(0, str(Path(__file__).parent))
+
+from history import RECORDED_WEEKS, history  # noqa: E402
+from toolbelt import logged_process  # noqa: E402
+from toolbelt.git.stack import lineage  # noqa: E402
 
 SESSION = "claude://claude.ai/epitaxy/local_28e13856-24b4-4207-b16c-7235010e72{n:02d}"
 
@@ -43,12 +54,39 @@ def _git(repo: Path, *args: str) -> None:
     logged_process.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
 
 
+def write_history(dest: Path, db: sqlite3.Connection, now: datetime) -> None:
+    """The aggregate view's history: DEST/history.json for the fake `gh`, and
+    the archived task facts in the stack DB (see history.py)."""
+    prs, tasks = history(now, random.Random(20261011))
+    (dest / "history.json").write_text(json.dumps(prs, indent=1))
+    for task in tasks:
+        row = db.execute(
+            "SELECT id FROM repos WHERE name = ?", (task["repo"],)
+        ).fetchone()
+        db.execute(
+            "INSERT INTO removed_branches "
+            "(repo_id, name, started_at, removed_at, landed) VALUES (?, ?, ?, ?, ?)",
+            (
+                row[0],
+                task["branch"],
+                task["started"].isoformat(),
+                task["removed"].isoformat(),
+                int(task["landed"]),
+            ),
+        )
+    # Removals before this were never archived, so their tasks have no start.
+    since = (now - timedelta(weeks=RECORDED_WEEKS)).isoformat()
+    db.execute("UPDATE archive_info SET since = ?", (since,))
+
+
 def seed(dest: Path, deep: int) -> None:
     repos = dest / "repos"
     for name in STACKS:
         repo = repos / name
         repo.mkdir(parents=True, exist_ok=True)
         _git(repo, "init", "-q", "-b", "main")
+        # So the aggregate view can match a repo's PRs to its branches.
+        _git(repo, "remote", "add", "origin", f"https://github.com/devon/{name}.git")
         _git(
             repo,
             "-c",
@@ -86,6 +124,7 @@ def seed(dest: Path, deep: int) -> None:
     for (_, branch), days in started.items():
         when = (now - timedelta(days=days)).isoformat()
         db.execute("UPDATE branches SET started_at = ? WHERE name = ?", (when, branch))
+    write_history(dest, db, now)
     db.commit()
 
 

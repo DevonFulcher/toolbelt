@@ -297,7 +297,7 @@ def sync_stack(
             )
             continue
         delete_branch_and_worktree(landed_branch, repo_root=main_wt, force=True)
-        remove_parent(landed_branch, root=main_wt)
+        remove_parent(landed_branch, root=main_wt, landed=True)
         logger.info(f"Cleaned up landed branch '{landed_branch}'.")
 
     if stacked_prs is not None:

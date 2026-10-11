@@ -7,7 +7,9 @@ Two things are served, both made of the models below:
   links, live status) plus the state catalog;
 * ``GET /api/events``: a Server-Sent Events stream of ``ServerEvent``s that
   keep a snapshot current (a branch's new status, a task's title, a structure
-  change, ...).
+  change, ...);
+* ``GET /api/aggregate``: ``Aggregate``, how work has flowed over a window
+  (throughput, lead times, the status mix), computed on demand.
 
 TypeScript types are generated from these models (``api_schema.py`` writes
 their JSON Schema, ``web/scripts/gen-types.mjs`` turns it into
@@ -484,6 +486,126 @@ class Snapshot(Model):
     untracked: UntrackedPrs
 
 
+# ---- the aggregate view (see aggregate.py) --------------------------------------
+
+#: The states a task can be in on the status-mix chart, in stacking order:
+#: the Next rules (``next_action.py``) that can be told apart from history.
+type MixState = Literal[
+    "working",
+    "draft",
+    "ready",
+    "waiting",
+    "changes",
+    "ci_running",
+    "ci_failing",
+    "approved",
+    "blocked",
+]
+#: The coarse classes the Next rules fall into (``Who`` without ``none``).
+type MixWho = Literal["you", "ci", "others"]
+type LeadStageKey = Literal[
+    "start_to_open",
+    "open_to_request",
+    "request_to_review",
+    "review_to_merge",
+    "start_to_merge",
+]
+
+
+class MixStateInfo(Model):
+    """One band of the status mix: its label, tone and legend come from the
+    state catalog (``pr_states``), so it reads like the cards."""
+
+    key: MixState
+    label: str
+    tone: Tone
+    legend: str
+
+
+class MixSeries(Model):
+    key: MixState
+    #: Share of the in-flight task time of each bucket, 0..1; ``None`` for a
+    #: bucket in which nothing was in flight.
+    share: list[float | None]
+
+
+class MixWhoSeries(Model):
+    key: MixWho
+    share: list[float | None]
+
+
+class StatusMix(Model):
+    #: ``day`` for windows up to 12 weeks, ``week`` beyond.
+    granularity: Literal["day", "week"]
+    #: ISO start of each bucket (the last one ends now).
+    starts: list[str]
+    #: Mean number of tasks in flight over each bucket.
+    inflight: list[float]
+    states: list[MixStateInfo]
+    series: list[MixSeries]
+    who: list[MixWhoSeries]
+
+
+class Throughput(Model):
+    #: ISO start (Monday, UTC) of each week; the last one is the current,
+    #: partial, week.
+    starts: list[str]
+    opened: list[int]
+    merged: list[int]
+    #: Closed without merging.
+    closed: list[int]
+
+
+class LeadStage(Model):
+    key: LeadStageKey
+    label: str
+    #: PRs merged in the window with this interval known / unknown (the
+    #: start or the request/review it is measured from was not recorded).
+    n: int
+    unknown: int
+    median_s: float | None
+    p75_s: float | None
+    p90_s: float | None
+    #: Every known interval in seconds, ascending.
+    values_s: list[float]
+
+
+class AggregateCoverage(Model):
+    #: PRs of the user's in the window, and how many of them have a recorded
+    #: task start.
+    prs: int
+    prs_with_start: int
+    #: Task starts are recorded from this time on (when the stack DB began
+    #: archiving removed branches); earlier tasks have no start unless their
+    #: branch is still tracked.
+    task_starts_since: str
+    #: Tasks that have no PR (yet), so are only known from the stack DB.
+    tasks_without_pr: int
+    #: GitHub had more PRs than were fetched, or some were hidden (an
+    #: organization the token is not authorized for).
+    truncated: bool
+    hidden: int
+
+
+class AggregateNote(Model):
+    label: str
+    why: str
+
+
+class Aggregate(Model):
+    weeks: int
+    window_start: str
+    window_end: str
+    #: When the GitHub history was fetched (it is cached for a while).
+    fetched_at: str
+    throughput: Throughput
+    lead_time: list[LeadStage]
+    mix: StatusMix
+    coverage: AggregateCoverage
+    #: What could not be reconstructed or is approximated.
+    notes: list[AggregateNote]
+
+
 # ---- server-sent events ---------------------------------------------------------
 
 
@@ -552,3 +674,4 @@ class Wire(Model):
 
     snapshot: Snapshot
     event: ServerEvent
+    aggregate: Aggregate

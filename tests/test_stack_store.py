@@ -279,7 +279,7 @@ def test_started_at_is_now_on_first_insert_and_reparenting_keeps_it(tmp_path: Pa
 
 def test_started_at_migration_backfills_existing_rows_from_created_at(tmp_path: Path):
     db = tmp_path / "stacks.db"
-    before = store._MIGRATIONS[:-1]
+    before = store._MIGRATIONS[:4]  # everything before the started_at column
     with sqlite3.connect(db) as conn:
         for migration in before:
             for statement in migration:
@@ -300,3 +300,55 @@ def test_started_at_migration_backfills_existing_rows_from_created_at(tmp_path: 
     assert s.get_started_at(1, "old") == datetime(2026, 10, 2, tzinfo=timezone.utc)
     s.set_parent(1, "old", "develop")  # reparenting keeps it
     assert s.get_started_at(1, "old") == datetime(2026, 10, 2, tzinfo=timezone.utc)
+
+
+def test_removing_a_branch_archives_its_task_facts(tmp_path: Path):
+    s = StackStore(tmp_path / "stacks.db")
+    repo_id = s.ensure_repo(_identity(tmp_path))
+    started = datetime(2026, 10, 1, 9, 0, tzinfo=timezone.utc)
+    s.set_parent(
+        repo_id, "feat", "main", task="PLAT-1", task_tracker="jira", started_at=started
+    )
+    s.set_parent(repo_id, "other", "main")
+
+    before = datetime.now(timezone.utc)
+    s.remove_branch(repo_id, "feat", landed=True)
+    s.remove_branch(repo_id, "other")
+    s.remove_branch(repo_id, "never-tracked")
+
+    assert s.get_parent(repo_id, "feat") is None
+    feat, other = s.removed_branches()
+    assert (feat.name, feat.task, feat.task_tracker) == ("feat", "PLAT-1", "jira")
+    assert feat.started_at == started
+    assert feat.landed is True and before <= feat.removed_at
+    assert (other.name, other.task, other.landed) == ("other", None, False)
+    assert other.started_at is not None  # stamped when it was registered
+
+
+def test_the_archive_outlives_the_branch_and_is_scoped_by_repo_id(tmp_path: Path):
+    db = tmp_path / "stacks.db"
+    s = StackStore(db)
+    a = s.ensure_repo(_identity(tmp_path, "a"))
+    b = s.ensure_repo(_identity(tmp_path, "b"))
+    s.set_parent(a, "feat", "main")
+    s.set_parent(b, "feat", "main")
+    s.remove_branch(a, "feat")
+    s.close()
+
+    reopened = StackStore(db)
+
+    assert [(r.repo_id, r.name) for r in reopened.removed_branches()] == [(a, "feat")]
+    assert [(t.repo_id, t.name) for t in reopened.tracked_branch_facts()] == [
+        (b, "feat")
+    ]
+
+
+def test_archiving_began_when_the_table_was_created(tmp_path: Path):
+    before = datetime.now(timezone.utc)
+    s = StackStore(tmp_path / "stacks.db")
+    after = datetime.now(timezone.utc)
+
+    assert before.replace(microsecond=0) <= s.archive_since() <= after
+    # Reopening does not reset it.
+    s.close()
+    assert StackStore(tmp_path / "stacks.db").archive_since() <= after

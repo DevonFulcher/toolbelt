@@ -68,7 +68,7 @@ describe("the URL state", () => {
     const parsed = parseState("?view=timeline&kind=review&order=oldest&next=you");
     expect(parsed).toEqual({ ...DEFAULT_STATE, next: "you" });
     expect(serializeState(parsed)).toBe("?next=you");
-    expect(VIEWS).toEqual(["table", "stacked", "grouped"]);
+    expect(VIEWS).toEqual(["table", "stacked", "grouped", "aggregate"]);
   });
 
   test("old links map onto the current views", () => {
@@ -117,4 +117,24 @@ test("toggleSort starts ascending and flips on the same column", () => {
   expect([s.sort, s.dir]).toEqual(["pr", "desc"]);
   s = toggleSort(s, "ci");
   expect([s.sort, s.dir]).toEqual(["ci", "asc"]);
+});
+
+describe("the aggregate view's state", () => {
+  test("is a view of its own, with a 12 week window by default", () => {
+    expect(VIEWS).toContain("aggregate");
+    expect(parseState("?view=aggregate")).toMatchObject({ view: "aggregate", weeks: 12 });
+    expect(serializeState(state({ view: "aggregate" }))).toBe("?view=aggregate");
+  });
+
+  test("carries a non-default window in the URL, and only for that view", () => {
+    expect(serializeState(state({ view: "aggregate", weeks: 26 }))).toBe("?view=aggregate&weeks=26");
+    expect(parseState("?view=aggregate&weeks=52").weeks).toBe(52);
+    // Another view's URL does not keep it.
+    expect(serializeState(state({ view: "table", weeks: 26 }))).toBe("?view=table");
+  });
+
+  test("ignores a window that is not offered", () => {
+    expect(parseState("?view=aggregate&weeks=7").weeks).toBe(12);
+    expect(parseState("?view=aggregate&weeks=abc").weeks).toBe(12);
+  });
 });

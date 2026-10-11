@@ -5,24 +5,32 @@ Answers only what the UI asks of `gh`:
   * `gh api graphql ... -f branch=<name>`: the single per-PR lookup (state, CI,
     reviews, review threads, timeline events). Branch names in SCENARIOS below
     have a PR; every other branch has none.
-  * `gh api graphql` with a `search(` query: the "open PRs not tracked by
-    toolbelt" callout; always an empty list here.
-Timestamps are relative to now, so the demo always looks recent. Anything else
-exits 1, like `gh pr view` for a branch without a PR.
+  * `gh api graphql` with a `search(` query and no timeline: the "open PRs
+    not tracked by toolbelt" callout; always an empty list here.
+  * `gh api graphql` with a `search(` query asking for `timelineItems`: the
+    aggregate view's history. Answers with the PRs in `history.json` (written
+    next to the demo's TOOLBELT_HOME by seed.py: ~12 weeks of merged/closed
+    PRs with absolute timestamps) plus the open PRs of SCENARIOS; a search
+    containing `is:open` gets only the open ones.
+Timestamps in SCENARIOS are relative to now, so the demo always looks recent.
+Anything else exits 1, like `gh pr view` for a branch without a PR.
 """
 
 import json
+import os
 import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 a = sys.argv[1:]
 if a[:2] != ["api", "graphql"]:
     sys.exit(1)
-if any("search(" in x for x in a):
+searching = any("search(" in x for x in a)
+if searching and not any("timelineItems" in x for x in a):
     print(json.dumps({"data": {"search": {"nodes": [], "issueCount": 0}}}))
     sys.exit(0)
 branch = next((x.split("=", 1)[1] for x in a if x.startswith("branch=")), None)
-if branch is None:
+if branch is None and not searching:
     print(json.dumps({"data": {"repository": {"pullRequests": {"nodes": []}}}}))
     sys.exit(0)
 NOW = datetime.now(timezone.utc)
@@ -234,5 +242,127 @@ SCENARIOS = {
         ],
     ),
 }
+
+
+# ---- the aggregate view's history -----------------------------------------------
+
+
+def history_node(spec):
+    """A `search` node for one PR spec of history.json; its events are
+    [kind, iso time, ...] (see `history` in seed.py)."""
+    items = []
+    for kind, when, *rest in spec["events"]:
+        if kind == "ready":
+            items.append(
+                {
+                    "__typename": "ReadyForReviewEvent",
+                    "createdAt": when,
+                    "actor": user("devon"),
+                }
+            )
+        elif kind == "draft":
+            items.append(
+                {
+                    "__typename": "ConvertToDraftEvent",
+                    "createdAt": when,
+                    "actor": user("devon"),
+                }
+            )
+        elif kind == "request":
+            items.append(
+                {
+                    "__typename": "ReviewRequestedEvent",
+                    "createdAt": when,
+                    "actor": user("devon"),
+                    "requestedReviewer": {"__typename": "User", "login": rest[0]},
+                }
+            )
+        elif kind == "review":
+            items.append(
+                {
+                    "__typename": "PullRequestReview",
+                    "submittedAt": when,
+                    "state": rest[1],
+                    "author": user(rest[0]),
+                }
+            )
+        elif kind == "commit":
+            oid, ci, done = rest
+            suites = [{"status": "COMPLETED", "updatedAt": done}] if done else []
+            items.append(
+                {
+                    "__typename": "PullRequestCommit",
+                    "commit": {
+                        "oid": oid,
+                        "messageHeadline": "Work",
+                        "committedDate": when,
+                        "author": {"user": user("devon"), "name": "Devon"},
+                        "statusCheckRollup": {"state": ci} if ci else None,
+                        "checkSuites": {"nodes": suites},
+                    },
+                }
+            )
+        elif kind == "base":
+            items.append(
+                {
+                    "__typename": "BaseRefChangedEvent",
+                    "createdAt": when,
+                    "previousRefName": rest[0],
+                    "currentRefName": rest[1],
+                }
+            )
+        elif kind == "merged":
+            items.append(
+                {"__typename": "MergedEvent", "createdAt": when, "actor": user("devon")}
+            )
+            items.append(
+                {"__typename": "ClosedEvent", "createdAt": when, "actor": user("devon")}
+            )
+        elif kind == "closed":
+            items.append(
+                {"__typename": "ClosedEvent", "createdAt": when, "actor": user("devon")}
+            )
+    return {
+        "number": spec["number"],
+        "title": spec["title"],
+        "state": spec["state"],
+        "isDraft": spec.get("draft", False),
+        "createdAt": spec["created"],
+        "mergedAt": spec.get("merged"),
+        "closedAt": spec.get("merged") or spec.get("closed"),
+        "headRefName": spec["head"],
+        "baseRefName": spec.get("base", "main"),
+        "reviewDecision": None,
+        "author": user("devon"),
+        "repository": {"nameWithOwner": f"devon/{spec['repo']}", "isArchived": False},
+        "reviewRequests": {"totalCount": 0},
+        "timelineItems": {"nodes": items},
+    }
+
+
+def scenario_search_node(head, node):
+    repo = "demo-search" if head == "devon/search-index" else "demo-app"
+    return {
+        **node,
+        "headRefName": head,
+        "repository": {"nameWithOwner": f"devon/{repo}", "isArchived": False},
+        "reviewRequests": {"totalCount": len(node["reviewRequests"]["nodes"])},
+    }
+
+
+if searching:
+    history = Path(os.environ.get("TOOLBELT_HOME", ".")).parent / "history.json"
+    specs = json.loads(history.read_text()) if history.is_file() else []
+    found = [history_node(spec) for spec in specs]
+    found += [scenario_search_node(h, n) for h, n in SCENARIOS.items()]
+    if any("is:open" in x for x in a):
+        found = [n for n in found if n["state"] == "OPEN"]
+    page = {
+        "issueCount": len(found),
+        "pageInfo": {"hasNextPage": False, "endCursor": None},
+        "nodes": found,
+    }
+    print(json.dumps({"data": {"search": page}}))
+    sys.exit(0)
 nodes = [SCENARIOS[branch]] if branch in SCENARIOS else []
 print(json.dumps({"data": {"repository": {"pullRequests": {"nodes": nodes}}}}))

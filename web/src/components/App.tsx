@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useCounts, useRows } from "../store/selectors";
 import { useApp } from "../store/StoreContext";
+import { AggregateView } from "./AggregateView";
 import { CardList } from "./CardList";
 import { FilterBar } from "./FilterBar";
 import { FocusBar } from "./FocusBar";
@@ -48,6 +49,15 @@ function Content() {
       <div className="empty error">{`Could not load the stacks: ${error}`}</div>
     ) : (
       <div className="empty">Loading…</div>
+    );
+  }
+  if (view === "aggregate") {
+    // History does not need tracked stacks: archived tasks and PRs count.
+    return (
+      <>
+        <FilterBar counts={counts} />
+        <AggregateView />
+      </>
     );
   }
   if (rows.length === 0) {
