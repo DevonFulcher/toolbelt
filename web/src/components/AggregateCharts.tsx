@@ -44,7 +44,11 @@ function useWidth(): [(el: HTMLElement | null) => void, number] {
   const ref = useCallback((el: HTMLElement | null) => {
     observer.current?.disconnect();
     observer.current = null;
-    if (!el || typeof ResizeObserver === "undefined") return;
+    if (!el) return;
+    // Start from the real width, not the default: no frame at the wrong size.
+    const initial = Math.floor(el.getBoundingClientRect().width);
+    if (initial > 0) setWidth(initial);
+    if (typeof ResizeObserver === "undefined") return;
     observer.current = new ResizeObserver((entries) => {
       const next = Math.floor(entries[0].contentRect.width);
       if (next > 0) setWidth(next);
@@ -468,7 +472,7 @@ export function LeadTimeChart({
         <div className="agg-lead-row agg-lead-axis">
           <div className="agg-lead-label" />
           <div className="agg-lead-strip">
-            <svg width={plotW} height={30} aria-hidden="true">
+            <svg width={plotW} height={36} aria-hidden="true">
               {axis.ticks.map((t) => (
                 <g key={t}>
                   <line className="agg-grid" x1={x(t)} x2={x(t)} y1={0} y2={5} />
@@ -477,7 +481,7 @@ export function LeadTimeChart({
                   </text>
                 </g>
               ))}
-              <text className="agg-axis-title" x={plotW / 2} y={29} textAnchor="middle">
+              <text className="agg-axis-title" x={plotW / 2} y={32} textAnchor="middle">
                 time (log scale)
               </text>
             </svg>
@@ -727,17 +731,16 @@ export function ShareChart({
                   ? `${inflight[hover.index].toFixed(1)} tasks in flight on average`
                   : "nothing in flight"}
               </div>
-              {[...series].reverse().map((s) => {
-                const k = series.indexOf(s);
-                const v = shares[k][hover.index];
-                return (
+              {[...series]
+                .reverse()
+                .filter((s) => (shares[series.indexOf(s)][hover.index] ?? 0) > 0)
+                .map((s) => (
                   <div key={s.key} className="agg-tip-row">
                     <Swatch id={id} series={s} />
                     <span>{s.label}</span>
-                    <span className="agg-tip-value">{pct(v)}</span>
+                    <span className="agg-tip-value">{pct(shares[series.indexOf(s)][hover.index])}</span>
                   </div>
-                );
-              })}
+                ))}
             </>
           )}
         </ChartTooltip>

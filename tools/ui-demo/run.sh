@@ -34,4 +34,5 @@ export PATH="$dir/bin:$PATH"
 (cd "$repo_root" && uv run python tools/ui-demo/seed.py "$dir" --deep "$deep")
 echo "demo data in $dir"
 cd "$dir/repos/demo-app"
-exec toolbelt ui --port "$port"
+# This checkout's code (not whichever `toolbelt` is first on PATH).
+exec uv run --project "$repo_root" toolbelt ui --port "$port"

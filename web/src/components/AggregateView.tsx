@@ -84,9 +84,9 @@ export function AggregatePanels({ data }: { data: Aggregate }) {
       </p>
       <div className="agg-notices">
         {coverage.prs === 0 && (
-          <div className="notice">{`None of your PRs were updated in the last ${data.weeks} weeks, so there is nothing to chart but tasks still being worked on.`}</div>
+          <div className="notice">{`None of your PRs were updated in the last ${data.weeks} weeks.`}</div>
         )}
-        {startsAfterWindow && (
+        {startsAfterWindow && coverage.prs > 0 && (
           <div className="notice">
             {`Task starts are only recorded since ${formatBucketDate(coverage.task_starts_since)}: ${coverage.prs_with_start} of ${coverage.prs} PRs have one. Earlier PRs begin when they were opened, and their "task started" intervals are unknown rather than guessed.`}
           </div>

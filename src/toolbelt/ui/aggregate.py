@@ -262,7 +262,9 @@ def replay(
             continue
         points.append(
             (
-                event.time,
+                # A commit can predate the PR; the state holds from its
+                # creation (as the card clamps to the track's start).
+                max(event.time, facts.created_at),
                 Flags(
                     draft=draft,
                     waiting=bool(pending) and not draft,

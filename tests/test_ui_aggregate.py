@@ -219,6 +219,12 @@ def test_ci_failing_then_running_then_waiting_for_review():
     ]
 
 
+def test_commits_made_before_the_pr_was_opened_set_its_starting_state():
+    record = pr(created=5, items=(commit(1, "FAILURE", "c0"), request(6)))
+
+    assert states(record, now_hours=10) == [(5, 10, "ci_failing")]
+
+
 def test_a_pending_head_commit_is_running_until_the_end():
     record = pr(items=(commit(2, "PENDING", "c1"),))
 
