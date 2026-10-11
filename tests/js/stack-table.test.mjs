@@ -23,7 +23,7 @@ const ids = (entries) => entries.map((e) => e.id);
 test("state round-trips through the query string and omits defaults", () => {
   assert.equal(table.serializeState(table.DEFAULT_STATE), "");
   const full = state({
-    view: "flat",
+    view: "table", mode: "flat",
     sort: "ci",
     dir: "desc",
     q: "fix login",
@@ -35,7 +35,6 @@ test("state round-trips through the query string and omits defaults", () => {
     merge: "conflicts",
     done: "1",
     compact: "1",
-    group: "repo",
   });
   const query = table.serializeState(full);
   assert.deepEqual(table.parseState(query), full);
@@ -53,7 +52,7 @@ test("the comments column is sortable and filterable", () => {
     row("c", "main", 3, { comments: { value: "has comments", sort: "12" } }),
     row("d", "main", 4, { comments: { value: "none", sort: "" } }),
   ];
-  const view = (o) => ids(table.layout(rows, state({ view: "flat", ...o })));
+  const view = (o) => ids(table.layout(rows, state({ view: "table", mode: "flat", ...o })));
   assert.deepEqual(view({ sort: "comments", dir: "desc" }), ["c", "a", "b", "d"]);
   assert.deepEqual(view({ comments: "has comments" }), ["a", "c"]);
   assert.deepEqual(view({ comments: "none" }), ["b", "d"]);
@@ -68,7 +67,7 @@ test("the retired timeline view and its filters are ignored, not an error", () =
   const parsed = table.parseState("?view=timeline&kind=review&order=oldest&next=you");
   assert.deepEqual(parsed, { ...table.DEFAULT_STATE, next: "you" });
   assert.equal(table.serializeState(parsed), "?next=you");
-  assert.deepEqual(table.VIEWS, ["tree", "flat", "cards"]);
+  assert.deepEqual(table.VIEWS, ["table", "stacked", "grouped"]);
 });
 
 test("compact comes from the URL, else from the remembered choice", () => {
@@ -104,15 +103,15 @@ const flat = [
 ];
 
 test("flat view lists the rows in server order by default", () => {
-  const out = table.layout(flat, state({ view: "flat" }));
+  const out = table.layout(flat, state({ view: "table", mode: "flat" }));
   assert.deepEqual(ids(out), ["a", "b", "c", "d"]);
   assert.ok(out.every((e) => e.depth === 0));
 });
 
 test("sorting is numeric and rows without a value stay last in both directions", () => {
-  const asc = table.layout(flat, state({ view: "flat", sort: "pr" }));
+  const asc = table.layout(flat, state({ view: "table", mode: "flat", sort: "pr" }));
   assert.deepEqual(ids(asc), ["b", "a", "d", "c"]);
-  const desc = table.layout(flat, state({ view: "flat", sort: "pr", dir: "desc" }));
+  const desc = table.layout(flat, state({ view: "table", mode: "flat", sort: "pr", dir: "desc" }));
   assert.deepEqual(ids(desc), ["d", "a", "b", "c"]);
 });
 
@@ -124,7 +123,7 @@ test("value filters match exactly and combine", () => {
     // Still loading: empty values never match a chosen filter.
     row("d", "main", 4, { pr: "", ci: "" }),
   ];
-  const view = (o) => ids(table.layout(rows, state({ view: "flat", ...o })));
+  const view = (o) => ids(table.layout(rows, state({ view: "table", mode: "flat", ...o })));
   assert.deepEqual(view({ pr: "open" }), ["a", "b"]);
   assert.deepEqual(view({ ci: "failed" }), ["a", "c"]);
   assert.deepEqual(view({ pr: "open", ci: "failed" }), ["a"]);
@@ -137,7 +136,7 @@ test("text filter is case-insensitive, ANDs terms, and accepts #PR numbers", () 
     row("devon/logout", "main", 2, { search: "devon/logout 43 ABC-2 Fix logout" }),
     row("devon/docs", "main", 3, { search: "devon/docs" }),
   ];
-  const view = (q) => ids(table.layout(rows, state({ view: "flat", q })));
+  const view = (q) => ids(table.layout(rows, state({ view: "table", mode: "flat", q })));
   assert.deepEqual(view("LOGIN"), ["devon/login"]);
   assert.deepEqual(view("fix"), ["devon/login", "devon/logout"]);
   assert.deepEqual(view("fix logout"), ["devon/logout"]);
@@ -217,13 +216,13 @@ test("sorting a column never interleaves repos in tree view", () => {
 test("sorting by repo orders the repo groups; flat view sorts across repos", () => {
   const desc = table.layout(multi, state({ sort: "repo", dir: "desc" }));
   assert.deepEqual(ids(desc), ["2:x", "1:x", "1:y"]);
-  const flatByPr = table.layout(multi, state({ view: "flat", sort: "pr" }));
+  const flatByPr = table.layout(multi, state({ view: "table", mode: "flat", sort: "pr" }));
   assert.deepEqual(ids(flatByPr), ["2:x", "1:y", "1:x"]);
 });
 
 test("the repo filter scopes the table to one repo", () => {
   assert.deepEqual(ids(table.layout(multi, state({ repo: "2" }))), ["2:x"]);
-  assert.deepEqual(ids(table.layout(multi, state({ view: "flat", repo: "1" }))), ["1:x", "1:y"]);
+  assert.deepEqual(ids(table.layout(multi, state({ view: "table", mode: "flat", repo: "1" }))), ["1:x", "1:y"]);
 });
 
 test("repo filter combines with value filters", () => {
@@ -242,54 +241,117 @@ test("the next column floats rows that need the user first and filters by who", 
     row("d", "main", 4, { next: { value: "you", sort: "1" } }),
     row("e", "main", 5, { next: { value: "", sort: "" } }),
   ];
-  const view = (o) => ids(table.layout(rows, state({ view: "flat", ...o })));
+  const view = (o) => ids(table.layout(rows, state({ view: "table", mode: "flat", ...o })));
   assert.deepEqual(view({ sort: "next" }), ["b", "d", "c", "a", "e"]);
   assert.deepEqual(view({ next: "you" }), ["b", "d"]);
   assert.equal(table.parseState("?next=you").next, "you");
 });
 
-test("the cards view lives in the URL next to tree and flat", () => {
-  for (const view of ["flat", "cards"]) {
+test("the card views live in the URL; retired view names map onto them", () => {
+  for (const view of ["stacked", "grouped"]) {
     const query = table.serializeState(state({ view }));
     assert.equal(query, `?view=${view}`);
     assert.equal(table.parseState(query).view, view);
   }
-  assert.equal(table.parseState("?view=tree").view, "tree");
-  const full = state({ view: "cards", group: "repo", q: "auth", next: "you", done: "1" });
+  assert.equal(table.serializeState(state({ view: "table", mode: "flat" })), "?mode=flat");
+  assert.equal(table.parseState("?mode=flat").mode, "flat");
+  // Old links: view=cards is grouped, view=tree|flat the table, group is ignored.
+  assert.equal(table.parseState("?view=cards").view, "grouped");
+  assert.deepEqual(table.parseState("?view=tree"), table.DEFAULT_STATE);
+  const flat = table.parseState("?view=flat");
+  assert.equal(flat.view, "table");
+  assert.equal(flat.mode, "flat");
+  assert.deepEqual(table.parseState("?view=cards&group=repo"), state({ view: "grouped" }));
+  const full = state({ view: "grouped", q: "auth", next: "you", done: "1", sort: "ci", dir: "desc" });
   assert.deepEqual(table.parseState(table.serializeState(full)), full);
 });
 
-test("cards are flat, filtered, and by default list what needs you first", () => {
+const nextRow = (id, parent, order, who, extra = {}) =>
+  row(id, parent, order, { next: { value: who, sort: "" }, ...extra });
+
+test("grouped cards are sections by next, in order, empty ones omitted", () => {
   const rows = [
-    row("a", "main", 1, { next: { value: "others", sort: "3" } }),
-    row("b", "a", 2, { next: { value: "you", sort: "1" } }),
-    row("c", "main", 3, { next: { value: "ci", sort: "2" } }),
-    row("d", "c", 4, { next: { value: "you", sort: "1" } }),
+    nextRow("a", "main", 1, "others"),
+    nextRow("b", "a", 2, "you"),
+    nextRow("c", "main", 3, "ci"),
+    nextRow("d", "c", 4, "you"),
+    nextRow("e", "main", 5, "none"),
   ];
-  const cards = (o) => table.layout(rows, state({ view: "cards", ...o }));
-  assert.deepEqual(ids(cards({})), ["b", "d", "c", "a"]);
-  // Not indented unless grouped: sorted rows are not in stack order.
-  assert.ok(cards({}).every((entry) => entry.depth === 0));
-  // The sort select overrides the default; filters apply as in the table.
-  assert.deepEqual(ids(cards({ sort: "next", dir: "desc" })), ["a", "c", "b", "d"]);
-  assert.deepEqual(ids(cards({ next: "you" })), ["b", "d"]);
+  const sections = (o) => table.groupedLayout(rows, state({ view: "grouped", ...o }));
+
+  const out = sections({});
+  assert.deepEqual(out.map((s) => s.key), ["you", "ci", "others"]);
+  assert.deepEqual(out.map((s) => s.label), ["Needs me", "Waiting on CI", "Waiting on others / team"]);
+  assert.ok(out.every((s) => s.meaning.length > 0));
+  assert.deepEqual(ids(out[0].entries), ["b", "d"]);
+  // Done is hidden unless included; filters apply as in the table.
+  assert.deepEqual(sections({ done: "1" }).map((s) => s.key), ["you", "ci", "others", "none"]);
+  assert.deepEqual(sections({ next: "you" }).map((s) => s.key), ["you"]);
+  assert.ok(out.every((s) => s.entries.every((e) => e.depth === 0 && !e.context)));
 });
 
-test("grouped cards keep each repo's stacks together, indented by depth", () => {
+test("within a grouped section branches follow stack order; sort applies among siblings", () => {
   const rows = [
-    row("1:a", "1:main", 1, { repo: "1", next: { value: "others", sort: "3" } }),
-    row("1:b", "1:a", 2, { repo: "1", next: { value: "you", sort: "1" } }),
-    row("2:c", "2:main", 3, { repo: "2", next: { value: "you", sort: "1" } }),
-    row("1:d", "1:main", 4, { repo: "1", next: { value: "ci", sort: "2" } }),
+    nextRow("1:a", "", 1, "you", { repo: "1", comments: { value: "x", sort: "5" } }),
+    nextRow("1:b", "1:a", 2, "you", { repo: "1", comments: { value: "x", sort: "1" } }),
+    nextRow("1:c", "", 3, "you", { repo: "1", comments: { value: "x", sort: "2" } }),
+    nextRow("2:d", "", 4, "you", { repo: "2", comments: { value: "x", sort: "0" } }),
   ];
 
-  const out = table.layout(rows, state({ view: "cards", group: "repo" }));
+  const def = table.groupedLayout(rows, state({ view: "grouped" }));
+  assert.deepEqual(ids(def[0].entries), ["1:a", "1:b", "1:c", "2:d"]);
 
-  // Siblings still float what needs you first; children stay under parents.
+  const sorted = table.groupedLayout(rows, state({ view: "grouped", sort: "comments" }));
+  // Roots by comments (c before a); a's child stays right under it.
+  assert.deepEqual(ids(sorted[0].entries), ["1:c", "1:a", "1:b", "2:d"]);
+});
+
+test("a branch whose next is not known yet is in a trailing Loading section", () => {
+  const rows = [nextRow("a", "main", 1, ""), nextRow("b", "main", 2, "you")];
+  const out = table.groupedLayout(rows, state({ view: "grouped" }));
+  assert.deepEqual(out.map((s) => s.key), ["you", "loading"]);
+});
+
+test("stacked cards keep each repo's stacks together, indented by depth, finished parents as context", () => {
+  const rows = [
+    nextRow("1:a", "", 1, "none", { repo: "1" }),
+    nextRow("1:b", "1:a", 2, "you", { repo: "1" }),
+    nextRow("2:c", "", 3, "you", { repo: "2" }),
+    nextRow("1:d", "", 4, "ci", { repo: "1" }),
+  ];
+
+  const out = table.stackedLayout(rows, state({ view: "stacked" }));
+
+  assert.deepEqual(out.map((s) => s.key), ["repo:1", "repo:2"]);
   assert.deepEqual(
-    out.map((e) => [e.id, e.depth]),
-    [["1:d", 0], ["1:a", 0], ["1:b", 1], ["2:c", 0]],
+    out[0].entries.map((e) => [e.id, e.depth, e.context]),
+    [["1:a", 0, true], ["1:b", 1, false], ["1:d", 0, false]],
   );
+  // With done included the parent is a card of its own.
+  const done = table.stackedLayout(rows, state({ view: "stacked", done: "1" }));
+  assert.equal(done[0].entries[0].context, false);
+});
+
+test("rails: tees for siblings that continue, corners for the last, lines through subtrees", () => {
+  // a
+  //   b
+  //     c
+  //   d
+  //     e
+  const entries = [0, 1, 2, 1, 2].map((depth) => ({ depth }));
+
+  const guides = table.railGuides(entries);
+
+  assert.deepEqual(guides[0], []);
+  assert.deepEqual(guides[1], [{ col: 0, kind: "tee" }]);
+  // c: b has a later sibling (d), so column 0 passes through; c is last under b.
+  assert.deepEqual(guides[2], [
+    { col: 0, kind: "line" },
+    { col: 1, kind: "corner" },
+  ]);
+  assert.deepEqual(guides[3], [{ col: 0, kind: "corner" }]);
+  // e: d is the last of a's children: no line in column 0.
+  assert.deepEqual(guides[4], [{ col: 1, kind: "corner" }]);
 });
 
 const withNext = (value) => ({ next: { value, sort: "" } });
@@ -300,7 +362,7 @@ test("done branches are hidden unless included or asked for by the next filter",
     row("b", "main", 2, withNext("none")),
     row("c", "main", 3, withNext("")),
   ];
-  const view = (o) => ids(table.layout(rows, state({ view: "flat", ...o })));
+  const view = (o) => ids(table.layout(rows, state({ view: "table", mode: "flat", ...o })));
   assert.deepEqual(view({}), ["a", "c"]);
   assert.deepEqual(view({ done: "1" }), ["a", "b", "c"]);
   assert.deepEqual(view({ next: "none" }), ["b"]);

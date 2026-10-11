@@ -89,12 +89,15 @@
       {%- endif -%}
       {%- call slot("title", "PR title") -%}<span title="{{ d.title }}">{{ d.title }}</span>{%- endcall -%}
       {%- call slot("timeline", "Timeline") -%}
-        <div class="tl-mount" data-track='{{ {"created": d.created, "ended": d.ended, "state": c.pr, "draft": d.is_draft, "events": d.events} | tojson }}'></div>
+        <div class="tl-mount" data-track='{{ {"created": d.created, "ended": d.ended, "state": c.pr, "draft": d.is_draft, "review": c.review, "events": d.events, "current": c.states} | tojson }}'></div>
       {%- endcall -%}
     {%- else -%}
-      {%- for key, label in slots[6:] -%}
+      {%- for key, label in slots[6:12] -%}
         {%- call slot(key, label, "na") -%}PR details unavailable{%- endcall -%}
       {%- endfor -%}
+      {%- call slot("timeline", "Timeline") -%}
+        <div class="tl-mount" data-track='{{ {"created": none, "ended": none, "state": c.pr, "draft": false, "review": c.review, "events": [], "current": c.states} | tojson }}'></div>
+      {%- endcall -%}
     {%- endif -%}
   {%- else -%}
     {%- for key, label in slots[1:6] -%}
@@ -104,7 +107,9 @@
       {%- call slot(key, label, "na") -%}no PR{%- endcall -%}
     {%- endfor -%}
     {%- call slot("title", "PR title", "na") -%}no PR{%- endcall -%}
-    {%- call slot("timeline", "Timeline", "na") -%}no PR yet — no timeline{%- endcall -%}
+    {%- call slot("timeline", "Timeline") -%}
+      <div class="tl-mount" data-track='{{ {"created": none, "ended": none, "state": "none", "draft": false, "review": "none", "events": [], "current": c.states} | tojson }}'></div>
+    {%- endcall -%}
   {%- endif -%}
 {%- endif -%}
 </div>

@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>toolbelt stacks</title>
 <script src="/static/htmx.min.js"></script>
+<script type="application/json" id="state-catalog">{{ state_catalog | safe }}</script>
 <script src="/static/pr-timeline.js" defer></script>
 <script src="/static/stack-table.js" defer></script>
 <script src="/static/live-updates.js" defer></script>
@@ -23,7 +24,9 @@
     }
   }
   * { box-sizing: border-box; }
-  html, body { overflow-x: hidden; }
+  /* clip, not hidden: hidden would make body a scroll container and break the
+     sticky section headers. */
+  html, body { overflow-x: clip; }
   body { margin: 0; background: var(--bg); color: var(--fg);
          font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
   a { color: var(--accent); text-decoration: none; }
@@ -119,9 +122,48 @@
   /* Cards: vertical, dense, table-like rows. Every datum is a labelled slot
      in a fixed grid position, so rows align; empty values say why. */
   .cards-wrap { display: grid; gap: 8px; }
-  .cards { display: grid; gap: 8px; }
-  .cards-group { margin: 8px 0 0; font-size: 12px; font-weight: 600; color: var(--muted);
-                 text-transform: uppercase; letter-spacing: .04em; }
+  .cards { display: grid; gap: 14px; }
+  .cards-section { display: grid; gap: 8px; align-content: start; }
+  .cards-group { position: sticky; top: 0; z-index: 3; margin: 0; padding: 4px 0;
+                 background: var(--bg); border-bottom: 1px solid var(--line); font-size: 13px; }
+  .cards-group button { all: unset; box-sizing: border-box; cursor: pointer; display: flex;
+                        flex-wrap: wrap; align-items: baseline; gap: 2px 10px; width: 100%; }
+  .cards-group button:focus-visible { outline: 2px solid var(--accent); }
+  .cg-caret::before { content: "▾"; display: inline-block; width: 1em; color: var(--muted); }
+  .cards-section.collapsed .cg-caret::before { content: "▸"; }
+  .cg-label { font-weight: 600; text-transform: uppercase; letter-spacing: .04em; font-size: 12px; }
+  .cg-count { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .cg-meaning { color: var(--muted); font-size: 12px; font-weight: 400; }
+  .cards-section-body { display: grid; gap: 8px; }
+  .cards-section.collapsed .cards-section-body { display: none; }
+  .cards-section[data-tone=you] .cg-label { color: var(--accent); }
+  .cards-section[data-tone=ci] .cg-label { color: var(--amber); }
+  .cards-pool { display: none; }
+  /* Stacked view: indentation by stack depth, a rail from each card up to its parent. */
+  .cards { --step: 1.5rem; --rail: color-mix(in srgb, var(--muted) 65%, transparent); }
+  .cards-stacked .card, .cards-stacked .card-stub { margin-left: calc(var(--depth, 0) * var(--step)); }
+  .card, .card-stub { position: relative; }
+  .card-rail { position: absolute; top: -9px; height: calc(100% + 18px); pointer-events: none;
+               left: calc(var(--depth, 0) * var(--step) * -1); width: calc(var(--depth, 0) * var(--step)); }
+  .rail-seg { position: absolute; top: 0; bottom: 0; width: 0;
+              left: calc((var(--col) + .5) * var(--step)); border-left: 2px solid var(--rail); }
+  .rail-seg[data-kind=corner] { bottom: 50%; }
+  .rail-seg[data-kind=corner]::after, .rail-seg[data-kind=tee]::after {
+    content: ""; position: absolute; left: -2px; width: calc(var(--step) * .5); border-top: 2px solid var(--rail); }
+  .rail-seg[data-kind=corner]::after { top: 100%; margin-top: -2px; }
+  .rail-seg[data-kind=tee]::after { top: 50%; margin-top: -1px; }
+  .card-stub { display: flex; gap: 8px; align-items: baseline; padding: 3px 12px; font-size: 12px;
+               color: var(--muted); border: 1px dashed var(--line); border-radius: 6px; opacity: .75; }
+  .card-stub .branch { font-size: 12px; }
+  .stack-chip { display: inline-block; font-size: 12px; padding: 0 7px; border-radius: 10px;
+                background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--fg); }
+  a.stack-link { color: var(--accent); }
+  a.stack-link[data-in]::after { content: " in: " attr(data-in); color: var(--muted); font-size: 11px;
+                                 font-family: system-ui, sans-serif; }
+  a.stack-link[data-gone] { color: var(--muted); pointer-events: none; }
+  a.stack-link[data-gone]::after { content: " (not shown)"; font-size: 11px; font-family: system-ui, sans-serif; }
+  @keyframes highlight { 0%, 60% { box-shadow: 0 0 0 3px var(--accent); } }
+  .highlight { animation: highlight 1.8s ease-out; }
   .card { --cols: minmax(17rem, 1.6fr) 13rem 6.5rem 5.5rem 9rem 6.5rem 6.5rem minmax(7rem, 1fr) 9rem;
           background: var(--card); border: 1px solid var(--line); border-radius: 8px;
           padding: 8px 12px; display: grid; grid-template-columns: var(--cols);
@@ -136,7 +178,7 @@
   .v-na .slot-value { color: var(--muted); opacity: .8; }
   .v-gap .slot-value { color: var(--fg); font-style: italic;
                        text-decoration: underline dashed var(--amber); text-underline-offset: 3px; }
-  .s-branch { grid-area: 1 / 1; padding-left: calc(var(--depth, 0) * 1rem); }
+  .s-branch { grid-area: 1 / 1; }
   .s-branch .branch { margin-left: 0; }
   .s-next { grid-area: 1 / 2; }
   .s-pr { grid-area: 1 / 3; }
@@ -146,14 +188,16 @@
   .s-merge { grid-area: 1 / 7; }
   .s-task { grid-area: 1 / 8; }
   .s-session { grid-area: 1 / 9; }
-  .s-parent { grid-area: 2 / 1; padding-left: calc(var(--depth, 0) * 1rem); }
+  .s-parent { grid-area: 2 / 1; }
   .s-pr_age { grid-area: 2 / 2; }
   .s-in_draft { grid-area: 2 / 3; }
   .s-review_requested { grid-area: 2 / 4 / auto / span 2; }
   .s-ci_failures { grid-area: 2 / 6; }
   .s-reviewers { grid-area: 2 / 7 / auto / span 3; }
-  .s-title { grid-area: 3 / 1 / auto / -1; }
-  .s-timeline { grid-area: 4 / 1 / auto / -1; }
+  .s-stack { grid-area: 3 / 1; }
+  .s-children { grid-area: 3 / 2 / auto / -1; }
+  .s-title { grid-area: 4 / 1 / auto / -1; }
+  .s-timeline { grid-area: 5 / 1 / auto / -1; }
   .s-title .slot-value { color: var(--fg); }
   .repo-chip { font-size: 11px; color: var(--muted); border: 1px solid var(--line);
                border-radius: 4px; padding: 0 6px; margin-right: 4px; }
@@ -163,17 +207,32 @@
   @media (max-width: 70rem) {
     .card { display: flex; flex-wrap: wrap; gap: 6px 16px; }
     .card .slot { flex: 0 1 auto; padding-left: 0; }
-    .s-title, .s-timeline { flex: 1 1 100%; order: 9; }
+    .s-title, .s-timeline { flex: 1 0 100%; order: 9; }
     .s-task, .s-session { order: 5; }
-    .s-parent, .s-pr_age, .s-in_draft, .s-review_requested, .s-ci_failures, .s-reviewers { order: 6; }
+    .s-parent, .s-stack, .s-children, .s-pr_age, .s-in_draft, .s-review_requested, .s-ci_failures, .s-reviewers { order: 6; }
   }
 
-  /* Per-card timeline track */
-  .tl { display: grid; gap: 2px; }
+  /* Per-card timeline track. Colours come from the catalog's tone tokens. */
+  .tone-green { --tone: var(--green); }
+  .tone-red { --tone: var(--red); }
+  .tone-amber { --tone: var(--amber); }
+  .tone-gray { --tone: var(--gray); }
+  .tone-purple { --tone: var(--purple); }
+  .tone-accent { --tone: var(--accent); }
+  .tl { display: grid; gap: 4px; }
+  .tl-body { display: flex; gap: 6px 16px; align-items: flex-start; flex-wrap: wrap; }
+  .tl-left { flex: 1 1 24rem; min-width: 0; display: grid; gap: 2px; }
+  .tl-chips { flex: 0 1 auto; display: flex; flex-wrap: wrap; gap: 3px 4px; justify-content: flex-end;
+              max-width: 24rem; }
+  .tl-chip { display: inline-flex; gap: 4px; align-items: baseline; padding: 0 7px; font-size: 11px;
+             border: 1px solid var(--tone, var(--gray)); border-radius: 10px; white-space: nowrap;
+             color: var(--tone, var(--gray)); background: var(--card); }
+  .tl-chip-label { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
   .tl-ends { display: flex; justify-content: space-between; align-items: center; gap: 8px;
              font-size: 11px; color: var(--muted); }
-  .tl-ends button { font-size: 11px; padding: 0 6px; border-radius: 4px; }
-  .tl-ends .tl-buttons { display: inline-flex; gap: 6px; }
+  .tl-ends button, .tl-buttons button { font-size: 11px; padding: 0 6px; border-radius: 4px; }
+  .tl-buttons { display: inline-flex; gap: 6px; }
+  .tl-legend-toggle[aria-pressed=true] { background: var(--accent); border-color: var(--accent); color: #fff; }
   .tl-track { position: relative; height: var(--tl-height, 24px); margin: 0 6px; cursor: pointer; }
   .tl-expanded .tl-track { cursor: default; }
   .tl-axis { position: absolute; left: 0; right: 0; top: 12px; height: 2px; margin-top: -1px;
@@ -181,36 +240,68 @@
   .tl-expanded .tl-axis { top: 14px; }
   .tl-tick { position: absolute; top: 20px; font-size: 10px; color: var(--muted);
              transform: translateX(-50%); }
-  .tl-phase { position: absolute; border-radius: 3px; opacity: .35; }
+  .tl-phase { position: absolute; border-radius: 3px; opacity: .35; background: var(--tone, var(--gray)); }
+  .tl-phase:hover, .tl-phase:focus-visible { opacity: .6; outline: none; }
   .tl-collapsed .tl-phase { top: 7px; height: 10px; }
   .tl-expanded .tl-phase { top: 8px; height: 12px; }
-  .tl-phase-draft { background: var(--gray); }
-  .tl-phase-waiting { background: var(--amber); }
-  .tl-phase-ci_failing { background: var(--red); }
   .tl-collapsed .tl-phase-ci_failing { top: 18px; height: 4px; }
   .tl-expanded .tl-phase-ci_failing { top: 22px; height: 5px; }
+  .tl-phase-ci_failing::before { content: ""; position: absolute; top: -4px; bottom: -4px; left: 0; right: 0; }
   .tl-mark { position: absolute; top: 12px; transform: translate(-50%, -50%); font-size: 12px;
-             line-height: 1; white-space: nowrap; }
+             line-height: 1; white-space: nowrap; color: var(--tone, var(--gray)); }
+  .tl-mark:hover, .tl-mark:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px;
+                                           border-radius: 4px; }
   .tl-expanded .tl-mark { top: 14px; }
-  .tl-faint { opacity: .55; color: var(--gray); font-size: 10px; }
+  .tl-faint { opacity: .55; font-size: 10px; }
   .tl-collapsed .tl-faint { display: none; }
   .tl-k-commits { border: 1px solid var(--gray); border-radius: 8px; padding: 1px 4px; background: var(--card); }
-  .tl-k-commit_failed, .tl-k-closed, .tl-k-review_changes { color: var(--red); }
-  .tl-k-review_requested, .tl-k-review_commented, .tl-k-review_request_removed { color: var(--amber); }
-  .tl-k-ready_for_review, .tl-k-review_approved, .tl-k-opened, .tl-k-reopened { color: var(--green); }
-  .tl-k-converted_to_draft { color: var(--gray); }
-  .tl-k-force_push { color: var(--accent); }
-  .tl-k-merged { color: var(--purple); }
   .tl-now { position: absolute; right: -1px; top: 2px; bottom: 2px; border-right: 2px solid var(--accent); }
   .tl-label { position: absolute; left: 100%; top: 50%; transform: translateY(-50%);
-              margin-left: 4px; font-size: 11px; color: var(--fg); }
+              margin-left: 4px; font-size: 11px; color: var(--fg); pointer-events: none; }
   .tl-label.tl-flip { left: auto; right: 100%; margin-left: 0; margin-right: 4px; }
-  .tl-list { list-style: none; margin: 6px 0 0; padding: 6px 0 0; border-top: 1px solid var(--line);
-             display: grid; gap: 2px; font-size: 12px; white-space: normal;
-             max-height: 14rem; overflow: auto; }
-  .tl-item { display: grid; grid-template-columns: 5rem 11rem 8rem minmax(0, 1fr); gap: 0 12px; }
+
+  /* Expanded chronological table: sticky headers, Detail takes the rest. */
+  .tl-list-wrap { max-height: 14rem; overflow: auto; margin-top: 6px; border-top: 1px solid var(--line);
+                  white-space: normal; }
+  .tl-list { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed;
+             font-size: 12px; }
+  .tl-list th { position: sticky; top: 0; z-index: 1; background: var(--card); text-align: left;
+                font-size: 10px; text-transform: uppercase; letter-spacing: .04em; font-weight: 600;
+                color: var(--muted); padding: 3px 12px 3px 0; border-bottom: 1px solid var(--line); }
+  .tl-list td { padding: 1px 12px 1px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tl-h-time, .tl-when { width: 7.5rem; }
+  .tl-h-event, .tl-what { width: 11rem; }
+  .tl-h-actor, .tl-who { width: 8rem; }
+  .tl-h-ci, .tl-ci { width: 5rem; }
   .tl-when, .tl-who { color: var(--muted); }
-  .tl-i-commit_failed .tl-what { color: var(--red); }
+  .tl-when time { cursor: help; }
+  .tl-i-commit_failed .tl-what, .tl-ci-failed { color: var(--red); }
+  .tl-ci-success { color: var(--green); }
+
+  /* Legend */
+  .tl-legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr)); gap: 8px 20px;
+               margin-top: 6px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px;
+               font-size: 12px; white-space: normal;
+               background: color-mix(in srgb, var(--line) 12%, transparent); }
+  .tl-legend h4 { margin: 0 0 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+                  color: var(--muted); }
+  .tl-legend-chips .tl-legend-row { grid-template-columns: 11rem 0 minmax(0, 1fr); }
+  .tl-legend-row { display: grid; grid-template-columns: 2.5rem 8rem minmax(0, 1fr); gap: 0 8px;
+                   align-items: baseline; padding: 1px 0; }
+  .tl-sample { color: var(--tone, var(--muted)); }
+  .tl-swatch { display: inline-block; height: .7rem; width: 2.5rem; border-radius: 3px;
+               background: var(--tone, var(--gray)); opacity: .5; }
+  .tl-legend .tl-chip { justify-self: start; }
+
+  /* Hover / focus tooltip (one element on the body) */
+  .tl-tip { position: fixed; z-index: 100; max-width: 26rem; padding: 6px 9px; font-size: 12px;
+            background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 6px;
+            box-shadow: 0 4px 14px rgba(0, 0, 0, .25); pointer-events: none; }
+  .tl-tip-title { font-weight: 600; }
+  .tl-tip-sub { color: var(--muted); margin-bottom: 2px; overflow-wrap: anywhere; }
+  .tl-tip-row { display: grid; grid-template-columns: 4.5rem minmax(0, 1fr); gap: 0 8px; }
+  .tl-tip-key { color: var(--muted); }
+  .tl-tip-items { margin: 4px 0 0; padding-left: 1rem; color: var(--muted); }
   .empty { padding: 24px; text-align: center; color: var(--muted); }
   [hidden] { display: none !important; }
 </style>
@@ -241,19 +332,22 @@
     </label>
     {% endfor %}
     <span class="seg" role="group" aria-label="View">
-      <button type="button" data-view="tree" aria-pressed="true">Tree</button>
-      <button type="button" data-view="flat" aria-pressed="false">Flat</button>
-      <button type="button" data-view="cards" aria-pressed="false">Cards</button>
+      <button type="button" data-view="table" aria-pressed="true" title="One row per branch">Table</button>
+      <button type="button" data-view="stacked" aria-pressed="false" title="Cards by repo and stack, with the stack drawn">Stacked</button>
+      <button type="button" data-view="grouped" aria-pressed="false" title="Cards grouped by what happens next">Grouped</button>
     </span>
-    <label data-views="cards" hidden>Sort
+    <span class="seg" role="group" aria-label="Table layout" data-views="table">
+      <button type="button" data-mode="tree" aria-pressed="true">Tree</button>
+      <button type="button" data-mode="flat" aria-pressed="false">Flat</button>
+    </span>
+    <label data-views="stacked grouped" hidden>Sort
       <select name="sort">
-        <option value="">Needs my action first</option>
+        <option value="">Stack order</option>
         {% for key, label in columns %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
       </select>
     </label>
     <button type="button" id="done" aria-pressed="false" title="Show merged and closed branches">Include done</button>
-    <button type="button" id="compact" data-views="tree flat" aria-pressed="false" title="Combine the PR, CI, review, comments and merge columns">Compact</button>
-    <button type="button" id="group" data-views="cards" aria-pressed="false" title="Group cards by repo and stack">Group by repo</button>
+    <button type="button" id="compact" data-views="table" aria-pressed="false" title="Combine the PR, CI, review, comments and merge columns">Compact</button>
     <button type="button" id="clear">Clear</button>
     <span id="count" aria-live="polite"></span>
   </form>

@@ -22,6 +22,7 @@ from toolbelt.git.stack.status import (
     PrState,
     ReviewState,
 )
+from toolbelt.ui import pr_states
 from toolbelt.ui.next_action import WHO_ORDER, ParentContext, next_action
 from toolbelt.ui.pr_activity import PrFacts, derive_activity, format_age
 
@@ -103,6 +104,8 @@ class StatusCells:
     next_kind: str = ""
     next_sort: str = ""
     detail: PrDetail | None = None
+    #: The "now" chips of the card's timeline (``pr_states.current_states``).
+    states: tuple[dict, ...] = ()
 
 
 UNLOADED = StatusCells(
@@ -218,4 +221,16 @@ def status_cells(
         next_kind=action.kind,
         next_sort=str(WHO_ORDER.index(action.who) + 1),
         detail=detail,
+        states=tuple(
+            pr_states.current_states(
+                pr=status.pr.value,
+                ci=status.ci.value,
+                review=status.review.value,
+                open_comments=open_comments,
+                merge=merge,
+                next_kind=action.kind,
+                next_who=action.who,
+                next_label=action.label,
+            )
+        ),
     )

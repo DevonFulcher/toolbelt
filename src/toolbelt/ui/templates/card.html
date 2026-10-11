@@ -33,8 +33,26 @@
   <div class="slot s-parent {{ 'v-ok' if row.parent else 'v-na' }}" data-slot="parent">
     <span class="slot-label">Parent</span>
     <span class="slot-value">
-      {%- if row.parent -%}<span class="branch" title="stacked on {{ row.parent }}">{{ row.parent }}</span>
+      {%- if row.parent -%}<a class="branch stack-link" href="#{{ row.parent_id }}" data-target="{{ row.parent_id }}" title="stacked on {{ row.parent }}">{{ row.parent }}</a>
       {%- else -%}no parent (stack root){%- endif -%}
+    </span>
+  </div>
+  <div class="slot s-stack v-ok" data-slot="stack">
+    <span class="slot-label">Stack</span>
+    <span class="slot-value">
+      {%- if row.stack_height > 1 -%}<span class="stack-chip" data-pos="{{ row.stack_pos }}" data-height="{{ row.stack_height }}" data-parent="{{ row.parent }}">stack {{ row.stack_pos }} of {{ row.stack_height }}</span>
+      {%- else -%}<span class="stack-chip" data-pos="1" data-height="1" data-parent="">single branch</span>{%- endif -%}
+    </span>
+  </div>
+  <div class="slot s-children {{ 'v-ok' if row.children else 'v-na' }}" data-slot="children">
+    <span class="slot-label">Children</span>
+    <span class="slot-value">
+      {%- if row.children -%}
+        {%- for child_id, child in row.children -%}
+          {%- if not loop.first %}, {% endif -%}
+          <a class="branch stack-link" href="#{{ child_id }}" data-target="{{ child_id }}">{{ child }}</a>
+        {%- endfor -%}
+      {%- else -%}none (nothing stacked on it){%- endif -%}
     </span>
   </div>
 </article>

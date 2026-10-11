@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import test from "node:test";
+import { catalog } from "./state-catalog.mjs";
 
 const require = createRequire(import.meta.url);
 const tl = require("../../src/toolbelt/ui/static/pr-timeline.js");
@@ -29,7 +30,7 @@ function track(createdAgoMs, events = [], extra = {}) {
   };
 }
 
-const layout = (t, options = {}) => tl.trackLayout(t, { now: NOW, ...options });
+const layout = (t, options = {}) => tl.trackLayout(t, { now: NOW, catalog, ...options });
 const kinds = (l) => l.markers.map((m) => m.kind);
 const near = (actual, expected, eps = 1e-9) =>
   assert.ok(Math.abs(actual - expected) < eps, `${actual} !~ ${expected}`);
@@ -171,6 +172,7 @@ test("draft and review-waiting phases are shaded as spans", () => {
     [
       ["draft", 0, 0.2],
       ["waiting", 0.2, 0.5],
+      ["approved", 0.5, 1],
     ],
   );
 });
@@ -257,15 +259,313 @@ test("the plain list is chronological and honours the commit toggle", () => {
     ev("commit", 4 * DAY, { ci: "failed", detail: "abc fix" }),
   ]);
 
-  const all = tl.listEntries(t, { now: NOW, commits: "all" });
+  const all = tl.listEntries(t, { now: NOW, catalog, commits: "all" });
   assert.deepEqual(
     all.map((e) => e.label),
     ["opened", "commit (CI failed)", "approved"],
   );
   assert.equal(all[1].age, "4d ago");
-  const none = tl.listEntries(t, { now: NOW, commits: "none" });
+  const none = tl.listEntries(t, { now: NOW, catalog, commits: "none" });
   assert.deepEqual(
     none.map((e) => e.kind),
     ["opened", "review_approved"],
   );
+});
+
+// ---- relative / absolute time ------------------------------------------------
+
+test("spans read as the two largest units; absolute times as a local date", () => {
+  assert.equal(tl.formatSpan(30), "<1m");
+  assert.equal(tl.formatSpan(5 * 60), "5m");
+  assert.equal(tl.formatSpan(3 * 3600 + 12 * 60), "3h 12m");
+  assert.equal(tl.formatSpan(3600), "1h");
+  assert.equal(tl.formatSpan(2 * 86400 + 4 * 3600 + 59), "2d 4h");
+  assert.equal(tl.formatSpan(23 * 86400), "3w 2d");
+  assert.equal(
+    tl.formatAbsolute(Date.parse("2026-10-08T15:42:00Z"), { timeZone: "UTC" }),
+    "Oct 8, 2026, 3:42 PM",
+  );
+  assert.equal(
+    tl.formatAbsolute(Date.parse("2026-10-08T15:42:00Z"), { timeZone: "America/Chicago" }),
+    "Oct 8, 2026, 10:42 AM",
+  );
+});
+
+// ---- approved phase ---------------------------------------------------------
+
+const approvedSpans = (t) => layout(t).phases.filter((p) => p.kind === "approved");
+const approve = (agoMs) => ev("review", agoMs, { detail: "approved", actor: "sam", subject: "sam" });
+
+test("approved runs from the approving review to now", () => {
+  const spans = approvedSpans(track(10 * DAY, [approve(4 * DAY)], { review: "approved" }));
+
+  assert.equal(spans.length, 1);
+  near(spans[0].x0, 0.6);
+  near(spans[0].x1, 1);
+});
+
+test("approved ends at the merge, and at a later request for changes", () => {
+  const merged = track(10 * DAY, [approve(6 * DAY), ev("merged", 2 * DAY)], {
+    state: "merged",
+    ended: ago(2 * DAY),
+  });
+  near(approvedSpans(merged)[0].x1, 1);
+
+  const changes = track(10 * DAY, [
+    approve(6 * DAY),
+    ev("review", 3 * DAY, { detail: "requested changes", actor: "sam", subject: "sam" }),
+  ]);
+  const spans = approvedSpans(changes);
+  assert.equal(spans.length, 1);
+  near(spans[0].x0, 0.4);
+  near(spans[0].x1, 0.7);
+});
+
+test("an approval that is stale now ends at the first push after it", () => {
+  const events = [approve(6 * DAY), ev("commit", 4 * DAY, { ci: "success" })];
+
+  const stale = approvedSpans(track(10 * DAY, events, { review: "none" }));
+  assert.equal(stale.length, 1);
+  near(stale[0].x1, 0.6);
+
+  // Still approved now: a later push does not end it.
+  const still = approvedSpans(track(10 * DAY, events, { review: "approved" }));
+  near(still[0].x1, 1);
+});
+
+// ---- chips ------------------------------------------------------------------
+
+test("now chips come from catalog references and are labelled by group", () => {
+  const t = track(DAY, [], {
+    current: [
+      { dimension: "pr", value: "open", args: {} },
+      { dimension: "ci", value: "running", args: {} },
+      { dimension: "comments", value: "open", args: { n: 3 } },
+      { dimension: "merge", value: "conflicts", args: {} },
+      { dimension: "next", value: "blocked", args: { text: "Blocked on devon/a", who: "you" } },
+    ],
+  });
+
+  const chips = tl.nowChips(t, catalog);
+
+  assert.deepEqual(
+    chips.map((c) => [c.group, c.text, c.tone]),
+    [
+      ["PR", "open", "green"],
+      ["CI", "running", "amber"],
+      ["Comments", "3 unresolved", "amber"],
+      ["Merge", "conflicts", "red"],
+      ["Next", "Blocked on devon/a", "accent"],
+    ],
+  );
+});
+
+test("an unknown state or event kind is an error, not a blank", () => {
+  const t = track(DAY, [], { current: [{ dimension: "ci", value: "exploded", args: {} }] });
+  assert.throws(() => tl.nowChips(t, catalog), /no catalog entry for ci=exploded/);
+  const odd = track(DAY, [ev("teleported", HOUR)]);
+  assert.throws(() => layout(odd), /no catalog entry for event kind "teleported"/);
+});
+
+// ---- tooltips -----------------------------------------------------------------
+
+test("an event tooltip has kind, detail, actor, absolute and relative time", () => {
+  const l = layout(
+    track(4 * DAY, [
+      ev("commit", 2 * DAY + 4 * HOUR, { detail: "abc1234 Fix it", ci: "failed", actor: "devon" }),
+    ]),
+  );
+  const marker = l.markers.find((m) => m.kind === "commit_failed");
+
+  const content = tl.tooltipContent(marker.tip, NOW, { timeZone: "UTC" });
+
+  assert.equal(content.title, "commit (CI failed)");
+  assert.equal(content.subtitle, "abc1234 Fix it");
+  assert.deepEqual(content.rows, [
+    ["Actor", "devon"],
+    ["CI", "failed"],
+    ["When", "Oct 18, 2026, 8:00 AM"],
+    ["Ago", "2d 4h ago"],
+  ]);
+});
+
+test("a cluster tooltip lists its members and the range", () => {
+  const burst = [];
+  for (let i = 0; i < 12; i += 1) burst.push(ev("commit", 10 * DAY - i * MIN, { detail: `c${i}` }));
+  const l = layout(track(30 * DAY, burst), { commits: "all" });
+  const cluster = l.markers.find((m) => m.kind === "commits");
+
+  const content = tl.tooltipContent(cluster.tip, NOW, { timeZone: "UTC" });
+
+  assert.equal(content.title, "12 commits");
+  assert.deepEqual(
+    content.rows.map(([k]) => k),
+    ["From", "To"],
+  );
+  assert.equal(content.items.length, 9);
+  assert.match(content.items[0], /devon · c0$/);
+  assert.equal(content.items[8], "+ 4 more");
+});
+
+test("a phase tooltip has its start, end and duration", () => {
+  const t = track(10 * DAY, [ev("commit", 8 * DAY, { ci: "failed" }), ev("commit", 6 * DAY)]);
+  const failing = layout(t).phases.find((p) => p.kind === "ci_failing");
+
+  const content = tl.tooltipContent(failing.tip, NOW, { timeZone: "UTC" });
+
+  assert.equal(content.title, "CI failing");
+  assert.deepEqual(
+    content.rows.map(([k]) => k),
+    ["From", "To", "Duration"],
+  );
+  assert.equal(content.rows[2][1], "2d");
+  assert.match(content.rows[1][1], /\(6d ago\)$/);
+  // A span running to now says so.
+  const ongoing = layout(track(3 * DAY, [], { draft: true })).phases[0];
+  assert.equal(tl.tooltipContent(ongoing.tip, NOW).rows[1][1], "now");
+});
+
+test("tooltips are placed below, flipped above at the bottom, clamped sideways", () => {
+  const size = { width: 200, height: 100 };
+  const viewport = { width: 800, height: 600 };
+  const rect = (left, top) => ({ left, right: left + 10, top, bottom: top + 10 });
+
+  const below = tl.positionTip(rect(300, 100), size, viewport);
+  assert.equal(below.placement, "below");
+  assert.equal(below.top, 118);
+  assert.equal(below.left, 205);
+
+  const above = tl.positionTip(rect(300, 560), size, viewport);
+  assert.equal(above.placement, "above");
+  assert.equal(above.top, 560 - 8 - 100);
+
+  assert.equal(tl.positionTip(rect(0, 100), size, viewport).left, 4);
+  assert.equal(tl.positionTip(rect(795, 100), size, viewport).left, 800 - 200 - 4);
+});
+
+// ---- catalog exhaustiveness: the renderer draws whatever the catalog says --------
+
+// A minimal document: enough of the DOM for render() to build a tree.
+function fakeDocument() {
+  const make = (tag) => ({
+    tag,
+    className: "",
+    textContent: "",
+    children: [],
+    style: { setProperty() {} },
+    attributes: {},
+    dataset: {},
+    append(...kids) {
+      for (const kid of kids) {
+        this.children.push(
+          typeof kid === "string" ? { tag: "#text", textContent: kid, children: [] } : kid,
+        );
+      }
+    },
+    setAttribute(name, value) {
+      this.attributes[name] = value;
+    },
+  });
+  return { createElement: make };
+}
+
+function walk(node, visit) {
+  visit(node);
+  for (const child of node.children || []) walk(child, visit);
+}
+
+// The server event that produces each marker kind (opened is implicit).
+const SERVER_EVENTS = {
+  commit: { kind: "commit" },
+  commit_failed: { kind: "commit", ci: "failed" },
+  force_push: { kind: "force_push" },
+  review_requested: { kind: "review_requested", subject: "sam" },
+  review_request_removed: { kind: "review_request_removed", subject: "sam" },
+  ready_for_review: { kind: "ready_for_review" },
+  converted_to_draft: { kind: "converted_to_draft" },
+  review_approved: { kind: "review", detail: "approved" },
+  review_changes: { kind: "review", detail: "requested changes" },
+  review_commented: { kind: "review", detail: "commented" },
+  merged: { kind: "merged" },
+  closed: { kind: "closed" },
+  reopened: { kind: "reopened" },
+};
+
+test("every catalog event kind is one the renderer produces, and is drawn with its glyph", () => {
+  // No catalog event the renderer cannot draw (the cluster is made of commits).
+  const known = new Set(["opened", "commits", ...Object.keys(SERVER_EVENTS)]);
+  assert.deepEqual(Object.keys(catalog.events).filter((k) => !known.has(k)), []);
+  assert.deepEqual([...known].filter((k) => !(k in catalog.events)), []);
+
+  for (const [kind, spec] of Object.entries(SERVER_EVENTS)) {
+    assert.equal(tl.markerKind({ ...spec, detail: spec.detail || "" }), kind);
+  }
+  const events = Object.values(SERVER_EVENTS).map((spec, i) => ev(spec.kind, 30 * DAY - i * DAY, spec));
+  const tree = tl.render(fakeDocument(), track(40 * DAY, events, { current: [] }), {
+    now: NOW,
+    catalog,
+    expanded: true,
+    legend: true,
+  });
+
+  const glyphs = [];
+  walk(tree, (n) => {
+    if ((n.className || "").includes("tl-mark")) glyphs.push(n.textContent);
+  });
+  for (const [kind, info] of Object.entries(catalog.events)) {
+    if (kind === "commits" || kind === "commit") continue;
+    assert.ok(glyphs.includes(info.glyph), kind);
+  }
+});
+
+test("every catalog state is representable: its kinds exist and it can be a chip", () => {
+  for (const state of catalog.states) {
+    assert.ok(state.reps.length > 0, `${state.dimension}=${state.value} has no representation`);
+    for (const rep of state.reps) {
+      const vocabulary = { event: catalog.events, phase: catalog.phases, now_state: catalog.chips }[rep.how];
+      assert.ok(vocabulary && rep.kind in vocabulary, `${state.dimension}=${state.value}: ${rep.how} ${rep.kind}`);
+    }
+    if (state.dimension in catalog.chips) {
+      const args = { n: 2, text: "label", who: "you" };
+      const current = [{ dimension: state.dimension, value: state.value, args }];
+      const [chip] = tl.nowChips(track(DAY, [], { current }), catalog);
+      assert.ok(chip.text && chip.group, `${state.dimension}=${state.value}`);
+    }
+  }
+});
+
+test("the legend lists every catalog event, phase and chip value, and what is not shown", () => {
+  const legend = tl.legendModel(catalog);
+
+  assert.deepEqual(legend.events.map((e) => e.kind), Object.keys(catalog.events));
+  assert.deepEqual(legend.phases.map((p) => p.kind), Object.keys(catalog.phases));
+  assert.deepEqual(legend.chips.map((c) => c.dimension), Object.keys(catalog.chips));
+  for (const group of legend.chips) {
+    const expected = catalog.states.filter((s) => s.dimension === group.dimension);
+    assert.equal(group.values.length, expected.length, group.dimension);
+  }
+  assert.ok(legend.notRepresented.some((n) => /conflict/i.test(n.label)));
+  assert.ok(legend.notRepresented.some((n) => /thread/i.test(n.label)));
+});
+
+test("a card with no PR renders its chips and says there is no history", () => {
+  const none = {
+    created: null,
+    ended: null,
+    state: "none",
+    draft: false,
+    review: "none",
+    events: [],
+    current: [
+      { dimension: "pr", value: "none", args: {} },
+      { dimension: "next", value: "open_pr", args: { text: "Open PR", who: "you" } },
+    ],
+  };
+
+  const tree = tl.render(fakeDocument(), none, { now: NOW, catalog, expanded: false });
+
+  const texts = [];
+  walk(tree, (n) => n.textContent && texts.push(n.textContent));
+  assert.ok(texts.some((t) => t.includes("no PR yet")));
+  assert.ok(texts.includes("PR") && texts.includes("Next"));
 });

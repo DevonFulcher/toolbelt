@@ -308,7 +308,9 @@ def test_filter_controls_are_rendered(tmp_path, make_client):
     ]
     repo_select = html.split('name="repo"')[1].split("</select>")[0]
     assert ">alpha<" in repo_select and ">beta<" in repo_select
-    assert 'data-view="tree"' in html and 'data-view="flat"' in html
+    for view in ("table", "stacked", "grouped"):
+        assert f'data-view="{view}"' in html
+    assert 'data-mode="tree"' in html and 'data-mode="flat"' in html
     assert "/static/stack-table.js" in html
 
 
@@ -1040,6 +1042,8 @@ CARD_SLOTS = {
     "task": "Task",
     "session": "Session",
     "parent": "Parent",
+    "stack": "Stack",
+    "children": "Children",
     "pr_age": "PR age",
     "in_draft": "In draft",
     "review_requested": "Review requested",
@@ -1178,6 +1182,8 @@ class TestViews:
         assert full["ci_failures"][2] == "2 failures"
         assert full["reviewers"] == ("Reviewers", "ok", "sam, lee")
         assert full["parent"] == ("Parent", "ok", "devon/a")
+        assert full["stack"] == ("Stack", "ok", "stack 2 of 2")
+        assert full["children"] == ("Children", "na", "none (nothing stacked on it)")
         assert full["title"][2] == "Second"
         assert "no task" in full["task"][2]
         # The draft one: task and session linked, in draft for 5 days.
@@ -1185,6 +1191,8 @@ class TestViews:
         assert draft["session"][1] == "ok"
         assert draft["in_draft"][2] == "5d"
         assert draft["parent"] == ("Parent", "na", "no parent (stack root)")
+        assert draft["stack"][2] == "stack 1 of 2"
+        assert draft["children"] == ("Children", "ok", "devon/b")
         # The PR title is escaped.
         assert "Add &lt;b&gt;the&lt;/b&gt; thing" in html
 
@@ -1214,12 +1222,18 @@ class TestViews:
             "title",
         ):
             assert found[key][1:] == ("na", "no PR"), key
-        assert found["timeline"] == ("Timeline", "na", "no PR yet — no timeline")
+        # No history to draw, but the track still carries the now chips.
+        assert found["timeline"][:2] == ("Timeline", "ok")
+        track = json.loads(
+            html_unescape(re.search(r"data-track='([^']*)'", card).group(1))
+        )
+        assert track["created"] is None
+        assert [s["dimension"] for s in track["current"]] == ["pr", "next"]
         # Missing but settable reads as a gap, not as "not applicable".
         assert found["task"] == ("Task", "gap", "no task linked")
         assert found["session"] == ("Session", "gap", "no session linked")
         assert found["parent"] == ("Parent", "ok", "devon/a")
-        assert "tl-mount" not in card
+        assert "tl-mount" in card
 
     def test_zero_and_empty_values_are_explicit(
         self, tmp_path, make_client, fetcher, tracker
@@ -1275,12 +1289,52 @@ class TestViews:
 
         assert {k: v[0] for k, v in found.items()} == CARD_SLOTS
         for key in CARD_SLOTS:
-            if key in ("branch", "task", "session", "parent"):
+            if key in ("branch", "task", "session", "parent", "stack", "children"):
                 continue
             assert found[key][1:] == ("na", "loading…"), key
         # Marked so the page can tell, once connected, that it still has
         # statuses to pick up.
         assert 'data-loading="1"' in card
+
+    def test_every_card_slot_has_a_state_mapping_in_the_catalog(
+        self, tmp_path, make_client, fetcher, tracker
+    ):
+        from toolbelt.ui.pr_states import SLOT_STATES, STATES
+
+        self.seed(tmp_path, fetcher)
+        client = self.client(make_client, tracker)
+        html_before = client.get("/").text
+        refresh(client)
+        html_after = client.get("/").text
+        dimensions = {s.dimension for s in STATES}
+
+        for html in (html_before, html_after):
+            for branch in ("devon/a", "devon/b"):
+                for key in slots_of(self.card(html, branch)):
+                    assert key in SLOT_STATES, f"slot {key} has no state mapping"
+                    assert SLOT_STATES[key] is None or SLOT_STATES[key] in dimensions
+
+    def test_a_card_carries_the_catalog_references_of_its_now_chips(
+        self, tmp_path, make_client, fetcher, tracker
+    ):
+        self.seed(tmp_path, fetcher)
+        client = self.client(make_client, tracker)
+        refresh(client)
+
+        card = self.card(client.get("/").text, "devon/a")
+        track = json.loads(
+            html_unescape(re.search(r"data-track='([^']*)'", card).group(1))
+        )
+
+        assert [(s["dimension"], s["value"]) for s in track["current"]] == [
+            ("pr", "draft"),
+            ("ci", "failed"),
+            ("review", "none"),
+            ("comments", "none"),
+            ("merge", "clean"),
+            ("next", "fix_ci"),
+        ]
+        assert track["review"] == "none"
 
     def test_a_loaded_card_is_not_marked_loading(
         self, tmp_path, make_client, fetcher, tracker
@@ -1346,12 +1400,25 @@ class TestViews:
 
         html = make_client().get("/").text
 
-        for view in ("tree", "flat", "cards"):
+        for view in ("table", "stacked", "grouped"):
             assert f'data-view="{view}"' in html
+        for mode in ("tree", "flat"):
+            assert f'data-mode="{mode}"' in html
+        # The retired views and the group toggle are gone.
+        assert 'data-view="cards"' not in html
+        assert 'id="group"' not in html
         sort = html.split('<select name="sort">')[1].split("</select>")[0]
-        assert "Needs my action first" in sort
-        for control in ("done", "compact", "group"):
+        assert "Stack order" in sort
+        for control in ("done", "compact"):
             assert f'id="{control}"' in html
+        # The page embeds the state catalog its timelines draw from.
+        catalog = re.search(
+            r'<script type="application/json" id="state-catalog">(.*?)</script>',
+            html,
+            re.DOTALL,
+        )
+        assert catalog is not None
+        assert "review_approved" in json.loads(catalog.group(1))["events"]
         # The global timeline view and its controls are gone.
         assert 'data-view="timeline"' not in html
         assert 'name="kind"' not in html
@@ -1397,3 +1464,9 @@ class TestViews:
         assert all('class="card-live"' in data["card"] for data in statuses)
         assert any("Fix / re-run CI" in data["card"] for data in statuses)
         assert any("tl-mount" in data["card"] for data in statuses)
+
+
+def test_stack_heights_count_the_tallest_chain_of_each_stack():
+    order = [("a", 0), ("b", 1), ("c", 2), ("d", 1), ("e", 0)]
+
+    assert ui_app._stack_heights(order) == {"a": 3, "b": 3, "c": 3, "d": 3, "e": 1}

@@ -16,7 +16,8 @@ receives changes over a Server-Sent Events stream (``/events``):
   reconnects knows whether it missed anything.
 
 Each status column (next action, PR, CI, review, comments, merge) is its own
-cell. The same branches are also rendered as cards (``view=cards``), each with
+cell. The same branches are also rendered as cards (``view=stacked``: by repo
+and stack; ``view=grouped``: by next action), each with
 its own timeline track: the page script lays those out from the table's data,
 so the table stays the one source of truth for filtering and sorting. The
 trunk (``main``) is not a tracked branch and is never rendered; each stack
@@ -58,7 +59,7 @@ from toolbelt.git.stack.store import Parents, StackStore, default_db_path
 from toolbelt.git.worktrees import current_branch
 from toolbelt.tasks.config import configured_tracker
 from toolbelt.tasks.tracker import TaskInfo, TaskTracker
-from toolbelt.ui import branch_links
+from toolbelt.ui import branch_links, pr_states
 from toolbelt.ui.branch_links import Link
 from toolbelt.ui.next_action import ParentContext, next_action
 from toolbelt.ui.pr_fetch import PrSnapshot, fetch_snapshot
@@ -162,6 +163,12 @@ class BranchRow:
     order: int
     current: bool
     cells: StatusCells
+    #: Position in its stack (``stack_pos`` of ``stack_height``): depth + 1,
+    #: and the height of the tallest chain in the stack this branch is in.
+    stack_pos: int
+    stack_height: int
+    #: ``(row id, branch)`` of the tracked branches stacked on this one.
+    children: tuple[tuple[str, str], ...]
     task: Link | None
     # True when the configured tracker owns the task, so its title/status can
     # be fetched lazily.
@@ -185,6 +192,22 @@ def _walk(parents: Parents) -> list[tuple[str, int]]:
         for first in children.get(base, []):
             visit(first, 0)
     return order
+
+
+def _stack_heights(order: list[tuple[str, int]]) -> dict[str, int]:
+    """Each branch -> the height of its stack (the deepest chain below the
+    stack's first branch, counted in branches), from the depth-first order."""
+    heights: dict[str, int] = {}
+    group: list[str] = []
+    deepest = 0
+    for name, depth in [*order, ("", 0)]:
+        if depth == 0:
+            for member in group:
+                heights[member] = deepest
+            group, deepest = [], 0
+        group.append(name)
+        deepest = max(deepest, depth + 1)
+    return heights
 
 
 def _checked_out_branch(root: Path) -> str | None:
@@ -259,7 +282,10 @@ def _page_rows(
                 if cwd_root and repo.git_common_dir == cwd_common_dir
                 else None
             )
-            for name, depth in _walk(parents):
+            order = _walk(parents)
+            heights = _stack_heights(order)
+            kids = lineage.children_map(parents)
+            for name, depth in order:
                 links = store.get_links(repo.id, name)
                 owner = branch_links.owning_tracker(
                     links.task_tracker if links else None, tracker
@@ -276,6 +302,12 @@ def _page_rows(
                         ),
                         parent=parent if parent in parents else "",
                         order=len(rows),
+                        stack_pos=depth + 1,
+                        stack_height=heights[name],
+                        children=tuple(
+                            (row_id(repo.id, child), child)
+                            for child in kids.get(name, [])
+                        ),
                         current=name == current,
                         cells=_cells_for(
                             refresher.get(repo.id, name),
@@ -499,6 +531,7 @@ def create_app(
             "index.html",
             {
                 "version": version,
+                "state_catalog": pr_states.catalog_json().replace("</", "<\\/"),
                 "repos": repos,
                 "rows": rows,
                 "columns": COLUMNS,

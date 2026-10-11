@@ -46,6 +46,37 @@ WHO_NONE = "none"
 WHO_ORDER = [WHO_YOU, WHO_CI, WHO_OTHERS, WHO_NONE]
 
 
+# The rule identifiers a ``NextAction.kind`` can take (see the table above).
+# ``pr_states`` must give each one a timeline representation; a test checks
+# that these are exactly the kinds ``next_action`` can return.
+OPEN_PR = "open_pr"
+DONE = "done"
+RESOLVE_CONFLICTS = "resolve_conflicts"
+ADDRESS_REVIEW = "address_review"
+RESOLVE_COMMENTS = "resolve_comments"
+FIX_CI = "fix_ci"
+WAIT_CI = "wait_ci"
+PUBLISH = "publish"
+BLOCKED = "blocked"
+MERGE = "merge"
+WAIT_REVIEW = "wait_review"
+REQUEST_REVIEW = "request_review"
+KINDS = (
+    OPEN_PR,
+    DONE,
+    RESOLVE_CONFLICTS,
+    ADDRESS_REVIEW,
+    RESOLVE_COMMENTS,
+    FIX_CI,
+    WAIT_CI,
+    PUBLISH,
+    BLOCKED,
+    MERGE,
+    WAIT_REVIEW,
+    REQUEST_REVIEW,
+)
+
+
 @dataclass(frozen=True)
 class NextAction:
     label: str
@@ -69,26 +100,26 @@ def next_action(status: BranchStatus, parent: ParentContext | None) -> NextActio
     """``parent`` is ``None`` for a branch on the base branch (or whose
     parent's status is not known yet)."""
     if status.pr is PrState.NONE:
-        return NextAction("Open PR", WHO_YOU, "open_pr")
+        return NextAction("Open PR", WHO_YOU, OPEN_PR)
     if status.pr in (PrState.MERGED, PrState.CLOSED):
-        return NextAction("Done", WHO_NONE, "done")
+        return NextAction("Done", WHO_NONE, DONE)
     if status.has_conflicts:
-        return NextAction("Resolve conflicts", WHO_YOU, "resolve_conflicts")
+        return NextAction("Resolve conflicts", WHO_YOU, RESOLVE_CONFLICTS)
     if status.review is ReviewState.REVIEWED:
-        return NextAction("Address review", WHO_YOU, "address_review")
+        return NextAction("Address review", WHO_YOU, ADDRESS_REVIEW)
     if status.open_comments > 0:
-        return NextAction("Resolve comments", WHO_YOU, "resolve_comments")
+        return NextAction("Resolve comments", WHO_YOU, RESOLVE_COMMENTS)
     if status.ci is CiState.FAILED:
-        return NextAction("Fix / re-run CI", WHO_YOU, "fix_ci")
+        return NextAction("Fix / re-run CI", WHO_YOU, FIX_CI)
     if status.ci is CiState.RUNNING:
-        return NextAction("Waiting on CI", WHO_CI, "wait_ci")
+        return NextAction("Waiting on CI", WHO_CI, WAIT_CI)
     if status.pr is PrState.DRAFT:
-        return NextAction("Publish PR", WHO_YOU, "publish")
+        return NextAction("Publish PR", WHO_YOU, PUBLISH)
     if status.review is ReviewState.APPROVED:
         if parent is not None and parent.pr is not PrState.MERGED:
             who = WHO_YOU if parent.next_who == WHO_YOU else WHO_OTHERS
-            return NextAction(f"Blocked on {parent.name}", who, "blocked")
-        return NextAction("Merge", WHO_YOU, "merge")
+            return NextAction(f"Blocked on {parent.name}", who, BLOCKED)
+        return NextAction("Merge", WHO_YOU, MERGE)
     if status.review is ReviewState.REQUESTED:
-        return NextAction("Waiting for review", WHO_OTHERS, "wait_review")
-    return NextAction("Request review", WHO_YOU, "request_review")
+        return NextAction("Waiting for review", WHO_OTHERS, WAIT_REVIEW)
+    return NextAction("Request review", WHO_YOU, REQUEST_REVIEW)
