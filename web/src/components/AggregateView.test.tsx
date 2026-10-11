@@ -187,7 +187,7 @@ describe("the aggregate view", () => {
     expect(within(who).queryByRole("button", { name: "Lines" })).toBeNull();
   });
 
-  test("weekends are drawn over the stacked area, not behind it, and as a strip on the axis", async () => {
+  test("weekends on the stacked charts are only a thin strip on the axis, described on hover", async () => {
     // Samples spanning Fri Oct 9 to Mon Oct 12, 2026: Saturday and Sunday are in range.
     const base = aggregate();
     serve(
@@ -207,17 +207,18 @@ describe("the aggregate view", () => {
     for (const name of ["Status mix", "Who is it waiting on"]) {
       const chart = await screen.findByRole("region", { name });
       const svg = chart.querySelector("svg[role=img]")!;
-      const painted = [...svg.querySelectorAll("path.agg-band, rect.agg-weekend")];
-      const bands = painted.flatMap((e, i) => (e.classList.contains("agg-band") ? [i] : []));
-      const weekends = painted.flatMap((e, i) => (e.classList.contains("agg-weekend") ? [i] : []));
+      const strips = [...svg.querySelectorAll("rect.agg-weekend-strip")];
 
-      expect(bands.length, name).toBeGreaterThan(0);
-      expect(weekends.length, name).toBeGreaterThan(0);
-      // Paint order: every weekend rect comes after the last stacked band, otherwise the
-      // opaque stack would hide it.
-      expect(Math.min(...weekends), name).toBeGreaterThan(Math.max(...bands));
-      expect(svg.querySelectorAll("rect.agg-weekend-veil").length, name).toBe(weekends.length);
-      expect(svg.querySelectorAll("rect.agg-weekend-strip").length, name).toBe(weekends.length);
+      // No hatch or wash over the stack: the stack stays unobscured.
+      expect(svg.querySelectorAll("rect.agg-weekend"), name).toHaveLength(0);
+      expect(strips.length, name).toBeGreaterThan(0);
+      // Each strip says what it is, with its dates, on hover.
+      expect(strips[0].querySelector("title")!.textContent, name).toMatch(/^Weekend: Oct 10 to Oct 11$/);
+      // The strip is painted after the hit area so it can receive the hover.
+      const painted = [...svg.querySelectorAll("rect.agg-hit, rect.agg-weekend-strip")];
+      expect(painted.findIndex((e) => e.classList.contains("agg-weekend-strip")), name).toBeGreaterThan(
+        painted.findIndex((e) => e.classList.contains("agg-hit")),
+      );
     }
   });
 

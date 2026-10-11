@@ -252,7 +252,6 @@ function WeekendBands({
   x,
   top,
   bottom,
-  veil = false,
 }: {
   id: string;
   from: number;
@@ -261,8 +260,6 @@ function WeekendBands({
   x: (ms: number) => number;
   top: number;
   bottom: number;
-  /** Also dim what is under the band: for a band drawn OVER filled marks. */
-  veil?: boolean;
 }) {
   return (
     <g aria-hidden="true">
@@ -271,9 +268,6 @@ function WeekendBands({
         const width = Math.max(x(end) - left, 0);
         return (
           <g key={start}>
-            {veil && (
-              <rect className="agg-weekend-veil" x={left} y={top} width={width} height={bottom - top} />
-            )}
             <rect
               className="agg-weekend"
               x={left}
@@ -287,6 +281,13 @@ function WeekendBands({
       })}
     </g>
   );
+}
+
+/** "Weekend: Oct 10 to Oct 11", or one date for a weekend the window clips to a single day. */
+function weekendTitle(start: number, end: number, timeZone: string): string {
+  const first = formatLocalDate(start, timeZone);
+  const last = formatLocalDate(end - 1, timeZone);
+  return first === last ? `Weekend: ${first}` : `Weekend: ${first} to ${last}`;
 }
 
 // ---- throughput ----------------------------------------------------------------------------
@@ -1007,30 +1008,6 @@ export function MixChart({
               fill={fillOf(id, s)}
             />
           ))}
-          {/* Weekends go OVER the stack (it is opaque, so an underlay would be hidden), and
-              again as a solid strip on the time axis, which reads at a glance. */}
-          <WeekendBands
-            id={id}
-            from={times[0]}
-            to={times[count - 1]}
-            timeZone={timeZone}
-            x={(ms) => MARGIN.left + ((ms - times[0]) / span) * plotW}
-            top={MARGIN.top}
-            bottom={MARGIN.top + plotH}
-            veil
-          />
-          <g aria-hidden="true">
-            {weekendSpans(times[0], times[count - 1], timeZone).map(([start, end]) => (
-              <rect
-                key={start}
-                className="agg-weekend-strip"
-                x={MARGIN.left + ((start - times[0]) / span) * plotW}
-                y={MARGIN.top + plotH + 1}
-                width={Math.max(((end - start) / span) * plotW, 0)}
-                height={5}
-              />
-            ))}
-          </g>
           {/* Tasks in flight: n at each sample, on the same time axis. */}
           <g transform={`translate(0 ${height})`}>
             <text className="agg-tick" x={MARGIN.left - 6} y={stripY(0)} textAnchor="end" dominantBaseline="middle">
@@ -1068,6 +1045,19 @@ export function MixChart({
             onPointerMove={move}
             onPointerLeave={() => setHover(null)}
           />
+          {/* Weekends: a thin strip on the time axis, after the hit area so it can be hovered. */}
+          {weekendSpans(times[0], times[count - 1], timeZone).map(([start, end]) => (
+            <rect
+              key={start}
+              className="agg-weekend-strip"
+              x={MARGIN.left + ((start - times[0]) / span) * plotW}
+              y={MARGIN.top + plotH + 1}
+              width={Math.max(((end - start) / span) * plotW, 0)}
+              height={4}
+            >
+              <title>{weekendTitle(start, end, timeZone)}</title>
+            </rect>
+          ))}
         </svg>
         <ChartTooltip hover={hover} width={width}>
           {hover && (
