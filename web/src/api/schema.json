@@ -41,6 +41,107 @@
       "title": "Age",
       "type": "object"
     },
+    "Aggregate": {
+      "additionalProperties": false,
+      "properties": {
+        "coverage": {
+          "$ref": "#/$defs/AggregateCoverage"
+        },
+        "fetched_at": {
+          "type": "string"
+        },
+        "lead_time": {
+          "items": {
+            "$ref": "#/$defs/LeadStage"
+          },
+          "type": "array"
+        },
+        "mix": {
+          "$ref": "#/$defs/StatusMix"
+        },
+        "notes": {
+          "items": {
+            "$ref": "#/$defs/AggregateNote"
+          },
+          "type": "array"
+        },
+        "throughput": {
+          "$ref": "#/$defs/Throughput"
+        },
+        "weeks": {
+          "type": "integer"
+        },
+        "window_end": {
+          "type": "string"
+        },
+        "window_start": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "weeks",
+        "window_start",
+        "window_end",
+        "fetched_at",
+        "throughput",
+        "lead_time",
+        "mix",
+        "coverage",
+        "notes"
+      ],
+      "title": "Aggregate",
+      "type": "object"
+    },
+    "AggregateCoverage": {
+      "additionalProperties": false,
+      "properties": {
+        "hidden": {
+          "type": "integer"
+        },
+        "prs": {
+          "type": "integer"
+        },
+        "prs_with_start": {
+          "type": "integer"
+        },
+        "task_starts_since": {
+          "type": "string"
+        },
+        "tasks_without_pr": {
+          "type": "integer"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "prs",
+        "prs_with_start",
+        "task_starts_since",
+        "tasks_without_pr",
+        "truncated",
+        "hidden"
+      ],
+      "title": "AggregateCoverage",
+      "type": "object"
+    },
+    "AggregateNote": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "why": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "why"
+      ],
+      "title": "AggregateNote",
+      "type": "object"
+    },
     "BlockedCatalogState": {
       "additionalProperties": false,
       "properties": {
@@ -796,6 +897,81 @@
       "title": "HelloEvent",
       "type": "object"
     },
+    "LeadStage": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "$ref": "#/$defs/LeadStageKey"
+        },
+        "label": {
+          "type": "string"
+        },
+        "median_s": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "n": {
+          "type": "integer"
+        },
+        "p75_s": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "p90_s": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "unknown": {
+          "type": "integer"
+        },
+        "values_s": {
+          "items": {
+            "type": "number"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "key",
+        "label",
+        "n",
+        "unknown",
+        "median_s",
+        "p75_s",
+        "p90_s",
+        "values_s"
+      ],
+      "title": "LeadStage",
+      "type": "object"
+    },
+    "LeadStageKey": {
+      "enum": [
+        "start_to_open",
+        "open_to_request",
+        "request_to_review",
+        "review_to_merge",
+        "start_to_merge"
+      ],
+      "type": "string"
+    },
     "Link": {
       "additionalProperties": false,
       "description": "``href`` is ``None`` when the value cannot (or should not) be linked.",
@@ -1022,6 +1198,108 @@
         "none"
       ],
       "type": "string"
+    },
+    "MixSeries": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "$ref": "#/$defs/MixState"
+        },
+        "share": {
+          "items": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "key",
+        "share"
+      ],
+      "title": "MixSeries",
+      "type": "object"
+    },
+    "MixState": {
+      "enum": [
+        "working",
+        "draft",
+        "ready",
+        "waiting",
+        "changes",
+        "ci_running",
+        "ci_failing",
+        "approved",
+        "blocked"
+      ],
+      "type": "string"
+    },
+    "MixStateInfo": {
+      "additionalProperties": false,
+      "description": "One band of the status mix: its label, tone and legend come from the\nstate catalog (``pr_states``), so it reads like the cards.",
+      "properties": {
+        "key": {
+          "$ref": "#/$defs/MixState"
+        },
+        "label": {
+          "type": "string"
+        },
+        "legend": {
+          "type": "string"
+        },
+        "tone": {
+          "$ref": "#/$defs/Tone"
+        }
+      },
+      "required": [
+        "key",
+        "label",
+        "tone",
+        "legend"
+      ],
+      "title": "MixStateInfo",
+      "type": "object"
+    },
+    "MixWho": {
+      "enum": [
+        "you",
+        "ci",
+        "others"
+      ],
+      "type": "string"
+    },
+    "MixWhoSeries": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "$ref": "#/$defs/MixWho"
+        },
+        "share": {
+          "items": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "key",
+        "share"
+      ],
+      "title": "MixWhoSeries",
+      "type": "object"
     },
     "NextActionInfo": {
       "additionalProperties": false,
@@ -1878,6 +2156,58 @@
       "title": "StatusEvent",
       "type": "object"
     },
+    "StatusMix": {
+      "additionalProperties": false,
+      "properties": {
+        "granularity": {
+          "enum": [
+            "day",
+            "week"
+          ],
+          "type": "string"
+        },
+        "inflight": {
+          "items": {
+            "type": "number"
+          },
+          "type": "array"
+        },
+        "series": {
+          "items": {
+            "$ref": "#/$defs/MixSeries"
+          },
+          "type": "array"
+        },
+        "starts": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "states": {
+          "items": {
+            "$ref": "#/$defs/MixStateInfo"
+          },
+          "type": "array"
+        },
+        "who": {
+          "items": {
+            "$ref": "#/$defs/MixWhoSeries"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "granularity",
+        "starts",
+        "inflight",
+        "states",
+        "series",
+        "who"
+      ],
+      "title": "StatusMix",
+      "type": "object"
+    },
     "StructureEvent": {
       "additionalProperties": false,
       "description": "The stack DB was written: the client re-fetches the snapshot.",
@@ -2037,6 +2367,43 @@
         "reason"
       ],
       "title": "TaskUnavailable",
+      "type": "object"
+    },
+    "Throughput": {
+      "additionalProperties": false,
+      "properties": {
+        "closed": {
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "merged": {
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "opened": {
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "starts": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "starts",
+        "opened",
+        "merged",
+        "closed"
+      ],
+      "title": "Throughput",
       "type": "object"
     },
     "TimelineEvent": {
@@ -2236,6 +2603,9 @@
   "additionalProperties": false,
   "description": "The schema root: lists everything the client reads (never\ninstantiated).",
   "properties": {
+    "aggregate": {
+      "$ref": "#/$defs/Aggregate"
+    },
     "event": {
       "$ref": "#/$defs/ServerEvent"
     },
@@ -2245,7 +2615,8 @@
   },
   "required": [
     "snapshot",
-    "event"
+    "event",
+    "aggregate"
   ],
   "title": "Wire",
   "type": "object"

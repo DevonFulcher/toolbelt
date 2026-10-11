@@ -274,6 +274,25 @@ def _check_entries(node: dict) -> list[dict]:
     ]
 
 
+def timeline_items(nodes: list[dict]) -> tuple[TimelineItem, ...]:
+    """A PR's ``timelineItems`` nodes as ``TimelineItem``s in time order
+    (entries of kinds the UI does not use are skipped)."""
+    parsed = [item for item in (_item(entry) for entry in nodes) if item is not None]
+    # Merging a PR also records a ClosedEvent at the same instant: that is not
+    # a PR closed without merging, so it is not a second ending.
+    merged_at = {item.time for item in parsed if item.kind == pr_activity.MERGED}
+    return tuple(
+        sorted(
+            (
+                item
+                for item in parsed
+                if not (item.kind == pr_activity.CLOSED and item.time in merged_at)
+            ),
+            key=lambda item: item.time,
+        )
+    )
+
+
 def parse_snapshot(payload: dict) -> PrSnapshot:
     """Parse a ``PR_QUERY`` response."""
     nodes = payload["data"]["repository"]["pullRequests"]["nodes"]
@@ -296,24 +315,7 @@ def parse_snapshot(payload: dict) -> PrSnapshot:
         },
         open_comments=count_unresolved_nodes(node["reviewThreads"]["nodes"]),
     )
-    parsed = [
-        item
-        for item in (_item(entry) for entry in node["timelineItems"]["nodes"])
-        if item is not None
-    ]
-    # Merging a PR also records a ClosedEvent at the same instant: that is not
-    # a PR closed without merging, so it is not a second ending.
-    merged_at = {item.time for item in parsed if item.kind == pr_activity.MERGED}
-    items = tuple(
-        sorted(
-            (
-                item
-                for item in parsed
-                if not (item.kind == pr_activity.CLOSED and item.time in merged_at)
-            ),
-            key=lambda item: item.time,
-        )
-    )
+    items = timeline_items(node["timelineItems"]["nodes"])
     facts = PrFacts(
         number=node["number"],
         title=node["title"],

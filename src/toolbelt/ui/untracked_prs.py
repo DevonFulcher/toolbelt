@@ -53,24 +53,27 @@ SearchRunner = Callable[[], Awaitable[dict]]
 RemoteLookup = Callable[[Path], Awaitable[str | None]]
 
 
-async def gh_search() -> dict:
+async def run_search_graphql(query: str, search: str, **variables: str) -> dict:
+    """``gh api graphql`` for a search query, with its ``$search`` (and any
+    other string) variables. A search across organizations answers what it may
+    and reports the rest as errors (a SAML-protected organization the token is
+    not authorized for), which makes `gh` exit non-zero with partial data:
+    that is still a result. No data at all is a failure."""
+    fields: list[str] = []
+    for name, value in {"search": search, **variables}.items():
+        fields += ["-f", f"{name}={value}"]
     process = await logged_process.create_subprocess_exec(
         "gh",
         "api",
         "graphql",
         "-f",
-        f"query={PR_QUERY}",
-        "-f",
-        f"search={SEARCH_QUERY}",
+        f"query={query}",
+        *fields,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
     stdout, stderr = await process.communicate()
     if process.returncode != 0:
-        # A search across organizations answers what it may and reports the
-        # rest as errors (a SAML-protected organization the token is not
-        # authorized for), which makes `gh` exit non-zero with partial data:
-        # that is still a result. No data at all is a failure.
         try:
             body = json.loads(stdout)
         except json.JSONDecodeError:
@@ -79,6 +82,10 @@ async def gh_search() -> dict:
             raise RuntimeError(f"gh api graphql failed: {stderr.decode().strip()}")
         return body
     return json.loads(stdout)
+
+
+async def gh_search() -> dict:
+    return await run_search_graphql(PR_QUERY, SEARCH_QUERY)
 
 
 async def origin_remote(path: Path) -> str | None:

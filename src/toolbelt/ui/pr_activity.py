@@ -50,7 +50,7 @@ type ActivityKind = Literal[
     "reopened",
 ]
 
-_CI_FAILED_ROLLUPS = {"FAILURE", "ERROR"}
+CI_FAILED_ROLLUPS = {"FAILURE", "ERROR"}
 
 
 @dataclass(frozen=True)
@@ -166,13 +166,13 @@ def _review_request_since(facts: PrFacts) -> datetime | None:
 
 
 def _ci_failure_count(facts: PrFacts) -> int:
-    failed = {oid for oid, state in facts.commit_rollups if state in _CI_FAILED_ROLLUPS}
+    failed = {oid for oid, state in facts.commit_rollups if state in CI_FAILED_ROLLUPS}
     # A force push overwrote these commits, so they are not among the PR's
     # commits any more, but they were pushed and their CI did run.
     failed |= {
         item.oid
         for item in facts.items
-        if item.kind == FORCE_PUSH and item.ci in _CI_FAILED_ROLLUPS
+        if item.kind == FORCE_PUSH and item.ci in CI_FAILED_ROLLUPS
     }
     return len(failed)
 
@@ -180,7 +180,7 @@ def _ci_failure_count(facts: PrFacts) -> int:
 def _ci_label(rollup: str | None) -> str:
     if rollup is None:
         return ""
-    if rollup in _CI_FAILED_ROLLUPS:
+    if rollup in CI_FAILED_ROLLUPS:
         return "failed"
     return "success" if rollup == "SUCCESS" else "pending"
 

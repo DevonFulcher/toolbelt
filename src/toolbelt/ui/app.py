@@ -7,6 +7,9 @@ The server is a JSON API plus the built web client (``web/``, served from
   links, live status, the state catalog), straight from the stack DB plus the
   in-memory caches (no network on the request path); see ``snapshot.py`` and
   ``api_models.py``;
+* ``GET /api/aggregate?weeks=N``: how work has flowed over the last N weeks
+  (throughput, lead times, status mix), computed when asked; see
+  ``aggregate.py`` and ``aggregate_feed.py``;
 * ``GET /api/events``: a Server-Sent Events stream of typed events that keep a
   snapshot current:
 
@@ -39,15 +42,27 @@ from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 
 from toolbelt.git.repo_pull import default_config_path
 from toolbelt.git.stack.store import Parents, StackStore, default_db_path
 from toolbelt.tasks.config import configured_tracker
 from toolbelt.tasks.tracker import TaskTracker
+from toolbelt.git.stack.status import PrState
+from toolbelt.ui import aggregate as aggregate_view
 from toolbelt.ui import api_models as api
 from toolbelt.ui import branch_links
+from toolbelt.ui.aggregate_feed import (
+    DEFAULT_TTL_SECONDS as DEFAULT_AGGREGATE_TTL_SECONDS,
+)
+from toolbelt.ui.aggregate_feed import (
+    AggregateService,
+    PageRunner,
+    StoredHistory,
+    gh_page,
+    read_history,
+)
 from toolbelt.ui.client_build import CLIENT_DIST
 from toolbelt.ui.live_status import (
     DEFAULT_CONCURRENCY,
@@ -188,6 +203,9 @@ def create_app(
     search_open_prs: SearchRunner = gh_search,
     remote_of: RemoteLookup = origin_remote,
     untracked_interval: float = DEFAULT_UNTRACKED_INTERVAL_SECONDS,
+    search_history: PageRunner = gh_page,
+    stored_history: Callable[[], StoredHistory] = read_history,
+    aggregate_ttl: float = DEFAULT_AGGREGATE_TTL_SECONDS,
 ) -> FastAPI:
     """``cwd_root``: the repo `tt ui` was launched from; its checked-out
     branch is marked current, as `tt g tree` does. ``fetch`` looks up a
@@ -202,7 +220,10 @@ def create_app(
     ``app.state.task_feed`` and ``app.state.structure_watcher`` directly.
     ``client_dist`` is the built web client. ``search_open_prs`` lists the
     user's open PRs (one GitHub call per ``untracked_interval``) and
-    ``remote_of`` looks up a checkout's origin: see ``untracked_prs.py``."""
+    ``remote_of`` looks up a checkout's origin: see ``untracked_prs.py``.
+    ``search_history`` pages through the user's PRs for the aggregate view
+    (cached for ``aggregate_ttl`` seconds) and ``stored_history`` reads the
+    stack DB's tracked and archived branches: see ``aggregate_feed.py``."""
     task_cache = TaskInfoCache(ttl_seconds=task_ttl_seconds, clock=clock)
     hub = EventHub(clock=clock, grace=grace_seconds)
 
@@ -252,6 +273,24 @@ def create_app(
         tick=tick,
     )
 
+    def pr_finished(repo_id: int, branch: str) -> bool:
+        fetched = refresher.get(repo_id, branch)
+        return (
+            fetched is not None
+            and fetched.status is not None
+            and fetched.status.pr in (PrState.MERGED, PrState.CLOSED)
+        )
+
+    aggregates = AggregateService(
+        search=search_history,
+        history=stored_history,
+        remote_of=remote_of,
+        finished=pr_finished,
+        clock=clock,
+        wall_clock=wall_clock,
+        ttl=aggregate_ttl,
+    )
+
     # The default change signal needs a connection held for as long as the app
     # serves (``data_version`` is per connection), opened on the event loop's
     # thread, which is where the watcher reads it.
@@ -297,6 +336,7 @@ def create_app(
     app.state.task_feed = task_feed
     app.state.untracked_feed = untracked_feed
     app.state.structure_watcher = watcher
+    app.state.aggregates = aggregates
 
     @app.get("/assets/{path:path}", include_in_schema=False, response_model=None)
     def asset(path: str) -> FileResponse:
@@ -335,6 +375,19 @@ def create_app(
             now=wall_clock(),
             version=version,
         )
+
+    @app.get("/api/aggregate", response_model=api.Aggregate)
+    async def aggregate(
+        weeks: int = Query(aggregate_view.DEFAULT_WEEKS),
+    ) -> api.Aggregate:
+        # Computed on demand, not part of the live poll loop: GitHub is asked
+        # (at most once per ``aggregate_ttl``) only while the view is open.
+        if weeks not in aggregate_view.WINDOWS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"weeks must be one of {list(aggregate_view.WINDOWS)}",
+            )
+        return await aggregates.get(weeks)
 
     @app.get("/api/events")
     async def events() -> StreamingResponse:
