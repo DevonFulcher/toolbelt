@@ -187,12 +187,25 @@ a.stack-link[data-gone]::after { content: " (not shown)"; font-size: 11px; font-
 .card-next { font-weight: 600; }
 .card-next-who { font-size: 11px; margin-left: 4px; }
 .card .task-title { margin: 0 4px; }
-@media (max-width: 70rem) {
+/* The nine-column grid needs about 91.5rem of viewport (its columns, gaps and
+   padding, plus the page padding). Stacked cards also lose --step per level of
+   indentation, up to MAX_VISIBLE_DEPTH (6) levels = 9rem more. Below those
+   widths the slots wrap instead, so a card can never be wider than its column. */
+@media (max-width: 92rem) {
   .card { display: flex; flex-wrap: wrap; gap: 6px 16px; }
   .card .slot { flex: 0 1 auto; padding-left: 0; }
   .s-title, .s-timeline { flex: 1 0 100%; order: 9; }
   .s-task, .s-session { order: 5; }
   .s-stack, .s-task_age, .s-pr_age, .s-in_draft, .s-review_requested, .s-ci_failures, .s-reviewers { order: 6; }
+}
+@media (max-width: 101rem) {
+  .cards-stacked .card { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+  .cards-stacked .card .slot { flex: 0 1 auto; padding-left: 0; }
+  .cards-stacked .s-title, .cards-stacked .s-timeline { flex: 1 0 100%; order: 9; }
+  .cards-stacked .s-task, .cards-stacked .s-session { order: 5; }
+  .cards-stacked .s-stack, .cards-stacked .s-task_age, .cards-stacked .s-pr_age,
+  .cards-stacked .s-in_draft, .cards-stacked .s-review_requested,
+  .cards-stacked .s-ci_failures, .cards-stacked .s-reviewers { order: 6; }
 }
 
 /* Per-card timeline track. Colours come from the catalog's tone tokens. */
