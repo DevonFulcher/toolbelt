@@ -149,7 +149,7 @@ a.stack-link[data-gone] { color: var(--muted); pointer-events: none; }
 a.stack-link[data-gone]::after { content: " (not shown)"; font-size: 11px; font-family: system-ui, sans-serif; }
 @keyframes highlight { 0%, 60% { box-shadow: 0 0 0 3px var(--accent); } }
 .highlight { animation: highlight 1.8s ease-out; }
-.card { --cols: minmax(17rem, 1.6fr) 13rem 6.5rem 5.5rem 9rem 6.5rem 6.5rem minmax(7rem, 1fr) 9rem;
+.card { --cols: minmax(17rem, 1.6fr) 13rem 6.5rem 7rem 9rem 6.5rem 6.5rem minmax(7rem, 1fr) 9rem;
         background: var(--card); border: 1px solid var(--line); border-radius: 8px;
         padding: 8px 12px; display: grid; grid-template-columns: var(--cols);
         gap: 6px 12px; align-items: start; min-width: 0; }

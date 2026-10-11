@@ -351,3 +351,82 @@ def test_the_query_asks_for_everything_the_derivations_need():
 def test_responses_are_plain_json_round_trippable():
     # Guards the fixtures themselves: the runner returns parsed JSON.
     assert json.loads(json.dumps(response(pr_node())))
+
+
+# ---- shapes seen in a real GitHub response (validation fixture repo) ---------
+
+
+def test_a_merge_also_records_a_closed_event_which_is_not_a_second_ending():
+    # Real payload shape: MergedEvent and ClosedEvent at the same second.
+    node = pr_node(
+        state="MERGED",
+        mergedAt="2026-10-01T09:00:56Z",
+        closedAt="2026-10-01T09:00:56Z",
+        mergeable="UNKNOWN",
+        head={"nodes": [{"commit": {"statusCheckRollup": None}}]},
+        timelineItems={
+            "nodes": [
+                {
+                    "__typename": "PullRequestCommit",
+                    "commit": {
+                        "oid": "07d9986",
+                        "messageHeadline": "add it",
+                        "committedDate": "2026-10-01T09:00:49Z",
+                        "author": {"user": {"login": "devon"}, "name": "Devon"},
+                        "statusCheckRollup": None,
+                    },
+                },
+                {
+                    "__typename": "MergedEvent",
+                    "createdAt": "2026-10-01T09:00:56Z",
+                    "actor": {"login": "devon"},
+                },
+                {
+                    "__typename": "ClosedEvent",
+                    "createdAt": "2026-10-01T09:00:56Z",
+                    "actor": {"login": "devon"},
+                },
+            ]
+        },
+    )
+
+    snapshot = parse_snapshot(response(node))
+
+    assert snapshot.facts is not None
+    assert [item.kind for item in snapshot.facts.items] == [pa.COMMIT, pa.MERGED]
+    assert snapshot.status.pr is PrState.MERGED
+
+
+def test_a_pr_closed_and_later_merged_keeps_its_real_close():
+    node = pr_node(
+        state="MERGED",
+        timelineItems={
+            "nodes": [
+                {
+                    "__typename": "ClosedEvent",
+                    "createdAt": "2026-10-02T09:00:00Z",
+                    "actor": {"login": "devon"},
+                },
+                {
+                    "__typename": "ReopenedEvent",
+                    "createdAt": "2026-10-03T09:00:00Z",
+                    "actor": {"login": "devon"},
+                },
+                {
+                    "__typename": "MergedEvent",
+                    "createdAt": "2026-10-04T09:00:00Z",
+                    "actor": {"login": "devon"},
+                },
+                {
+                    "__typename": "ClosedEvent",
+                    "createdAt": "2026-10-04T09:00:00Z",
+                    "actor": {"login": "devon"},
+                },
+            ]
+        },
+    )
+
+    facts = parse_snapshot(response(node)).facts
+
+    assert facts is not None
+    assert [item.kind for item in facts.items] == [pa.CLOSED, pa.REOPENED, pa.MERGED]

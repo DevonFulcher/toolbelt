@@ -296,12 +296,20 @@ def parse_snapshot(payload: dict) -> PrSnapshot:
         },
         open_comments=count_unresolved_nodes(node["reviewThreads"]["nodes"]),
     )
+    parsed = [
+        item
+        for item in (_item(entry) for entry in node["timelineItems"]["nodes"])
+        if item is not None
+    ]
+    # Merging a PR also records a ClosedEvent at the same instant: that is not
+    # a PR closed without merging, so it is not a second ending.
+    merged_at = {item.time for item in parsed if item.kind == pr_activity.MERGED}
     items = tuple(
         sorted(
             (
                 item
-                for item in (_item(entry) for entry in node["timelineItems"]["nodes"])
-                if item is not None
+                for item in parsed
+                if not (item.kind == pr_activity.CLOSED and item.time in merged_at)
             ),
             key=lambda item: item.time,
         )
