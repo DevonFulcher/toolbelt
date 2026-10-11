@@ -8,12 +8,15 @@ land?" — a squash-merge rewrites the SHA, so local ancestry can't tell — and
 """
 
 import asyncio
+import json
+from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 
 import typer
 
 from toolbelt import logged_process
+from toolbelt.git.stack.store import PrCandidate, PrLink
 from toolbelt.logger import logger
 
 
@@ -23,6 +26,28 @@ class Forge(Protocol):
     async def pr_is_merged(self, branch: str) -> bool: ...
 
     async def pr_is_open(self, branch: str) -> bool: ...
+
+    async def pr_candidates(self, branch: str) -> list[PrCandidate]:
+        """Every PR (any state) whose head is ``branch``, best first: the
+        identity ``store.StackStore.link_pr`` records for the branch's task."""
+        ...
+
+
+def candidate_from_json(node: dict) -> PrCandidate:
+    """A ``gh ... --json number,id,createdAt`` PR object."""
+    return PrCandidate(
+        link=PrLink(number=node["number"], node_id=node["id"]),
+        created_at=datetime.fromisoformat(node["createdAt"].replace("Z", "+00:00")),
+    )
+
+
+def ranked_candidates(prs: list[dict]) -> list[PrCandidate]:
+    """``gh pr list --json number,id,state,createdAt`` objects, open PRs
+    first, then merged ones, then closed ones; newest first within each."""
+    order = {"OPEN": 0, "MERGED": 1}
+    ranked = sorted(prs, key=lambda pr: pr["createdAt"], reverse=True)
+    ranked.sort(key=lambda pr: order.get(pr["state"], 2))
+    return [candidate_from_json(pr) for pr in ranked]
 
 
 class GhForge:
@@ -92,3 +117,29 @@ class GhForge:
             )
             raise typer.Exit(1)
         return stdout.decode().strip() not in ("", "0")
+
+    async def pr_candidates(self, branch: str) -> list[PrCandidate]:
+        process = await logged_process.create_subprocess_exec(
+            "gh",
+            "pr",
+            "list",
+            "--head",
+            branch,
+            "--state",
+            "all",
+            "--limit",
+            "20",
+            "--json",
+            "number,id,state,createdAt",
+            cwd=self._root,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await process.communicate()
+        if process.returncode != 0:
+            logger.error(
+                f"`gh` failed listing the PRs of '{branch}': "
+                f"{stderr.decode().strip()}"
+            )
+            raise typer.Exit(1)
+        return ranked_candidates(json.loads(stdout))

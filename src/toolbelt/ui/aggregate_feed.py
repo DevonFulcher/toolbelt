@@ -13,8 +13,9 @@
   that is flagged, as the untracked-PR callout does.
 * **The stack DB**: tracked and archived branches (``removed_branches``),
   which date each task's start. They are read on every request (cheap, local)
-  and matched to PRs by ``(repo, head branch)``: the store knows nothing of
-  GitHub, so the PR number / merge time are not copied into it.
+  and joined to PRs by the PR identity the CLI recorded for the task (node id,
+  else repo and number); only a task that never recorded its PR falls back to
+  ``(repo, head branch)`` and the times, and is flagged as such.
 
 The ``gh`` call, the stack DB read, the remote lookup and the clocks are
 injected, so tests drive it with canned payloads.
@@ -67,7 +68,7 @@ query($search: String!, $after: String) {{
     pageInfo {{ hasNextPage endCursor }}
     nodes {{
       ... on PullRequest {{
-        number title state isDraft createdAt mergedAt closedAt
+        id number title state isDraft createdAt mergedAt closedAt
         headRefName baseRefName reviewDecision
         author {{ login }}
         repository {{ nameWithOwner isArchived }}
@@ -172,6 +173,7 @@ def parse_pr(node: dict) -> aggregate.PrRecord:
         review_now=_review_now(node),
         base_changes=tuple(changes),
         ci_done=_ci_done(entries),
+        node_id=node.get("id") or "",
     )
 
 
@@ -235,6 +237,8 @@ async def task_facts(
             branch=row.name,
             started_at=row.started_at,
             finished=finished(row.repo_id, row.name),
+            pr_node_id=row.pr.node_id if row.pr else None,
+            pr_number=row.pr.number if row.pr else None,
         )
         for row in history.tracked
     ]
@@ -245,6 +249,8 @@ async def task_facts(
             started_at=row.started_at,
             removed_at=row.removed_at,
             landed=row.landed,
+            pr_node_id=row.pr.node_id if row.pr else None,
+            pr_number=row.pr.number if row.pr else None,
         )
         for row in history.removed
     ]

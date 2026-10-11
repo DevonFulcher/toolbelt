@@ -21,7 +21,8 @@ repo's identity (see ``lineage``) and pass it in.
 import contextlib
 import os
 import sqlite3
-from collections.abc import Iterator
+import uuid
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -131,6 +132,24 @@ _MIGRATIONS: list[tuple[str, ...]] = [
         "INSERT INTO archive_info (since) "
         "VALUES (strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now'))",
     ),
+    (
+        # Identity, so the aggregate view can join tasks to PRs by id rather
+        # than by branch name (a name is reused). ``task_id`` is stable for
+        # the life of a task and is carried into ``removed_branches`` when
+        # the branch stops being tracked; existing rows get a random one.
+        # ``pr_number`` / ``pr_node_id`` (GitHub's GraphQL node id) are the
+        # task's PR, recorded by the CLI flows that see it (``link_pr``) and
+        # NULL until then; the repo is the row's repo (its remote).
+        "ALTER TABLE branches ADD COLUMN task_id TEXT",
+        "ALTER TABLE branches ADD COLUMN pr_number INTEGER",
+        "ALTER TABLE branches ADD COLUMN pr_node_id TEXT",
+        "UPDATE branches SET task_id = lower(hex(randomblob(16)))",
+        "CREATE UNIQUE INDEX branches_by_task_id ON branches (task_id)",
+        "ALTER TABLE removed_branches ADD COLUMN task_id TEXT",
+        "ALTER TABLE removed_branches ADD COLUMN pr_number INTEGER",
+        "ALTER TABLE removed_branches ADD COLUMN pr_node_id TEXT",
+        "UPDATE removed_branches SET task_id = lower(hex(randomblob(16)))",
+    ),
 ]
 
 
@@ -149,10 +168,33 @@ class BranchLinks:
 
 
 @dataclass(frozen=True)
+class PrLink:
+    """A PR's identity: its number in the repo and GitHub's node id (which,
+    unlike the number, is globally unique and survives a repo transfer)."""
+
+    number: int
+    node_id: str
+
+
+@dataclass(frozen=True)
+class PrCandidate:
+    """A PR the code host reports for a branch name, offered to ``link_pr``
+    in order of preference. ``created_at`` keeps an earlier task's PR (same
+    branch name) from being linked to a later task."""
+
+    link: PrLink
+    created_at: datetime
+
+
+@dataclass(frozen=True)
 class RemovedBranch:
     """A branch that was tracked and no longer is, with the task facts it
-    had. ``landed``: removed as the cleanup after its PR merged."""
+    had. ``landed``: removed as the cleanup after its PR merged.
+    ``task_id`` is the id it had while tracked; ``pr`` its PR when that was
+    ever recorded."""
 
+    task_id: str
+    pr: PrLink | None
     repo_id: int
     name: str
     task: str | None
@@ -166,6 +208,8 @@ class RemovedBranch:
 class TrackedBranchFacts:
     """A branch that is tracked now, with the facts the aggregate view uses."""
 
+    task_id: str
+    pr: PrLink | None
     repo_id: int
     name: str
     task: str | None
@@ -200,6 +244,17 @@ def default_db_path() -> Path:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _new_task_id() -> str:
+    return uuid.uuid4().hex
+
+
+def _pr_link(row: sqlite3.Row) -> PrLink | None:
+    """The PR link in a row's ``pr_number`` / ``pr_node_id`` columns."""
+    if row["pr_node_id"] is None or row["pr_number"] is None:
+        return None
+    return PrLink(number=row["pr_number"], node_id=row["pr_node_id"])
 
 
 def _optional_time(value: str | None) -> datetime | None:
@@ -286,9 +341,9 @@ class StackStore:
             for branch, parent in parents.items():
                 conn.execute(
                     "INSERT OR IGNORE INTO branches "
-                    "(repo_id, name, parent, started_at, created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
-                    (repo_id, branch, parent, now, now, now),
+                    "(task_id, repo_id, name, parent, started_at, created_at, "
+                    "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (_new_task_id(), repo_id, branch, parent, now, now, now),
                 )
 
     def get_parent(self, repo_id: int, branch: str) -> str | None:
@@ -318,9 +373,9 @@ class StackStore:
         with self._write() as conn:
             conn.execute(
                 "INSERT INTO branches "
-                "(repo_id, name, parent, task, task_tracker, agent_link, "
-                "started_at, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "(task_id, repo_id, name, parent, task, task_tracker, "
+                "agent_link, started_at, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT (repo_id, name) DO UPDATE SET "
                 "parent = excluded.parent, "
                 "task_tracker = CASE WHEN excluded.task IS NULL "
@@ -329,6 +384,7 @@ class StackStore:
                 "agent_link = COALESCE(excluded.agent_link, agent_link), "
                 "updated_at = excluded.updated_at",
                 (
+                    _new_task_id(),
                     repo_id,
                     branch,
                     parent,
@@ -396,9 +452,10 @@ class StackStore:
         with self._write() as conn:
             conn.execute(
                 "INSERT INTO removed_branches "
-                "(repo_id, name, task, task_tracker, started_at, removed_at, "
-                "landed) "
-                "SELECT repo_id, name, task, task_tracker, started_at, ?, ? "
+                "(task_id, pr_number, pr_node_id, repo_id, name, task, "
+                "task_tracker, started_at, removed_at, landed) "
+                "SELECT task_id, pr_number, pr_node_id, repo_id, name, task, "
+                "task_tracker, started_at, ?, ? "
                 "FROM branches WHERE repo_id = ? AND name = ?",
                 (_now(), int(landed), repo_id, branch),
             )
@@ -407,14 +464,81 @@ class StackStore:
                 (repo_id, branch),
             )
 
+    def get_pr_link(self, repo_id: int, branch: str) -> PrLink | None:
+        """The PR recorded for ``branch``'s task, if any."""
+        row = self._conn.execute(
+            "SELECT pr_number, pr_node_id FROM branches "
+            "WHERE repo_id = ? AND name = ?",
+            (repo_id, branch),
+        ).fetchone()
+        return _pr_link(row) if row else None
+
+    def link_pr(
+        self, repo_id: int, branch: str, candidates: Sequence[PrCandidate]
+    ) -> PrLink | None:
+        """Record which PR is ``branch``'s task's, when it first becomes
+        known, and return the task's link (``None``: untracked, or no
+        candidate qualified).
+
+        A recorded link is never replaced. Otherwise the first candidate (the
+        caller's order of preference) that is not another task's PR (already
+        linked from a tracked or archived row of this repo) and was not
+        created before this branch name's last archived task ended (it is
+        that task's PR, from before the name was reused) is taken."""
+        with self._write() as conn:
+            row = conn.execute(
+                "SELECT pr_number, pr_node_id FROM branches "
+                "WHERE repo_id = ? AND name = ?",
+                (repo_id, branch),
+            ).fetchone()
+            if row is None:
+                return None
+            existing = _pr_link(row)
+            if existing is not None:
+                return existing
+            claimed = {
+                r["pr_node_id"]
+                for r in conn.execute(
+                    "SELECT pr_node_id FROM branches WHERE repo_id = ? "
+                    "UNION SELECT pr_node_id FROM removed_branches "
+                    "WHERE repo_id = ?",
+                    (repo_id, repo_id),
+                )
+            }
+            last_removed = conn.execute(
+                "SELECT removed_at FROM removed_branches "
+                "WHERE repo_id = ? AND name = ? ORDER BY removed_at DESC LIMIT 1",
+                (repo_id, branch),
+            ).fetchone()
+            earliest = (
+                datetime.fromisoformat(last_removed["removed_at"])
+                if last_removed
+                else None
+            )
+            for candidate in candidates:
+                if candidate.link.node_id in claimed:
+                    continue
+                if earliest is not None and candidate.created_at < earliest:
+                    continue
+                conn.execute(
+                    "UPDATE branches SET pr_number = ?, pr_node_id = ? "
+                    "WHERE repo_id = ? AND name = ?",
+                    (candidate.link.number, candidate.link.node_id, repo_id, branch),
+                )
+                return candidate.link
+            return None
+
     def removed_branches(self) -> list[RemovedBranch]:
         """Every archived branch, oldest removal first."""
         rows = self._conn.execute(
-            "SELECT repo_id, name, task, task_tracker, started_at, removed_at, "
-            "landed FROM removed_branches ORDER BY removed_at, id"
+            "SELECT task_id, pr_number, pr_node_id, repo_id, name, task, "
+            "task_tracker, started_at, removed_at, landed "
+            "FROM removed_branches ORDER BY removed_at, id"
         )
         return [
             RemovedBranch(
+                task_id=r["task_id"],
+                pr=_pr_link(r),
                 repo_id=r["repo_id"],
                 name=r["name"],
                 task=r["task"],
@@ -428,10 +552,13 @@ class StackStore:
 
     def tracked_branch_facts(self) -> list[TrackedBranchFacts]:
         rows = self._conn.execute(
-            "SELECT repo_id, name, task, started_at FROM branches ORDER BY id"
+            "SELECT task_id, pr_number, pr_node_id, repo_id, name, task, "
+            "started_at FROM branches ORDER BY id"
         )
         return [
             TrackedBranchFacts(
+                task_id=r["task_id"],
+                pr=_pr_link(r),
                 repo_id=r["repo_id"],
                 name=r["name"],
                 task=r["task"],

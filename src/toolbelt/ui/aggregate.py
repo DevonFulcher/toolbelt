@@ -137,6 +137,9 @@ class PrRecord:
     base_changes: tuple[tuple[datetime, str, str], ...] = ()
     #: When the check suites of a commit (by oid) completed.
     ci_done: Mapping[str, datetime] = field(default_factory=dict)
+    #: GitHub's node id of the PR: the identity tasks are joined on (``""``
+    #: when the payload did not carry it).
+    node_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -152,6 +155,14 @@ class TaskFact:
     landed: bool = False
     #: Still tracked, but its PR is known to be merged/closed already.
     finished: bool = False
+    #: The PR recorded for the task (``None``: never recorded, so only the
+    #: branch name can tie it to a PR).
+    pr_node_id: str | None = None
+    pr_number: int | None = None
+
+    @property
+    def linked(self) -> bool:
+        return self.pr_node_id is not None or self.pr_number is not None
 
 
 # ---- replaying a PR's events ------------------------------------------------------
@@ -507,24 +518,56 @@ class Task:
     started: datetime | None
     #: Without a PR: when it stopped being worked on (``None``: still going).
     ended: datetime | None = None
+    #: How the task fact was tied to the PR: ``id`` (the recorded PR link)
+    #: or ``name`` (the branch name and the times, the fallback for a task
+    #: whose PR was never recorded); ``None`` without a fact.
+    matched_by: str | None = None
 
 
 def match_tasks(
     prs: Sequence[PrRecord], facts: Sequence[TaskFact], now: datetime
 ) -> list[Task]:
-    """Pairs each PR with the task fact of its head branch (each fact is used
-    once: the earliest PR created after it), and turns the facts left over
-    into tasks without a PR."""
+    """Pairs each PR with its task fact and turns the facts left over into
+    tasks without a PR.
+
+    A fact whose PR was recorded is joined by that identity (GitHub's node
+    id, else repo and number): a branch name is not identity, so a reused
+    name cannot mislead it. Only facts that never recorded a PR fall back to
+    the head branch name (each used once: the earliest PR created after it,
+    unless the branch was removed before the PR existed), and those matches
+    are flagged ``matched_by == "name"``."""
+    by_node = {f.pr_node_id: f for f in facts if f.pr_node_id}
+    by_number = {
+        (f.repo, f.pr_number): f
+        for f in facts
+        if f.pr_number is not None and f.repo is not None
+    }
     by_key: dict[tuple[str, str], list[TaskFact]] = {}
     for fact in facts:
-        if fact.repo is not None:
+        if fact.repo is not None and not fact.linked:
             by_key.setdefault((fact.repo, fact.branch), []).append(fact)
     for group in by_key.values():
         group.sort(key=lambda f: (f.started_at is None, f.started_at))
+
+    def start_of(fact: TaskFact, pr: PrRecord) -> datetime | None:
+        if fact.started_at is not None and fact.started_at <= pr.facts.created_at:
+            return fact.started_at
+        return None
+
     used: set[int] = set()
-    tasks: list[Task] = []
-    for pr in sorted(prs, key=lambda p: p.facts.created_at):
-        started: datetime | None = None
+    matched: dict[int, Task] = {}
+    ordered = sorted(prs, key=lambda p: p.facts.created_at)
+    for pr in ordered:
+        linked = by_node.get(pr.node_id) if pr.node_id else None
+        if linked is None:
+            linked = by_number.get((pr.repo, pr.facts.number))
+        if linked is not None and id(linked) not in used:
+            used.add(id(linked))
+            matched[id(pr)] = Task(pr=pr, started=start_of(linked, pr), matched_by="id")
+    for pr in ordered:
+        if id(pr) in matched:
+            continue
+        task = Task(pr=pr, started=None)
         for fact in by_key.get((pr.repo, pr.head_branch), []):
             if id(fact) in used:
                 continue
@@ -532,16 +575,19 @@ def match_tasks(
             if fact.removed_at is not None and fact.removed_at < pr.facts.created_at:
                 continue
             used.add(id(fact))
-            if fact.started_at is not None and fact.started_at <= pr.facts.created_at:
-                started = fact.started_at
+            started = start_of(fact, pr)
+            task = Task(pr=pr, started=started, matched_by="name")
             break
-        tasks.append(Task(pr=pr, started=started))
+        matched[id(pr)] = task
+    tasks = [matched[id(pr)] for pr in ordered]
     for fact in facts:
         if id(fact) in used or fact.started_at is None:
             continue
         # A landed branch whose PR is not among the fetched ones merged before
-        # the window; a tracked one known to be finished is likewise past.
-        if fact.landed or fact.finished:
+        # the window; a tracked one known to be finished is likewise past; and
+        # one with a recorded PR has a PR (not fetched: older than the window
+        # or beyond the fetch's limit), so it is not a task without one.
+        if fact.landed or fact.finished or fact.linked:
             continue
         tasks.append(Task(pr=None, started=fact.started_at, ended=fact.removed_at))
     return tasks
@@ -705,6 +751,14 @@ def compute(
                 1
                 for task in with_pr
                 if task.started is not None
+                and task.pr is not None
+                and _in_window(task.pr, start, now)
+            ),
+            starts_by_name=sum(
+                1
+                for task in with_pr
+                if task.started is not None
+                and task.matched_by == "name"
                 and task.pr is not None
                 and _in_window(task.pr, start, now)
             ),

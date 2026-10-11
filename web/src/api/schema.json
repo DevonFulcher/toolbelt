@@ -104,6 +104,9 @@
         "prs_with_start": {
           "type": "integer"
         },
+        "starts_by_name": {
+          "type": "integer"
+        },
         "task_starts_since": {
           "type": "string"
         },
@@ -117,6 +120,7 @@
       "required": [
         "prs",
         "prs_with_start",
+        "starts_by_name",
         "task_starts_since",
         "tasks_without_pr",
         "truncated",

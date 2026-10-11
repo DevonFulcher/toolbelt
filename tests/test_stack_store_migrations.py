@@ -71,6 +71,7 @@ def _seed(conn: sqlite3.Connection) -> None:
             "branches",
             {
                 "repo_id": 1,
+                "task_id": f"seeded-{name}",
                 "name": name,
                 "parent": parent,
                 "task": task,
@@ -87,6 +88,7 @@ def _seed(conn: sqlite3.Connection) -> None:
             "removed_branches",
             {
                 "repo_id": 1,
+                "task_id": "seeded-old",
                 "name": "old",
                 "task": "OLD-7",
                 "task_tracker": "jira",
@@ -188,6 +190,14 @@ def test_every_historical_version_migrates_to_head_keeping_its_data(
         assert old.removed_at == datetime.fromisoformat(REMOVED)
     else:
         assert s.removed_branches() == []
+    # Every task has an id (given, or backfilled by the migration), unique,
+    # and no PR is recorded for any of them.
+    tracked = s.tracked_branch_facts()
+    assert len({t.task_id for t in tracked}) == len(tracked) == 2
+    assert all(t.task_id and t.pr is None for t in tracked)
+    if version >= 6:
+        assert s.removed_branches()[0].task_id
+        assert s.removed_branches()[0].pr is None
     # The migrated database is fully usable: archive a branch, add one.
     s.remove_branch(1, "plain")
     s.set_parent(1, "new", "main")

@@ -79,6 +79,7 @@ export function aggregate(overrides: Partial<Aggregate> = {}): Aggregate {
     coverage: {
       prs: 9,
       prs_with_start: 3,
+      starts_by_name: 1,
       task_starts_since: "2026-09-30T08:00:00Z",
       tasks_without_pr: 1,
       truncated: false,

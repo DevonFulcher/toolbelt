@@ -14,6 +14,7 @@ from toolbelt.git.commands import is_git_repo
 from toolbelt.git.repo import get_current_repo_root_path
 from toolbelt.git.repo_lock import repo_lock
 from toolbelt.git.stack.cli import stack_typer
+from toolbelt.git.stack.forge import GhForge
 from toolbelt.git.workflow import (
     git_branch_clean,
     git_merge,
@@ -60,8 +61,9 @@ def merge(
     help="Delete local branches whose upstream has been removed.",
 )
 def branch_clean():
-    with repo_lock(repo_root()):
-        git_branch_clean()
+    root = repo_root()
+    with repo_lock(root):
+        git_branch_clean(forge=GhForge(root))
 
 
 @git_typer.command(

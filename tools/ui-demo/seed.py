@@ -22,14 +22,20 @@ import os
 import random
 import sqlite3
 import sys
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from history import RECORDED_WEEKS, history  # noqa: E402
+from history import RECORDED_WEEKS, history, node_id  # noqa: E402
 from toolbelt import logged_process  # noqa: E402
 from toolbelt.git.stack import lineage  # noqa: E402
+from toolbelt.git.stack.store import PrCandidate, PrLink  # noqa: E402
+
+# Tracked demo branches whose PR the CLI has already recorded (the others have
+# a PR but no recorded link yet, as a branch that was never synced since).
+LINKED_PRS = {"devon/auth-models": 101, "devon/auth-api": 102, "devon/cache-layer": 88}
 
 SESSION = "claude://claude.ai/epitaxy/local_28e13856-24b4-4207-b16c-7235010e72{n:02d}"
 
@@ -65,8 +71,12 @@ def write_history(dest: Path, db: sqlite3.Connection, now: datetime) -> None:
         ).fetchone()
         db.execute(
             "INSERT INTO removed_branches "
-            "(repo_id, name, started_at, removed_at, landed) VALUES (?, ?, ?, ?, ?)",
+            "(task_id, pr_number, pr_node_id, repo_id, name, started_at, "
+            "removed_at, landed) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
+                uuid.uuid4().hex,
+                task["pr"]["number"] if task["pr"] else None,
+                task["pr"]["node_id"] if task["pr"] else None,
                 row[0],
                 task["branch"],
                 task["started"].isoformat(),
@@ -112,6 +122,20 @@ def seed(dest: Path, deep: int) -> None:
                 agent_link=SESSION.format(n=session) if session else None,
             )
             started[(name, branch)] = days
+    for name, branches in STACKS.items():
+        for branch, *_ in branches:
+            if branch in LINKED_PRS:
+                number = LINKED_PRS[branch]
+                lineage.link_pr(
+                    branch,
+                    [
+                        PrCandidate(
+                            PrLink(number, node_id(number)),
+                            datetime.now(timezone.utc) - timedelta(days=30),
+                        )
+                    ],
+                    root=repos / name,
+                )
     parent = "devon/search-ranking"
     for i in range(1, deep + 1):
         branch = f"devon/deep-{i:02d}"

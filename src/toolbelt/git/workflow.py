@@ -1,3 +1,5 @@
+import asyncio
+import json
 import os
 import re
 import subprocess
@@ -23,6 +25,7 @@ from .repo_pull import (
     start_background_pull,
     take_unreported_summary,
 )
+from .stack.forge import Forge, GhForge, candidate_from_json
 from .worktrees_ops import (
     _is_worktree_dirty,
     _worktree_paths_for_branch,
@@ -66,15 +69,15 @@ def sync_repo(root: Path | None = None) -> None:
 
     # Imported lazily: worktrees -> bootstrap.repo_setup -> workflow would be a
     # circular import at module load time.
-    from toolbelt.git.stack.forge import GhForge
     from toolbelt.git.stack.gh_stack import GhStackedPrs
     from toolbelt.git.stack.sync import sync_stack
     from toolbelt.git.worktrees import repo_root
 
     root = root or repo_root()
     main_wt = main_worktree(root)
-    sync_stack(root=root, forge=GhForge(root), stacked_prs=GhStackedPrs())
-    git_branch_clean(root)
+    forge = GhForge(root)
+    sync_stack(root=root, forge=forge, stacked_prs=GhStackedPrs())
+    git_branch_clean(root, forge=forge)
     update_repo(root if root.exists() else main_wt)
     start_background_pull(state_dir=state_dir, config_path=default_config_path())
 
@@ -96,29 +99,64 @@ def git_merge(pr: str) -> None:
     # circular import at module load time.
     from toolbelt.git.stack.worktree import worktree_paths
 
-    branch = capture(
-        ["gh", "pr", "view", pr, "--json", "headRefName", "--jq", ".headRefName"]
+    viewed = json.loads(
+        capture(
+            [
+                "gh",
+                "pr",
+                "view",
+                pr,
+                "--json",
+                "headRefName,number,id,createdAt",
+            ]
+        )
     )
-    logged_process.run(["gh", "pr", "merge", "--squash", pr], check=True)
+    branch = viewed["headRefName"]
+    # Record which PR the branch's task landed as before the merge cleanup
+    # archives it (a no-op for an untracked branch or one already linked).
+    from toolbelt.git.stack import lineage
 
     root = get_current_repo_root_path()
+    lineage.link_pr(branch, [candidate_from_json(viewed)], root=root)
+    logged_process.run(["gh", "pr", "merge", "--squash", pr], check=True)
+
     worktree = worktree_paths(root=root).get(branch)
     if worktree is None:
         logger.warning(
             f"No worktree tracked for '{branch}'; skipping stack sync, just "
             "cleaning up local branches."
         )
-        git_branch_clean(root)
+        git_branch_clean(root, forge=GhForge(root))
         return
     sync_repo(worktree)
 
 
-def git_pr(skip_tests: bool, cwd: Path | None = None) -> None:
+def record_branch_pr(branch: str, *, root: Path, forge: Forge) -> None:
+    """Record the PR ``forge`` knows for ``branch`` as its task's PR, unless
+    one is already recorded (the lookup is skipped then). Does nothing for an
+    untracked branch."""
+    # Lazy import: worktrees -> bootstrap.repo_setup -> workflow would be a
+    # circular import at module load time.
+    from toolbelt.git.stack import lineage
+
+    if lineage.get_pr_link(branch, root=root) is None:
+        lineage.link_pr(branch, asyncio.run(forge.pr_candidates(branch)), root=root)
+
+
+def git_pr(
+    skip_tests: bool, cwd: Path | None = None, forge: Forge | None = None
+) -> None:
     # ``cwd`` targets the branch's worktree: when `git save` starts a new stacked
     # branch it lands in its own worktree, so the PR must be opened from there
     # rather than the (default-branch) directory the command was invoked in.
+    from toolbelt.git.worktrees import current_branch, repo_root
+
+    root = cwd or repo_root()
+    forge = forge or GhForge(root)
     view_pr = logged_process.run(["gh", "pr", "view", "--web"], check=False, cwd=cwd)
     if view_pr.returncode == 0:
+        # The PR exists: remember which one it is for this branch's task.
+        record_branch_pr(current_branch(root), root=root, forge=forge)
         return
     repo = current_repo()
     if repo and not skip_tests:
@@ -131,9 +169,7 @@ def git_pr(skip_tests: bool, cwd: Path | None = None) -> None:
     # which may differ — e.g. `git send` calls this with the freshly created
     # branch's worktree as ``cwd`` without chdir'ing the process into it).
     from toolbelt.git.stack.lineage import get_parent
-    from toolbelt.git.worktrees import current_branch, repo_root
 
-    root = cwd or repo_root()
     branch = current_branch(root)
     base = get_parent(branch, root=root) or get_default_branch()
     logged_process.run(
@@ -141,6 +177,10 @@ def git_pr(skip_tests: bool, cwd: Path | None = None) -> None:
         check=False,
         cwd=cwd,
     )
+    # `--web` only opens the browser's form, so the PR usually does not exist
+    # yet and nothing is recorded; it is when it was created by the time this
+    # runs, otherwise the next `git sync` records it.
+    record_branch_pr(branch, root=root, forge=forge)
 
 
 def _drop_lineage_entry(branch: str, *, root: Path) -> None:
@@ -213,7 +253,7 @@ def _unsafe_to_delete_reason(branch: str, *, root: Path) -> str | None:
     return None
 
 
-def git_branch_clean(root: Path | None = None) -> None:
+def git_branch_clean(root: Path | None = None, *, forge: Forge | None = None) -> None:
     """
     Delete local branches whose upstream has been removed (unless they may
     hold unmerged work or uncommitted changes; see ``_unsafe_to_delete_reason``
@@ -234,6 +274,10 @@ def git_branch_clean(root: Path | None = None) -> None:
     whose branch just got merged. For the same reason, a branch whose worktree
     contains ``root`` (or the cwd) is not deleted: ``WorktreeInUseError`` is
     raised instead, asking the caller to run from another worktree.
+
+    When ``forge`` is given, the PR of each branch it deletes is first
+    recorded as its task's PR (unless already known), so the archived task
+    can be joined to it by id.
     """
     # Lazy import: worktrees -> bootstrap.repo_setup -> workflow would be a
     # circular import at module load time.
@@ -273,6 +317,8 @@ def git_branch_clean(root: Path | None = None) -> None:
         ensure_not_inside_worktree(
             branch_name, root=root, caller_dirs=[caller_root, Path.cwd()]
         )
+        if forge is not None:
+            record_branch_pr(branch_name, root=root, forge=forge)
         deleted_branch = delete_branch_and_worktree(branch_name, repo_root=root)
         _drop_lineage_entry(deleted_branch, root=root)
         deleted_branches.append(deleted_branch)

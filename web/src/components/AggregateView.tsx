@@ -91,6 +91,11 @@ export function AggregatePanels({ data }: { data: Aggregate }) {
             {`Task starts are only recorded since ${formatBucketDate(coverage.task_starts_since)}: ${coverage.prs_with_start} of ${coverage.prs} PRs have one. Earlier PRs begin when they were opened, and their "task started" intervals are unknown rather than guessed.`}
           </div>
         )}
+        {coverage.starts_by_name > 0 && (
+          <div className="notice">
+            {`${coverage.starts_by_name} of ${coverage.prs_with_start} task starts matched by branch name (their PR was never recorded, so a reused branch name could be mismatched). The rest are tied to their PR by id.`}
+          </div>
+        )}
         {coverage.truncated && (
           <div className="notice">GitHub has more PRs than were fetched: older ones in this window may be missing.</div>
         )}

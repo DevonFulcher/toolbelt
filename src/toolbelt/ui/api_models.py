@@ -575,6 +575,10 @@ class AggregateCoverage(Model):
     #: task start.
     prs: int
     prs_with_start: int
+    #: Of ``prs_with_start``, how many were tied to their task by the branch
+    #: name (and the times) because the task never recorded its PR; the rest
+    #: were joined by the PR's id.
+    starts_by_name: int
     #: Task starts are recorded from this time on (when the stack DB began
     #: archiving removed branches); earlier tasks have no start unless their
     #: branch is still tracked.

@@ -10,7 +10,13 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from toolbelt.git.stack.store import RepoIdentity, StackStore, default_db_path
+from toolbelt.git.stack.store import (
+    PrCandidate,
+    PrLink,
+    RepoIdentity,
+    StackStore,
+    default_db_path,
+)
 from toolbelt.ui import aggregate as agg
 from toolbelt.ui import pr_activity as act
 from toolbelt.ui import pr_states
@@ -81,6 +87,7 @@ def pr(
     review_now: str = "none",
     base_changes: tuple[tuple[datetime, str, str], ...] = (),
     ci_done: dict[str, datetime] | None = None,
+    node_id: str = "",
 ) -> PrRecord:
     state = "MERGED" if merged_at is not None else "CLOSED" if closed_at else "OPEN"
     facts = PrFacts(
@@ -105,6 +112,7 @@ def pr(
         review_now=review_now,
         base_changes=base_changes,
         ci_done=ci_done or {},
+        node_id=node_id,
     )
 
 
@@ -349,6 +357,8 @@ def fact(
     landed: bool = False,
     repo: str | None = "o/api",
     finished: bool = False,
+    node_id: str | None = None,
+    number: int | None = None,
 ) -> TaskFact:
     return TaskFact(
         repo=repo,
@@ -357,6 +367,8 @@ def fact(
         removed_at=at(removed) if removed is not None else None,
         landed=landed,
         finished=finished,
+        pr_node_id=node_id,
+        pr_number=number,
     )
 
 
@@ -390,6 +402,88 @@ def test_an_attempt_removed_before_the_pr_existed_is_not_its_start():
     assert tasks[0].started is None
     # ...and it is a task of its own: worked on, then abandoned.
     assert (tasks[1].pr, tasks[1].started, tasks[1].ended) == (None, at(5), at(50))
+
+
+def test_a_recorded_pr_ties_its_task_even_when_the_branch_name_was_reused():
+    older = pr(1, created=10, head="feat", closed_at=20, node_id="N1")
+    newer = pr(2, created=100, head="feat", node_id="N2")
+    # Only the newer task's start was recorded; by name alone the older PR
+    # would have taken it (and then dropped it, as it started after the PR).
+    facts = [fact("feat", 90, node_id="N2", number=2)]
+
+    tasks = agg.match_tasks([older, newer], facts, at(150))
+
+    assert [(t.pr.facts.number, t.started, t.matched_by) for t in tasks if t.pr] == [
+        (1, None, None),
+        (2, at(90), "id"),
+    ]
+
+
+def test_each_recorded_task_goes_to_its_own_pr_by_id_not_by_order():
+    first = pr(1, created=10, head="feat", closed_at=20, node_id="N1")
+    second = pr(2, created=100, head="feat", node_id="N2")
+    # Facts in the opposite order, and the earlier one removed late.
+    facts = [
+        fact("feat", 95, node_id="N2", number=2),
+        fact("feat", 5, removed=120, node_id="N1", number=1),
+    ]
+
+    tasks = agg.match_tasks([second, first], facts, at(150))
+
+    assert {t.pr.facts.number: t.started for t in tasks if t.pr} == {
+        1: at(5),
+        2: at(95),
+    }
+
+
+def test_the_number_joins_when_there_is_no_node_id_and_repos_are_kept_apart():
+    here = pr(7, created=10, head="x", repo="o/api")
+    other = pr(7, created=10, head="y", repo="o/web")
+
+    tasks = agg.match_tasks(
+        [here, other], [fact("x", 4, number=7, repo="o/api")], at(50)
+    )
+
+    assert {t.pr.head_branch: (t.started, t.matched_by) for t in tasks if t.pr} == {
+        "x": (at(4), "id"),
+        "y": (None, None),
+    }
+
+
+def test_a_task_that_never_recorded_its_pr_falls_back_to_the_name_and_says_so():
+    record = pr(1, created=10, head="feat")
+
+    tasks = agg.match_tasks([record], [fact("feat", 5)], at(50))
+
+    assert [(t.started, t.matched_by) for t in tasks] == [(at(5), "name")]
+
+
+def test_a_recorded_task_never_matches_another_pr_by_name():
+    unrelated = pr(1, created=10, head="feat", node_id="N1")
+    fact_of_other = fact("feat", 5, node_id="N9", number=9)
+
+    tasks = agg.match_tasks([unrelated], [fact_of_other], at(50))
+
+    # Its own PR (N9) is not among the fetched ones: not a task without a PR
+    # either, and PR 1 gets no start from a name coincidence.
+    assert [(t.pr is not None, t.started) for t in tasks] == [(True, None)]
+
+
+def test_coverage_counts_the_starts_matched_by_name():
+    result = compute(
+        [
+            pr(1, created=10, head="a", node_id="N1"),
+            pr(2, created=11, head="b", node_id="N2"),
+            pr(3, created=12, head="c", node_id="N3"),
+        ],
+        facts=[
+            fact("a", 5, node_id="N1", number=1),
+            fact("b", 6),
+        ],
+    )
+
+    assert result.coverage.prs_with_start == 2
+    assert result.coverage.starts_by_name == 1
 
 
 def test_facts_without_a_pr_are_tasks_unless_landed_or_known_finished():
@@ -621,8 +715,10 @@ def node(
     decision: str | None = None,
     archived: bool = False,
     items: list[dict] | None = None,
+    node_id: str | None = None,
 ) -> dict:
     return {
+        **({"id": node_id} if node_id else {}),
         "number": number,
         "title": f"PR {number}",
         "state": state,
@@ -890,6 +986,69 @@ def test_stored_task_starts_reach_the_prs_through_the_repo_remote():
     stages = {s.key: s for s in result.lead_time}
     assert stages["start_to_open"].values_s == [8 * 3600]  # PR 2, merged
     assert result.coverage.task_starts_since.endswith("Z")
+
+
+def test_recorded_pr_ids_tie_stored_tasks_to_prs_even_when_a_name_was_reused():
+    store = StackStore(default_db_path())
+    try:
+        repo_id = store.ensure_repo(
+            RepoIdentity(
+                git_common_dir=Path("/r/.git"),
+                path=Path("/r"),
+                remote_url="git@github.com:O/Api.git",
+            )
+        )
+        # The first task of the name: its PR (#1) was recorded, then removed.
+        store.set_parent(
+            repo_id, "reused", "main", started_at=datetime(2026, 10, 1, 8, tzinfo=UTC)
+        )
+        store.link_pr(
+            repo_id,
+            "reused",
+            [PrCandidate(PrLink(1, "N1"), datetime(2026, 10, 1, 9, tzinfo=UTC))],
+        )
+        store.remove_branch(repo_id, "reused", landed=True)
+        # The same name again, for PR #2.
+        store.set_parent(
+            repo_id, "reused", "main", started_at=datetime(2026, 10, 6, 1, tzinfo=UTC)
+        )
+        store.link_pr(
+            repo_id,
+            "reused",
+            [PrCandidate(PrLink(2, "N2"), datetime.now(UTC) + timedelta(days=1))],
+        )
+    finally:
+        store.close()
+    from toolbelt.ui.aggregate_feed import read_history
+
+    pages = Pages(
+        updated=[
+            page(
+                node(
+                    1,
+                    head="reused",
+                    node_id="N1",
+                    created="2026-10-01T09:00:00Z",
+                    state="MERGED",
+                    merged_at="2026-10-02T09:00:00Z",
+                ),
+                node(
+                    2,
+                    head="reused",
+                    node_id="N2",
+                    created="2026-10-06T09:00:00Z",
+                ),
+            )
+        ]
+    )
+
+    result = asyncio.run(service(pages, history=read_history).get(12))
+
+    assert result.coverage.prs_with_start == 2
+    assert result.coverage.starts_by_name == 0
+    stages = {s.key: s for s in result.lead_time}
+    assert stages["start_to_open"].n == 1  # PR 1 merged, its own start (1h)
+    assert stages["start_to_open"].values_s == [3600]
 
 
 @pytest.fixture

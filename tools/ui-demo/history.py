@@ -10,7 +10,10 @@
 * ``tasks``: the archived task facts (what the stack DB's ``removed_branches``
   holds) of the branches that were cleaned up after those PRs, plus a few that
   never got a PR. Only PRs from the last ``RECORDED_WEEKS`` weeks have one:
-  older ones show "no task start recorded", as a real database would.
+  older ones show "no task start recorded", as a real database would. About
+  two thirds carry their PR's identity (``pr``: number and node id, as the CLI
+  records it); the rest do not, so the view falls back to the branch name for
+  those, and one branch name is used by two tasks (each linked by id).
 
 Lead times vary on purpose: quick and slow reviews, changes requested,
 failing CI, drafts, PRs closed unmerged and two stacked pairs (the child is
@@ -71,6 +74,11 @@ def iso(when: datetime) -> str:
     return when.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def node_id(number: int) -> str:
+    """The fake GitHub node id of PR ``number`` (shared with the fake `gh`)."""
+    return f"PR_kwDEMO{number:06d}"
+
+
 def history(now: datetime, rng: random.Random) -> tuple[list[dict], list[dict]]:
     prs: list[dict] = []
     tasks: list[dict] = []
@@ -89,6 +97,7 @@ def history(now: datetime, rng: random.Random) -> tuple[list[dict], list[dict]]:
         topic = order[index] + (f" {round_ + 1}" if round_ else "")
         return {
             "number": number,
+            "node_id": node_id(number),
             "title": topic,
             "repo": repo,
             "head": f"devon/{topic.lower().replace(' ', '-')}",
@@ -169,6 +178,17 @@ def history(now: datetime, rng: random.Random) -> tuple[list[dict], list[dict]]:
             spec["state"] = "MERGED" if outcome == "merged" else "CLOSED"
             prs.append(spec)
 
+    # One branch name used for two tasks: the later PR re-uses the earlier
+    # one's head. Recorded ids keep them apart.
+    recorded = [
+        spec
+        for spec in prs
+        if spec["created"] >= recorded_since and spec["repo"] == "demo-app"
+    ]
+    reused_head = recorded[0]["head"]
+    recorded[-1]["head"] = reused_head
+    always_linked = {recorded[0]["number"], recorded[-1]["number"]}
+
     # Two stacked pairs: the child is approved while its parent still waits.
     for repo, weeks_ago in (("demo-app", 5.5), ("demo-search", 2.5)):
         parent = make(now - timedelta(weeks=weeks_ago), repo=repo)
@@ -199,6 +219,7 @@ def history(now: datetime, rng: random.Random) -> tuple[list[dict], list[dict]]:
     for spec in prs:
         ended = spec.get("merged") or spec["closed"]
         if spec["created"] >= recorded_since:
+            linked = spec["number"] in always_linked or rng.random() < 0.67
             tasks.append(
                 {
                     "repo": spec["repo"],
@@ -207,6 +228,9 @@ def history(now: datetime, rng: random.Random) -> tuple[list[dict], list[dict]]:
                     - timedelta(hours=rng.choice([1, 2, 4, 6, 10, 20, 30, 50])),
                     "removed": ended + timedelta(hours=rng.uniform(0.2, 30)),
                     "landed": "merged" in spec,
+                    "pr": {"number": spec["number"], "node_id": spec["node_id"]}
+                    if linked
+                    else None,
                 }
             )
     # Tasks that never got a PR: started, then dropped.
@@ -222,6 +246,7 @@ def history(now: datetime, rng: random.Random) -> tuple[list[dict], list[dict]]:
                 "started": now - timedelta(days=ago),
                 "removed": now - timedelta(days=ago - lived),
                 "landed": False,
+                "pr": None,
             }
         )
 

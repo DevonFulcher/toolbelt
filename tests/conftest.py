@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from toolbelt.git.stack.store import PrCandidate
+
 
 @pytest.fixture(autouse=True)
 def _isolate_git_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -57,15 +59,27 @@ class FakeForge:
     behavior.
     """
 
-    def __init__(self, merged: Iterable[str] = (), no_pr: Iterable[str] = ()) -> None:
+    def __init__(
+        self,
+        merged: Iterable[str] = (),
+        no_pr: Iterable[str] = (),
+        candidates: dict[str, list[PrCandidate]] | None = None,
+    ) -> None:
         self.merged = set(merged)
         self.no_pr = set(no_pr)
+        #: The PRs `pr_candidates` reports per branch (none by default).
+        self.candidates = candidates or {}
+        self.candidate_lookups: list[str] = []
 
     async def pr_is_merged(self, branch: str) -> bool:
         return branch in self.merged
 
     async def pr_is_open(self, branch: str) -> bool:
         return branch not in self.no_pr
+
+    async def pr_candidates(self, branch: str) -> list[PrCandidate]:
+        self.candidate_lookups.append(branch)
+        return self.candidates.get(branch, [])
 
 
 def git(*args: str, cwd: Path) -> str:

@@ -21,11 +21,14 @@ from toolbelt.git.stack.forge import Forge
 from toolbelt.git.stack.gh_stack import StackedPrs, mirror_stack
 from toolbelt.git.stack.lineage import (
     all_parents,
+    get_pr_link,
+    link_pr,
     remove_parent,
     resolve_stack,
     set_parent,
 )
 from toolbelt.git.stack.ops import has_unpushed_real_work
+from toolbelt.git.stack.store import PrCandidate
 from toolbelt.git.stack.worktree import worktree_paths
 from toolbelt.git.worktrees import current_branch
 from toolbelt.git.worktrees_ops import (
@@ -101,18 +104,20 @@ def _remote_branch_exists(branch: str, *, root: Path) -> bool:
 
 
 async def _resolve_stack_status(
-    stack: list[str], forge: Forge
-) -> tuple[set[str], set[str]]:
+    stack: list[str], unlinked: list[str], forge: Forge
+) -> tuple[set[str], set[str], dict[str, list[PrCandidate]]]:
     """Ask `forge` which of `stack`'s branches have landed, and which have an
-    open PR (draft or not) — both concurrently, across the whole stack in
-    one round trip."""
-    merged, is_open = await asyncio.gather(
+    open PR (draft or not) — and, for the ``unlinked`` ones (no PR recorded
+    for their task yet), which PRs they have — all concurrently, across the
+    whole stack in one round trip."""
+    merged, is_open, found = await asyncio.gather(
         asyncio.gather(*(forge.pr_is_merged(b) for b in stack)),
         asyncio.gather(*(forge.pr_is_open(b) for b in stack)),
+        asyncio.gather(*(forge.pr_candidates(b) for b in unlinked)),
     )
     landed = {branch for branch, m in zip(stack, merged) if m}
     has_open_pr = {branch for branch, o in zip(stack, is_open) if o}
-    return landed, has_open_pr
+    return landed, has_open_pr, dict(zip(unlinked, found))
 
 
 def _restack(child: str, *, worktree: Path, onto: str, upstream: str) -> bool:
@@ -170,7 +175,15 @@ def sync_stack(
 
     # Authoritative, queried once per branch (concurrently — each is an
     # independent `gh` network round-trip).
-    landed, has_open_pr = asyncio.run(_resolve_stack_status(stack, forge))
+    unlinked = [b for b in stack if get_pr_link(b, root=root) is None]
+    landed, has_open_pr, candidates = asyncio.run(
+        _resolve_stack_status(stack, unlinked, forge)
+    )
+    # Record each task's PR now, while every branch (landed ones included) is
+    # still tracked: cleanup below archives the row, and the PR's identity is
+    # what the UI joins history on.
+    for branch, found in candidates.items():
+        link_pr(branch, found, root=root)
 
     # Landed branches are deleted at the end; refuse up front (before
     # restacking or deleting anything) if that would remove the worktree this

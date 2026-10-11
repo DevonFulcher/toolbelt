@@ -97,6 +97,7 @@ def pr(n, title, **o):
     }[ci]
     state = {"RUNNING": "PENDING"}.get(ci, ci)
     node = {
+        "id": f"PR_kwDEMO{n:06d}",
         "number": n,
         "url": f"https://github.com/devon/demo/pull/{n}",
         "title": title,
@@ -323,6 +324,7 @@ def history_node(spec):
                 {"__typename": "ClosedEvent", "createdAt": when, "actor": user("devon")}
             )
     return {
+        "id": spec["node_id"],
         "number": spec["number"],
         "title": spec["title"],
         "state": spec["state"],

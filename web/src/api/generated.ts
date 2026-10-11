@@ -104,6 +104,7 @@ export interface AggregateCoverage {
   hidden: number;
   prs: number;
   prs_with_start: number;
+  starts_by_name: number;
   task_starts_since: string;
   tasks_without_pr: number;
   truncated: boolean;

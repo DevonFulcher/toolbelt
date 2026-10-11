@@ -22,6 +22,8 @@ from toolbelt.git.exec import capture, run
 from toolbelt.git.stack.store import (
     BranchLinks,
     Parents,
+    PrCandidate,
+    PrLink,
     PublishedChain,
     RepoIdentity,
     RepoRecord,
@@ -173,6 +175,22 @@ def set_links(
             agent_link=agent_link,
         ):
             raise LookupError(f"'{branch}' is not a tracked stack branch")
+
+
+def get_pr_link(branch: str, *, root: Path) -> PrLink | None:
+    """The PR recorded for ``branch``'s task, if any."""
+    with _repo_store(root) as (store, repo_id):
+        return store.get_pr_link(repo_id, branch)
+
+
+def link_pr(branch: str, candidates: list[PrCandidate], *, root: Path) -> PrLink | None:
+    """Record the PR of ``branch``'s task from ``candidates`` unless it is
+    already known (see ``StackStore.link_pr``); no-op for an untracked
+    branch."""
+    if not candidates:
+        return None
+    with _repo_store(root) as (store, repo_id):
+        return store.link_pr(repo_id, branch, candidates)
 
 
 def remove_parent(branch: str, *, root: Path, landed: bool = False) -> None:
