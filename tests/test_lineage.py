@@ -22,6 +22,24 @@ def test_set_get_remove_parent(repo: Path):
     assert lineage.get_parent("devon/api", root=repo) is None
 
 
+def test_removing_a_parent_archives_the_branch_and_records_a_landing(repo: Path):
+    from toolbelt.git.stack.store import StackStore, default_db_path
+
+    lineage.set_parent("devon/api", "main", root=repo, task="PLAT-1")
+    lineage.set_parent("devon/docs", "main", root=repo)
+    lineage.remove_parent("devon/api", root=repo, landed=True)
+    lineage.remove_parent("devon/docs", root=repo)
+
+    store = StackStore(default_db_path())
+    try:
+        archived = {r.name: r for r in store.removed_branches()}
+    finally:
+        store.close()
+    assert archived["devon/api"].landed is True
+    assert archived["devon/api"].task == "PLAT-1"
+    assert archived["devon/docs"].landed is False
+
+
 def test_branch_name_with_slashes_and_dots(repo: Path):
     lineage.set_parent("devon/feature.v2", "main", root=repo)
     assert lineage.get_parent("devon/feature.v2", root=repo) == "main"

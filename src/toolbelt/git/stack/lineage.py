@@ -175,10 +175,11 @@ def set_links(
             raise LookupError(f"'{branch}' is not a tracked stack branch")
 
 
-def remove_parent(branch: str, *, root: Path) -> None:
-    """Drop ``branch`` from the stack (no-op if it was untracked)."""
+def remove_parent(branch: str, *, root: Path, landed: bool = False) -> None:
+    """Drop ``branch`` from the stack (no-op if it was untracked). Its task
+    facts are archived; ``landed`` records that its PR was merged."""
     with _repo_store(root) as (store, repo_id):
-        store.remove_branch(repo_id, branch)
+        store.remove_branch(repo_id, branch, landed=landed)
 
 
 def get_gh_stack_unsupported_at(*, root: Path) -> datetime | None:

@@ -103,6 +103,30 @@ _MIGRATIONS: list[tuple[str, ...]] = [
         "ALTER TABLE branches ADD COLUMN started_at TEXT",
         "UPDATE branches SET started_at = created_at",
     ),
+    (
+        # A branch's task facts, kept when it stops being tracked (landed,
+        # cleaned up, `tt remove`): the work history the UI's aggregate view
+        # is built from. Written by ``remove_branch``; ``landed`` says the
+        # removal was the cleanup after a merge. Rows exist only from this
+        # migration on (``archive_info.since``): earlier removals are not
+        # recoverable.
+        """
+        CREATE TABLE removed_branches (
+            id INTEGER PRIMARY KEY,
+            repo_id INTEGER NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            task TEXT,
+            task_tracker TEXT,
+            started_at TEXT,
+            removed_at TEXT NOT NULL,
+            landed INTEGER NOT NULL
+        )
+        """,
+        "CREATE INDEX removed_branches_by_repo ON removed_branches (repo_id)",
+        "CREATE TABLE archive_info (since TEXT NOT NULL)",
+        "INSERT INTO archive_info (since) "
+        "VALUES (strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now'))",
+    ),
 ]
 
 
@@ -118,6 +142,30 @@ class BranchLinks:
     task: str | None
     task_tracker: str | None
     agent_link: str | None
+
+
+@dataclass(frozen=True)
+class RemovedBranch:
+    """A branch that was tracked and no longer is, with the task facts it
+    had. ``landed``: removed as the cleanup after its PR merged."""
+
+    repo_id: int
+    name: str
+    task: str | None
+    task_tracker: str | None
+    started_at: datetime | None
+    removed_at: datetime
+    landed: bool
+
+
+@dataclass(frozen=True)
+class TrackedBranchFacts:
+    """A branch that is tracked now, with the facts the aggregate view uses."""
+
+    repo_id: int
+    name: str
+    task: str | None
+    started_at: datetime | None
 
 
 @dataclass(frozen=True)
@@ -326,12 +374,61 @@ class StackStore:
             )
             return cursor.rowcount > 0
 
-    def remove_branch(self, repo_id: int, branch: str) -> None:
+    def remove_branch(self, repo_id: int, branch: str, *, landed: bool = False) -> None:
+        """Stop tracking ``branch``, first archiving its task facts (see
+        ``removed_branches``) in the same transaction. ``landed``: its PR was
+        merged and this is the cleanup after it."""
         with self._write() as conn:
+            conn.execute(
+                "INSERT INTO removed_branches "
+                "(repo_id, name, task, task_tracker, started_at, removed_at, "
+                "landed) "
+                "SELECT repo_id, name, task, task_tracker, started_at, ?, ? "
+                "FROM branches WHERE repo_id = ? AND name = ?",
+                (_now(), int(landed), repo_id, branch),
+            )
             conn.execute(
                 "DELETE FROM branches WHERE repo_id = ? AND name = ?",
                 (repo_id, branch),
             )
+
+    def removed_branches(self) -> list[RemovedBranch]:
+        """Every archived branch, oldest removal first."""
+        rows = self._conn.execute(
+            "SELECT repo_id, name, task, task_tracker, started_at, removed_at, "
+            "landed FROM removed_branches ORDER BY removed_at, id"
+        )
+        return [
+            RemovedBranch(
+                repo_id=r[0],
+                name=r[1],
+                task=r[2],
+                task_tracker=r[3],
+                started_at=datetime.fromisoformat(r[4]) if r[4] else None,
+                removed_at=datetime.fromisoformat(r[5]),
+                landed=bool(r[6]),
+            )
+            for r in rows
+        ]
+
+    def tracked_branch_facts(self) -> list[TrackedBranchFacts]:
+        rows = self._conn.execute(
+            "SELECT repo_id, name, task, started_at FROM branches ORDER BY id"
+        )
+        return [
+            TrackedBranchFacts(
+                repo_id=r[0],
+                name=r[1],
+                task=r[2],
+                started_at=datetime.fromisoformat(r[3]) if r[3] else None,
+            )
+            for r in rows
+        ]
+
+    def archive_since(self) -> datetime:
+        """When archiving began: earlier removals are not in the archive."""
+        row = self._conn.execute("SELECT since FROM archive_info").fetchone()
+        return datetime.fromisoformat(row[0])
 
     def all_parents(self, repo_id: int) -> Parents:
         rows = self._conn.execute(
