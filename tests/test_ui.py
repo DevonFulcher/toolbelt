@@ -7,6 +7,7 @@ test_ui_live.py. The last test starts the real CLI command under uvicorn.
 """
 
 import asyncio
+import re
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -825,6 +826,39 @@ def test_the_index_serves_the_built_client(tmp_path, make_client):
     assert index.status_code == 200 and "<title>toolbelt" in index.text
     assert index.headers["cache-control"] == "no-cache"
     assert asset.status_code == 200 and asset.text == "console.log(1)"
+
+
+def test_the_favicon_is_served_at_the_linked_path_and_at_the_implicit_one(
+    tmp_path, make_client
+):
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "favicon.svg").write_text("<svg/>")
+    client = make_client(client_dist=dist)
+
+    for path in ("/favicon.svg", "/favicon.ico"):
+        response = client.get(path)
+        assert response.status_code == 200, path
+        assert response.headers["content-type"] == "image/svg+xml"
+        assert response.text == "<svg/>"
+
+
+def test_the_favicon_is_404_when_the_client_is_not_built(tmp_path, make_client):
+    client = make_client(client_dist=tmp_path / "missing")
+
+    assert client.get("/favicon.ico").status_code == 404
+
+
+def test_the_page_links_a_favicon_the_client_build_ships():
+    web = Path(__file__).resolve().parents[1] / "web"
+    page = (web / "index.html").read_text()
+
+    link = re.search(r'<link rel="icon"[^>]*href="/([^"]+)"', page)
+
+    assert link, "index.html has no icon link"
+    # Vite copies web/public as is into the build, so the file is served at /<name>.
+    assert (web / "public" / link.group(1)).is_file()
+    assert "<title>toolbelt factory</title>" in page
 
 
 def test_an_unbuilt_client_says_so(tmp_path, make_client):

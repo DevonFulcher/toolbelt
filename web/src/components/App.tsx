@@ -23,7 +23,7 @@ export function App({ clock = Date.now }: { clock?: () => number }) {
     <NowContext.Provider value={now}>
       <TooltipProvider>
         <header>
-          <h1>toolbelt stacks</h1>
+          <h1>toolbelt factory</h1>
           <LiveIndicator />
         </header>
         <main>

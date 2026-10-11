@@ -93,6 +93,18 @@ class TestIsStale:
 
         assert is_stale(web_dir, dist)
 
+    def test_a_changed_public_file_makes_it_stale(self, web):
+        web_dir, dist = web
+        for path in web_dir.rglob("*"):
+            if path.is_file():
+                touch(path, 1000)
+        touch(web_dir / "public" / "favicon.svg", 1000)
+        build_at(dist, 2000)
+
+        touch(web_dir / "public" / "favicon.svg", 3000)
+
+        assert is_stale(web_dir, dist)
+
     def test_tests_are_not_part_of_the_build(self, web):
         web_dir, dist = web
         for path in web_dir.rglob("*"):

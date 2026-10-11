@@ -309,6 +309,20 @@ def create_app(
             file, headers={"Cache-Control": "public, max-age=31536000, immutable"}
         )
 
+    # The mark is linked from index.html; `/favicon.ico` is what browsers ask
+    # for without looking at the page, so it serves the same SVG.
+    @app.get("/favicon.svg", include_in_schema=False, response_model=None)
+    @app.get("/favicon.ico", include_in_schema=False, response_model=None)
+    def favicon() -> FileResponse:
+        file = client_dist / "favicon.svg"
+        if not file.is_file():
+            raise HTTPException(status_code=404)
+        return FileResponse(
+            file,
+            media_type="image/svg+xml",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
+
     @app.get("/", include_in_schema=False, response_model=None)
     def index() -> FileResponse | PlainTextResponse:
         page = client_dist / "index.html"

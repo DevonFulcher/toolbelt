@@ -43,7 +43,7 @@ def _inputs(web_dir: Path) -> Iterator[Path]:
         path = web_dir / name
         if path.is_file():
             yield path
-    for path in (web_dir / "src").rglob("*"):
+    for path in (*(web_dir / "src").rglob("*"), *(web_dir / "public").rglob("*")):
         # Tests are not part of the build.
         if not path.is_file() or ".test." in path.name or "testing" in path.parts:
             continue
