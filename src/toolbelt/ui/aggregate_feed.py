@@ -260,6 +260,18 @@ class _Cache:
     hidden: int
 
 
+def _find_repo(repos: list[RepoRecord], wanted: str) -> RepoRecord:
+    """The repo with this id, else this name (as the other views' ``repo``
+    filter, which is the id)."""
+    for repo in repos:
+        if str(repo.id) == wanted:
+            return repo
+    for repo in repos:
+        if repo.name.lower() == wanted.lower():
+            return repo
+    raise LookupError(f"unknown repo: {wanted}")
+
+
 def _key(record: aggregate.PrRecord) -> tuple[str, int]:
     return (record.repo, record.facts.number)
 
@@ -351,7 +363,12 @@ class AggregateService:
                     del cache.records[key]
         return len(fresh), open_cut or cut, max(open_hidden, hidden)
 
-    async def get(self, weeks: int) -> api.Aggregate:
+    async def get(self, weeks: int, repo: str | None = None) -> api.Aggregate:
+        """The aggregate of the last ``weeks`` weeks; ``repo`` (a stack DB
+        repo id or a repo's name) narrows it to that repo's PRs and tasks.
+        Raises ``LookupError`` for a repo that is not known."""
+        history = self._history()
+        chosen = _find_repo(history.repos, repo) if repo else None
         async with self._lock:
             now = self._wall_clock()
             cache = self._cache
@@ -378,8 +395,14 @@ class AggregateService:
                 truncated = cache.truncated or cut
                 hidden = max(cache.hidden, errors)
             prs = list(cache.records.values())
-        history = self._history()
         facts = await task_facts(history, self._remote_of, self._finished)
+        if chosen is not None:
+            slug = repo_slug(chosen.remote_url) or repo_slug(
+                await self._remote_of(chosen.path)
+            )
+            # A repo whose remote cannot be resolved cannot be matched to PRs.
+            prs = [p for p in prs if slug is not None and p.repo == slug]
+            facts = [f for f in facts if slug is not None and f.repo == slug]
         return aggregate.compute(
             prs,
             facts,
@@ -390,4 +413,5 @@ class AggregateService:
             refreshed=refreshed,
             truncated=truncated,
             hidden=hidden,
+            repo=chosen.name if chosen else None,
         )

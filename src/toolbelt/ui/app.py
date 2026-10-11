@@ -7,7 +7,7 @@ The server is a JSON API plus the built web client (``web/``, served from
   links, live status, the state catalog), straight from the stack DB plus the
   in-memory caches (no network on the request path); see ``snapshot.py`` and
   ``api_models.py``;
-* ``GET /api/aggregate?weeks=N``: how work has flowed over the last N weeks
+* ``GET /api/aggregate?weeks=N[&repo=<id or name>]``: how work has flowed over the last N weeks
   (throughput, lead times, status mix), computed when asked; see
   ``aggregate.py`` and ``aggregate_feed.py``;
 * ``GET /api/events``: a Server-Sent Events stream of typed events that keep a
@@ -388,6 +388,7 @@ def create_app(
     @app.get("/api/aggregate", response_model=api.Aggregate)
     async def aggregate(
         weeks: int = Query(aggregate_view.DEFAULT_WEEKS),
+        repo: str | None = Query(None),
     ) -> api.Aggregate:
         # Computed on demand, not part of the live poll loop: GitHub is asked
         # (for what changed) on each request, only while the view is open.
@@ -396,7 +397,10 @@ def create_app(
                 status_code=400,
                 detail=f"weeks must be one of {list(aggregate_view.WINDOWS)}",
             )
-        return await aggregates.get(weeks)
+        try:
+            return await aggregates.get(weeks, repo or None)
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
 
     @app.get("/api/events")
     async def events() -> StreamingResponse:

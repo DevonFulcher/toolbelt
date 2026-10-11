@@ -10,8 +10,8 @@ import { useApp } from "../store/StoreContext";
 import { LeadTimeChart, MixChart, ThroughputChart, withHatches } from "./AggregateCharts";
 
 type Load =
-  | { weeks: number; state: "ready"; data: Aggregate }
-  | { weeks: number; state: "error"; message: string };
+  | { weeks: number; repo: string; state: "ready"; data: Aggregate }
+  | { weeks: number; repo: string; state: "error"; message: string };
 
 /** A fetch older than this is repeated when the page becomes visible again. */
 export const STALE_AFTER_MS = 60_000;
@@ -30,7 +30,11 @@ export interface AggregateHandle {
  * when the window changes, again when the page becomes visible after more
  * than `STALE_AFTER_MS`, and on `refresh()`.
  */
-export function useAggregate(weeks: number, fetchImpl: typeof fetch = fetch): AggregateHandle {
+export function useAggregate(
+  weeks: number,
+  repo: string,
+  fetchImpl: typeof fetch = fetch,
+): AggregateHandle {
   const [load, setLoad] = useState<Load | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const fetchedAt = useRef(0);
@@ -38,20 +42,25 @@ export function useAggregate(weeks: number, fetchImpl: typeof fetch = fetch): Ag
   const run = useCallback(() => {
     const id = ++latest.current;
     setRefreshing(true);
-    fetchAggregate(weeks, fetchImpl).then(
+    fetchAggregate(weeks, repo, fetchImpl).then(
       (data) => {
         if (id !== latest.current) return;
         fetchedAt.current = Date.now();
-        setLoad({ weeks, state: "ready", data });
+        setLoad({ weeks, repo, state: "ready", data });
         setRefreshing(false);
       },
       (error: unknown) => {
         if (id !== latest.current) return;
-        setLoad({ weeks, state: "error", message: error instanceof Error ? error.message : String(error) });
+        setLoad({
+          weeks,
+          repo,
+          state: "error",
+          message: error instanceof Error ? error.message : String(error),
+        });
         setRefreshing(false);
       },
     );
-  }, [weeks, fetchImpl]);
+  }, [weeks, repo, fetchImpl]);
   // A result still in flight for another window (or after unmount) is dropped.
   const abandon = useCallback(() => {
     latest.current++;
@@ -68,7 +77,8 @@ export function useAggregate(weeks: number, fetchImpl: typeof fetch = fetch): Ag
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, [run]);
   // A result for another window is stale: say "loading" until this one's in.
-  return { load: load && load.weeks === weeks ? load : null, refresh: run, refreshing };
+  const current = load && load.weeks === weeks && load.repo === repo;
+  return { load: current ? load : null, refresh: run, refreshing };
 }
 
 /** The coarse classes: the sections of the grouped view, so the legend reads
@@ -77,7 +87,8 @@ const WHO_TONE: Record<MixWho, Tone> = { you: "accent", ci: "amber", others: "gr
 
 export function AggregateView({ fetchImpl = fetch }: { fetchImpl?: typeof fetch }) {
   const weeks = useApp((s) => s.view.weeks);
-  const { load, refresh, refreshing } = useAggregate(weeks, fetchImpl);
+  const repo = useApp((s) => s.view.repo);
+  const { load, refresh, refreshing } = useAggregate(weeks, repo, fetchImpl);
   if (load === null) {
     return <div className="empty">{`Loading the last ${weeks} weeks…`}</div>;
   }
@@ -125,6 +136,9 @@ export function AggregatePanels({
   return (
     <section className="aggregate" aria-label="Aggregate">
       <p className="agg-summary">
+        {data.repo !== null && (
+          <strong className="agg-repo-n">{`${data.repo}: n = ${coverage.prs} PR${coverage.prs === 1 ? "" : "s"}. `}</strong>
+        )}
         {`${formatBucketDate(data.window_start)} to ${formatBucketDate(data.window_end)} (${data.weeks} weeks): ${coverage.prs} of your PRs`}
         {coverage.tasks_without_pr > 0 && `, ${coverage.tasks_without_pr} task${coverage.tasks_without_pr === 1 ? "" : "s"} without a PR yet`}
         {`. Fetched ${new Date(data.fetched_at).toLocaleTimeString()}, ${data.refreshed} PR${data.refreshed === 1 ? "" : "s"} refreshed from GitHub. `}

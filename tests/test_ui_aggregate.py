@@ -1302,6 +1302,74 @@ def test_recorded_pr_ids_tie_stored_tasks_to_prs_even_when_a_name_was_reused():
     assert stages["start_to_open"].values_s == [3600]
 
 
+def _two_repos():
+    store = StackStore(default_db_path())
+    try:
+        api_id = store.ensure_repo(
+            RepoIdentity(
+                git_common_dir=Path("/api/.git"),
+                path=Path("/api"),
+                remote_url="git@github.com:O/Api.git",
+            )
+        )
+        web_id = store.ensure_repo(
+            RepoIdentity(
+                git_common_dir=Path("/web/.git"),
+                path=Path("/web"),
+                remote_url="git@github.com:O/Web.git",
+            )
+        )
+        store.set_parent(
+            api_id, "branch-1", "main", started_at=datetime(2026, 10, 5, 8, tzinfo=UTC)
+        )
+        store.set_parent(
+            web_id, "branch-2", "main", started_at=datetime(2026, 10, 5, 8, tzinfo=UTC)
+        )
+        store.set_parent(
+            web_id, "idea", "main", started_at=datetime(2026, 10, 6, 8, tzinfo=UTC)
+        )
+    finally:
+        store.close()
+    return api_id, web_id
+
+
+def test_the_repo_filter_narrows_prs_and_tasks_to_one_repo():
+    api_id, web_id = _two_repos()
+    from toolbelt.ui.aggregate_feed import read_history
+
+    github = FakeGitHub(
+        pr_node(1, "2026-10-06T09:00:00Z", repo="o/api"),
+        pr_node(2, "2026-10-06T10:00:00Z", repo="o/web"),
+        pr_node(3, "2026-10-06T11:00:00Z", repo="o/web"),
+    )
+    svc = service(github, history=read_history)
+
+    everything = asyncio.run(svc.get(12))
+    by_id = asyncio.run(svc.get(12, str(web_id)))
+    by_name = asyncio.run(svc.get(12, "API"))
+
+    assert (everything.repo, everything.coverage.prs) == (None, 3)
+    assert (by_id.repo, by_id.coverage.prs, by_id.coverage.prs_with_start) == (
+        "web",
+        2,
+        1,
+    )
+    assert sum(by_id.throughput.opened) == 2
+    assert (by_name.repo, by_name.coverage.prs) == ("api", 1)
+    # The task without a PR of the other repo is not counted for this one.
+    assert by_name.coverage.tasks_without_pr == 0
+    assert by_id.coverage.tasks_without_pr == 1
+    assert max(by_name.mix.inflight) == 1
+    assert len(github.calls) > 0
+
+
+def test_an_unknown_repo_is_a_lookup_error():
+    github = FakeGitHub(pr_node(1, "2026-10-06T09:00:00Z"))
+
+    with pytest.raises(LookupError, match="nope"):
+        asyncio.run(service(github).get(12, "nope"))
+
+
 @pytest.fixture
 def client_and_pages(tmp_path: Path):
     pages = Pages(
@@ -1344,6 +1412,14 @@ def test_the_aggregate_endpoint_serves_the_computed_view(client_and_pages):
     assert body["mix"]["step_hours"] == 6
     assert body["mix"]["states"][0]["label"] == pr_states.PHASES["working"].label
     assert body["notes"]
+
+
+def test_the_endpoint_passes_the_repo_filter_and_reports_an_unknown_one(
+    client_and_pages,
+):
+    client, _ = client_and_pages
+
+    assert client.get("/api/aggregate?repo=nope").status_code == 404
 
 
 def test_the_endpoint_defaults_to_twelve_weeks_and_rejects_other_windows(

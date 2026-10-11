@@ -722,6 +722,7 @@ def compute(
     refreshed: int = 0,
     truncated: bool = False,
     hidden: int = 0,
+    repo: str | None = None,
 ) -> api.Aggregate:
     """The aggregate view of the last ``weeks`` weeks (calendar weeks from
     Monday, UTC, the last one partial)."""
@@ -757,6 +758,7 @@ def compute(
         window_end=_iso(now),
         fetched_at=_iso(fetched_at),
         refreshed=refreshed,
+        repo=repo,
         throughput=_throughput(records, start, now),
         lead_time=_lead_time(with_pr, start),
         mix=_mix(lives, sample_instants(start, now, weeks), weeks),

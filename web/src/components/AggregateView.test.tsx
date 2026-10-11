@@ -97,6 +97,22 @@ describe("the aggregate view", () => {
     clock.mockRestore();
   });
 
+  test("the repo filter is passed through and the per-repo sample size is prominent", async () => {
+    const fetchMock = serve((weeks) => aggregate({ weeks, repo: "demo-app" }));
+    const { url } = renderWith(<App clock={() => NOW} />, snapshot([branch(1, "devon/a", { status: noPr() })]), {
+      search: "?view=aggregate&repo=1",
+    });
+
+    await screen.findByRole("heading", { name: "Throughput" });
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/aggregate?weeks=12&repo=1", expect.anything());
+    expect(screen.getByText("demo-app: n = 9 PRs.")).toBeInTheDocument();
+    // The stack filters stay hidden for this view; the repo one is shown.
+    expect(screen.getByLabelText("Repo")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Filter")).not.toBeInTheDocument();
+    expect(url.location.search).toContain("repo=1");
+  });
+
   test("a weeks parameter in the URL selects the window", async () => {
     const fetchMock = serve(aggregate({ weeks: 4 }));
     show("?view=aggregate&weeks=4");

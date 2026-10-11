@@ -68,6 +68,16 @@
         "refreshed": {
           "type": "integer"
         },
+        "repo": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "throughput": {
           "$ref": "#/$defs/Throughput"
         },
@@ -87,6 +97,7 @@
         "window_end",
         "fetched_at",
         "refreshed",
+        "repo",
         "throughput",
         "lead_time",
         "mix",

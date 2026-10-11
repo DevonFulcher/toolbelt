@@ -616,6 +616,9 @@ class Aggregate(Model):
     #: request fetches the whole window).
     fetched_at: str
     refreshed: int
+    #: The repo this is narrowed to (its name), ``None`` for all of them.
+    #: Sample sizes shrink per repo: ``coverage`` says how many PRs.
+    repo: str | None
     throughput: Throughput
     lead_time: list[LeadStage]
     mix: StatusMix

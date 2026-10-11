@@ -96,6 +96,7 @@ export interface Aggregate {
   mix: StatusMix;
   notes: AggregateNote[];
   refreshed: number;
+  repo: string | null;
   throughput: Throughput;
   weeks: number;
   window_end: string;

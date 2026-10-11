@@ -47,29 +47,31 @@ export function FilterBar({ counts }: { counts: Counts }) {
   return (
     <form id="controls" onSubmit={(event) => event.preventDefault()}>
       {view.view !== "aggregate" && (
+        <label>
+          Filter
+          <input
+            type="search"
+            name="q"
+            placeholder="branch, PR #, task…"
+            autoComplete="off"
+            value={view.q}
+            onChange={(event) => set({ q: event.target.value })}
+          />
+        </label>
+      )}
+      <label>
+        Repo
+        <select name="repo" value={view.repo} onChange={(event) => set({ repo: event.target.value })}>
+          <option value="">All</option>
+          {repos.map((repo) => (
+            <option key={repo.id} value={String(repo.id)}>
+              {repo.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      {view.view !== "aggregate" && (
         <>
-          <label>
-            Filter
-            <input
-              type="search"
-              name="q"
-              placeholder="branch, PR #, task…"
-              autoComplete="off"
-              value={view.q}
-              onChange={(event) => set({ q: event.target.value })}
-            />
-          </label>
-          <label>
-            Repo
-            <select name="repo" value={view.repo} onChange={(event) => set({ repo: event.target.value })}>
-              <option value="">All</option>
-              {repos.map((repo) => (
-                <option key={repo.id} value={String(repo.id)}>
-                  {repo.name}
-                </option>
-              ))}
-            </select>
-          </label>
           {filters.map((filter) => (
             <label key={filter.key}>
               {filter.label}
