@@ -4,12 +4,12 @@
 same lookup `tt g tree` uses) for every tracked branch and keeps the latest
 result in memory, so a page render never waits on ``gh``. Whenever a branch's
 status changes it calls ``on_change``; ``EventHub`` fans such events out to the
-connected browsers (see the ``/events`` endpoint in ``app.py``).
+connected browsers (see the ``/api/events`` endpoint in ``app.py``).
 
 Polling only runs while at least one browser is connected: the loops in
 ``StatusRefresher.run`` and ``StructureWatcher.run`` park on the hub until a
 subscriber appears. A browser that is open but not being looked at (hidden
-tab, minimized window) closes its stream (see ``static/live-updates.js``), so
+tab, minimized window) closes its stream (see ``web/src/live/connection.ts``), so
 that also stops the polling. When the last browser leaves, polling carries on
 for ``EventHub``'s grace period, so a page reload or a dropped connection does
 not stop and restart it; when one arrives, the refresher wakes at once and
