@@ -19,6 +19,7 @@ Pure functions over ``PrFacts`` (the normalized GraphQL result, built in
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Literal
 
 # Event kinds, as carried in ``TimelineItem.kind`` / ``Event.kind``.
 OPENED = "opened"
@@ -32,6 +33,22 @@ FORCE_PUSH = "force_push"
 MERGED = "merged"
 CLOSED = "closed"
 REOPENED = "reopened"
+
+#: The event kinds above as a type, for the API's wire models (a test keeps
+#: the two in step).
+type ActivityKind = Literal[
+    "opened",
+    "ready_for_review",
+    "converted_to_draft",
+    "review_requested",
+    "review_request_removed",
+    "review",
+    "commit",
+    "force_push",
+    "merged",
+    "closed",
+    "reopened",
+]
 
 _CI_FAILED_ROLLUPS = {"FAILURE", "ERROR"}
 
@@ -211,7 +228,7 @@ def derive_activity(facts: PrFacts, now: datetime) -> PrActivity:
 
 def format_age(age: timedelta) -> str:
     """Compact: ``5m``, ``3h``, ``4d``, ``3w``. (Kept in step with
-    ``formatAge`` in ``static/live-updates.js``, which re-renders it live.)"""
+    ``formatAge`` in ``web/src/logic/format.ts``, which re-renders it live.)"""
     seconds = max(int(age.total_seconds()), 0)
     if seconds < 60:
         return "<1m"

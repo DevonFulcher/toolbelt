@@ -9,8 +9,9 @@ TestClient buffers a whole response and an event stream never ends.
 
 import asyncio
 import json
-import re
 from pathlib import Path
+
+from pydantic import TypeAdapter
 
 from toolbelt.git.stack.status import (
     NO_PR,
@@ -20,7 +21,8 @@ from toolbelt.git.stack.status import (
     ReviewState,
 )
 from toolbelt.git.stack.store import RepoIdentity, StackStore, default_db_path
-from toolbelt.ui.app import cell_id, create_app
+from toolbelt.ui import api_models
+from toolbelt.ui.app import create_app
 from toolbelt.ui.pr_fetch import PrSnapshot
 from toolbelt.ui.live_status import (
     EventHub,
@@ -378,13 +380,13 @@ class TestEventHub:
         async def scenario():
             hub = EventHub()
             one, two = hub.subscribe(), hub.subscribe()
-            hub.publish("status", {"html": "x"})
+            hub.publish("status", {"branch_id": "x"})
             hub.publish("structure", {})
             assert hub.subscribers == 2
             return [one.get_nowait(), one.get_nowait(), two.get_nowait()], hub
 
         events, hub = run(scenario())
-        assert events[0] == ("status", {"html": "x", "v": 1})
+        assert events[0] == ("status", {"branch_id": "x", "v": 1})
         assert events[1] == ("structure", {"v": 2})
         assert events[2] == events[0]
         assert hub.version == 2
@@ -438,8 +440,8 @@ class Stream:
             "asgi": {"version": "3.0"},
             "http_version": "1.1",
             "method": "GET",
-            "path": "/events",
-            "raw_path": b"/events",
+            "path": "/api/events",
+            "raw_path": b"/api/events",
             "query_string": b"",
             "headers": [],
             "client": ("127.0.0.1", 1),
@@ -504,9 +506,10 @@ def test_events_stream_says_hello_then_relays_status_and_refresh(tmp_path):
 
             name, status = await stream.next()
             assert name == "status"
-            assert f"c-{repo_id}-" in status["html"]
-            assert "#5 open" in status["html"]
-            assert "<tr" not in status["html"]
+            assert status["type"] == "status"
+            assert status["branch_id"] == f"{repo_id}:devon/a"
+            assert status["status"]["load"] == "loaded"
+            assert status["status"]["pr_number"] == 5
             name, refreshed = await stream.next()
             assert (name, refreshed["v"]) == ("refreshed", 2)
         # The disconnect is noticed: the poller would pause again.
@@ -539,18 +542,21 @@ def test_a_status_change_also_republishes_the_branches_stacked_on_it(tmp_path):
         async with Stream(app) as stream:
             await stream.next()  # hello
             await app.state.refresher.run_once()
-            html = ""
+            labels = {}
             for _ in range(5):
                 name, data = await stream.next()
                 if name == "status":
-                    html += data["html"]
+                    # Every event is a valid member of the typed stream.
+                    TypeAdapter(api_models.ServerEvent).validate_python(data)
+                    if data["status"]["load"] == "loaded":
+                        labels[data["branch_id"]] = data["status"]["next"]["label"]
                 if name == "refreshed":
                     break
-            return html
+            return labels
 
-    html = run(scenario())
+    labels = run(scenario())
 
-    assert "Blocked on devon/a" in html
+    assert labels[f"{repo_id}:devon/b"] == "Blocked on devon/a"
 
 
 def test_closing_the_stream_stops_the_polling_after_the_grace_period(tmp_path):
@@ -627,15 +633,15 @@ def test_hello_reports_how_stale_the_cache_is(tmp_path):
     assert run(scenario()) == 12
 
 
-def test_the_page_carries_the_event_version_it_was_rendered_at(tmp_path):
+def test_the_snapshot_carries_the_event_version_it_was_read_at(tmp_path):
     from fastapi.testclient import TestClient
 
     app, _, _ = seeded_app(tmp_path)
     app.state.hub.publish("structure", {})
 
-    html = TestClient(app).get("/").text
+    snapshot = TestClient(app).get("/api/snapshot").json()
 
-    assert 'data-version="1"' in html
+    assert snapshot["version"] == 1
 
 
 def test_lifespan_runs_and_stops_the_background_loops(tmp_path):
@@ -644,7 +650,7 @@ def test_lifespan_runs_and_stops_the_background_loops(tmp_path):
     app, fetcher, _ = seeded_app(tmp_path)
 
     with TestClient(app) as client:
-        assert client.get("/").status_code == 200
+        assert client.get("/api/snapshot").status_code == 200
         # Nobody is subscribed, so nothing is polled.
         assert fetcher.calls == []
     assert app.state.hub.subscribers == 0
@@ -697,12 +703,9 @@ def test_a_change_republishes_every_descendant_not_only_children(tmp_path):
         for name, data in events:
             if name != "status":
                 continue
-            match = re.search(
-                rf'id="{cell_id(repo_id, branch, "next")}"[^>]*data-value="(\w*)"',
-                data["html"],
-            )
-            if match:
-                found = match.group(1)
+            loaded = data["status"]["load"] == "loaded"
+            if loaded and data["branch_id"] == f"{repo_id}:{branch}":
+                found = data["status"]["next"]["who"]
         return found
 
     async def scenario():

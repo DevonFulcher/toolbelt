@@ -1,11 +1,12 @@
 """The state catalog: every state a card shows has a timeline representation."""
 
 import itertools
-import json
+from typing import get_args
 
 import pytest
 
 from toolbelt.git.stack.status import BranchStatus, CiState, PrState, ReviewState
+from toolbelt.ui import api_models, pr_activity
 from toolbelt.ui import next_action as na
 from toolbelt.ui import pr_states
 from toolbelt.ui.pr_states import CHIPS, EVENTS, NOW_STATE, PHASES, SLOT_STATES, STATES
@@ -115,9 +116,37 @@ def test_slot_states_map_onto_catalog_dimensions():
         assert dimension is None or dimension in dimensions, slot
 
 
-def test_the_catalog_serializes_to_json_the_page_embeds():
-    data = json.loads(pr_states.catalog_json())
+def test_the_catalog_is_the_wire_model_the_client_is_generated_from():
+    catalog = api_models.build_catalog()
 
-    assert set(data) == {"events", "phases", "chips", "states", "not_represented"}
-    assert data["events"]["review_approved"]["glyph"] == "✓"
-    assert {s["dimension"] for s in data["states"]} >= {"pr", "ci", "review"}
+    assert catalog.events.review_approved.glyph == "✓"
+    assert {s.dimension for s in catalog.states} >= {"pr", "ci", "review"}
+    # The wire model validated every value (an unknown one would raise), and
+    # lists exactly the catalog's states and slots.
+    assert [(s.dimension, s.value) for s in catalog.states] == [
+        (s.dimension, s.value) for s in STATES
+    ]
+    assert catalog.slots.model_dump() == SLOT_STATES
+
+
+@pytest.mark.parametrize(
+    ("alias", "keys"),
+    [
+        (pr_states.EventKind, EVENTS),
+        (pr_states.PhaseKind, PHASES),
+        (pr_states.ChipDimension, CHIPS),
+    ],
+)
+def test_the_literal_types_list_exactly_the_catalog_keys(alias, keys):
+    assert set(get_args(alias.__value__)) == set(keys)
+
+
+def test_the_wire_literals_match_the_rules_they_describe():
+    assert set(get_args(na.NextKind.__value__)) == set(na.KINDS)
+    assert set(get_args(na.Who.__value__)) == set(na.WHO_ORDER)
+    kinds = {
+        value
+        for name, value in vars(pr_activity).items()
+        if name.isupper() and isinstance(value, str)
+    }
+    assert set(get_args(pr_activity.ActivityKind.__value__)) == kinds

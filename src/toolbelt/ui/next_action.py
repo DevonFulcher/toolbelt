@@ -34,6 +34,7 @@ inherits this transitively.
 """
 
 from dataclasses import dataclass
+from typing import Literal
 
 from toolbelt.git.stack.status import BranchStatus, CiState, PrState, ReviewState
 
@@ -44,6 +45,10 @@ WHO_NONE = "none"
 
 #: Who-values in the order "needs me first" sorts them.
 WHO_ORDER = [WHO_YOU, WHO_CI, WHO_OTHERS, WHO_NONE]
+
+#: The values above as a type, for the API's wire models (a test keeps the
+#: two in step).
+type Who = Literal["you", "others", "ci", "none"]
 
 
 # The rule identifiers a ``NextAction.kind`` can take (see the table above).
@@ -75,6 +80,23 @@ KINDS = (
     WAIT_REVIEW,
     REQUEST_REVIEW,
 )
+
+#: ``KINDS`` as a type, for the API's wire models (a test keeps the two in
+#: step).
+type NextKind = Literal[
+    "open_pr",
+    "done",
+    "resolve_conflicts",
+    "address_review",
+    "resolve_comments",
+    "fix_ci",
+    "wait_ci",
+    "publish",
+    "blocked",
+    "merge",
+    "wait_review",
+    "request_review",
+]
 
 
 @dataclass(frozen=True)

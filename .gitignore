@@ -2,3 +2,5 @@
 __pycache__
 .mypy_cache
 .ruff_cache
+node_modules
+src/toolbelt/ui/static/dist

@@ -2,8 +2,8 @@
 timeline represents it.
 
 A card's slots (PR, CI, Review, Comments, Merge, Next, ...) each show a value
-of some *dimension*. The timeline (``static/pr-timeline.js``) must show every
-one of them. That is enforced structurally: this module declares, for each
+of some *dimension*. The timeline (``web/src/components/Timeline.tsx``) must
+show every one of them. That is enforced structurally: this module declares, for each
 value of each dimension, how it appears on the track:
 
 * ``event``: a marker at the moment it happened (kind from ``EVENTS``);
@@ -16,9 +16,11 @@ A value may have several representations (a failed CI is a ``commit_failed``
 event, a ``ci_failing`` phase and a chip). ``absent=True`` marks a value that
 is shown by *not* drawing a phase at the track's end ("not a draft").
 
-The catalog is serialized to JSON (``catalog_json``) and handed to the page:
-the renderer draws glyphs, colours and labels from it, and the legend is
-generated from it, so neither can drift from the cards. ``current_states``
+The catalog is served to the page inside the snapshot (``api_models.Catalog``,
+which also generates the client's TypeScript types, so every dimension's
+values are literal unions there): the renderer draws glyphs, colours and
+labels from it, and the legend is generated from it, so neither can drift
+from the cards. ``current_states``
 turns a branch's current values into catalog references, looking each one up
 (a missing entry is a ``KeyError``, not a silent blank). Adding a state
 without a timeline representation fails ``tests/test_pr_states.py``.
@@ -27,9 +29,9 @@ What is deliberately *not* on the timeline is listed in ``NOT_REPRESENTED``
 and shown in the legend.
 """
 
-import json
 from collections.abc import Collection, Mapping
 from dataclasses import asdict, dataclass
+from typing import Literal, get_args
 
 from toolbelt.git.stack.status import CiState, PrState, ReviewState
 from toolbelt.ui import next_action as na
@@ -40,28 +42,50 @@ NOW_STATE = "now_state"
 HOWS = (EVENT, PHASE, NOW_STATE)
 
 # Colour tokens; the page's stylesheet maps each to a colour variable.
-GREEN, RED, AMBER, GRAY, PURPLE, ACCENT = (
-    "green",
-    "red",
-    "amber",
-    "gray",
-    "purple",
-    "accent",
-)
+type Tone = Literal["green", "red", "amber", "gray", "purple", "accent"]
+GREEN: Tone = "green"
+RED: Tone = "red"
+AMBER: Tone = "amber"
+GRAY: Tone = "gray"
+PURPLE: Tone = "purple"
+ACCENT: Tone = "accent"
+
+# The keys of ``EVENTS`` / ``PHASES`` / ``CHIPS`` as types, so the wire models
+# (and the client's TypeScript) can say which kinds exist. ``_index`` checks
+# they are exactly those keys.
+type EventKind = Literal[
+    "opened",
+    "commit",
+    "commits",
+    "commit_failed",
+    "force_push",
+    "review_requested",
+    "review_request_removed",
+    "ready_for_review",
+    "converted_to_draft",
+    "review_approved",
+    "review_changes",
+    "review_commented",
+    "merged",
+    "closed",
+    "reopened",
+]
+type PhaseKind = Literal["draft", "waiting", "ci_failing", "approved"]
+type ChipDimension = Literal["pr", "ci", "review", "comments", "merge", "next"]
 
 
 @dataclass(frozen=True)
 class Marker:
     label: str
     glyph: str
-    tone: str
+    tone: Tone
     legend: str
 
 
 @dataclass(frozen=True)
 class Span:
     label: str
-    tone: str
+    tone: Tone
     legend: str
 
 
@@ -82,7 +106,7 @@ class StateValue:
     #: What a chip says; ``{n}`` are filled from the
     #: current state's args.
     label: str
-    tone: str
+    tone: Tone
     legend: str
     reps: tuple[Rep, ...]
 
@@ -408,8 +432,9 @@ STATES: tuple[StateValue, ...] = (
 )
 
 #: Which dimension each card slot shows (``None``: not a PR state; the
-#: reason says why it needs no timeline representation). The card test fails
-#: when a slot is rendered that is not listed here.
+#: reason says why it needs no timeline representation). Served in the
+#: catalog, so the client's card cannot render a slot that is not listed here
+#: (a compile error there).
 SLOT_STATES: dict[str, str | None] = {
     "next": "next",
     "pr": "pr",
@@ -428,9 +453,7 @@ SLOT_STATES: dict[str, str | None] = {
     "branch": None,
     "task": None,
     "session": None,
-    "parent": None,
     "stack": None,
-    "children": None,
 }
 
 NOT_REPRESENTED: tuple[tuple[str, str], ...] = (
@@ -462,6 +485,12 @@ NOT_REPRESENTED: tuple[tuple[str, str], ...] = (
 
 
 def _index() -> dict[tuple[str, str], StateValue]:
+    for literal, keys in (
+        (EventKind, EVENTS),
+        (PhaseKind, PHASES),
+        (ChipDimension, CHIPS),
+    ):
+        assert set(get_args(literal.__value__)) == set(keys), f"{literal} out of step"
     index: dict[tuple[str, str], StateValue] = {}
     for state in STATES:
         key = (state.dimension, state.value)
@@ -524,16 +553,9 @@ def catalog() -> dict:
         "events": {kind: asdict(marker) for kind, marker in EVENTS.items()},
         "phases": {kind: asdict(span) for kind, span in PHASES.items()},
         "chips": CHIPS,
+        "slots": SLOT_STATES,
         "states": [asdict(state) for state in STATES],
         "not_represented": [
             {"label": label, "why": why} for label, why in NOT_REPRESENTED
         ],
     }
-
-
-def catalog_json() -> str:
-    return json.dumps(catalog(), ensure_ascii=False)
-
-
-if __name__ == "__main__":
-    print(catalog_json())

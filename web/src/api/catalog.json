@@ -1,0 +1,750 @@
+{
+  "events": {
+    "opened": {
+      "label": "opened",
+      "glyph": "◆",
+      "tone": "green",
+      "legend": "The PR was opened."
+    },
+    "commit": {
+      "label": "commit",
+      "glyph": "•",
+      "tone": "gray",
+      "legend": "A commit was pushed (faint dot, expanded view)."
+    },
+    "commits": {
+      "label": "commits",
+      "glyph": "",
+      "tone": "gray",
+      "legend": "Several commits close together, grouped (the number is the count)."
+    },
+    "commit_failed": {
+      "label": "commit (CI failed)",
+      "glyph": "●",
+      "tone": "red",
+      "legend": "A commit whose CI ended failing."
+    },
+    "force_push": {
+      "label": "force push",
+      "glyph": "↯",
+      "tone": "accent",
+      "legend": "The branch was force-pushed."
+    },
+    "review_requested": {
+      "label": "review requested",
+      "glyph": "▸",
+      "tone": "amber",
+      "legend": "A review was requested from someone."
+    },
+    "review_request_removed": {
+      "label": "request removed",
+      "glyph": "⊘",
+      "tone": "amber",
+      "legend": "A review request was withdrawn."
+    },
+    "ready_for_review": {
+      "label": "ready for review",
+      "glyph": "▶",
+      "tone": "green",
+      "legend": "The draft was marked ready for review."
+    },
+    "converted_to_draft": {
+      "label": "back to draft",
+      "glyph": "◐",
+      "tone": "gray",
+      "legend": "The PR was converted back to a draft."
+    },
+    "review_approved": {
+      "label": "approved",
+      "glyph": "✓",
+      "tone": "green",
+      "legend": "A reviewer approved."
+    },
+    "review_changes": {
+      "label": "changes requested",
+      "glyph": "✗",
+      "tone": "red",
+      "legend": "A reviewer requested changes."
+    },
+    "review_commented": {
+      "label": "commented",
+      "glyph": "✎",
+      "tone": "amber",
+      "legend": "A reviewer left a review comment."
+    },
+    "merged": {
+      "label": "merged",
+      "glyph": "⬤",
+      "tone": "purple",
+      "legend": "The PR was merged."
+    },
+    "closed": {
+      "label": "closed",
+      "glyph": "✕",
+      "tone": "red",
+      "legend": "The PR was closed without merging."
+    },
+    "reopened": {
+      "label": "reopened",
+      "glyph": "↺",
+      "tone": "green",
+      "legend": "The PR was reopened."
+    }
+  },
+  "phases": {
+    "draft": {
+      "label": "In draft",
+      "tone": "gray",
+      "legend": "Not yet ready for review."
+    },
+    "waiting": {
+      "label": "Waiting for review",
+      "tone": "amber",
+      "legend": "Ready, with a review request outstanding."
+    },
+    "ci_failing": {
+      "label": "CI failing",
+      "tone": "red",
+      "legend": "From a failed commit until the next push."
+    },
+    "approved": {
+      "label": "Approved",
+      "tone": "green",
+      "legend": "From an approving review until merge or now. Ends early at the first push after it when the PR is no longer approved (a stale approval), or when that reviewer then requests changes."
+    }
+  },
+  "chips": {
+    "pr": "PR",
+    "ci": "CI",
+    "review": "Review",
+    "comments": "Comments",
+    "merge": "Merge",
+    "next": "Next"
+  },
+  "slots": {
+    "next": "next",
+    "pr": "pr",
+    "ci": "ci",
+    "review": "review",
+    "comments": "comments",
+    "merge": "merge",
+    "in_draft": "draft",
+    "review_requested": "reviewers",
+    "reviewers": "reviewers",
+    "ci_failures": "ci",
+    "title": "pr",
+    "pr_age": "pr",
+    "timeline": "pr",
+    "branch": null,
+    "task": null,
+    "session": null,
+    "stack": null
+  },
+  "states": [
+    {
+      "label": "open",
+      "tone": "green",
+      "legend": "An open PR.",
+      "reps": [
+        {
+          "how": "event",
+          "kind": "opened",
+          "absent": false
+        },
+        {
+          "how": "now_state",
+          "kind": "pr",
+          "absent": false
+        }
+      ],
+      "dimension": "pr",
+      "value": "open"
+    },
+    {
+      "label": "draft",
+      "tone": "gray",
+      "legend": "A draft PR.",
+      "reps": [
+        {
+          "how": "phase",
+          "kind": "draft",
+          "absent": false
+        },
+        {
+          "how": "now_state",
+          "kind": "pr",
+          "absent": false
+        }
+      ],
+      "dimension": "pr",
+      "value": "draft"
+    },
+    {
+      "label": "merged",
+      "tone": "purple",
+      "legend": "Merged.",
+      "reps": [
+        {
+          "how": "event",
+          "kind": "merged",
+          "absent": false
+        },
+        {
+          "how": "now_state",
+          "kind": "pr",
+          "absent": false
+        }
+      ],
+      "dimension": "pr",
+      "value": "merged"
+    },
+    {
+      "label": "closed",
+      "tone": "red",
+      "legend": "Closed without merging.",
+      "reps": [
+        {
+          "how": "event",
+          "kind": "closed",
+          "absent": false
+        },
+        {
+          "how": "now_state",
+          "kind": "pr",
+          "absent": false
+        }
+      ],
+      "dimension": "pr",
+      "value": "closed"
+    },
+    {
+      "label": "no PR",
+      "tone": "gray",
+      "legend": "The branch has no PR yet; there is no history.",
+      "reps": [
+        {
+          "how": "now_state",
+          "kind": "pr",
+          "absent": false
+        }
+      ],
+      "dimension": "pr",
+      "value": "none"
+    },
+    {
+      "label": "passing",
+      "tone": "green",
+      "legend": "The head commit's checks passed.",
+      "reps": [
+        {
+          "how": "now_state",
+          "kind": "ci",
+          "absent": false
+        }
+      ],
+      "dimension": "ci",
+      "value": "success"
+    },
+    {
+      "label": "failed",
+      "tone": "red",
+      "legend": "The head commit's checks failed.",
+      "reps": [
+        {
+          "how": "event",
+          "kind": "commit_failed",
+          "absent": false
+        },
+        {
+          "how": "phase",
+          "kind": "ci_failing",
+          "absent": false
+        },
+        {
+          "how": "now_state",
+          "kind": "ci",
+          "absent": false
+        }
+      ],
+      "dimension": "ci",
+      "value": "failed"
+    },
+    {
+      "label": "running",
+      "tone": "amber",
+      "legend": "Checks are still running.",
+      "reps": [
+        {
+          "how": "now_state",
+          "kind": "ci",
+          "absent": false
+        }
+      ],
+      "dimension": "ci",
+      "value": "running"
+    },
+    {
+      "label": "no CI",
+      "tone": "gray",
+      "legend": "No checks are configured.",
+      "reps": [
+        {
+          "how": "now_state",
+          "kind": "ci",
+          "absent": false
+        }
+      ],
+      "dimension": "ci",
+      "value": "none"
+    },
+    {
+      "label": "approved",
+      "tone": "green",
+      "legend": "Approved by a reviewer.",
+      "reps": [
+        {
+          "how": "event",
+          "kind": "review_approved",
+          "absent": false
+        },
+        {
+          "how": "phase",
+          "kind": "approved",
+          "absent": false
+        },
+        {
+          "how": "now_state",
+          "kind": "review",
+          "absent": false
+        }
+      ],
+      "dimension": "review",
+      "value": "approved"
+    },
+    {
+      "label": "requested",
+      "tone": "amber",
+      "legend": "A review is requested and pending.",
+      "reps": [
+        {
+          "how": "event",
+          "kind": "review_requested",
+          "absent": false
+        },
+        {
+          "how": "phase",
+          "kind": "waiting",
+          "absent": false
+        },
+        {
+          "how": "now_state",
+          "kind": "review",
+          "absent": false
+        }
+      ],
+      "dimension": "review",
+      "value": "requested"
+    },
+    {
+      "label": "changes requested",
+      "tone": "red",
+      "legend": "A reviewer requested changes.",
+      "reps": [
+        {
+          "how": "event",
+          "kind": "review_changes",
+          "absent": false
+        },
+        {
+          "how": "now_state",
+          "kind": "review",
+          "absent": false
+        }
+      ],
+      "dimension": "review",
+      "value": "reviewed"
+    },
+    {
+      "label": "none requested",
+      "tone": "gray",
+      "legend": "Nobody was asked to review.",
+      "reps": [
+        {
+          "how": "now_state",
+          "kind": "review",
+          "absent": false
+        }
+      ],
+      "dimension": "review",
+      "value": "none"
+    },
+    {
+      "label": "0 unresolved",
+      "tone": "gray",
+      "legend": "No unresolved review threads.",
+      "reps": [
+        {
+          "how": "now_state",
+          "kind": "comments",
+          "absent": false
+        }
+      ],
+      "dimension": "comments",
+      "value": "none"
+    },
+    {
+      "label": "{n} unresolved",
+      "tone": "amber",
+      "legend": "Unresolved review threads (current count, no history).",
+      "reps": [
+        {
+          "how": "now_state",
+          "kind": "comments",
+          "absent": false
+        }
+      ],
+      "dimension": "comments",
+      "value": "open"
+    },
+    {
+      "label": "clean",
+      "tone": "green",
+      "legend": "No merge conflicts.",
+      "reps": [
+        {
+          "how": "now_state",
+          "kind": "merge",
+          "absent": false
+        }
+      ],
+      "dimension": "merge",
+      "value": "clean"
+    },
+    {
+      "label": "conflicts",
+      "tone": "red",
+      "legend": "The PR conflicts with its base (current state, no history).",
+      "reps": [
+        {
+          "how": "now_state",
+          "kind": "merge",
+          "absent": false
+        }
+      ],
+      "dimension": "merge",
+      "value": "conflicts"
+    },
+    {
+      "label": "n/a",
+      "tone": "gray",
+      "legend": "Not applicable: no open PR.",
+      "reps": [
+        {
+          "how": "now_state",
+          "kind": "merge",
+          "absent": false
+        }
+      ],
+      "dimension": "merge",
+      "value": "none"
+    },
+    {
+      "label": "in draft",
+      "tone": "gray",
+      "legend": "Currently a draft.",
+      "reps": [
+        {
+          "how": "phase",
+          "kind": "draft",
+          "absent": false
+        },
+        {
+          "how": "event",
+          "kind": "converted_to_draft",
+          "absent": false
+        }
+      ],
+      "dimension": "draft",
+      "value": "draft"
+    },
+    {
+      "label": "not a draft",
+      "tone": "gray",
+      "legend": "Not a draft: no draft span at the track's end.",
+      "reps": [
+        {
+          "how": "phase",
+          "kind": "draft",
+          "absent": true
+        },
+        {
+          "how": "event",
+          "kind": "ready_for_review",
+          "absent": false
+        }
+      ],
+      "dimension": "draft",
+      "value": "ready"
+    },
+    {
+      "label": "reviewers pending",
+      "tone": "amber",
+      "legend": "At least one review request is outstanding.",
+      "reps": [
+        {
+          "how": "phase",
+          "kind": "waiting",
+          "absent": false
+        },
+        {
+          "how": "event",
+          "kind": "review_requested",
+          "absent": false
+        }
+      ],
+      "dimension": "reviewers",
+      "value": "pending"
+    },
+    {
+      "label": "none pending",
+      "tone": "gray",
+      "legend": "No review request outstanding: no waiting span at the end.",
+      "reps": [
+        {
+          "how": "phase",
+          "kind": "waiting",
+          "absent": true
+        },
+        {
+          "how": "event",
+          "kind": "review_request_removed",
+          "absent": false
+        }
+      ],
+      "dimension": "reviewers",
+      "value": "none"
+    },
+    {
+      "label": "blocked",
+      "tone": "gray",
+      "legend": "Approved but its parent is unmerged: the Next chip says so.",
+      "reps": [
+        {
+          "how": "now_state",
+          "kind": "next",
+          "absent": false
+        }
+      ],
+      "dimension": "blocked",
+      "value": "yes"
+    },
+    {
+      "label": "not blocked",
+      "tone": "gray",
+      "legend": "Not waiting on a parent PR.",
+      "reps": [
+        {
+          "how": "now_state",
+          "kind": "next",
+          "absent": true
+        }
+      ],
+      "dimension": "blocked",
+      "value": "no"
+    },
+    {
+      "label": "Open PR",
+      "tone": "amber",
+      "legend": "No PR yet: open one.",
+      "reps": [
+        {
+          "how": "now_state",
+          "kind": "next",
+          "absent": false
+        }
+      ],
+      "dimension": "next",
+      "value": "open_pr"
+    },
+    {
+      "label": "Done",
+      "tone": "gray",
+      "legend": "Merged or closed.",
+      "reps": [
+        {
+          "how": "now_state",
+          "kind": "next",
+          "absent": false
+        }
+      ],
+      "dimension": "next",
+      "value": "done"
+    },
+    {
+      "label": "Resolve conflicts",
+      "tone": "red",
+      "legend": "The PR has merge conflicts.",
+      "reps": [
+        {
+          "how": "now_state",
+          "kind": "next",
+          "absent": false
+        }
+      ],
+      "dimension": "next",
+      "value": "resolve_conflicts"
+    },
+    {
+      "label": "Address review",
+      "tone": "red",
+      "legend": "A reviewer requested changes.",
+      "reps": [
+        {
+          "how": "now_state",
+          "kind": "next",
+          "absent": false
+        }
+      ],
+      "dimension": "next",
+      "value": "address_review"
+    },
+    {
+      "label": "Resolve comments",
+      "tone": "amber",
+      "legend": "Unresolved review threads remain.",
+      "reps": [
+        {
+          "how": "now_state",
+          "kind": "next",
+          "absent": false
+        }
+      ],
+      "dimension": "next",
+      "value": "resolve_comments"
+    },
+    {
+      "label": "Fix / re-run CI",
+      "tone": "red",
+      "legend": "CI failed.",
+      "reps": [
+        {
+          "how": "now_state",
+          "kind": "next",
+          "absent": false
+        }
+      ],
+      "dimension": "next",
+      "value": "fix_ci"
+    },
+    {
+      "label": "Waiting on CI",
+      "tone": "amber",
+      "legend": "CI is running.",
+      "reps": [
+        {
+          "how": "now_state",
+          "kind": "next",
+          "absent": false
+        }
+      ],
+      "dimension": "next",
+      "value": "wait_ci"
+    },
+    {
+      "label": "Publish PR",
+      "tone": "accent",
+      "legend": "A draft with green CI: mark it ready.",
+      "reps": [
+        {
+          "how": "now_state",
+          "kind": "next",
+          "absent": false
+        }
+      ],
+      "dimension": "next",
+      "value": "publish"
+    },
+    {
+      "label": "Blocked on parent",
+      "tone": "gray",
+      "legend": "Approved, but its parent PR is not merged yet.",
+      "reps": [
+        {
+          "how": "now_state",
+          "kind": "next",
+          "absent": false
+        }
+      ],
+      "dimension": "next",
+      "value": "blocked"
+    },
+    {
+      "label": "Merge",
+      "tone": "green",
+      "legend": "Approved and ready to merge.",
+      "reps": [
+        {
+          "how": "now_state",
+          "kind": "next",
+          "absent": false
+        }
+      ],
+      "dimension": "next",
+      "value": "merge"
+    },
+    {
+      "label": "Waiting for review",
+      "tone": "gray",
+      "legend": "Waiting for a reviewer.",
+      "reps": [
+        {
+          "how": "now_state",
+          "kind": "next",
+          "absent": false
+        }
+      ],
+      "dimension": "next",
+      "value": "wait_review"
+    },
+    {
+      "label": "Request review",
+      "tone": "accent",
+      "legend": "Ready, but nobody was asked to review.",
+      "reps": [
+        {
+          "how": "now_state",
+          "kind": "next",
+          "absent": false
+        }
+      ],
+      "dimension": "next",
+      "value": "request_review"
+    }
+  ],
+  "not_represented": [
+    {
+      "label": "Comment threads opening or resolving",
+      "why": "GitHub has no timeline event for it; only the current unresolved count is shown (Comments chip)."
+    },
+    {
+      "label": "A PR becoming conflicting",
+      "why": "Not an event; only whether it conflicts now is shown (Merge chip)."
+    },
+    {
+      "label": "CI progress between commits",
+      "why": "Only each commit's final result is known; a re-run of the same commit is not an event."
+    },
+    {
+      "label": "When an approval went stale or was dismissed",
+      "why": "Inferred: it ends at the first push after it when the PR is not approved now."
+    },
+    {
+      "label": "History of being blocked on a parent",
+      "why": "Derived from the parent's state now (Next chip), not recorded."
+    },
+    {
+      "label": "Conversation comments, edits, labels, assignees",
+      "why": "Not review activity; not fetched."
+    }
+  ]
+}

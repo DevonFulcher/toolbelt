@@ -1,0 +1,2027 @@
+{
+  "$defs": {
+    "ActivityKind": {
+      "enum": [
+        "opened",
+        "ready_for_review",
+        "converted_to_draft",
+        "review_requested",
+        "review_request_removed",
+        "review",
+        "commit",
+        "force_push",
+        "merged",
+        "closed",
+        "reopened"
+      ],
+      "type": "string"
+    },
+    "Age": {
+      "additionalProperties": false,
+      "description": "A duration for display. ``since`` (ISO time) is set while it is still\ngrowing, so the page can keep the text current; ``None`` once it ended.",
+      "properties": {
+        "since": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "since"
+      ],
+      "title": "Age",
+      "type": "object"
+    },
+    "BlockedCatalogState": {
+      "additionalProperties": false,
+      "properties": {
+        "dimension": {
+          "const": "blocked",
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "legend": {
+          "type": "string"
+        },
+        "reps": {
+          "items": {
+            "$ref": "#/$defs/Rep"
+          },
+          "type": "array"
+        },
+        "tone": {
+          "$ref": "#/$defs/Tone"
+        },
+        "value": {
+          "enum": [
+            "yes",
+            "no"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "tone",
+        "legend",
+        "reps",
+        "dimension",
+        "value"
+      ],
+      "title": "BlockedCatalogState",
+      "type": "object"
+    },
+    "Branch": {
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Link"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "children": {
+          "items": {
+            "$ref": "#/$defs/ChildRef"
+          },
+          "type": "array"
+        },
+        "current": {
+          "type": "boolean"
+        },
+        "depth": {
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "order": {
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "repo_id": {
+          "type": "integer"
+        },
+        "stack_height": {
+          "type": "integer"
+        },
+        "stack_pos": {
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/LiveStatus"
+        },
+        "task": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Link"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "task_fetchable": {
+          "type": "boolean"
+        },
+        "task_live": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TaskLive"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "repo_id",
+        "name",
+        "depth",
+        "parent_id",
+        "parent",
+        "order",
+        "current",
+        "stack_pos",
+        "stack_height",
+        "children",
+        "task",
+        "task_fetchable",
+        "task_live",
+        "agent",
+        "status"
+      ],
+      "title": "Branch",
+      "type": "object"
+    },
+    "Catalog": {
+      "additionalProperties": false,
+      "properties": {
+        "chips": {
+          "$ref": "#/$defs/ChipGroups"
+        },
+        "events": {
+          "$ref": "#/$defs/EventMarkers"
+        },
+        "not_represented": {
+          "items": {
+            "$ref": "#/$defs/NotRepresented"
+          },
+          "type": "array"
+        },
+        "phases": {
+          "$ref": "#/$defs/PhaseSpans"
+        },
+        "slots": {
+          "$ref": "#/$defs/SlotDimensions"
+        },
+        "states": {
+          "items": {
+            "$ref": "#/$defs/CatalogState"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "events",
+        "phases",
+        "chips",
+        "slots",
+        "states",
+        "not_represented"
+      ],
+      "title": "Catalog",
+      "type": "object"
+    },
+    "CatalogDimension": {
+      "enum": [
+        "pr",
+        "ci",
+        "review",
+        "comments",
+        "merge",
+        "draft",
+        "reviewers",
+        "blocked",
+        "next"
+      ],
+      "type": "string"
+    },
+    "CatalogState": {
+      "discriminator": {
+        "mapping": {
+          "blocked": "#/$defs/BlockedCatalogState",
+          "ci": "#/$defs/CiCatalogState",
+          "comments": "#/$defs/CommentsCatalogState",
+          "draft": "#/$defs/DraftCatalogState",
+          "merge": "#/$defs/MergeCatalogState",
+          "next": "#/$defs/NextCatalogState",
+          "pr": "#/$defs/PrCatalogState",
+          "review": "#/$defs/ReviewCatalogState",
+          "reviewers": "#/$defs/ReviewersCatalogState"
+        },
+        "propertyName": "dimension"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/PrCatalogState"
+        },
+        {
+          "$ref": "#/$defs/CiCatalogState"
+        },
+        {
+          "$ref": "#/$defs/ReviewCatalogState"
+        },
+        {
+          "$ref": "#/$defs/CommentsCatalogState"
+        },
+        {
+          "$ref": "#/$defs/MergeCatalogState"
+        },
+        {
+          "$ref": "#/$defs/DraftCatalogState"
+        },
+        {
+          "$ref": "#/$defs/ReviewersCatalogState"
+        },
+        {
+          "$ref": "#/$defs/BlockedCatalogState"
+        },
+        {
+          "$ref": "#/$defs/NextCatalogState"
+        }
+      ]
+    },
+    "ChildRef": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "title": "ChildRef",
+      "type": "object"
+    },
+    "Chip": {
+      "discriminator": {
+        "mapping": {
+          "ci": "#/$defs/CiChip",
+          "comments": "#/$defs/CommentsChip",
+          "merge": "#/$defs/MergeChip",
+          "next": "#/$defs/NextChip",
+          "pr": "#/$defs/PrChip",
+          "review": "#/$defs/ReviewChip"
+        },
+        "propertyName": "dimension"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/PrChip"
+        },
+        {
+          "$ref": "#/$defs/CiChip"
+        },
+        {
+          "$ref": "#/$defs/ReviewChip"
+        },
+        {
+          "$ref": "#/$defs/CommentsChip"
+        },
+        {
+          "$ref": "#/$defs/MergeChip"
+        },
+        {
+          "$ref": "#/$defs/NextChip"
+        }
+      ]
+    },
+    "ChipDimension": {
+      "enum": [
+        "pr",
+        "ci",
+        "review",
+        "comments",
+        "merge",
+        "next"
+      ],
+      "type": "string"
+    },
+    "ChipGroups": {
+      "additionalProperties": false,
+      "description": "The label of each \"now\" chip group.",
+      "properties": {
+        "ci": {
+          "type": "string"
+        },
+        "comments": {
+          "type": "string"
+        },
+        "merge": {
+          "type": "string"
+        },
+        "next": {
+          "type": "string"
+        },
+        "pr": {
+          "type": "string"
+        },
+        "review": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pr",
+        "ci",
+        "review",
+        "comments",
+        "merge",
+        "next"
+      ],
+      "title": "ChipGroups",
+      "type": "object"
+    },
+    "CiCatalogState": {
+      "additionalProperties": false,
+      "properties": {
+        "dimension": {
+          "const": "ci",
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "legend": {
+          "type": "string"
+        },
+        "reps": {
+          "items": {
+            "$ref": "#/$defs/Rep"
+          },
+          "type": "array"
+        },
+        "tone": {
+          "$ref": "#/$defs/Tone"
+        },
+        "value": {
+          "$ref": "#/$defs/CiState"
+        }
+      },
+      "required": [
+        "label",
+        "tone",
+        "legend",
+        "reps",
+        "dimension",
+        "value"
+      ],
+      "title": "CiCatalogState",
+      "type": "object"
+    },
+    "CiChip": {
+      "additionalProperties": false,
+      "properties": {
+        "dimension": {
+          "const": "ci",
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/CiState"
+        }
+      },
+      "required": [
+        "dimension",
+        "value"
+      ],
+      "title": "CiChip",
+      "type": "object"
+    },
+    "CiResult": {
+      "enum": [
+        "",
+        "failed",
+        "success",
+        "pending"
+      ],
+      "type": "string"
+    },
+    "CiState": {
+      "enum": [
+        "none",
+        "running",
+        "failed",
+        "success"
+      ],
+      "title": "CiState",
+      "type": "string"
+    },
+    "CommentsCatalogState": {
+      "additionalProperties": false,
+      "properties": {
+        "dimension": {
+          "const": "comments",
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "legend": {
+          "type": "string"
+        },
+        "reps": {
+          "items": {
+            "$ref": "#/$defs/Rep"
+          },
+          "type": "array"
+        },
+        "tone": {
+          "$ref": "#/$defs/Tone"
+        },
+        "value": {
+          "$ref": "#/$defs/CommentsValue"
+        }
+      },
+      "required": [
+        "label",
+        "tone",
+        "legend",
+        "reps",
+        "dimension",
+        "value"
+      ],
+      "title": "CommentsCatalogState",
+      "type": "object"
+    },
+    "CommentsChip": {
+      "additionalProperties": false,
+      "properties": {
+        "dimension": {
+          "const": "comments",
+          "type": "string"
+        },
+        "n": {
+          "type": "integer"
+        },
+        "value": {
+          "$ref": "#/$defs/CommentsValue"
+        }
+      },
+      "required": [
+        "dimension",
+        "value",
+        "n"
+      ],
+      "title": "CommentsChip",
+      "type": "object"
+    },
+    "CommentsValue": {
+      "enum": [
+        "none",
+        "open"
+      ],
+      "type": "string"
+    },
+    "DraftCatalogState": {
+      "additionalProperties": false,
+      "properties": {
+        "dimension": {
+          "const": "draft",
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "legend": {
+          "type": "string"
+        },
+        "reps": {
+          "items": {
+            "$ref": "#/$defs/Rep"
+          },
+          "type": "array"
+        },
+        "tone": {
+          "$ref": "#/$defs/Tone"
+        },
+        "value": {
+          "enum": [
+            "draft",
+            "ready"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "tone",
+        "legend",
+        "reps",
+        "dimension",
+        "value"
+      ],
+      "title": "DraftCatalogState",
+      "type": "object"
+    },
+    "EventKind": {
+      "enum": [
+        "opened",
+        "commit",
+        "commits",
+        "commit_failed",
+        "force_push",
+        "review_requested",
+        "review_request_removed",
+        "ready_for_review",
+        "converted_to_draft",
+        "review_approved",
+        "review_changes",
+        "review_commented",
+        "merged",
+        "closed",
+        "reopened"
+      ],
+      "type": "string"
+    },
+    "EventMarkers": {
+      "additionalProperties": false,
+      "properties": {
+        "closed": {
+          "$ref": "#/$defs/Marker"
+        },
+        "commit": {
+          "$ref": "#/$defs/Marker"
+        },
+        "commit_failed": {
+          "$ref": "#/$defs/Marker"
+        },
+        "commits": {
+          "$ref": "#/$defs/Marker"
+        },
+        "converted_to_draft": {
+          "$ref": "#/$defs/Marker"
+        },
+        "force_push": {
+          "$ref": "#/$defs/Marker"
+        },
+        "merged": {
+          "$ref": "#/$defs/Marker"
+        },
+        "opened": {
+          "$ref": "#/$defs/Marker"
+        },
+        "ready_for_review": {
+          "$ref": "#/$defs/Marker"
+        },
+        "reopened": {
+          "$ref": "#/$defs/Marker"
+        },
+        "review_approved": {
+          "$ref": "#/$defs/Marker"
+        },
+        "review_changes": {
+          "$ref": "#/$defs/Marker"
+        },
+        "review_commented": {
+          "$ref": "#/$defs/Marker"
+        },
+        "review_request_removed": {
+          "$ref": "#/$defs/Marker"
+        },
+        "review_requested": {
+          "$ref": "#/$defs/Marker"
+        }
+      },
+      "required": [
+        "opened",
+        "commit",
+        "commits",
+        "commit_failed",
+        "force_push",
+        "review_requested",
+        "review_request_removed",
+        "ready_for_review",
+        "converted_to_draft",
+        "review_approved",
+        "review_changes",
+        "review_commented",
+        "merged",
+        "closed",
+        "reopened"
+      ],
+      "title": "EventMarkers",
+      "type": "object"
+    },
+    "EventRep": {
+      "additionalProperties": false,
+      "properties": {
+        "absent": {
+          "type": "boolean"
+        },
+        "how": {
+          "const": "event",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/EventKind"
+        }
+      },
+      "required": [
+        "how",
+        "kind",
+        "absent"
+      ],
+      "title": "EventRep",
+      "type": "object"
+    },
+    "FailedStatus": {
+      "additionalProperties": false,
+      "description": "The lookup was attempted and failed.",
+      "properties": {
+        "load": {
+          "const": "failed",
+          "type": "string"
+        }
+      },
+      "required": [
+        "load"
+      ],
+      "title": "FailedStatus",
+      "type": "object"
+    },
+    "FilterKey": {
+      "enum": [
+        "next",
+        "pr",
+        "ci",
+        "review",
+        "comments",
+        "merge"
+      ],
+      "type": "string"
+    },
+    "FilterOption": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "label"
+      ],
+      "title": "FilterOption",
+      "type": "object"
+    },
+    "FilterSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "$ref": "#/$defs/FilterKey"
+        },
+        "label": {
+          "type": "string"
+        },
+        "options": {
+          "items": {
+            "$ref": "#/$defs/FilterOption"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "key",
+        "label",
+        "options"
+      ],
+      "title": "FilterSpec",
+      "type": "object"
+    },
+    "HelloEvent": {
+      "additionalProperties": false,
+      "description": "Sent on connect: the current version (a client that last saw another\none missed something) and how stale the cache is.",
+      "properties": {
+        "age": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type": {
+          "const": "hello",
+          "type": "string"
+        },
+        "v": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "v",
+        "age"
+      ],
+      "title": "HelloEvent",
+      "type": "object"
+    },
+    "Link": {
+      "additionalProperties": false,
+      "description": "``href`` is ``None`` when the value cannot (or should not) be linked.",
+      "properties": {
+        "href": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "href"
+      ],
+      "title": "Link",
+      "type": "object"
+    },
+    "LiveStatus": {
+      "discriminator": {
+        "mapping": {
+          "failed": "#/$defs/FailedStatus",
+          "loaded": "#/$defs/LoadedStatus",
+          "loading": "#/$defs/LoadingStatus"
+        },
+        "propertyName": "load"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/LoadingStatus"
+        },
+        {
+          "$ref": "#/$defs/FailedStatus"
+        },
+        {
+          "$ref": "#/$defs/LoadedStatus"
+        }
+      ]
+    },
+    "LoadedStatus": {
+      "additionalProperties": false,
+      "properties": {
+        "ci": {
+          "$ref": "#/$defs/CiState"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PrDetail"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "load": {
+          "const": "loaded",
+          "type": "string"
+        },
+        "merge": {
+          "$ref": "#/$defs/MergeValue"
+        },
+        "next": {
+          "$ref": "#/$defs/NextActionInfo"
+        },
+        "now": {
+          "items": {
+            "$ref": "#/$defs/Chip"
+          },
+          "type": "array"
+        },
+        "open_comments": {
+          "type": "integer"
+        },
+        "pr": {
+          "$ref": "#/$defs/PrState"
+        },
+        "pr_number": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pr_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "review": {
+          "$ref": "#/$defs/ReviewState"
+        }
+      },
+      "required": [
+        "load",
+        "pr",
+        "pr_number",
+        "pr_url",
+        "ci",
+        "review",
+        "merge",
+        "open_comments",
+        "next",
+        "detail",
+        "now"
+      ],
+      "title": "LoadedStatus",
+      "type": "object"
+    },
+    "LoadingStatus": {
+      "additionalProperties": false,
+      "description": "No result in yet (or the repo's checkout is missing: nothing to ask).",
+      "properties": {
+        "load": {
+          "const": "loading",
+          "type": "string"
+        }
+      },
+      "required": [
+        "load"
+      ],
+      "title": "LoadingStatus",
+      "type": "object"
+    },
+    "Marker": {
+      "additionalProperties": false,
+      "properties": {
+        "glyph": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "legend": {
+          "type": "string"
+        },
+        "tone": {
+          "$ref": "#/$defs/Tone"
+        }
+      },
+      "required": [
+        "label",
+        "glyph",
+        "tone",
+        "legend"
+      ],
+      "title": "Marker",
+      "type": "object"
+    },
+    "MergeCatalogState": {
+      "additionalProperties": false,
+      "properties": {
+        "dimension": {
+          "const": "merge",
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "legend": {
+          "type": "string"
+        },
+        "reps": {
+          "items": {
+            "$ref": "#/$defs/Rep"
+          },
+          "type": "array"
+        },
+        "tone": {
+          "$ref": "#/$defs/Tone"
+        },
+        "value": {
+          "$ref": "#/$defs/MergeValue"
+        }
+      },
+      "required": [
+        "label",
+        "tone",
+        "legend",
+        "reps",
+        "dimension",
+        "value"
+      ],
+      "title": "MergeCatalogState",
+      "type": "object"
+    },
+    "MergeChip": {
+      "additionalProperties": false,
+      "properties": {
+        "dimension": {
+          "const": "merge",
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/MergeValue"
+        }
+      },
+      "required": [
+        "dimension",
+        "value"
+      ],
+      "title": "MergeChip",
+      "type": "object"
+    },
+    "MergeValue": {
+      "enum": [
+        "conflicts",
+        "clean",
+        "none"
+      ],
+      "type": "string"
+    },
+    "NextActionInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/NextKind"
+        },
+        "label": {
+          "type": "string"
+        },
+        "who": {
+          "$ref": "#/$defs/Who"
+        }
+      },
+      "required": [
+        "label",
+        "who",
+        "kind"
+      ],
+      "title": "NextActionInfo",
+      "type": "object"
+    },
+    "NextCatalogState": {
+      "additionalProperties": false,
+      "properties": {
+        "dimension": {
+          "const": "next",
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "legend": {
+          "type": "string"
+        },
+        "reps": {
+          "items": {
+            "$ref": "#/$defs/Rep"
+          },
+          "type": "array"
+        },
+        "tone": {
+          "$ref": "#/$defs/Tone"
+        },
+        "value": {
+          "$ref": "#/$defs/NextKind"
+        }
+      },
+      "required": [
+        "label",
+        "tone",
+        "legend",
+        "reps",
+        "dimension",
+        "value"
+      ],
+      "title": "NextCatalogState",
+      "type": "object"
+    },
+    "NextChip": {
+      "additionalProperties": false,
+      "properties": {
+        "dimension": {
+          "const": "next",
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/NextKind"
+        },
+        "who": {
+          "$ref": "#/$defs/Who"
+        }
+      },
+      "required": [
+        "dimension",
+        "value",
+        "text",
+        "who"
+      ],
+      "title": "NextChip",
+      "type": "object"
+    },
+    "NextKind": {
+      "enum": [
+        "open_pr",
+        "done",
+        "resolve_conflicts",
+        "address_review",
+        "resolve_comments",
+        "fix_ci",
+        "wait_ci",
+        "publish",
+        "blocked",
+        "merge",
+        "wait_review",
+        "request_review"
+      ],
+      "type": "string"
+    },
+    "NotRepresented": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "why": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "why"
+      ],
+      "title": "NotRepresented",
+      "type": "object"
+    },
+    "NowRep": {
+      "additionalProperties": false,
+      "properties": {
+        "absent": {
+          "type": "boolean"
+        },
+        "how": {
+          "const": "now_state",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ChipDimension"
+        }
+      },
+      "required": [
+        "how",
+        "kind",
+        "absent"
+      ],
+      "title": "NowRep",
+      "type": "object"
+    },
+    "PhaseKind": {
+      "enum": [
+        "draft",
+        "waiting",
+        "ci_failing",
+        "approved"
+      ],
+      "type": "string"
+    },
+    "PhaseRep": {
+      "additionalProperties": false,
+      "properties": {
+        "absent": {
+          "type": "boolean"
+        },
+        "how": {
+          "const": "phase",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/PhaseKind"
+        }
+      },
+      "required": [
+        "how",
+        "kind",
+        "absent"
+      ],
+      "title": "PhaseRep",
+      "type": "object"
+    },
+    "PhaseSpans": {
+      "additionalProperties": false,
+      "properties": {
+        "approved": {
+          "$ref": "#/$defs/Span"
+        },
+        "ci_failing": {
+          "$ref": "#/$defs/Span"
+        },
+        "draft": {
+          "$ref": "#/$defs/Span"
+        },
+        "waiting": {
+          "$ref": "#/$defs/Span"
+        }
+      },
+      "required": [
+        "draft",
+        "waiting",
+        "ci_failing",
+        "approved"
+      ],
+      "title": "PhaseSpans",
+      "type": "object"
+    },
+    "PrCatalogState": {
+      "additionalProperties": false,
+      "properties": {
+        "dimension": {
+          "const": "pr",
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "legend": {
+          "type": "string"
+        },
+        "reps": {
+          "items": {
+            "$ref": "#/$defs/Rep"
+          },
+          "type": "array"
+        },
+        "tone": {
+          "$ref": "#/$defs/Tone"
+        },
+        "value": {
+          "$ref": "#/$defs/PrState"
+        }
+      },
+      "required": [
+        "label",
+        "tone",
+        "legend",
+        "reps",
+        "dimension",
+        "value"
+      ],
+      "title": "PrCatalogState",
+      "type": "object"
+    },
+    "PrChip": {
+      "additionalProperties": false,
+      "properties": {
+        "dimension": {
+          "const": "pr",
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/PrState"
+        }
+      },
+      "required": [
+        "dimension",
+        "value"
+      ],
+      "title": "PrChip",
+      "type": "object"
+    },
+    "PrDetail": {
+      "additionalProperties": false,
+      "properties": {
+        "ci_failures": {
+          "type": "integer"
+        },
+        "created": {
+          "type": "string"
+        },
+        "draft_age": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Age"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ended": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/TimelineEvent"
+          },
+          "type": "array"
+        },
+        "is_draft": {
+          "type": "boolean"
+        },
+        "pr_age": {
+          "$ref": "#/$defs/Age"
+        },
+        "review_request_age": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Age"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reviewers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "pr_age",
+        "draft_age",
+        "review_request_age",
+        "ci_failures",
+        "reviewers",
+        "created",
+        "ended",
+        "is_draft",
+        "events"
+      ],
+      "title": "PrDetail",
+      "type": "object"
+    },
+    "PrState": {
+      "enum": [
+        "none",
+        "draft",
+        "open",
+        "merged",
+        "closed"
+      ],
+      "title": "PrState",
+      "type": "string"
+    },
+    "RefreshedEvent": {
+      "additionalProperties": false,
+      "description": "A polling pass finished (drives the \"updated Ns ago\" label).",
+      "properties": {
+        "type": {
+          "const": "refreshed",
+          "type": "string"
+        },
+        "v": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "v"
+      ],
+      "title": "RefreshedEvent",
+      "type": "object"
+    },
+    "Rep": {
+      "discriminator": {
+        "mapping": {
+          "event": "#/$defs/EventRep",
+          "now_state": "#/$defs/NowRep",
+          "phase": "#/$defs/PhaseRep"
+        },
+        "propertyName": "how"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/EventRep"
+        },
+        {
+          "$ref": "#/$defs/PhaseRep"
+        },
+        {
+          "$ref": "#/$defs/NowRep"
+        }
+      ]
+    },
+    "Repo": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "path_missing": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "path",
+        "path_missing"
+      ],
+      "title": "Repo",
+      "type": "object"
+    },
+    "ReviewCatalogState": {
+      "additionalProperties": false,
+      "properties": {
+        "dimension": {
+          "const": "review",
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "legend": {
+          "type": "string"
+        },
+        "reps": {
+          "items": {
+            "$ref": "#/$defs/Rep"
+          },
+          "type": "array"
+        },
+        "tone": {
+          "$ref": "#/$defs/Tone"
+        },
+        "value": {
+          "$ref": "#/$defs/ReviewState"
+        }
+      },
+      "required": [
+        "label",
+        "tone",
+        "legend",
+        "reps",
+        "dimension",
+        "value"
+      ],
+      "title": "ReviewCatalogState",
+      "type": "object"
+    },
+    "ReviewChip": {
+      "additionalProperties": false,
+      "properties": {
+        "dimension": {
+          "const": "review",
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/ReviewState"
+        }
+      },
+      "required": [
+        "dimension",
+        "value"
+      ],
+      "title": "ReviewChip",
+      "type": "object"
+    },
+    "ReviewState": {
+      "enum": [
+        "none",
+        "requested",
+        "approved",
+        "reviewed"
+      ],
+      "title": "ReviewState",
+      "type": "string"
+    },
+    "ReviewersCatalogState": {
+      "additionalProperties": false,
+      "properties": {
+        "dimension": {
+          "const": "reviewers",
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "legend": {
+          "type": "string"
+        },
+        "reps": {
+          "items": {
+            "$ref": "#/$defs/Rep"
+          },
+          "type": "array"
+        },
+        "tone": {
+          "$ref": "#/$defs/Tone"
+        },
+        "value": {
+          "enum": [
+            "pending",
+            "none"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "tone",
+        "legend",
+        "reps",
+        "dimension",
+        "value"
+      ],
+      "title": "ReviewersCatalogState",
+      "type": "object"
+    },
+    "ServerEvent": {
+      "discriminator": {
+        "mapping": {
+          "hello": "#/$defs/HelloEvent",
+          "refreshed": "#/$defs/RefreshedEvent",
+          "status": "#/$defs/StatusEvent",
+          "structure": "#/$defs/StructureEvent",
+          "task": "#/$defs/TaskEvent"
+        },
+        "propertyName": "type"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/HelloEvent"
+        },
+        {
+          "$ref": "#/$defs/StatusEvent"
+        },
+        {
+          "$ref": "#/$defs/TaskEvent"
+        },
+        {
+          "$ref": "#/$defs/StructureEvent"
+        },
+        {
+          "$ref": "#/$defs/RefreshedEvent"
+        }
+      ]
+    },
+    "SlotDimensions": {
+      "additionalProperties": false,
+      "properties": {
+        "branch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogDimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ci": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogDimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ci_failures": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogDimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "comments": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogDimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "in_draft": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogDimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "merge": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogDimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "next": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogDimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pr": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogDimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pr_age": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogDimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "review": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogDimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "review_requested": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogDimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reviewers": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogDimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "session": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogDimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stack": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogDimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "task": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogDimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "timeline": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogDimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "title": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogDimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "next",
+        "pr",
+        "ci",
+        "review",
+        "comments",
+        "merge",
+        "in_draft",
+        "review_requested",
+        "reviewers",
+        "ci_failures",
+        "title",
+        "pr_age",
+        "timeline",
+        "branch",
+        "task",
+        "session",
+        "stack"
+      ],
+      "title": "SlotDimensions",
+      "type": "object"
+    },
+    "Snapshot": {
+      "additionalProperties": false,
+      "properties": {
+        "age": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "branches": {
+          "items": {
+            "$ref": "#/$defs/Branch"
+          },
+          "type": "array"
+        },
+        "catalog": {
+          "$ref": "#/$defs/Catalog"
+        },
+        "filters": {
+          "items": {
+            "$ref": "#/$defs/FilterSpec"
+          },
+          "type": "array"
+        },
+        "repos": {
+          "items": {
+            "$ref": "#/$defs/Repo"
+          },
+          "type": "array"
+        },
+        "version": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "version",
+        "age",
+        "repos",
+        "branches",
+        "catalog",
+        "filters"
+      ],
+      "title": "Snapshot",
+      "type": "object"
+    },
+    "Span": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "legend": {
+          "type": "string"
+        },
+        "tone": {
+          "$ref": "#/$defs/Tone"
+        }
+      },
+      "required": [
+        "label",
+        "tone",
+        "legend"
+      ],
+      "title": "Span",
+      "type": "object"
+    },
+    "StatusEvent": {
+      "additionalProperties": false,
+      "description": "A branch's status changed (also sent for every branch stacked on it:\nits next action depends on this one's PR).",
+      "properties": {
+        "branch_id": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/LiveStatus"
+        },
+        "type": {
+          "const": "status",
+          "type": "string"
+        },
+        "v": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "v",
+        "branch_id",
+        "status"
+      ],
+      "title": "StatusEvent",
+      "type": "object"
+    },
+    "StructureEvent": {
+      "additionalProperties": false,
+      "description": "The stack DB was written: the client re-fetches the snapshot.",
+      "properties": {
+        "type": {
+          "const": "structure",
+          "type": "string"
+        },
+        "v": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "v"
+      ],
+      "title": "StructureEvent",
+      "type": "object"
+    },
+    "TaskDetails": {
+      "additionalProperties": false,
+      "properties": {
+        "state": {
+          "const": "info",
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "state",
+        "title",
+        "status"
+      ],
+      "title": "TaskDetails",
+      "type": "object"
+    },
+    "TaskEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "branch_id": {
+          "type": "string"
+        },
+        "task": {
+          "$ref": "#/$defs/TaskLive"
+        },
+        "type": {
+          "const": "task",
+          "type": "string"
+        },
+        "v": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "v",
+        "branch_id",
+        "task"
+      ],
+      "title": "TaskEvent",
+      "type": "object"
+    },
+    "TaskLive": {
+      "discriminator": {
+        "mapping": {
+          "info": "#/$defs/TaskDetails",
+          "loading": "#/$defs/TaskLoading",
+          "unavailable": "#/$defs/TaskUnavailable"
+        },
+        "propertyName": "state"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/TaskLoading"
+        },
+        {
+          "$ref": "#/$defs/TaskDetails"
+        },
+        {
+          "$ref": "#/$defs/TaskUnavailable"
+        }
+      ]
+    },
+    "TaskLoading": {
+      "additionalProperties": false,
+      "properties": {
+        "state": {
+          "const": "loading",
+          "type": "string"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "title": "TaskLoading",
+      "type": "object"
+    },
+    "TaskUnavailable": {
+      "additionalProperties": false,
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "state": {
+          "const": "unavailable",
+          "type": "string"
+        }
+      },
+      "required": [
+        "state",
+        "reason"
+      ],
+      "title": "TaskUnavailable",
+      "type": "object"
+    },
+    "TimelineEvent": {
+      "additionalProperties": false,
+      "description": "One event of a PR's history, in time order. ``ci`` is, for a commit\n(or the commit a force push replaced), its CI result (``\"\"``: none).",
+      "properties": {
+        "actor": {
+          "type": "string"
+        },
+        "ci": {
+          "$ref": "#/$defs/CiResult"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ActivityKind"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "t": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "t",
+        "kind",
+        "actor",
+        "detail",
+        "ci",
+        "subject"
+      ],
+      "title": "TimelineEvent",
+      "type": "object"
+    },
+    "Tone": {
+      "enum": [
+        "green",
+        "red",
+        "amber",
+        "gray",
+        "purple",
+        "accent"
+      ],
+      "type": "string"
+    },
+    "Who": {
+      "enum": [
+        "you",
+        "others",
+        "ci",
+        "none"
+      ],
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The schema root: lists everything the client reads (never\ninstantiated).",
+  "properties": {
+    "event": {
+      "$ref": "#/$defs/ServerEvent"
+    },
+    "snapshot": {
+      "$ref": "#/$defs/Snapshot"
+    }
+  },
+  "required": [
+    "snapshot",
+    "event"
+  ],
+  "title": "Wire",
+  "type": "object"
+}
