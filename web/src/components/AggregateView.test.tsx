@@ -266,6 +266,38 @@ describe("the aggregate view", () => {
     }
   });
 
+  test("each chart can collapse weekends independently", async () => {
+    const base = aggregate();
+    serve(aggregate({
+      mix: { ...base.mix, starts: [
+        "2026-10-09T18:00:00Z", "2026-10-10T12:00:00Z",
+        "2026-10-11T12:00:00Z", "2026-10-12T18:00:00Z",
+      ] },
+    }));
+    show();
+    const flow = await screen.findByRole("region", { name: "Throughput" });
+    const lead = screen.getByRole("region", { name: "Lead time over time (All time)" });
+    const mix = screen.getByRole("region", { name: "Status mix" });
+    const who = screen.getByRole("region", { name: "Who is it waiting on" });
+
+    const bars = flow.querySelectorAll("g.agg-col").length;
+    fireEvent.click(within(flow).getByRole("checkbox", { name: "Exclude weekends" }));
+    expect(flow.querySelectorAll("g.agg-col").length).toBeLessThan(bars);
+    expect(flow.querySelectorAll("rect.agg-weekend")).toHaveLength(0);
+    expect(mix.querySelectorAll("rect.agg-weekend-strip").length).toBeGreaterThan(0);
+
+    const before = mix.querySelector("path.agg-band")!.getAttribute("d");
+    fireEvent.click(within(mix).getByRole("checkbox", { name: "Exclude weekends" }));
+    expect(mix.querySelector("path.agg-band")!.getAttribute("d")).not.toBe(before);
+    expect(mix.querySelectorAll("rect.agg-weekend-strip")).toHaveLength(0);
+    expect(who.querySelectorAll("rect.agg-weekend-strip").length).toBeGreaterThan(0);
+
+    fireEvent.click(within(who).getByRole("checkbox", { name: "Exclude weekends" }));
+    expect(who.querySelectorAll("rect.agg-weekend-strip")).toHaveLength(0);
+    fireEvent.click(within(lead).getByRole("button", { name: "Excluding weekends" }));
+    expect(lead.querySelectorAll("rect.agg-weekend")).toHaveLength(0);
+  });
+
   test("few tasks in flight are called out as coarse, and the table gives counts", async () => {
     serve(aggregate());
     show();

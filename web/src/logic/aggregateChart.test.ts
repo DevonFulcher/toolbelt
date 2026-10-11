@@ -17,6 +17,7 @@ import {
   dayLabels,
   weekendSpans,
   stackShares,
+  timeAxis,
 } from "./aggregateChart";
 
 describe("scales", () => {
@@ -152,6 +153,20 @@ describe("day labels", () => {
 });
 
 describe("weekend bands", () => {
+  test("weekend time collapses to one x position, including a daylight-saving change", () => {
+    const zone = "America/Chicago";
+    const friday = Date.parse("2026-10-30T17:00:00Z"); // Friday noon CDT
+    const saturday = Date.parse("2026-10-31T17:00:00Z");
+    const sunday = Date.parse("2026-11-01T18:00:00Z"); // noon CST, after the clock change
+    const monday = Date.parse("2026-11-02T18:00:00Z"); // Monday noon CST
+    const axis = timeAxis(friday, monday, zone, true);
+    expect(axis(friday)).toBe(0);
+    expect(axis(saturday)).toBe(0.5);
+    expect(axis(sunday)).toBe(0.5);
+    expect(axis(monday)).toBe(1);
+    expect(timeAxis(friday, monday, zone, false)(sunday)).toBeGreaterThan(0.5);
+  });
+
   test("Saturday and Sunday merge into one band, clipped to the range", () => {
     const monday = Date.UTC(2026, 9, 5);
     const day = 86_400_000;

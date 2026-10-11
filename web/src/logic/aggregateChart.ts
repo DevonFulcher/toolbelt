@@ -233,10 +233,10 @@ export function dayLabels(
   buckets: readonly { start: number }[],
   timeZone: string,
   slotPx: number,
+  daysPerWeek = 7,
 ): (string | null)[] {
-  // Mondays are 7 bars apart: when that is too tight for a date, only every
-  // few of them are labelled.
-  const everyNth = Math.max(1, Math.ceil(MONDAY_LABEL_PX / (7 * slotPx)));
+  // The caller's displayed days per week determine spacing between Mondays.
+  const everyNth = Math.max(1, Math.ceil(MONDAY_LABEL_PX / (daysPerWeek * slotPx)));
   let monday = -1;
   return buckets.map(({ start }) => {
     const { weekday } = localParts(start, timeZone);
@@ -271,6 +271,17 @@ export function weekendSpans(from: number, to: number, timeZone: string): [numbe
     else spans.push([start, end]);
   }
   return spans;
+}
+
+/** Project an instant onto an axis whose weekend intervals have zero width. */
+export function timeAxis(from: number, to: number, timeZone: string, excludeWeekends: boolean): (ms: number) => number {
+  const weekends = excludeWeekends ? weekendSpans(from, to, timeZone) : [];
+  const visible = Math.max(to - from - weekends.reduce((sum, [start, end]) => sum + end - start, 0), 1);
+  return (ms) => {
+    const clamped = Math.min(Math.max(ms, from), to);
+    const removed = weekends.reduce((sum, [start, end]) => sum + Math.max(0, Math.min(clamped, end) - start), 0);
+    return (clamped - from - removed) / visible;
+  };
 }
 
 // ---- dates ----------------------------------------------------------------------------

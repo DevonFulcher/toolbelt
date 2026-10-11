@@ -204,6 +204,7 @@ export function AggregatePanels({
     return times.some((t) => t >= start && t <= now);
   });
   const flow = throughput(data.prs, { windowStart: start, now, weeks, timeZone });
+  const weekdayFlow = throughput(data.prs, { windowStart: start, now, weeks, timeZone, excludeWeekends: true });
   const lead = leadTimeSeries(data.prs, {
     windowStart: start,
     now,
@@ -275,6 +276,7 @@ export function AggregatePanels({
       </div>
       <ThroughputChart
         data={flow}
+        weekdayData={weekdayFlow}
         timeZone={timeZone}
         styles={{ opened: throughputStyles[0], merged: throughputStyles[1] }}
       />

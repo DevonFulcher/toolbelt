@@ -2,7 +2,7 @@
 // windows) or per local week (26 and 52 weeks), from the PRs' UTC instants and
 // the viewer's time zone. Pure; the zone is injected.
 import type { PrMilestones } from "../api/generated";
-import { bucketIndex, localBuckets, type Bucket } from "./localTime";
+import { bucketIndex, isWeekend, localBuckets, type Bucket } from "./localTime";
 
 export type Granularity = "day" | "week";
 
@@ -22,7 +22,7 @@ export interface Throughput {
 
 export function throughput(
   prs: readonly PrMilestones[],
-  options: { windowStart: number; now: number; weeks: number; timeZone: string },
+  options: { windowStart: number; now: number; weeks: number; timeZone: string; excludeWeekends?: boolean },
 ): Throughput {
   const granularity = granularityFor(options.weeks);
   const buckets = localBuckets(
@@ -36,10 +36,11 @@ export function throughput(
   const closed = buckets.map(() => 0);
   for (const pr of prs) {
     const open = bucketIndex(buckets, Date.parse(pr.opened));
-    if (open >= 0) opened[open]++;
+    if (open >= 0 && (!options.excludeWeekends || !isWeekend(Date.parse(pr.opened), options.timeZone))) opened[open]++;
     if (pr.ended === null) continue;
     const end = bucketIndex(buckets, Date.parse(pr.ended));
     if (end < 0) continue;
+    if (options.excludeWeekends && isWeekend(Date.parse(pr.ended), options.timeZone)) continue;
     if (pr.state === "MERGED") merged[end]++;
     else if (pr.state === "CLOSED") closed[end]++;
   }

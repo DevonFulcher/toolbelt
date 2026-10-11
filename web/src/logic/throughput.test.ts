@@ -82,4 +82,18 @@ describe("throughput", () => {
     expect(result.merged[result.merged.length - 1]).toBe(1);
     expect(result.buckets[result.buckets.length - 1].start).toBe(localMidnight(2026, 10, 12, CHICAGO));
   });
+
+  test("excluding weekends removes weekend events in daily and weekly windows", () => {
+    const prs = [
+      pr(1, "2026-10-09T18:00:00Z", "2026-10-10T18:00:00Z", "MERGED"),
+      pr(2, "2026-10-10T18:00:00Z", "2026-10-12T18:00:00Z", "MERGED"),
+    ];
+    for (const weeks of [4, 26]) {
+      const result = throughput(prs, {
+        windowStart: windowStart(NOW, weeks, CHICAGO), now: NOW, weeks, timeZone: CHICAGO, excludeWeekends: true,
+      });
+      expect(result.opened.reduce((sum, n) => sum + n, 0)).toBe(1);
+      expect(result.merged.reduce((sum, n) => sum + n, 0)).toBe(1);
+    }
+  });
 });

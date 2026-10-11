@@ -31,15 +31,16 @@ import {
   niceMax,
   rangePath,
   stackShares,
+  timeAxis,
   weekendSpans,
 } from "../logic/aggregateChart";
 import { TOTAL_STAGE, type LeadTimeSeries, type StageKey } from "../logic/leadTime";
 import {
   addLocalDays,
-  bucketIndex,
   formatLocalDate,
   formatLocalDay,
   formatLocalInstant,
+  isWeekend,
 } from "../logic/localTime";
 import type { Throughput } from "../logic/throughput";
 import "./aggregate.css";
@@ -194,6 +195,15 @@ function EmptyChart({ children }: { children: ReactNode }) {
   return <div className="agg-empty">{children}</div>;
 }
 
+function WeekendControl({ excluded, onChange }: { excluded: boolean; onChange: (value: boolean) => void }) {
+  return (
+    <label className="agg-check">
+      <input type="checkbox" checked={excluded} onChange={(event) => onChange(event.target.checked)} />
+      Exclude weekends
+    </label>
+  );
+}
+
 // ---- tooltip ---------------------------------------------------------------------------
 
 interface Hover {
@@ -300,47 +310,52 @@ export interface ThroughputSeries {
 
 export function ThroughputChart({
   data,
+  weekdayData,
   timeZone,
   styles,
 }: {
   data: Throughput;
+  weekdayData: Throughput;
   timeZone: string;
   styles: ThroughputSeries;
 }) {
   const [ref, width] = useWidth();
   const id = useId();
   const [hover, setHover] = useState<Hover | null>(null);
-  const { buckets, opened, merged, closed, granularity } = data;
+  const [excludeWeekends, setExcludeWeekends] = useState(false);
+  const { buckets, opened, merged, closed, granularity } = excludeWeekends ? weekdayData : data;
   const daily = granularity === "day";
+  const indexes = buckets.map((_, i) => i).filter((i) => !excludeWeekends || !daily || !buckets[i].weekend);
+  const shown = indexes.map((i) => buckets[i]);
   const height = 220;
   const plotW = Math.max(width - MARGIN.left - MARGIN.right, 50);
   const plotH = height - MARGIN.top - MARGIN.bottom;
-  const max = Math.max(1, ...opened, ...merged);
+  const max = Math.max(1, ...indexes.map((i) => opened[i]), ...indexes.map((i) => merged[i]));
   const ticks = countTicks(max);
   const top = niceMax(ticks[ticks.length - 1]);
   const y = linearScale([0, top], [MARGIN.top + plotH, MARGIN.top]);
-  const slot = plotW / Math.max(buckets.length, 1);
+  const slot = plotW / Math.max(shown.length, 1);
   const barW = Math.max(Math.min(slot * 0.4, 22), 1);
   const centre = (i: number): number => MARGIN.left + slot * (i + 0.5);
-  const totalOpened = opened.reduce((a, b) => a + b, 0);
-  const totalMerged = merged.reduce((a, b) => a + b, 0);
+  const totalOpened = indexes.reduce((a, i) => a + opened[i], 0);
+  const totalMerged = indexes.reduce((a, i) => a + merged[i], 0);
   const labelled = slot >= 14;
   const first = buckets[0].start;
   const lastEnd = buckets[buckets.length - 1].end;
   const bucketX = (ms: number): number => MARGIN.left + ((ms - first) / Math.max(lastEnd - first, 1)) * plotW;
   const dates = daily
-    ? dayLabels(buckets, timeZone, slot)
-    : buckets.map((b, i) =>
-        labelIndexes(buckets.length, Math.max(2, Math.floor(plotW / 70))).includes(i)
+    ? dayLabels(shown, timeZone, slot, excludeWeekends ? 5 : 7)
+    : shown.map((b, i) =>
+        labelIndexes(shown.length, Math.max(2, Math.floor(plotW / 70))).includes(i)
           ? formatLocalDate(b.start, timeZone)
           : null,
       );
   const title = (i: number): string =>
-    daily ? formatLocalDay(buckets[i].start, timeZone) : `Week of ${formatLocalDay(buckets[i].start, timeZone)}`;
+    daily ? formatLocalDay(shown[i].start, timeZone) : `Week of ${formatLocalDay(shown[i].start, timeZone)}`;
 
   const move = (event: PointerEvent<SVGRectElement>): void => {
     const box = event.currentTarget.getBoundingClientRect();
-    const index = Math.min(buckets.length - 1, Math.max(0, Math.floor((event.clientX - box.left) / slot)));
+    const index = Math.min(shown.length - 1, Math.max(0, Math.floor((event.clientX - box.left) / slot)));
     setHover({ index, x: centre(index) });
   };
   const key = (event: KeyboardEvent): void => {
@@ -349,29 +364,30 @@ export function ThroughputChart({
     if (!step) return;
     event.preventDefault();
     const next = Math.min(
-      buckets.length - 1,
-      Math.max(0, (hover?.index ?? (step > 0 ? -1 : buckets.length)) + step),
+      shown.length - 1,
+      Math.max(0, (hover?.index ?? (step > 0 ? -1 : shown.length)) + step),
     );
     setHover({ index: next, x: centre(next) });
   };
 
-  const summary = `${totalOpened} PRs opened and ${totalMerged} merged over ${buckets.length} ${daily ? "days" : "weeks"}, from ${formatLocalDay(first, timeZone)}.`;
+  const summary = `${totalOpened} PRs opened and ${totalMerged} merged over ${shown.length} ${daily ? "days" : "weeks"}, from ${formatLocalDay(first, timeZone)}${excludeWeekends && daily ? ", excluding weekends" : ""}.`;
   const both = [styles.opened, styles.merged];
   return (
     <ChartFrame
       title="Throughput"
       description={
         daily
-          ? `PRs opened and merged per day in your time zone (${timeZone}); Saturdays and Sundays are hatched. The last day is today so far.`
-          : `PRs opened and merged per week in your time zone (${timeZone}); weeks start on Monday and each spans a weekend, so no weekends are marked. The last is the current week so far.`
+          ? `PRs opened and merged per day in your time zone (${timeZone}); ${excludeWeekends ? "weekend days are removed from the chart and totals. The last bar is the latest weekday in the window" : "Saturdays and Sundays are hatched. The last day is today so far"}.`
+          : `PRs opened and merged per week in your time zone (${timeZone}); weeks start on Monday. ${excludeWeekends ? "Weekend events are removed from the chart and totals." : "Each week spans a weekend, so no weekends are marked."} The last is the current week so far.`
       }
-      legend={
+      legend={<div className="agg-lead-controls">
         <Legend
           id={id}
           series={both}
           values={{ opened: `${totalOpened} total`, merged: `${totalMerged} total` }}
         />
-      }
+        <WeekendControl excluded={excludeWeekends} onChange={(value) => { setExcludeWeekends(value); setHover(null); }} />
+      </div>}
       table={
         <table className="agg-table">
           <caption>{`PRs per ${daily ? "day" : "week"} (${timeZone})`}</caption>
@@ -385,15 +401,18 @@ export function ThroughputChart({
             </tr>
           </thead>
           <tbody>
-            {buckets.map((bucket, i) => (
-              <tr key={bucket.start}>
-                <th scope="row">{formatLocalDay(bucket.start, timeZone)}</th>
-                {daily && <td>{bucket.weekend ? "yes" : ""}</td>}
-                <td>{opened[i]}</td>
-                <td>{merged[i]}</td>
-                <td>{closed[i]}</td>
-              </tr>
-            ))}
+            {shown.map((bucket, position) => {
+              const i = indexes[position];
+              return (
+                <tr key={bucket.start}>
+                  <th scope="row">{formatLocalDay(bucket.start, timeZone)}</th>
+                  {daily && <td>{bucket.weekend ? "yes" : ""}</td>}
+                  <td>{opened[i]}</td>
+                  <td>{merged[i]}</td>
+                  <td>{closed[i]}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       }
@@ -410,7 +429,7 @@ export function ThroughputChart({
         >
           <Patterns id={id} series={both} />
           <WeekendPattern id={id} />
-          {daily && (
+          {daily && !excludeWeekends && (
             <WeekendBands
               id={id}
               from={first}
@@ -439,11 +458,11 @@ export function ThroughputChart({
           <text className="agg-axis-title" transform={`translate(11 ${MARGIN.top + plotH / 2}) rotate(-90)`} textAnchor="middle">
             {`PRs per ${daily ? "day" : "week"}`}
           </text>
-          {buckets.map((bucket, i) => (
-            <g key={bucket.start} className={hover?.index === i ? "agg-col agg-col-active" : "agg-col"}>
+          {indexes.map((sourceIndex, i) => (
+            <g key={buckets[sourceIndex].start} className={hover?.index === i ? "agg-col agg-col-active" : "agg-col"}>
               {([
-                [styles.opened, opened[i], -barW],
-                [styles.merged, merged[i], 0],
+                [styles.opened, opened[sourceIndex], -barW],
+                [styles.merged, merged[sourceIndex], 0],
               ] as const).map(([series, value, dx]) => (
                 <g key={series.key} className={`tone-${series.tone}`}>
                   <rect
@@ -455,9 +474,9 @@ export function ThroughputChart({
                   />
                 </g>
               ))}
-              {labelled && merged[i] > 0 && (
-                <text className="agg-value" x={centre(i) + barW / 2} y={y(merged[i]) - 3} textAnchor="middle">
-                  {merged[i]}
+              {labelled && merged[sourceIndex] > 0 && (
+                <text className="agg-value" x={centre(i) + barW / 2} y={y(merged[sourceIndex]) - 3} textAnchor="middle">
+                  {merged[sourceIndex]}
                 </text>
               )}
             </g>
@@ -477,10 +496,10 @@ export function ThroughputChart({
           {hover && (
             <>
               <strong>{title(hover.index)}</strong>
-              {buckets[hover.index].weekend && <div className="agg-tip-sub">weekend</div>}
-              <div>{`${opened[hover.index]} opened`}</div>
-              <div>{`${merged[hover.index]} merged`}</div>
-              <div>{`${closed[hover.index]} closed unmerged`}</div>
+              {shown[hover.index].weekend && <div className="agg-tip-sub">weekend</div>}
+              <div>{`${opened[indexes[hover.index]]} opened`}</div>
+              <div>{`${merged[indexes[hover.index]]} merged`}</div>
+              <div>{`${closed[indexes[hover.index]]} closed unmerged`}</div>
             </>
           )}
         </ChartTooltip>
@@ -541,13 +560,14 @@ export function LeadTimeChart({
   const axis = durationAxis(Math.max(0, ...values));
   const y = linearScale([0, axis.top], [MARGIN.top + plotH, MARGIN.top]);
   const pointY = (seconds: number): number => y(Math.min(seconds, axis.top));
-  const span = Math.max(now - windowStart, 1);
-  const xMs = (ms: number): number => MARGIN.left + (Math.min(Math.max(ms - windowStart, 0), span) / span) * plotW;
+  const project = timeAxis(windowStart, now, timeZone, excludeWeekends);
+  const xMs = (ms: number): number => MARGIN.left + project(ms) * plotW;
   const centres = series.buckets.map((b) => xMs(eventMode ? b.start : (b.start + Math.min(b.end, now)) / 2));
   const bucketX = (i: number): number => centres[i];
   const axisLabels = eventMode
     ? series.buckets.reduce<number[]>((picked, bucket, i) => {
-        if (!picked.length || xMs(bucket.start) - xMs(series.buckets[picked[picked.length - 1]].start) >= 70) picked.push(i);
+        if ((!excludeWeekends || !isWeekend(bucket.start, timeZone)) &&
+          (!picked.length || xMs(bucket.start) - xMs(series.buckets[picked[picked.length - 1]].start) >= 70)) picked.push(i);
         return picked;
       }, [])
     : labelIndexes(series.buckets.length, Math.max(2, Math.floor(plotW / 70)));
@@ -574,8 +594,8 @@ export function LeadTimeChart({
   };
   const move = (event: PointerEvent<SVGRectElement>): void => {
     const box = event.currentTarget.getBoundingClientRect();
-    const ms = windowStart + ((event.clientX - box.left) / Math.max(box.width, 1)) * span;
-    const index = eventMode ? nearestIndex(series.buckets.map((b) => b.start), ms) : Math.max(0, bucketIndex(series.buckets, ms));
+    const px = MARGIN.left + ((event.clientX - box.left) / Math.max(box.width, 1)) * plotW;
+    const index = nearestIndex(centres, px);
     setHover({ type: "bucket", index, x: centres[index] });
   };
   const toggle = (stage: StageKey): void => {
@@ -598,8 +618,8 @@ export function LeadTimeChart({
       title={`Lead time over time (${modeLabel})`}
       description={
         eventMode
-          ? `Each point is one PR at its exact merge time (${timeZone}), using ${modeLabel.toLowerCase()}. Lines connect known values for each step; missing milestones leave gaps. Hover a point for its PR and duration.`
-          : `Each PR is placed at the time it merged (${timeZone}), and each line is the median of a step over the PRs that merged in each week, using ${modeLabel.toLowerCase()}. A bucket with no PR whose step is known is a gap. The dots are single PRs; hover one for its details. The scale follows the medians; longer individual PRs appear at the top edge with their full duration in the tooltip.`
+          ? `Each point is one PR at its exact merge time (${timeZone}), using ${modeLabel.toLowerCase()}. Lines connect known values for each step; missing milestones leave gaps. Hover a point for its PR and duration.${excludeWeekends ? " Weekend hours have zero width on the x-axis." : ""}`
+          : `Each PR is placed at the time it merged (${timeZone}), and each line is the median of a step over the PRs that merged in each week, using ${modeLabel.toLowerCase()}. A bucket with no PR whose step is known is a gap. The dots are single PRs; hover one for its details. The scale follows the medians; longer individual PRs appear at the top edge with their full duration in the tooltip.${excludeWeekends ? " Weekend hours have zero width on the x-axis." : ""}`
       }
       legend={
         <div className="agg-lead-controls">
@@ -689,7 +709,7 @@ export function LeadTimeChart({
           >
             <Patterns id={id} series={styles} />
             <WeekendPattern id={id} />
-            <WeekendBands
+            {!excludeWeekends && <WeekendBands
               id={id}
               from={windowStart}
               to={now}
@@ -697,7 +717,7 @@ export function LeadTimeChart({
               x={xMs}
               top={MARGIN.top}
               bottom={MARGIN.top + plotH}
-            />
+            />}
             {axis.ticks.map((t) => (
               <g key={t.value}>
                 <line className="agg-grid" x1={MARGIN.left} x2={MARGIN.left + plotW} y1={y(t.value)} y2={y(t.value)} />
@@ -889,14 +909,15 @@ export function MixChart({
   const [ref, width] = useWidth();
   const id = useId();
   const [hover, setHover] = useState<Hover | null>(null);
+  const [excludeWeekends, setExcludeWeekends] = useState(false);
   const height = 240;
   const stripHeight = 52;
   const plotW = Math.max(width - MARGIN.left - MARGIN.right, 50);
   const plotH = height - MARGIN.top - MARGIN.bottom;
   const count = starts.length;
   const times = starts.map((t) => Date.parse(t));
-  const span = Math.max(times[count - 1] - times[0], 1);
-  const xs = times.map((t) => MARGIN.left + ((t - times[0]) / span) * plotW);
+  const project = timeAxis(times[0], times[count - 1], timeZone, excludeWeekends);
+  const xs = times.map((t) => MARGIN.left + project(t) * plotW);
   const x = (i: number): number => xs[i];
   const y = linearScale([0, 1], [MARGIN.top + plotH, MARGIN.top]);
   const hasData = inflight.some((n) => n > 0);
@@ -918,8 +939,8 @@ export function MixChart({
   const at = (index: number): void => setHover({ index, x: xs[index] });
   const move = (event: PointerEvent<SVGRectElement>): void => {
     const box = event.currentTarget.getBoundingClientRect();
-    const ms = times[0] + ((event.clientX - box.left) / Math.max(box.width, 1)) * span;
-    at(nearestIndex(times, ms));
+    const px = MARGIN.left + ((event.clientX - box.left) / Math.max(box.width, 1)) * plotW;
+    at(nearestIndex(xs, px));
   };
   const key = (event: KeyboardEvent): void => {
     if (event.key === "Escape") setHover(null);
@@ -944,14 +965,18 @@ export function MixChart({
   const ticks = [0, 0.25, 0.5, 0.75, 1];
   const labels: number[] = [];
   xs.forEach((at, i) => {
-    if (labels.length === 0 || at - xs[labels[labels.length - 1]] >= 80) labels.push(i);
+    if ((!excludeWeekends || !isWeekend(times[i], timeZone)) &&
+      (labels.length === 0 || at - xs[labels[labels.length - 1]] >= 80)) labels.push(i);
   });
 
   return (
     <ChartFrame
       title={title}
-      description={description}
-      legend={<Legend id={id} series={series} values={latest} />}
+      description={<>{description}{excludeWeekends && " Weekend hours have zero width on the x-axis; use the arrow keys to inspect changes that share an x position."}</>}
+      legend={<div className="agg-lead-controls">
+        <Legend id={id} series={series} values={latest} />
+        <WeekendControl excluded={excludeWeekends} onChange={(value) => { setExcludeWeekends(value); setHover(null); }} />
+      </div>}
       table={
         <table className="agg-table">
           <caption>{`${title}: share (and number) of the tasks in flight at each state change`}</caption>
@@ -1064,13 +1089,13 @@ export function MixChart({
             onPointerLeave={() => setHover(null)}
           />
           {/* Weekends: a thin strip on the time axis, after the hit area so it can be hovered. */}
-          {weekendSpans(times[0], times[count - 1], timeZone).map(([start, end]) => (
+          {!excludeWeekends && weekendSpans(times[0], times[count - 1], timeZone).map(([start, end]) => (
             <rect
               key={start}
               className="agg-weekend-strip"
-              x={MARGIN.left + ((start - times[0]) / span) * plotW}
+              x={MARGIN.left + project(start) * plotW}
               y={MARGIN.top + plotH + 1}
-              width={Math.max(((end - start) / span) * plotW, 0)}
+              width={Math.max((project(end) - project(start)) * plotW, 0)}
               height={4}
             >
               <title>{weekendTitle(start, end, timeZone)}</title>
