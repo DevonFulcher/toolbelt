@@ -289,6 +289,12 @@ export interface Marker {
   ci: string;
   count: number;
   lane: number;
+  /** The text drawn beside the marker (empty for faint commit dots). */
+  label: string;
+  /** The label sits left of its marker (the marker is past the middle). */
+  flip: boolean;
+  /** No lane had room for the label at this width: the marker is drawn alone. */
+  labelHidden: boolean;
   items: TipItem[];
   title: string;
   tip: Tip;
@@ -338,7 +344,23 @@ export interface LayoutOptions {
   laneGap?: number;
   /** Most lanes markers stack into. */
   maxLanes?: number;
+  /**
+   * The track's width in pixels. When given, labels are placed by their real
+   * width: a marker takes the first lane whose labels it does not touch, and
+   * is drawn without its label when no lane has room. Without it lanes are
+   * decided by `laneGap` alone (a fraction of the track).
+   */
+  widthPx?: number;
 }
+
+/** A marker past this fraction of the track puts its label on its left. */
+export const LABEL_FLIP_AT = 0.5;
+// Rough metrics of the 11px label text and the marker glyph, in pixels.
+const LABEL_CHAR_PX = 6.2;
+const LABEL_PAD_PX = 8;
+const LABEL_GLYPH_HALF_PX = 7;
+const LABEL_GAP_PX = 4;
+const LABEL_MIN_PX = 24;
 
 /**
  * Lays out a track. Every marker and phase carries `tip`, the data its hover
@@ -390,6 +412,9 @@ export function trackLayout(track: Track, options: LayoutOptions): TrackLayout {
       ci: "",
       count: 1,
       lane: 0,
+      label: "",
+      flip: false,
+      labelHidden: false,
       items: [],
       title: `${info.label} ${age(startedMs)}`,
       tip: {
@@ -419,6 +444,9 @@ export function trackLayout(track: Track, options: LayoutOptions): TrackLayout {
       ci: event.ci || "",
       count: 1,
       lane: 0,
+      label: "",
+      flip: false,
+      labelHidden: false,
       items: [{ t: event.t, ms: event.ms, actor: event.actor, detail: event.detail }],
       title:
         `${info.label}${withDetail ? `: ${event.detail}` : ""}` +
@@ -477,7 +505,40 @@ export function trackLayout(track: Track, options: LayoutOptions): TrackLayout {
 
   // Prominent markers that would overlap stack into lanes.
   const lastX: number[] = [];
+  const taken: Array<Array<[number, number]>> = [];
+  const widthPx = options.widthPx;
   for (const marker of prominent) {
+    const info = eventInfo(catalog, marker.kind);
+    marker.label =
+      marker.actor && marker.kind.startsWith("review") ? `${info.label} · ${marker.actor}` : info.label;
+    marker.flip = marker.x > LABEL_FLIP_AT;
+    if (widthPx !== undefined && widthPx > 0) {
+      // Pixel mode: the label (cut to the room on its side) and the glyph
+      // occupy an interval; the marker takes the first lane it does not touch.
+      const x = marker.x * widthPx;
+      const room = marker.flip ? x : widthPx - x;
+      const text = Math.min(
+        marker.label.length * LABEL_CHAR_PX,
+        Math.max(room - LABEL_PAD_PX - LABEL_GLYPH_HALF_PX, LABEL_MIN_PX),
+      );
+      const left = marker.flip ? x - LABEL_PAD_PX - text : x - LABEL_GLYPH_HALF_PX;
+      const right = marker.flip ? x + LABEL_GLYPH_HALF_PX : x + LABEL_PAD_PX + text;
+      const free = (lane: Array<[number, number]>) =>
+        lane.every(([l, r]) => right + LABEL_GAP_PX <= l || left - LABEL_GAP_PX >= r);
+      let lane = taken.findIndex(free);
+      if (lane === -1 && taken.length < maxLanes) {
+        taken.push([]);
+        lane = taken.length - 1;
+      }
+      if (lane === -1) {
+        marker.labelHidden = true;
+        marker.lane = 0;
+      } else {
+        taken[lane].push([left, right]);
+        marker.lane = lane;
+      }
+      continue;
+    }
     let lane = lastX.findIndex((x) => marker.x - x >= laneGap);
     if (lane === -1) {
       lane = lastX.length < maxLanes ? lastX.length : lastX.indexOf(Math.min(...lastX));
@@ -523,7 +584,7 @@ export function trackLayout(track: Track, options: LayoutOptions): TrackLayout {
     ended,
     markers,
     phases,
-    lanes: Math.max(1, lastX.length),
+    lanes: Math.max(1, lastX.length, taken.length),
     now: ended ? null : 1,
     startLabel: `started ${age(start)}`,
     endKind,

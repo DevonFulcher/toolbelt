@@ -154,6 +154,41 @@ describe("track layout", () => {
     expect(apart.lanes).toBe(1);
   });
 
+  test("by pixel width, labels that would touch take other lanes, and drop out when no lane has room", () => {
+    const t = track(10 * DAY, [
+      ev("review_requested", 9.5 * DAY, { subject: "sam" }),
+      ev("review", 9 * DAY, { actor: "lee", detail: "changes requested" }),
+      ev("review", 8.5 * DAY, { actor: "sam", detail: "approved" }),
+    ]);
+
+    // Plenty of room: every label fits in the first lane.
+    const wide = layout(t, { widthPx: 6000, maxLanes: 4 });
+    expect(wide.markers.every((m) => m.lane === 0 && !m.labelHidden)).toBe(true);
+
+    // A narrow track: the same events stack into lanes.
+    const narrow = layout(t, { widthPx: 220, maxLanes: 4 });
+    expect(new Set(narrow.markers.map((m) => m.lane)).size).toBeGreaterThan(1);
+
+    // One lane only: what cannot fit is drawn as a bare marker, not on top of another label.
+    const one = layout(t, { widthPx: 220, maxLanes: 1 });
+    const shown = one.markers.filter((m) => !m.labelHidden);
+    expect(shown.length).toBeLessThan(one.markers.length);
+    expect(one.markers.filter((m) => !m.labelHidden).every((m) => m.lane === 0)).toBe(true);
+  });
+
+  test("a label flips left of its marker past the middle and carries its text", () => {
+    const l = layout(track(10 * DAY, [ev("review", 2 * DAY, { actor: "sam", detail: "approved" })]), {
+      widthPx: 400,
+    });
+
+    const review = l.markers.find((m) => m.kind === "review_approved")!;
+    expect(review.flip).toBe(true);
+    expect(review.label).toBe("approved · sam");
+    const opened = l.markers.find((m) => m.kind === "opened")!;
+    expect(opened.flip).toBe(false);
+    expect(opened.label).toBe("opened");
+  });
+
   test("events from before the PR was opened sit at its start", () => {
     const l = layout(track(2 * DAY, [ev("commit", 5 * DAY, { ci: "failed" })]));
 

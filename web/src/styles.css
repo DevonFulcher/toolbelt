@@ -215,7 +215,8 @@ a.stack-link[data-gone]::after { content: " (not shown)"; font-size: 11px; font-
 .tl-ends button, .tl-buttons button { font-size: 11px; padding: 0 6px; border-radius: 4px; }
 .tl-buttons { display: inline-flex; gap: 6px; }
 .tl-legend-toggle[aria-pressed=true] { background: var(--accent); border-color: var(--accent); color: #fff; }
-.tl-track { position: relative; height: var(--tl-height, 34px); margin: 0 6px; }
+.tl-track { position: relative; height: var(--tl-height, 34px); margin: 0 6px;
+            container-type: inline-size; }
 /* Weekday lines and weekend bands: decoration behind everything, never hit. */
 .tl-daygrid { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
 .tl-weekend { position: absolute; top: 0; bottom: 0;
@@ -253,9 +254,16 @@ a.stack-link[data-gone]::after { content: " (not shown)"; font-size: 11px; font-
 .tl-track .tl-mark { z-index: 1; }
 .tl-now:hover, .tl-now:focus-visible, .tl-end-cap:hover, .tl-end-cap:focus-visible {
   outline: none; border-right-color: var(--fg); }
+/* A label never outgrows the track: --x is the marker's fraction across it, so
+   the room on the label's side is (1 - x) or x of the track width (cqw), less
+   the marker and a margin. Longer text is cut with an ellipsis; the marker's
+   tooltip carries the full text. */
 .tl-label { position: absolute; left: 100%; top: 50%; transform: translateY(-50%);
-            margin-left: 4px; font-size: 11px; color: var(--fg); pointer-events: none; }
-.tl-label.tl-flip { left: auto; right: 100%; margin-left: 0; margin-right: 4px; }
+            margin-left: 4px; font-size: 11px; color: var(--fg); pointer-events: none;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+            max-width: max(2rem, calc((1 - var(--x, 0)) * 100cqw - 14px)); }
+.tl-label.tl-flip { left: auto; right: 100%; margin-left: 0; margin-right: 4px;
+                    max-width: max(2rem, calc(var(--x, 1) * 100cqw - 14px)); }
 
 /* The chronological log table: sticky headers, Detail takes the rest. */
 .tl-list-wrap { max-height: 14rem; overflow: auto; margin-top: 6px; border-top: 1px solid var(--line);

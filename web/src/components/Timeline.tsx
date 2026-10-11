@@ -1,4 +1,4 @@
-import { memo, useMemo, type CSSProperties } from "react";
+import { memo, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { Catalog, LoadedStatus, CiResult } from "../api/generated";
 import { formatAbsolute } from "../logic/format";
 import {
@@ -64,6 +64,22 @@ interface TimelineProps {
  * lists the current state, the legend toggle ("?") and, behind the
  * Expand/Collapse button, the chronological log table.
  */
+/** The pixel width of an element, kept current as it resizes. 0 until measured. */
+function useWidth(ref: React.RefObject<HTMLElement | null>): number {
+  const [width, setWidth] = useState(0);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => setWidth(el.clientWidth);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [ref]);
+  return width;
+}
+
 export const Timeline = memo(function Timeline({ id, status, startedAt, catalog, now }: TimelineProps) {
   const ui = useApp((s) => s.cardUi[id]);
   const patchCardUi = useApp((s) => s.patchCardUi);
@@ -71,6 +87,8 @@ export const Timeline = memo(function Timeline({ id, status, startedAt, catalog,
   const toggleLog = useApp((s) => s.toggleLog);
   const hideCommits = Boolean(ui?.hideCommits);
   const legend = Boolean(ui?.legend);
+  const trackRef = useRef<HTMLDivElement>(null);
+  const trackWidth = useWidth(trackRef);
   const track = useMemo(() => trackOf(status, startedAt), [status, startedAt]);
   const chips = useMemo(() => nowChips(track, catalog), [track, catalog]);
 
@@ -104,7 +122,14 @@ export const Timeline = memo(function Timeline({ id, status, startedAt, catalog,
   }
 
   const commits = hideCommits ? "none" : "all";
-  const layout = trackLayout(track, { now, catalog, commits, laneGap: 0.15, maxLanes: 4 });
+  const layout = trackLayout(track, {
+    now,
+    catalog,
+    commits,
+    laneGap: 0.15,
+    maxLanes: 4,
+    ...(trackWidth > 0 ? { widthPx: trackWidth } : {}),
+  });
   const height = TRACK_BASE + (layout.lanes - 1) * LANE_STEP;
   // The end cap (the "now" line, or the end of a merged/closed PR) says what
   // the state is at that moment.
@@ -144,7 +169,7 @@ export const Timeline = memo(function Timeline({ id, status, startedAt, catalog,
             </span>
             <span className="tl-end">{layout.endLabel}</span>
           </div>
-          <div className="tl-track" style={{ height }}>
+          <div className="tl-track" style={{ height }} ref={trackRef}>
             <DayGrid start={layout.start} end={layout.end} />
             <div className="tl-axis" />
             {layout.ticks.map((tick) => (
@@ -167,10 +192,6 @@ export const Timeline = memo(function Timeline({ id, status, startedAt, catalog,
             {layout.markers.map((marker, index) => {
               const faint = marker.kind === "commit" || marker.kind === "commits";
               const info = eventInfo(catalog, marker.kind);
-              const label =
-                marker.actor && marker.kind.startsWith("review")
-                  ? `${info.label} · ${marker.actor}`
-                  : info.label;
               return (
                 <TipSource
                   key={`${marker.kind}-${marker.ms}-${index}`}
@@ -183,8 +204,13 @@ export const Timeline = memo(function Timeline({ id, status, startedAt, catalog,
                   }}
                 >
                   {marker.kind === "commits" ? String(marker.count) : info.glyph}
-                  {!faint && (
-                    <span className={`tl-label${marker.x > 0.78 ? " tl-flip" : ""}`}>{label}</span>
+                  {!faint && !marker.labelHidden && (
+                    <span
+                      className={`tl-label${marker.flip ? " tl-flip" : ""}`}
+                      style={{ "--x": marker.x } as CSSProperties}
+                    >
+                      {marker.label}
+                    </span>
                   )}
                 </TipSource>
               );

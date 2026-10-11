@@ -41,6 +41,22 @@ describe("a card's timeline", () => {
     expect(screen.getByText("now")).toBeInTheDocument();
   });
 
+  test("a label grows toward the roomier side of the track and knows how much room it has", () => {
+    show();
+
+    const labels = [...track().querySelectorAll<HTMLElement>(".tl-label")];
+
+    expect(labels.length).toBeGreaterThan(0);
+    for (const label of labels) {
+      const x = Number(label.style.getPropertyValue("--x"));
+      expect(x).toBeGreaterThanOrEqual(0);
+      expect(x).toBeLessThanOrEqual(1);
+      // Past the middle the label sits left of its marker, so it can never
+      // run off the right end of the track (the CSS caps its width by --x).
+      expect(label.classList.contains("tl-flip"), label.textContent ?? "").toBe(x > 0.5);
+    }
+  });
+
   test("there is one track: always labelled, with no chip row repeating the slots above", () => {
     show();
 
