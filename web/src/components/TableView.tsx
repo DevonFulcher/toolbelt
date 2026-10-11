@@ -1,10 +1,12 @@
 import { memo, useMemo, type CSSProperties } from "react";
 import type { LiveStatus, LoadedStatus } from "../api/generated";
+import { capEntries } from "../logic/focus";
 import { layout } from "../logic/layout";
 import type { Row } from "../logic/rows";
 import { COLUMNS, toggleSort, type Column } from "../logic/viewState";
 import { LOADING } from "../store/selectors";
 import { useApp, useAppStore } from "../store/StoreContext";
+import { CapControl } from "./CapControl";
 import { CI_TONE, ExternalLink, PR_TONE, Pill, REVIEW_TONE, TaskValue } from "./presentation";
 
 const HEADINGS: Record<Column, string> = {
@@ -25,7 +27,7 @@ const LOOKUP_FAILED = "gh could not look up this branch's PR";
 export function TableView({ rows }: { rows: Row[] }) {
   const store = useAppStore();
   const view = useApp((s) => s.view);
-  const entries = useMemo(() => layout(rows, { ...view, view: "table" }), [rows, view]);
+  const entries = useMemo(() => capEntries(layout(rows, { ...view, view: "table" })), [rows, view]);
   const compact = view.compact === "1";
 
   const sortable = (column: Column) => {
@@ -68,9 +70,18 @@ export function TableView({ rows }: { rows: Row[] }) {
           </tr>
         </thead>
         <tbody>
-          {entries.map((entry) => (
-            <TableRow key={entry.id} id={entry.id} depth={entry.depth} context={entry.context} compact={compact} />
-          ))}
+          {entries.flatMap((entry) => [
+            <TableRow key={entry.id} id={entry.id} depth={entry.depth} context={entry.context} compact={compact} />,
+            ...(entry.hidden
+              ? [
+                  <tr key={`cap:${entry.id}`} className="cap-row" data-cap-for={entry.id}>
+                    <td colSpan={COLUMNS.length + 1}>
+                      <CapControl id={entry.id} depth={entry.depth} hidden={entry.hidden} />
+                    </td>
+                  </tr>,
+                ]
+              : []),
+          ])}
         </tbody>
       </table>
     </div>

@@ -49,6 +49,16 @@ describe("the URL state", () => {
     expect(serializeState(state({ view: "table", compact: "1" }))).toBe("?view=table&compact=1");
   });
 
+  test("the focus root is written only for the views that draw a tree", () => {
+    const root = "1:devon/a";
+    expect(serializeState(state({ view: "stacked", root }))).toBe("?view=stacked&root=1%3Adevon%2Fa");
+    expect(serializeState(state({ view: "table", root }))).toBe("?view=table&root=1%3Adevon%2Fa");
+    expect(serializeState(state({ view: "table", mode: "flat", root }))).toBe("?view=table&mode=flat");
+    expect(serializeState(state({ view: "grouped", root }))).toBe("");
+    expect(parseState("?view=stacked&root=1%3Adevon%2Fa").root).toBe(root);
+    expect(parseState("?view=stacked").root).toBe("");
+  });
+
   test("ignores unknown sort columns and view names", () => {
     const parsed = parseState("?sort=evil&view=3d&dir=sideways&done=yes&group=x");
     expect(parsed).toEqual(DEFAULT_STATE);

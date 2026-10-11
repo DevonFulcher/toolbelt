@@ -3,6 +3,7 @@ import { useCounts, useRows } from "../store/selectors";
 import { useApp } from "../store/StoreContext";
 import { CardList } from "./CardList";
 import { FilterBar } from "./FilterBar";
+import { FocusBar } from "./FocusBar";
 import { LiveIndicator } from "./LiveIndicator";
 import { TableView } from "./TableView";
 import { TooltipProvider } from "./Tooltip";
@@ -38,6 +39,7 @@ function Content() {
   const error = useApp((s) => s.error);
   const repos = useApp((s) => s.repos);
   const view = useApp((s) => s.view.view);
+  const mode = useApp((s) => s.view.mode);
   const rows = useRows();
   const counts = useCounts(rows);
 
@@ -68,6 +70,8 @@ function Content() {
           ))}
       </div>
       <UntrackedCallout />
+      {/* The views that draw the stack as a tree can be focused on a branch. */}
+      {(view === "stacked" || (view === "table" && mode === "tree")) && <FocusBar rows={rows} />}
       {view === "table" ? <TableView rows={rows} /> : <CardList rows={rows} />}
       {counts.visible === 0 && counts.inRepo > 0 && (
         <div id="no-match" className="empty">

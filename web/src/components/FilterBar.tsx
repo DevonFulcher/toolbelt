@@ -149,6 +149,7 @@ export function FilterBar({ counts }: { counts: Counts }) {
             view: view.view,
             mode: view.mode,
             compact: view.compact,
+            root: view.root,
           })
         }
       >

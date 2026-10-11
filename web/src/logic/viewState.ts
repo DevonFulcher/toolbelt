@@ -1,6 +1,7 @@
 // The view state (view, filters, sort) and its URL query string. Same
 // parameters as the previous page: `view=table|stacked|grouped`, `mode=flat`,
-// `compact=1`, `done=1`, `sort`/`dir`, `q`, `repo` and the per-column
+// `compact=1`, `done=1`, `sort`/`dir`, `q`, `repo`, `root` (the branch id the
+// stacked view and the table's tree are focused on) and the per-column
 // filters. Only non-default values are written, so the default view is a
 // bare URL.
 import type { FilterKey } from "../api/generated";
@@ -55,6 +56,11 @@ export interface ViewState {
   done: "" | "1";
   /** "1" collapses the PR/CI/Review/Comments/Merge columns into one. */
   compact: "" | "1";
+  /**
+   * The branch id the stacked view and the table's tree are focused on (they
+   * show only its subtree); "" shows every stack from its root.
+   */
+  root: string;
 }
 
 export const DEFAULT_STATE: ViewState = {
@@ -73,6 +79,7 @@ export const DEFAULT_STATE: ViewState = {
   merge: "",
   done: "",
   compact: "",
+  root: "",
 };
 
 const isOneOf = <T extends string>(list: readonly T[], value: string | null): value is T =>
@@ -108,6 +115,7 @@ export function parseState(search: string): ViewState {
   for (const key of VALUE_FILTERS) state[key] = params.get(key) ?? "";
   if (params.get("done") === "1") state.done = "1";
   if (params.get("compact") === "1") state.compact = "1";
+  state.root = params.get("root") ?? "";
   return state;
 }
 
@@ -141,6 +149,10 @@ export function serializeState(state: ViewState): string {
   if (state.done) params.set("done", "1");
   // Table-only, like `mode`: a card view's URL does not carry it.
   if (state.view === "table" && state.compact) params.set("compact", "1");
+  // The views that draw a tree; the grouped view and the flat table ignore it.
+  if (state.root && (state.view === "stacked" || (state.view === "table" && state.mode === "tree"))) {
+    params.set("root", state.root);
+  }
   const text = params.toString();
   return text ? `?${text}` : "";
 }

@@ -47,7 +47,7 @@ main { padding: 16px 20px; display: grid; gap: 16px; grid-template-columns: minm
 table.stacks { border-collapse: separate; border-spacing: 0; width: 100%; min-width: 56rem; }
 .stacks th, .stacks td { padding: 3px 12px; text-align: left; white-space: nowrap;
                          vertical-align: middle; }
-.stacks thead th { position: sticky; top: 0; z-index: 1; background: var(--card);
+.stacks thead th { position: sticky; top: var(--focus-h, 0px); z-index: 1; background: var(--card);
                    border-bottom: 1px solid var(--line); font-size: 12px; font-weight: 600;
                    color: var(--muted); padding: 0; }
 .stacks thead th button { all: unset; box-sizing: border-box; display: block; width: 100%;
@@ -108,7 +108,7 @@ a.pill:hover { text-decoration: none; background: color-mix(in srgb, currentColo
 .cards-wrap { display: grid; gap: 8px; }
 .cards { display: grid; gap: 14px; }
 .cards-section { display: grid; gap: 8px; align-content: start; }
-.cards-group { position: sticky; top: 0; z-index: 3; margin: 0; padding: 4px 0;
+.cards-group { position: sticky; top: var(--focus-h, 0px); z-index: 3; margin: 0; padding: 4px 0;
                background: var(--bg); border-bottom: 1px solid var(--line); font-size: 13px; }
 .cards-group button { all: unset; box-sizing: border-box; cursor: pointer; display: flex;
                       flex-wrap: wrap; align-items: baseline; gap: 2px 10px; width: 100%; }
@@ -315,3 +315,32 @@ a.stack-link[data-gone]::after { content: " (not shown)"; font-size: 11px; font-
 .callout-repo { color: var(--muted); font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .empty { padding: 24px; text-align: center; color: var(--muted); }
 [hidden] { display: none !important; }
+
+/* Focus root: breadcrumbs, the cap's "continue from here" control. */
+.focus-bar { position: sticky; top: 0; z-index: 4; box-sizing: border-box;
+             height: var(--focus-h); display: flex; align-items: center; gap: 4px 14px;
+             padding: 0 10px; background: var(--card); border: 1px solid var(--line);
+             border-radius: 6px; font-size: 13px; overflow-x: auto; white-space: nowrap; }
+main:has(.focus-bar) { --focus-h: 2.6rem; }
+.focus-crumbs { display: flex; align-items: center; list-style: none; margin: 0; padding: 0; gap: 0; }
+.focus-crumbs li + li::before { content: "›"; color: var(--muted); padding: 0 6px; }
+.focus-repo { color: var(--muted); }
+.focus-current { font-weight: 600; }
+.focus-gap details { display: inline-block; position: relative; }
+.focus-gap summary { cursor: pointer; list-style: none; color: var(--accent); }
+.focus-gap summary::-webkit-details-marker { display: none; }
+.focus-gap ul { position: absolute; top: 1.6em; left: 0; z-index: 5; margin: 0; padding: 6px 10px;
+                list-style: none; background: var(--card); border: 1px solid var(--line);
+                border-radius: 6px; box-shadow: 0 4px 14px rgba(0, 0, 0, .25); }
+.focus-gap ul li::before { content: none; }
+.focus-size { color: var(--muted); font-size: 12px; }
+.focus-actions { margin-left: auto; display: inline-flex; gap: 6px; }
+.focus-actions button { font-size: 12px; padding: 1px 8px; }
+.cap { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; padding: 4px 12px; font-size: 13px;
+       border: 1px dashed var(--accent); border-radius: 6px; width: fit-content; }
+.cards-stacked .cap { margin-left: calc(var(--depth, 0) * var(--step)); }
+.stacks .cap { margin-left: calc(var(--depth, 0) * 1.25rem); }
+.cap-continue { color: var(--accent); font-weight: 600; }
+.cap-count { color: var(--muted); font-size: 12px; }
+.stacks .cap-row td { padding-top: 2px; padding-bottom: 6px; }
+.stack-open { font-size: 12px; color: var(--accent); }

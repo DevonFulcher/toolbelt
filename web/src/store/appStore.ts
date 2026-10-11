@@ -18,7 +18,7 @@ import type {
   UntrackedPrs,
 } from "../api/generated";
 import type { ConnectionState } from "../live/connection";
-import { DEFAULT_STATE, type ViewState } from "../logic/viewState";
+import { DEFAULT_STATE, type View, type ViewState } from "../logic/viewState";
 
 /** A branch without its live parts (those are patched separately). */
 export type StaticBranch = Omit<Branch, "status" | "task_live">;
@@ -81,6 +81,11 @@ export interface AppState {
   setConnection(state: ConnectionState): void;
   /** Replaces the view state (the URL follows). */
   setView(view: ViewState): void;
+  /**
+   * Focuses the stacked view and the table's tree on a branch ("" shows the
+   * whole stack), optionally switching to another view at the same time.
+   */
+  focusRoot(root: string, view?: View): void;
   patchCardUi(id: string, patch: CardUi): void;
   toggleLog(id: string): void;
   toggleSection(key: string): void;
@@ -149,13 +154,18 @@ export function createAppStore(init: StoreInit = {}): AppStore {
         const before = prev.branchesById[rest.id];
         statics.push(before && same(before, rest) ? before : rest);
       }
+      const branchesById = Object.fromEntries(statics.map((b) => [b.id, b]));
+      // A focus root that is not (or no longer) a branch is dropped.
+      const view =
+        prev.view.root && !(prev.view.root in branchesById) ? { ...prev.view, root: "" } : prev.view;
       set({
         ready: true,
         error: null,
+        view,
         repos: same(prev.repos, snapshot.repos) ? prev.repos : snapshot.repos,
         reposById: Object.fromEntries(snapshot.repos.map((repo) => [repo.id, repo])),
         branches: statics,
-        branchesById: Object.fromEntries(statics.map((b) => [b.id, b])),
+        branchesById,
         statuses: share(prev.statuses, statuses),
         tasks: share(prev.tasks, tasks),
         catalog: prev.catalog && same(prev.catalog, snapshot.catalog) ? prev.catalog : snapshot.catalog,
@@ -221,6 +231,11 @@ export function createAppStore(init: StoreInit = {}): AppStore {
     setView(view) {
       if (view.compact !== get().view.compact) preferences.saveCompact(view.compact);
       set({ view });
+    },
+
+    focusRoot(root, view) {
+      const current = get().view;
+      get().setView({ ...current, root, ...(view ? { view } : {}) });
     },
 
     patchCardUi(id, patch) {

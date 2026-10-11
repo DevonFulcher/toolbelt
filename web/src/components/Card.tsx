@@ -1,8 +1,9 @@
 import { memo, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { Catalog, LiveStatus, LoadedStatus, SlotDimensions } from "../api/generated";
 import type { RailSegment } from "../logic/layout";
+import { serializeState } from "../logic/viewState";
 import { LOADING } from "../store/selectors";
-import { useApp } from "../store/StoreContext";
+import { useApp, useAppStore } from "../store/StoreContext";
 import { Timeline } from "./Timeline";
 import { Age, CI_TONE, ExternalLink, PR_TONE, Pill, REVIEW_TONE, TaskValue, WHO_TEXT } from "./presentation";
 import { useNow } from "./useNow";
@@ -63,6 +64,11 @@ export interface CardProps {
   parentIn: string | null;
   /** The parent is not shown at all (filtered out, or collapsed away). */
   parentGone: boolean;
+  /**
+   * This card is the focus root and its parent is outside the view: the
+   * parent link re-roots there instead of scrolling.
+   */
+  parentOutside: boolean;
   onJump(target: string, from: string): void;
 }
 
@@ -87,7 +93,12 @@ const sameRails = (a: RailSegment[], b: RailSegment[]): boolean =>
 
 export const Card = memo(
   function Card(props: CardProps) {
-    const { id, depth, rails, moved, highlighted, parentIn, parentGone, onJump } = props;
+    const { id, depth, rails, moved, highlighted, parentIn, parentGone, parentOutside, onJump } = props;
+    const store = useAppStore();
+    // Grouped view only: the URL of this branch's stack in the stacked view.
+    const stackedHref = useApp((s) =>
+      s.view.view === "grouped" ? serializeState({ ...s.view, view: "stacked", root: id }) : null,
+    );
     const branch = useApp((s) => s.branchesById[id]);
     const repo = useApp((s) => (branch ? s.reposById[branch.repo_id] : undefined));
     const status = useApp((s) => s.statuses[id]) ?? LOADING;
@@ -160,10 +171,15 @@ export const Card = memo(
             <a
               className="branch stack-link"
               href={`#${branch.parent_id}`}
-              title={`stacked on ${branch.parent}`}
+              title={
+                parentOutside
+                  ? `stacked on ${branch.parent}, which is outside this view: focus there`
+                  : `stacked on ${branch.parent}`
+              }
               data-target={branch.parent_id}
               data-in={parentIn ?? undefined}
               data-gone={parentGone ? "1" : undefined}
+              data-outside={parentOutside ? "1" : undefined}
               onClick={(event) => {
                 event.preventDefault();
                 onJump(branch.parent_id as string, id);
@@ -179,6 +195,19 @@ export const Card = memo(
               ? `stack ${branch.stack_pos} of ${branch.stack_height}`
               : "single branch"}
           </span>{" "}
+          {stackedHref !== null && childNames.length > 0 && (
+            <a
+              className="stack-open"
+              href={stackedHref}
+              title="Open the Stacked view focused on this branch and what is stacked on it"
+              onClick={(event) => {
+                event.preventDefault();
+                store.getState().focusRoot(id, "stacked");
+              }}
+            >
+              open in stacked view →
+            </a>
+          )}{" "}
           <span
             className={`stack-chip${childNames.length ? "" : " stack-chip-muted"}`}
             title={childNames.length ? `stacked on it: ${childNames.join(", ")}` : "nothing stacked on it"}
@@ -198,6 +227,7 @@ export const Card = memo(
     a.highlighted === b.highlighted &&
     a.parentIn === b.parentIn &&
     a.parentGone === b.parentGone &&
+    a.parentOutside === b.parentOutside &&
     a.onJump === b.onJump &&
     sameRails(a.rails, b.rails),
 );

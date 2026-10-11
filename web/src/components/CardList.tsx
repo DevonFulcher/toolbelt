@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { knownRoot } from "../logic/focus";
 import { groupedLayout, railGuides, stackedLayout, type Section } from "../logic/layout";
 import type { Row } from "../logic/rows";
 import { useApp, useAppStore } from "../store/StoreContext";
 import { Card, Stub } from "./Card";
+import { CapControl } from "./CapControl";
 
 const NO_RAILS: never[] = [];
 
@@ -17,6 +19,8 @@ export function CardList({ rows }: { rows: Row[] }) {
   const view = useApp((s) => s.view);
   const collapsed = useApp((s) => s.collapsed);
   const stacked = view.view === "stacked";
+  // The branch the view is focused on (a root that is no branch is ignored).
+  const focusRoot = stacked ? knownRoot(rows, view.root) : "";
   const byId = useMemo(() => new Map(rows.map((row) => [row.id, row])), [rows]);
   const sections = useMemo(
     () => (stacked ? stackedLayout(rows, view) : groupedLayout(rows, view)),
@@ -72,6 +76,11 @@ export function CardList({ rows }: { rows: Row[] }) {
   }, [placement]);
   const onJump = useCallback(
     (target: string, from: string) => {
+      // The focus root's parent is not in the view: go there instead.
+      if (from === store.getState().view.root) {
+        store.getState().focusRoot(target);
+        return;
+      }
       const { placed, stubs } = placementRef.current;
       const own = placed.get(target);
       const fromSection = placed.get(from);
@@ -144,18 +153,26 @@ export function CardList({ rows }: { rows: Row[] }) {
                     const parentStub = parentId
                       ? placement.stubs.has(`${section.key}|${parentId}`)
                       : false;
+                    const outside = Boolean(parentId) && entry.id === focusRoot;
                     return (
-                      <Card
-                        key={entry.id}
-                        id={entry.id}
-                        depth={depth}
-                        rails={rails}
-                        moved={moved.has(entry.id)}
-                        highlighted={jump?.id === entry.id}
-                        parentIn={parentSection && parentSection.key !== section.key ? parentSection.label : null}
-                        parentGone={Boolean(parentId) && !parentSection && !parentStub}
-                        onJump={onJump}
-                      />
+                      <Fragment key={entry.id}>
+                        <Card
+                          id={entry.id}
+                          depth={depth}
+                          rails={rails}
+                          moved={moved.has(entry.id)}
+                          highlighted={jump?.id === entry.id}
+                          parentIn={
+                            parentSection && parentSection.key !== section.key ? parentSection.label : null
+                          }
+                          parentGone={Boolean(parentId) && !parentSection && !parentStub && !outside}
+                          parentOutside={outside}
+                          onJump={onJump}
+                        />
+                        {entry.hidden && (
+                          <CapControl id={entry.id} depth={depth} hidden={entry.hidden} />
+                        )}
+                      </Fragment>
                     );
                   })}
                 </div>

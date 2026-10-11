@@ -9,6 +9,7 @@
 //            CI / Waiting on others / Done), flat within a section but
 //            ordered by stack so related branches are adjacent; a finished
 //            parent is a slim stub above its children there too.
+import { capEntries, focusedRows } from "./focus";
 import type { Row } from "./rows";
 import { type Column, type ViewState, VALUE_FILTERS } from "./viewState";
 
@@ -17,6 +18,11 @@ export interface Entry {
   depth: number;
   /** Kept only as context for the stack below (a stub, not a card). */
   context: boolean;
+  /**
+   * Set by `capEntries` on an entry at the depth cap with branches below it
+   * that are not shown: how many more levels, and how many branches.
+   */
+  hidden?: { levels: number; branches: number };
 }
 
 export interface Section {
@@ -105,16 +111,19 @@ export function matches(row: Row, state: ViewState): boolean {
  * applied among siblings; each repo's rows stay together, and the repos
  * themselves are in server (name) order, or by the Repo column when it is
  * the sort. Rows whose parent is missing become roots; cycles do not hang.
+ * With a focus root (`state.root`, when it names a row) only its subtree is
+ * laid out, so depth counts from it; the flat table ignores it.
  */
-export function layout(rows: Row[], state: ViewState): Entry[] {
+export function layout(allRows: Row[], state: ViewState): Entry[] {
   const compare = rowComparator(state);
   if (state.view === "table" && state.mode === "flat") {
-    return rows
+    return allRows
       .filter((row) => matches(row, state))
       .sort(compare)
       .map((row) => ({ id: row.id, depth: 0, context: false }));
   }
 
+  const rows = focusedRows(allRows, state.root);
   const byId = new Map(rows.map((row) => [row.id, row]));
   const matched = new Set<string>();
   const keep = new Set<string>();
@@ -209,7 +218,8 @@ export const NEXT_SECTIONS = [
 export function groupedLayout(rows: Row[], state: ViewState): Section[] {
   const byId = new Map(rows.map((row) => [row.id, row]));
   const contextIds = new Set<string>();
-  const entries = layout(rows, { ...state, view: "stacked" });
+  // Flat sections: neither the focus root nor the depth cap applies.
+  const entries = layout(rows, { ...state, view: "stacked", root: "" });
   for (const entry of entries) if (entry.context) contextIds.add(entry.id);
 
   const known = new Set<string>(NEXT_SECTIONS.map((section) => section.key));
@@ -247,12 +257,13 @@ export function groupedLayout(rows: Row[], state: ViewState): Section[] {
 
 /**
  * The stacked view: one section per repo (in the tree layout's order), with
- * the stack's finished/filtered-out ancestors as context entries.
+ * the stack's finished/filtered-out ancestors as context entries. It shows
+ * the focus root's subtree (when set), down to the depth cap.
  */
 export function stackedLayout(rows: Row[], state: ViewState): Section[] {
   const byId = new Map(rows.map((row) => [row.id, row]));
   const sections: Section[] = [];
-  for (const entry of layout(rows, { ...state, view: "stacked" })) {
+  for (const entry of capEntries(layout(rows, { ...state, view: "stacked" }))) {
     const row = byId.get(entry.id);
     if (!row) continue;
     let section = sections[sections.length - 1];

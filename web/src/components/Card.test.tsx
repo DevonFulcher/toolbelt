@@ -126,7 +126,7 @@ describe("a card's labelled slots", () => {
     expect(a.task).toEqual(["Task", "ok", "ABC-1"]);
     expect(a.session[1]).toBe("ok");
     expect(a.in_draft[2]).toBe("5d");
-    expect(a.stack[2]).toBe("stack root stack 1 of 2 1 child");
+    expect(a.stack[2]).toBe("stack root stack 1 of 2 open in stacked view → 1 child");
   });
 
   test("the task age counts from when the task started, and says so when unknown", () => {

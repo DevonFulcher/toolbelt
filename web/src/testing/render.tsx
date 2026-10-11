@@ -7,19 +7,50 @@ import { StoreProvider } from "../store/StoreContext";
 import { syncUrl, type UrlTarget } from "../store/urlSync";
 import { NOW } from "./fixtures";
 
-/** A stand-in for `window` that records the address bar. */
-export function fakeUrl(search = ""): UrlTarget & { writes: string[] } {
+/**
+ * A stand-in for `window` that records the address bar: `writes` are the
+ * replaced/pushed URLs, `entries` the session history (`position` is the
+ * current one), and `back()` / `forward()` step it and fire `popstate`.
+ */
+export function fakeUrl(search = "") {
+  const entries = [search];
+  const listeners = new Set<() => void>();
   const target = {
     location: { pathname: "/", search },
     writes: [] as string[],
+    pushes: [] as string[],
+    entries,
+    position: 0,
     history: {
       replaceState(_data: unknown, _unused: string, url: string) {
         target.writes.push(url);
         target.location.search = url.replace(/^[^?]*/, "");
+        entries[target.position] = target.location.search;
+      },
+      pushState(_data: unknown, _unused: string, url: string) {
+        target.pushes.push(url);
+        target.location.search = url.replace(/^[^?]*/, "");
+        entries.splice(target.position + 1, entries.length, target.location.search);
+        target.position += 1;
       },
     },
+    addEventListener(_type: "popstate", listener: () => void) {
+      listeners.add(listener);
+    },
+    removeEventListener(_type: "popstate", listener: () => void) {
+      listeners.delete(listener);
+    },
+    go(delta: number) {
+      const next = target.position + delta;
+      if (next < 0 || next >= entries.length) return;
+      target.position = next;
+      target.location.search = entries[next];
+      for (const listener of listeners) listener();
+    },
+    back: () => target.go(-1),
+    forward: () => target.go(1),
   };
-  return target;
+  return target satisfies UrlTarget & Record<string, unknown>;
 }
 
 export interface Rendered {
