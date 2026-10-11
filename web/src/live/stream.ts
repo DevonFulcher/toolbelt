@@ -8,6 +8,7 @@
 //   task       a branch's task title / status
 //   structure  the stack DB changed: re-fetch the snapshot
 //   refreshed  a polling pass finished ("updated Ns ago")
+//   untracked  the open PRs toolbelt does not track changed
 //
 // The stream is only open while the page is being looked at (see
 // connection.ts). Events are handled one at a time, so a status that arrives
@@ -30,7 +31,7 @@ export interface EventSourceLike {
   close(): void;
 }
 
-const EVENT_TYPES = ["hello", "status", "task", "structure", "refreshed"] as const;
+const EVENT_TYPES = ["hello", "status", "task", "structure", "refreshed", "untracked"] as const;
 const CLOSED = 2; // EventSource.CLOSED
 
 export interface LiveDeps {
@@ -83,6 +84,9 @@ export function startLiveUpdates(deps: LiveDeps): LiveUpdates {
         return undefined;
       case "refreshed":
         state.refreshed(event.v);
+        return undefined;
+      case "untracked":
+        state.untrackedChanged(event.untracked, event.v);
         return undefined;
       case "structure":
         return loadSnapshot();

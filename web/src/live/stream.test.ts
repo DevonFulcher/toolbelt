@@ -174,6 +174,17 @@ describe("live updates", () => {
     expect(store.getState().tasks["1:a"]).toEqual({ state: "info", title: "Fix it", status: "Open" });
   });
 
+  test("an untracked event replaces the list of untracked PRs", async () => {
+    const { store, current } = setup();
+    await settle();
+    current().emit({ type: "hello", v: 0, age: null });
+
+    current().emit({ type: "untracked", v: 1, untracked: { state: "loaded", prs: [], truncated: false, hidden: 0 } });
+    await settle();
+
+    expect(store.getState().untracked).toEqual({ state: "loaded", prs: [], truncated: false, hidden: 0 });
+  });
+
   test("a stream that died is reopened after a delay while the page is visible", async () => {
     const { env, store, advance, current } = setup();
     await settle();

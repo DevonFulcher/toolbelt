@@ -421,6 +421,44 @@ class FilterSpec(Model):
     options: list[FilterOption]
 
 
+class UntrackedPr(Model):
+    """An open PR of the user's that is not a tracked branch: shown as a
+    link only (``repo`` is ``owner/name``)."""
+
+    repo: str
+    number: int
+    title: str
+    url: str
+    created_at: str
+    is_draft: bool
+
+
+class UntrackedLoading(Model):
+    state: Literal["loading"]
+
+
+class UntrackedLoaded(Model):
+    state: Literal["loaded"]
+    prs: list[UntrackedPr]
+    #: GitHub has more open PRs of the user's than the 100 it was asked for,
+    #: so some may be missing.
+    truncated: bool
+    #: Open PRs GitHub would not show (an organization the token is not
+    #: authorized for): they cannot be listed.
+    hidden: int
+
+
+class UntrackedFailed(Model):
+    state: Literal["failed"]
+    error: str
+
+
+type UntrackedPrs = Annotated[
+    UntrackedLoading | UntrackedLoaded | UntrackedFailed,
+    Field(discriminator="state"),
+]
+
+
 class Snapshot(Model):
     #: The event version this was read at: events with a higher ``v``
     #: happened after it.
@@ -432,6 +470,8 @@ class Snapshot(Model):
     branches: list[Branch]
     catalog: Catalog
     filters: list[FilterSpec]
+    #: Open PRs of the user's that are not tracked branches.
+    untracked: UntrackedPrs
 
 
 # ---- server-sent events ---------------------------------------------------------
@@ -477,8 +517,21 @@ class RefreshedEvent(Model):
     v: int
 
 
+class UntrackedEvent(Model):
+    """The list of open PRs that toolbelt does not track changed."""
+
+    type: Literal["untracked"]
+    v: int
+    untracked: UntrackedPrs
+
+
 type ServerEvent = Annotated[
-    HelloEvent | StatusEvent | TaskEvent | StructureEvent | RefreshedEvent,
+    HelloEvent
+    | StatusEvent
+    | TaskEvent
+    | StructureEvent
+    | RefreshedEvent
+    | UntrackedEvent,
     Field(discriminator="type"),
 ]
 

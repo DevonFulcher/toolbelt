@@ -267,6 +267,7 @@ def build_snapshot(
     tracker: TaskTracker | None,
     refresher: StatusRefresher,
     task_feed: TaskFeed,
+    untracked: api.UntrackedPrs,
     now: datetime,
     version: int,
 ) -> api.Snapshot:
@@ -346,6 +347,7 @@ def build_snapshot(
             branches=branches,
             catalog=api.build_catalog(),
             filters=filters(),
+            untracked=untracked,
         )
     finally:
         store.close()

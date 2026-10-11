@@ -124,6 +124,8 @@ class RepoRecord:
     name: str
     path: Path
     git_common_dir: Path
+    #: ``origin``'s URL when the repo was registered.
+    remote_url: str | None = None
 
 
 def state_dir() -> Path:
@@ -356,9 +358,16 @@ class StackStore:
 
     def repos(self) -> list[RepoRecord]:
         rows = self._conn.execute(
-            "SELECT id, name, path, git_common_dir FROM repos ORDER BY name, path"
+            "SELECT id, name, path, git_common_dir, remote_url FROM repos "
+            "ORDER BY name, path"
         )
         return [
-            RepoRecord(id=r[0], name=r[1], path=Path(r[2]), git_common_dir=Path(r[3]))
+            RepoRecord(
+                id=r[0],
+                name=r[1],
+                path=Path(r[2]),
+                git_common_dir=Path(r[3]),
+                remote_url=r[4],
+            )
             for r in rows
         ]

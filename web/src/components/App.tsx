@@ -6,6 +6,7 @@ import { FilterBar } from "./FilterBar";
 import { LiveIndicator } from "./LiveIndicator";
 import { TableView } from "./TableView";
 import { TooltipProvider } from "./Tooltip";
+import { UntrackedCallout } from "./UntrackedCallout";
 import { NowContext } from "./useNow";
 
 /** How often ages and timeline tracks are re-drawn between server updates. */
@@ -66,6 +67,7 @@ function Content() {
             </div>
           ))}
       </div>
+      <UntrackedCallout />
       {view === "table" ? <TableView rows={rows} /> : <CardList rows={rows} />}
       {counts.visible === 0 && counts.inRepo > 0 && (
         <div id="no-match" className="empty">

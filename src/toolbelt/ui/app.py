@@ -17,11 +17,14 @@ The server is a JSON API plus the built web client (``web/``, served from
   - ``task``: a branch's task title/status was (re)fetched;
   - ``structure``: the stack DB was written (new branch, re-parenting, new
     links), so the page re-fetches the snapshot;
-  - ``refreshed``: a polling pass finished (drives "updated Ns ago").
+  - ``refreshed``: a polling pass finished (drives "updated Ns ago");
+  - ``untracked``: the list of the user's open PRs that are not tracked
+    branches changed (see ``untracked_prs.py``).
 
 A background ``StatusRefresher`` (``live_status.py``) keeps the status cache
 current by polling GitHub (one GraphQL call per branch, see ``pr_fetch.py``)
-while any browser is connected; a ``TaskFeed`` does the same for tasks.
+while any browser is connected; a ``TaskFeed`` does the same for tasks and
+an ``UntrackedPrFeed`` (slowly) for the PRs toolbelt does not track.
 
 The status lookup (``fetch``), the task tracker and the clocks are
 ``create_app`` arguments, so tests can inject them.
@@ -68,6 +71,17 @@ from toolbelt.ui.snapshot import (
 )
 from toolbelt.ui.task_cache import TaskInfoCache
 from toolbelt.ui.task_feed import LinkedTask, TaskFeed
+from toolbelt.ui.untracked_prs import (
+    DEFAULT_INTERVAL_SECONDS as DEFAULT_UNTRACKED_INTERVAL_SECONDS,
+)
+from toolbelt.ui.untracked_prs import (
+    RemoteLookup,
+    SearchRunner,
+    TrackedRepo,
+    UntrackedPrFeed,
+    gh_search,
+    origin_remote,
+)
 
 _HERE = Path(__file__).parent
 #: The web client's build output (``pnpm build`` in ``web/``).
@@ -115,6 +129,23 @@ def _tracked_branches() -> list[TrackedBranch]:
         store.close()
 
 
+def _tracked_repos() -> list[TrackedRepo]:
+    """Every registered repo with its tracked branches (what the callout of
+    untracked PRs excludes)."""
+    store = StackStore(default_db_path())
+    try:
+        return [
+            TrackedRepo(
+                path=repo.path,
+                remote_url=repo.remote_url,
+                branches=frozenset(store.all_parents(repo.id)),
+            )
+            for repo in store.repos()
+        ]
+    finally:
+        store.close()
+
+
 def _linked_tasks(tracker: TaskTracker | None) -> list[LinkedTask]:
     """Every tracked branch's stored task ref that the configured tracker
     owns: the only refs that ever reach a tracker."""
@@ -156,6 +187,9 @@ def create_app(
     db_version: Callable[[], int] | None = None,
     keepalive_seconds: float = _KEEPALIVE_SECONDS,
     client_dist: Path = CLIENT_DIST,
+    search_open_prs: SearchRunner = gh_search,
+    remote_of: RemoteLookup = origin_remote,
+    untracked_interval: float = DEFAULT_UNTRACKED_INTERVAL_SECONDS,
 ) -> FastAPI:
     """``cwd_root``: the repo `tt ui` was launched from; its checked-out
     branch is marked current, as `tt g tree` does. ``fetch`` looks up a
@@ -168,7 +202,9 @@ def create_app(
     pollers start with the app's lifespan, so an app that is not served (a
     bare ``TestClient``) never polls; tests drive ``app.state.refresher``,
     ``app.state.task_feed`` and ``app.state.structure_watcher`` directly.
-    ``client_dist`` is the built web client."""
+    ``client_dist`` is the built web client. ``search_open_prs`` lists the
+    user's open PRs (one GitHub call per ``untracked_interval``) and
+    ``remote_of`` looks up a checkout's origin: see ``untracked_prs.py``."""
     task_cache = TaskInfoCache(ttl_seconds=task_ttl_seconds, clock=clock)
     hub = EventHub(clock=clock, grace=grace_seconds)
 
@@ -208,6 +244,16 @@ def create_app(
         tick=tick,
     )
 
+    untracked_feed = UntrackedPrFeed(
+        repos=_tracked_repos,
+        search=search_open_prs,
+        hub=hub,
+        remote_of=remote_of,
+        clock=clock,
+        interval=untracked_interval,
+        tick=tick,
+    )
+
     # The default change signal needs a connection held for as long as the app
     # serves (``data_version`` is per connection), opened on the event loop's
     # thread, which is where the watcher reads it.
@@ -228,6 +274,7 @@ def create_app(
         tasks = [
             asyncio.create_task(refresher.run()),
             asyncio.create_task(task_feed.run()),
+            asyncio.create_task(untracked_feed.run()),
             asyncio.create_task(watcher.run()),
         ]
         try:
@@ -250,6 +297,7 @@ def create_app(
     app.state.hub = hub
     app.state.refresher = refresher
     app.state.task_feed = task_feed
+    app.state.untracked_feed = untracked_feed
     app.state.structure_watcher = watcher
 
     @app.get("/assets/{path:path}", include_in_schema=False, response_model=None)
@@ -285,6 +333,7 @@ def create_app(
             tracker=tracker(),
             refresher=refresher,
             task_feed=task_feed,
+            untracked=untracked_feed.get(),
             now=wall_clock(),
             version=version,
         )

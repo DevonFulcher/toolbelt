@@ -15,6 +15,7 @@ import type {
   Repo,
   Snapshot,
   TaskLive,
+  UntrackedPrs,
 } from "../api/generated";
 import type { ConnectionState } from "../live/connection";
 import { DEFAULT_STATE, type ViewState } from "../logic/viewState";
@@ -52,6 +53,8 @@ export interface AppState {
   tasks: Record<string, TaskLive>;
   catalog: Catalog | null;
   filters: FilterSpec[];
+  /** Open PRs of the user's that are not tracked branches (links only). */
+  untracked: UntrackedPrs;
   /** The latest event version seen (the snapshot's, then each event's). */
   version: number | null;
   /** `Date.now()` of the last refresh we know about. */
@@ -69,6 +72,7 @@ export interface AppState {
   statusChanged(branchId: string, status: LiveStatus, v: number): void;
   taskChanged(branchId: string, task: TaskLive, v: number): void;
   refreshed(v: number): void;
+  untrackedChanged(untracked: UntrackedPrs, v: number): void;
   hello(v: number, ageSeconds: number | null): void;
   setConnection(state: ConnectionState): void;
   /** Replaces the view state (the URL follows). */
@@ -118,6 +122,7 @@ export function createAppStore(init: StoreInit = {}): AppStore {
     tasks: {},
     catalog: null,
     filters: [],
+    untracked: { state: "loading" },
     version: null,
     updatedAt: null,
     connection: "connecting",
@@ -147,6 +152,7 @@ export function createAppStore(init: StoreInit = {}): AppStore {
         tasks: share(prev.tasks, tasks),
         catalog: prev.catalog && same(prev.catalog, snapshot.catalog) ? prev.catalog : snapshot.catalog,
         filters: same(prev.filters, snapshot.filters) ? prev.filters : snapshot.filters,
+        untracked: same(prev.untracked, snapshot.untracked) ? prev.untracked : snapshot.untracked,
         // A restarted server counts from 0 again: take the snapshot's.
         version: snapshot.version,
         updatedAt: snapshot.age === null ? prev.updatedAt : now - snapshot.age * 1000,
@@ -184,6 +190,12 @@ export function createAppStore(init: StoreInit = {}): AppStore {
       const state = get();
       if (state.version !== null && v <= state.version) return;
       set({ version: v, updatedAt: clock() });
+    },
+
+    untrackedChanged(untracked, v) {
+      const state = get();
+      if (state.version !== null && v <= state.version) return;
+      set({ version: v, untracked });
     },
 
     hello(v, ageSeconds) {

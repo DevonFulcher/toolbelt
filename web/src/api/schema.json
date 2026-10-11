@@ -1518,7 +1518,8 @@
           "refreshed": "#/$defs/RefreshedEvent",
           "status": "#/$defs/StatusEvent",
           "structure": "#/$defs/StructureEvent",
-          "task": "#/$defs/TaskEvent"
+          "task": "#/$defs/TaskEvent",
+          "untracked": "#/$defs/UntrackedEvent"
         },
         "propertyName": "type"
       },
@@ -1537,6 +1538,9 @@
         },
         {
           "$ref": "#/$defs/RefreshedEvent"
+        },
+        {
+          "$ref": "#/$defs/UntrackedEvent"
         }
       ]
     },
@@ -1770,6 +1774,9 @@
           },
           "type": "array"
         },
+        "untracked": {
+          "$ref": "#/$defs/UntrackedPrs"
+        },
         "version": {
           "type": "integer"
         }
@@ -1780,7 +1787,8 @@
         "repos",
         "branches",
         "catalog",
-        "filters"
+        "filters",
+        "untracked"
       ],
       "title": "Snapshot",
       "type": "object"
@@ -1997,6 +2005,145 @@
         "accent"
       ],
       "type": "string"
+    },
+    "UntrackedEvent": {
+      "additionalProperties": false,
+      "description": "The list of open PRs that toolbelt does not track changed.",
+      "properties": {
+        "type": {
+          "const": "untracked",
+          "type": "string"
+        },
+        "untracked": {
+          "$ref": "#/$defs/UntrackedPrs"
+        },
+        "v": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "v",
+        "untracked"
+      ],
+      "title": "UntrackedEvent",
+      "type": "object"
+    },
+    "UntrackedFailed": {
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "type": "string"
+        },
+        "state": {
+          "const": "failed",
+          "type": "string"
+        }
+      },
+      "required": [
+        "state",
+        "error"
+      ],
+      "title": "UntrackedFailed",
+      "type": "object"
+    },
+    "UntrackedLoaded": {
+      "additionalProperties": false,
+      "properties": {
+        "hidden": {
+          "type": "integer"
+        },
+        "prs": {
+          "items": {
+            "$ref": "#/$defs/UntrackedPr"
+          },
+          "type": "array"
+        },
+        "state": {
+          "const": "loaded",
+          "type": "string"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "state",
+        "prs",
+        "truncated",
+        "hidden"
+      ],
+      "title": "UntrackedLoaded",
+      "type": "object"
+    },
+    "UntrackedLoading": {
+      "additionalProperties": false,
+      "properties": {
+        "state": {
+          "const": "loading",
+          "type": "string"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "title": "UntrackedLoading",
+      "type": "object"
+    },
+    "UntrackedPr": {
+      "additionalProperties": false,
+      "description": "An open PR of the user's that is not a tracked branch: shown as a\nlink only (``repo`` is ``owner/name``).",
+      "properties": {
+        "created_at": {
+          "type": "string"
+        },
+        "is_draft": {
+          "type": "boolean"
+        },
+        "number": {
+          "type": "integer"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo",
+        "number",
+        "title",
+        "url",
+        "created_at",
+        "is_draft"
+      ],
+      "title": "UntrackedPr",
+      "type": "object"
+    },
+    "UntrackedPrs": {
+      "discriminator": {
+        "mapping": {
+          "failed": "#/$defs/UntrackedFailed",
+          "loaded": "#/$defs/UntrackedLoaded",
+          "loading": "#/$defs/UntrackedLoading"
+        },
+        "propertyName": "state"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/UntrackedLoading"
+        },
+        {
+          "$ref": "#/$defs/UntrackedLoaded"
+        },
+        {
+          "$ref": "#/$defs/UntrackedFailed"
+        }
+      ]
     },
     "Who": {
       "enum": [
