@@ -486,6 +486,7 @@ SLOT_STATES: dict[str, str | None] = {
     "pr_age": "pr",
     "timeline": "pr",
     # Not PR states: where the branch is and what it is linked to.
+    "repo": None,
     "branch": None,
     "task": None,
     "session": None,

@@ -364,6 +364,7 @@ export interface SlotDimensions {
   next: CatalogDimension | null;
   pr: CatalogDimension | null;
   pr_age: CatalogDimension | null;
+  repo: CatalogDimension | null;
   review: CatalogDimension | null;
   review_requested: CatalogDimension | null;
   reviewers: CatalogDimension | null;

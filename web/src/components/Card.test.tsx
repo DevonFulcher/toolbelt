@@ -20,7 +20,8 @@ vi.mock("./presentation", async (original) => {
 });
 
 const SLOT_LABELS: Record<string, string> = {
-  branch: "Repo / branch",
+  repo: "Repo",
+  branch: "Branch",
   next: "Next",
   pr: "PR",
   ci: "CI",
@@ -221,7 +222,7 @@ describe("a card's labelled slots", () => {
 
     expect(labels(found)).toEqual(SLOT_LABELS);
     for (const key of Object.keys(SLOT_LABELS)) {
-      if (["branch", "task", "session", "stack", "task_age"].includes(key)) continue;
+      if (["repo", "branch", "task", "session", "stack", "task_age"].includes(key)) continue;
       expect(found[key].slice(1), key).toEqual(["na", "loading…"]);
     }
   });

@@ -501,7 +501,7 @@ describe("catalog exhaustiveness: the renderer draws whatever the catalog says",
   test("every card slot has a dimension mapping in the catalog", () => {
     // A Record over the card's slot keys: the same list the Card renders.
     const slots = [
-      "branch", "next", "pr", "ci", "review", "comments", "merge", "task", "session",
+      "repo", "branch", "next", "pr", "ci", "review", "comments", "merge", "task", "session",
       "stack", "task_age", "pr_age", "in_draft", "review_requested", "ci_failures", "reviewers", "title", "timeline",
     ];
     expect(Object.keys(catalog.slots).sort()).toEqual([...slots].sort());

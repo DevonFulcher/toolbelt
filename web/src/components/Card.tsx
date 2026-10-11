@@ -122,10 +122,12 @@ export const Card = memo(
         style={{ "--depth": depth } as CSSProperties}
       >
         <Rails rails={rails} />
-        <Slot id="branch" label="Repo / branch">
+        <Slot id="repo" label="Repo">
           <span className="repo-chip" title={repo.path}>
             {repo.name}
           </span>
+        </Slot>
+        <Slot id="branch" label="Branch">
           <span className={`branch${branch.current ? " current" : ""}`}>{branch.name}</span>
         </Slot>
         <Slot

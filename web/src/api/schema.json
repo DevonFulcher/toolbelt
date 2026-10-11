@@ -1663,6 +1663,16 @@
             }
           ]
         },
+        "repo": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogDimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "review": {
           "anyOf": [
             {
@@ -1769,6 +1779,7 @@
         "task_age",
         "pr_age",
         "timeline",
+        "repo",
         "branch",
         "task",
         "session",
