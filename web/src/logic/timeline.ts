@@ -123,6 +123,8 @@ const clamp01 = (value: number): number => Math.min(1, Math.max(0, value));
 interface TimedEvent extends TimelineEvent {
   ms: number;
   seq: number;
+  /** When the commit's checks completed, ms (null: not known). */
+  ciDone: number | null;
 }
 
 /** The phases of a PR's life (the working phase is drawn before it). */
@@ -148,11 +150,40 @@ export interface PhaseSpan {
  *   merge/close/now, a later "changes requested" or dismissal by that
  *   reviewer, or, when the PR is open and not approved now (so the approval
  *   went stale), the first push after it.
- * - ci_failing: from a commit whose CI failed until the next commit or force
- *   push (which supersedes it), or the end of the PR.
+ * - ci_running ("Waiting on CI"): from a push until that commit's checks
+ *   completed, whatever the outcome; until the next push (or the end) when
+ *   they have not and the commit's rollup is pending.
+ * - ci_failing: from the completion of a failing commit's checks until the
+ *   next commit or force push (which supersedes it), or the end of the PR.
+ *   A failed commit with no known completion time fails from its push (a
+ *   fallback: GitHub gave no suite times).
+ *
+ * Mirrors `replay` / `commit_ci_phases` in the server (`aggregate.py`,
+ * `pr_activity.py`); `phaseVectors.json` is asserted by both.
  */
+export function commitCiPhases(
+  result: string,
+  push: number,
+  done: number | null,
+): ("running" | "failing")[] {
+  if (result === "") return [];
+  if (done !== null && done > push) return result === "failed" ? ["running", "failing"] : ["running"];
+  if (result === "failed") return ["failing"];
+  if (result === "pending" && done === null) return ["running"];
+  return [];
+}
+
 export function phaseSpans(
-  events: { kind: ActivityKind; actor: string; subject: string; detail: string; ci: string; ms: number }[],
+  events: {
+    kind: ActivityKind;
+    actor: string;
+    subject: string;
+    detail: string;
+    ci: string;
+    ms: number;
+    /** When the commit's checks completed (ms), if known. */
+    ciDone?: number | null;
+  }[],
   track: Pick<Track, "state" | "draft" | "review">,
   start: number,
   end: number,
@@ -166,10 +197,16 @@ export function phaseSpans(
   const pending = new Set<string>();
   const approvers = new Set<string>();
   let failing = false;
+  let running = false;
+  // Whether the head commit's checks fail once they complete, and which
+  // event (by index) is the head.
+  let failsWhenDone = false;
+  let head = -1;
   const open: Record<PrPhaseKind, number | null> = {
     draft: draft ? start : null,
     waiting: null,
     approved: null,
+    ci_running: null,
     ci_failing: null,
   };
   const spans: PhaseSpan[] = [];
@@ -183,7 +220,17 @@ export function phaseSpans(
       open[kind] = null;
     }
   };
-  for (const event of events) {
+  // Each commit's checks completing is a step of its own.
+  type Step = Omit<(typeof events)[number], "kind"> & { kind: ActivityKind | "ci_done"; id: number };
+  const steps: Step[] = events.map((event, id) => ({ ...event, id }));
+  events.forEach((event, id) => {
+    const done = event.ciDone ?? null;
+    if (event.kind === "commit" && done !== null && event.ms < done && done <= end) {
+      steps.push({ ...event, kind: "ci_done", ms: done, id });
+    }
+  });
+  steps.sort((a, b) => a.ms - b.ms);
+  for (const event of steps) {
     const who = event.subject || event.actor;
     if (event.kind === "ready_for_review") draft = false;
     else if (event.kind === "converted_to_draft") draft = true;
@@ -197,11 +244,20 @@ export function phaseSpans(
       }
     } else if (event.kind === "commit" || event.kind === "force_push") {
       if (staleOnPush) approvers.clear();
-      failing = event.kind === "commit" && event.ci === "failed";
+      const phases = event.kind === "commit" ? commitCiPhases(event.ci, event.ms, event.ciDone ?? null) : [];
+      running = phases[0] === "running";
+      failing = phases[0] === "failing";
+      failsWhenDone = phases[1] === "failing";
+      head = event.kind === "commit" ? event.id : -1;
+    } else if (event.kind === "ci_done") {
+      if (event.id !== head) continue;
+      running = false;
+      failing = failsWhenDone;
     } else continue;
     set("draft", draft, event.ms);
     set("waiting", pending.size > 0 && !draft, event.ms);
     set("approved", approvers.size > 0, event.ms);
+    set("ci_running", running, event.ms);
     set("ci_failing", failing, event.ms);
   }
   for (const kind of Object.keys(open) as PrPhaseKind[]) {
@@ -381,7 +437,12 @@ export function trackLayout(track: Track, options: LayoutOptions): TrackLayout {
   // When the PR was opened; none for a branch that has no PR yet.
   const prStart = track.created === null ? null : Date.parse(track.created);
   const events: TimedEvent[] = track.events
-    .map((event, seq) => ({ ...event, ms: Date.parse(event.t), seq }))
+    .map((event, seq) => ({
+      ...event,
+      ms: Date.parse(event.t),
+      seq,
+      ciDone: event.ci_done ? Date.parse(event.ci_done) : null,
+    }))
     .sort((a, b) => a.ms - b.ms || a.seq - b.seq);
   const done = track.state === "merged" || track.state === "closed";
   let endMs = track.ended ? Date.parse(track.ended) : null;

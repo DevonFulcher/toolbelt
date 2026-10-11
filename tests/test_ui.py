@@ -604,6 +604,7 @@ class TestPrDetail:
             "detail": "requested review from sam",
             "ci": "",
             "subject": "sam",
+            "ci_done": None,
         }
 
     def test_a_finished_pr_has_a_fixed_age_that_no_longer_ticks(self):

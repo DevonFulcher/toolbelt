@@ -76,7 +76,7 @@ export type EventKind =
   | "merged"
   | "closed"
   | "reopened";
-export type PhaseKind = "working" | "draft" | "waiting" | "ci_failing" | "approved";
+export type PhaseKind = "working" | "draft" | "waiting" | "ci_running" | "ci_failing" | "approved";
 export type ChipDimension = "pr" | "ci" | "review" | "comments" | "merge" | "next";
 export type FilterKey = "next" | "pr" | "ci" | "review" | "comments" | "merge";
 
@@ -226,6 +226,7 @@ export interface Age {
 export interface TimelineEvent {
   actor: string;
   ci: CiResult;
+  ci_done: string | null;
   detail: string;
   kind: ActivityKind;
   subject: string;
@@ -417,6 +418,7 @@ export interface NotRepresented {
 export interface PhaseSpans {
   approved: Span;
   ci_failing: Span;
+  ci_running: Span;
   draft: Span;
   waiting: Span;
   working: Span;

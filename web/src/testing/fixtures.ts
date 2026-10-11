@@ -23,7 +23,7 @@ export const iso = (ms: number): string => new Date(ms).toISOString();
 export const ago = (ms: number): string => iso(NOW - ms);
 
 export function event(kind: TimelineEvent["kind"], agoMs: number, extra: Partial<TimelineEvent> = {}): TimelineEvent {
-  return { t: ago(agoMs), kind, actor: "devon", detail: "", ci: "", subject: "", ...extra };
+  return { t: ago(agoMs), kind, actor: "devon", detail: "", ci: "", subject: "", ci_done: null, ...extra };
 }
 
 /** The "now" chips the server would send for a status. */

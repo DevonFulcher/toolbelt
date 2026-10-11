@@ -129,20 +129,6 @@ def _review_now(node: dict) -> str:
     return "none"
 
 
-def _ci_done(entries: list[dict]) -> dict[str, datetime]:
-    """When each pushed commit's check suites completed (only those whose
-    suites all had)."""
-    done: dict[str, datetime] = {}
-    for entry in entries:
-        commit = entry.get("commit")
-        if entry.get("__typename") != "PullRequestCommit" or not commit:
-            continue
-        suites = (commit.get("checkSuites") or {}).get("nodes") or []
-        if suites and all(suite["status"] == "COMPLETED" for suite in suites):
-            done[commit["oid"]] = max(_time(suite["updatedAt"]) for suite in suites)
-    return done
-
-
 def parse_pr(node: dict) -> aggregate.PrRecord:
     """One PR node of a ``PR_QUERY`` page."""
     entries = node["timelineItems"]["nodes"]
@@ -172,7 +158,6 @@ def parse_pr(node: dict) -> aggregate.PrRecord:
         facts=facts,
         review_now=_review_now(node),
         base_changes=tuple(changes),
-        ci_done=_ci_done(entries),
         node_id=node.get("id") or "",
     )
 

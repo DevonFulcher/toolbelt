@@ -15,6 +15,15 @@ Pure functions over ``PrFacts`` (the normalized GraphQL result, built in
   ended ``FAILURE``/``ERROR`` -- one per push that failed, not per failing
   job. Commits that were force-pushed away count too (they were pushed).
 * ``timeline``: every event in time order.
+
+**CI phases.** A push starts CI, and CI takes time to run whatever its
+outcome, so each commit's checks are split by ``commit_ci_phases`` into
+*waiting on CI* (from the push until the commit's check suites completed;
+until its end when they have not and the rollup is still pending) and, only
+when it then failed, *CI failing* (from the completion until the next push or
+the PR's end). The card timeline (``phaseSpans`` in ``web/src/logic/
+timeline.ts``) and the aggregate replay (``aggregate.replay``) both follow
+this one rule; ``web/src/testing/phaseVectors.json`` is asserted by both.
 """
 
 from dataclasses import dataclass
@@ -69,6 +78,9 @@ class TimelineItem:
     subject: str = ""
     oid: str = ""
     ci: str | None = None
+    #: For a commit: when its check suites all completed (the latest
+    #: ``updatedAt``), ``None`` while unknown (still running, or no suites).
+    ci_done: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -103,6 +115,8 @@ class Event:
     ci: str = ""
     #: The reviewer a review request concerns, or who submitted a review.
     subject: str = ""
+    #: For a commit: when its checks completed (see ``TimelineItem``).
+    ci_done: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -185,6 +199,45 @@ def _ci_label(rollup: str | None) -> str:
     return "success" if rollup == "SUCCESS" else "pending"
 
 
+@dataclass(frozen=True)
+class CiPhase:
+    """``kind`` (running / failing) holds from ``start`` until the next push
+    (or the PR's end) unless ``end`` says when it stops."""
+
+    kind: Literal["running", "failing"]
+    start: datetime
+    end: datetime | None = None
+
+
+def commit_ci_phases(
+    result: str, push: datetime, done: datetime | None
+) -> tuple[CiPhase, ...]:
+    """What a pushed commit's CI does over time, in order (``result`` is
+    ``Event.ci``: ``failed``/``success``/``pending``/``""``).
+
+    * a completion time after the push: *running* from the push until it,
+      then *failing* from it when the result failed (whatever the outcome,
+      CI took that long to run);
+    * no completion time and still ``pending``: *running* until the next push;
+    * no completion time and ``failed``: *failing* from the push. This is a
+      fallback (GitHub gave no suite times), so the time CI was running is
+      not separated from the time it was failing;
+    * otherwise nothing (passed, or no CI).
+    """
+    if result == "":
+        return ()
+    if done is not None and done > push:
+        phases = [CiPhase("running", push, done)]
+        if result == "failed":
+            phases.append(CiPhase("failing", done))
+        return tuple(phases)
+    if result == "failed":
+        return (CiPhase("failing", push),)
+    if result == "pending" and done is None:
+        return (CiPhase("running", push),)
+    return ()
+
+
 def _timeline(facts: PrFacts) -> tuple[Event, ...]:
     opened = Event(
         time=facts.created_at,
@@ -200,6 +253,7 @@ def _timeline(facts: PrFacts) -> tuple[Event, ...]:
             detail=item.detail,
             ci=_ci_label(item.ci),
             subject=item.subject,
+            ci_done=item.ci_done,
         )
         for item in facts.items
     ]

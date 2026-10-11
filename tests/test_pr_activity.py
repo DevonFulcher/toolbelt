@@ -269,3 +269,46 @@ class TestPreOpenCommits:
         )
 
         assert activity.pr_age == timedelta(days=5)
+
+
+class TestCommitCiPhases:
+    def test_a_failed_commit_runs_until_its_checks_complete_and_then_fails(self):
+        assert pa.commit_ci_phases("failed", at(1), at(2)) == (
+            pa.CiPhase("running", at(1), at(2)),
+            pa.CiPhase("failing", at(2)),
+        )
+
+    def test_a_passing_commit_only_runs(self):
+        assert pa.commit_ci_phases("success", at(1), at(2)) == (
+            pa.CiPhase("running", at(1), at(2)),
+        )
+
+    def test_without_a_completion_time_pending_runs_and_failed_fails_from_push(self):
+        assert pa.commit_ci_phases("pending", at(1), None) == (
+            pa.CiPhase("running", at(1)),
+        )
+        assert pa.commit_ci_phases("failed", at(1), None) == (
+            pa.CiPhase("failing", at(1)),
+        )
+        assert pa.commit_ci_phases("success", at(1), None) == ()
+        assert pa.commit_ci_phases("", at(1), at(2)) == ()
+
+    def test_checks_that_completed_before_the_push_do_not_run_after_it(self):
+        assert pa.commit_ci_phases("failed", at(3), at(2)) == (
+            pa.CiPhase("failing", at(3)),
+        )
+        assert pa.commit_ci_phases("success", at(3), at(2)) == ()
+
+    def test_the_timeline_event_carries_the_completion_time(self):
+        facts_ = facts(
+            items=(
+                item(1, pa.COMMIT, oid="c1", ci="FAILURE", ci_done=at(2)),
+                item(3, pa.COMMIT, oid="c2", ci="SUCCESS"),
+            )
+        )
+
+        events = [
+            e for e in derive_activity(facts_, NOW).timeline if e.kind == pa.COMMIT
+        ]
+
+        assert [e.ci_done for e in events] == [at(2), None]

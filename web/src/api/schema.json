@@ -1450,6 +1450,7 @@
         "working",
         "draft",
         "waiting",
+        "ci_running",
         "ci_failing",
         "approved"
       ],
@@ -1486,6 +1487,9 @@
         "ci_failing": {
           "$ref": "#/$defs/Span"
         },
+        "ci_running": {
+          "$ref": "#/$defs/Span"
+        },
         "draft": {
           "$ref": "#/$defs/Span"
         },
@@ -1500,6 +1504,7 @@
         "working",
         "draft",
         "waiting",
+        "ci_running",
         "ci_failing",
         "approved"
       ],
@@ -2431,6 +2436,16 @@
         "ci": {
           "$ref": "#/$defs/CiResult"
         },
+        "ci_done": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "detail": {
           "type": "string"
         },
@@ -2450,7 +2465,8 @@
         "actor",
         "detail",
         "ci",
-        "subject"
+        "subject",
+        "ci_done"
       ],
       "title": "TimelineEvent",
       "type": "object"

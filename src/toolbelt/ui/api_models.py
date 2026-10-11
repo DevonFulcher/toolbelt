@@ -243,6 +243,9 @@ class TimelineEvent(Model):
     ci: CiResult
     #: The reviewer a review request concerns, or who submitted a review.
     subject: str
+    #: For a commit: when its checks completed, if known. The CI phases
+    #: (waiting on CI, then failing) are drawn from it.
+    ci_done: str | None
 
 
 class PrDetail(Model):

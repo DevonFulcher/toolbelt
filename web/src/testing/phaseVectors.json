@@ -86,6 +86,73 @@
         ["waiting", 5, 15],
         ["approved", 20, 60]
       ]
+    },
+    {
+      "name": "a failing commit waits on CI until its checks complete, then fails until the next push; a passing one waited too",
+      "state": "open",
+      "draft": false,
+      "review": "none",
+      "start": 0,
+      "end": 100,
+      "events": [
+        { "t": 10, "kind": "commit", "actor": "me", "subject": "", "detail": "c1", "ci": "failed", "ciDone": 25 },
+        { "t": 60, "kind": "commit", "actor": "me", "subject": "", "detail": "c2", "ci": "success", "ciDone": 70 }
+      ],
+      "spans": [
+        ["ci_running", 10, 25],
+        ["ci_failing", 25, 60],
+        ["ci_running", 60, 70]
+      ]
+    },
+    {
+      "name": "a pending commit with no completion time runs until the next push",
+      "state": "open",
+      "draft": false,
+      "review": "none",
+      "start": 0,
+      "end": 100,
+      "events": [
+        { "t": 10, "kind": "commit", "actor": "me", "subject": "", "detail": "c1", "ci": "pending" },
+        { "t": 30, "kind": "commit", "actor": "me", "subject": "", "detail": "c2", "ci": "success" }
+      ],
+      "spans": [["ci_running", 10, 30]]
+    },
+    {
+      "name": "a force push ends a commit's running and failing phases",
+      "state": "open",
+      "draft": false,
+      "review": "none",
+      "start": 0,
+      "end": 100,
+      "events": [
+        { "t": 10, "kind": "commit", "actor": "me", "subject": "", "detail": "c1", "ci": "failed", "ciDone": 40 },
+        { "t": 20, "kind": "force_push", "actor": "me", "subject": "", "detail": "force-pushed", "ci": "failed" }
+      ],
+      "spans": [["ci_running", 10, 20]]
+    },
+    {
+      "name": "checks completing after the end of the PR are still running at its end",
+      "state": "merged",
+      "draft": false,
+      "review": "approved",
+      "start": 0,
+      "end": 100,
+      "events": [
+        { "t": 90, "kind": "commit", "actor": "me", "subject": "", "detail": "c1", "ci": "failed", "ciDone": 150 }
+      ],
+      "spans": [["ci_running", 90, 100]]
+    },
+    {
+      "name": "a commit whose checks completed before it was pushed fails from the push",
+      "state": "open",
+      "draft": false,
+      "review": "none",
+      "start": 0,
+      "end": 100,
+      "events": [
+        { "t": 30, "kind": "commit", "actor": "me", "subject": "", "detail": "c1", "ci": "failed", "ciDone": 20 }
+      ],
+      "spans": [["ci_failing", 30, 100]]
     }
   ]
 }

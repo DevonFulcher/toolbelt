@@ -263,6 +263,31 @@ describe("phases", () => {
     near(failing[1].x1, 1);
   });
 
+  test("a failed commit waits on CI until its checks completed, then fails until the next push", () => {
+    const t = track(10 * DAY, [
+      ev("commit", 8 * DAY, { ci: "failed", ci_done: ago(7 * DAY) }),
+      ev("commit", 4 * DAY, { ci: "success", ci_done: ago(3 * DAY) }),
+    ]);
+
+    const phases = layout(t).phases.filter((p) => p.kind === "ci_running" || p.kind === "ci_failing");
+
+    expect(phases.map((p) => [p.kind, Math.round(p.x0 * 100) / 100, Math.round(p.x1 * 100) / 100])).toEqual([
+      ["ci_running", 0.2, 0.3],
+      ["ci_failing", 0.3, 0.6],
+      ["ci_running", 0.6, 0.7],
+    ]);
+  });
+
+  test("a pending commit with no completion time is waiting on CI until now", () => {
+    const l = layout(track(10 * DAY, [ev("commit", 2 * DAY, { ci: "pending" })]));
+
+    const running = l.phases.filter((p) => p.kind === "ci_running");
+
+    expect(running).toHaveLength(1);
+    near(running[0].x0, 0.8);
+    near(running[0].x1, 1);
+  });
+
   test("a removed request or a review ends waiting; two reviewers need both", () => {
     const t = track(10 * DAY, [
       ev("review_requested", 8 * DAY, { subject: "sam" }),

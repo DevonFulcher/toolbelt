@@ -80,6 +80,7 @@ query($owner: String!, $repo: String!, $branch: String!) {{
               oid messageHeadline committedDate
               author {{ user {{ login }} name }}
               statusCheckRollup {{ state }}
+              checkSuites(first: 10) {{ nodes {{ status updatedAt }} }}
             }} }}
             ... on HeadRefForcePushedEvent {{
               createdAt actor {{ login }}
@@ -154,6 +155,15 @@ def _reviewer(node: dict | None) -> str:
     return node.get("login") or node.get("name") or ""
 
 
+def checks_completed_at(commit: dict) -> datetime | None:
+    """When all of a commit's check suites had completed (their latest
+    ``updatedAt``), or ``None`` when there are none or one is still running."""
+    suites = (commit.get("checkSuites") or {}).get("nodes") or []
+    if not suites or any(suite["status"] != "COMPLETED" for suite in suites):
+        return None
+    return max(_parse_time(suite["updatedAt"]) for suite in suites)
+
+
 def _rollup_state(commit: dict | None) -> str | None:
     rollup = (commit or {}).get("statusCheckRollup")
     return rollup["state"] if rollup else None
@@ -219,6 +229,7 @@ def _item(node: dict) -> TimelineItem | None:
             f"{commit['oid'][:7]} {commit['messageHeadline']}",
             oid=commit["oid"],
             ci=_rollup_state(commit),
+            ci_done=checks_completed_at(commit),
         )
     if kind == "HeadRefForcePushedEvent":
         before = node.get("beforeCommit") or {}

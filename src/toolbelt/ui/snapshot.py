@@ -195,6 +195,7 @@ def pr_detail(facts: PrFacts, now: datetime) -> api.PrDetail:
                     "detail": event.detail,
                     "ci": event.ci,
                     "subject": event.subject,
+                    "ci_done": _iso(event.ci_done) if event.ci_done else None,
                 }
             )
             for event in activity.timeline

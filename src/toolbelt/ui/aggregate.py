@@ -23,17 +23,18 @@ shared set of vectors is checked against both).
 **What history cannot give.** Merge conflicts and unresolved review threads
 are only known now (``pr_states.NOT_REPRESENTED``), so "Resolve conflicts" /
 "Resolve comments" never appear; time spent there is shown as whatever else
-applies. CI "running" is the time between a push and when its check suites
-completed (their ``updatedAt``), or until now for a still-pending head
-commit; a commit that fails counts as failing from the push, as the card
-draws it. A PR whose timeline is longer than the fetched 100 items is
+applies. CI follows ``pr_activity.commit_ci_phases``, as the card does:
+"running" is the time from a push until its check suites completed (their
+``updatedAt``) whatever the outcome, or until now for a still-pending head
+commit; "failing" is the time from that completion with a failing result
+until the next push. A PR whose timeline is longer than the fetched 100 items is
 truncated at its newest end.
 """
 
 import bisect
 import math
-from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from toolbelt.ui import api_models as api
@@ -69,7 +70,7 @@ STATES: tuple[StateDef, ...] = (
     StateDef("ready", ("state", "next:request_review"), WHO_YOU),
     StateDef("waiting", ("phase", "waiting"), WHO_OTHERS),
     StateDef("changes", ("state", "review:reviewed"), WHO_YOU),
-    StateDef("ci_running", ("state", "next:wait_ci"), WHO_CI),
+    StateDef("ci_running", ("phase", "ci_running"), WHO_CI),
     StateDef("ci_failing", ("phase", "ci_failing"), WHO_YOU),
     StateDef("approved", ("phase", "approved"), WHO_YOU),
     StateDef("blocked", ("state", "next:blocked"), None),
@@ -85,9 +86,12 @@ NOTES: tuple[tuple[str, str], ...] = (
     ),
     (
         "Waiting on CI",
-        "From a push until its check suites completed. A commit that fails "
-        "counts as 'CI failing' from the push (as on the card), so only "
-        "passing or still-pending runs show as waiting.",
+        "From a push until that commit's check suites completed, whatever "
+        "the outcome (CI takes time to run even when it fails), or until now "
+        "while they are pending. 'CI failing' then runs from the completion "
+        "until the next push. A failed commit with no known completion time "
+        "counts as failing from its push, so its running time is not "
+        "separated.",
     ),
     (
         "Tasks before their PR",
@@ -135,8 +139,6 @@ class PrRecord:
     review_now: str
     #: Base branch changes ``(time, previous, current)``.
     base_changes: tuple[tuple[datetime, str, str], ...] = ()
-    #: When the check suites of a commit (by oid) completed.
-    ci_done: Mapping[str, datetime] = field(default_factory=dict)
     #: GitHub's node id of the PR: the identity tasks are joined on (``""``
     #: when the payload did not carry it).
     node_id: str = ""
@@ -196,13 +198,12 @@ def replay(
     facts: PrFacts,
     *,
     review_now: str,
-    ci_done: Mapping[str, datetime] | None = None,
     until: datetime,
 ) -> list[tuple[datetime, Flags]]:
     """The PR's flags after each event, in time order (the state holding from
     that time until the next entry). The card timeline's rules, plus
-    ``changes`` and ``running``. Events after ``until`` are ignored."""
-    ci_done = ci_done or {}
+    ``changes``; ``running`` and ``failing`` follow ``act.commit_ci_phases``.
+    Events after ``until`` are ignored."""
     items = [item for item in facts.items if item.time <= until]
     done = facts.state in ("MERGED", "CLOSED")
     # An approval that is no longer standing now ended at the next push.
@@ -216,11 +217,11 @@ def replay(
 
     # Each commit's checks completing is an event of its own.
     synthetic = [
-        TimelineItem(time=when, kind=_CI_DONE, actor="", oid=item.oid)
+        TimelineItem(time=item.ci_done, kind=_CI_DONE, actor="", oid=item.oid)
         for item in items
         if item.kind == act.COMMIT
-        and (when := ci_done.get(item.oid)) is not None
-        and item.time < when <= until
+        and item.ci_done is not None
+        and item.time < item.ci_done <= until
     ]
     events = sorted([*items, *synthetic], key=lambda item: item.time)
 
@@ -229,6 +230,8 @@ def replay(
     changes: set[str] = set()
     failing = False
     running = False
+    #: Whether the head commit's checks failed once they complete.
+    fails_when_done = False
     head: str | None = None
     points: list[tuple[datetime, Flags]] = [(facts.created_at, Flags(draft=draft))]
     for event in events:
@@ -255,20 +258,20 @@ def replay(
         elif event.kind in (act.COMMIT, act.FORCE_PUSH):
             if stale_on_push:
                 approvers.clear()
-            result = _ci_result(event.ci) if event.kind == act.COMMIT else ""
-            failing = result == "failed"
-            # Still running: pending now, or its suites finish later.
-            running = event.kind == act.COMMIT and (
-                result == "pending"
-                or (
-                    result == "success"
-                    and ci_done.get(event.oid, event.time) > event.time
-                )
+            phases = (
+                act.commit_ci_phases(_ci_result(event.ci), event.time, event.ci_done)
+                if event.kind == act.COMMIT
+                else ()
             )
+            first = phases[0].kind if phases else ""
+            running = first == "running"
+            failing = first == "failing"
+            fails_when_done = len(phases) > 1 and phases[1].kind == "failing"
             head = event.oid if event.kind == act.COMMIT else None
         elif event.kind == _CI_DONE:
             if event.oid == head:
                 running = False
+                failing = fails_when_done
         else:
             continue
         points.append(
@@ -296,14 +299,16 @@ def phase_spans(
     start: datetime,
     end: datetime,
 ) -> list[tuple[str, datetime, datetime]]:
-    """The card timeline's phases (draft, waiting, approved, ci_failing) as
+    """The card timeline's phases (draft, waiting, approved, ci_running,
+    ci_failing) as
     ``(kind, t0, t1)``, sorted: the same result as ``phaseSpans`` in
     ``web/src/logic/timeline.ts`` for the same events (a shared test vector
     file keeps them in step)."""
     points = replay(facts, review_now=review_now, until=end)
     spans: list[tuple[str, datetime, datetime]] = []
-    for kind in ("draft", "waiting", "approved", "ci_failing"):
-        attribute = "failing" if kind == "ci_failing" else kind
+    attributes = {"ci_running": "running", "ci_failing": "failing"}
+    for kind in ("draft", "waiting", "approved", "ci_running", "ci_failing"):
+        attribute = attributes.get(kind, kind)
         began: datetime | None = None
         for when, flags in points:
             when = min(max(when, start), end)
@@ -379,7 +384,6 @@ def open_segments(record: PrRecord, now: datetime) -> list[Segment]:
     points = replay(
         record.facts,
         review_now=record.review_now,
-        ci_done=record.ci_done,
         until=life[-1][1],
     )
     times = [when for when, _ in points]

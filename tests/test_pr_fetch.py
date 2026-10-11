@@ -325,7 +325,46 @@ def test_a_merged_pr_is_not_retried_for_mergeable():
     assert len(graphql.calls) == 1
 
 
+def test_a_commits_completion_time_is_its_latest_completed_suite():
+    def commit_with(suites):
+        return pr_node(
+            timelineItems={
+                "nodes": [
+                    {
+                        "__typename": "PullRequestCommit",
+                        "commit": {
+                            "oid": "a1a1a1a2b2",
+                            "messageHeadline": "Add it",
+                            "committedDate": "2026-10-01T09:30:00Z",
+                            "author": {"user": {"login": "devon"}, "name": "Devon"},
+                            "statusCheckRollup": {"state": "FAILURE"},
+                            "checkSuites": {"nodes": suites},
+                        },
+                    }
+                ]
+            }
+        )
+
+    def done(suites):
+        payload = {
+            "data": {"repository": {"pullRequests": {"nodes": [commit_with(suites)]}}}
+        }
+        facts = parse_snapshot(payload).facts
+        assert facts is not None
+        return facts.items[0].ci_done
+
+    finished = [
+        {"status": "COMPLETED", "updatedAt": "2026-10-01T09:40:00Z"},
+        {"status": "COMPLETED", "updatedAt": "2026-10-01T09:55:00Z"},
+    ]
+    assert done(finished) == datetime(2026, 10, 1, 9, 55, tzinfo=UTC)
+    # One suite still running: not complete yet. And no suites: unknown.
+    assert done([*finished, {"status": "IN_PROGRESS", "updatedAt": "x"}]) is None
+    assert done([]) is None
+
+
 def test_the_query_asks_for_everything_the_derivations_need():
+    assert "checkSuites" in PR_QUERY
     for needed in (
         "headRefName: $branch",
         "reviewThreads",

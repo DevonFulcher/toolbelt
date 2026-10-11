@@ -74,7 +74,9 @@ type EventKind = Literal[
     "closed",
     "reopened",
 ]
-type PhaseKind = Literal["working", "draft", "waiting", "ci_failing", "approved"]
+type PhaseKind = Literal[
+    "working", "draft", "waiting", "ci_running", "ci_failing", "approved"
+]
 type ChipDimension = Literal["pr", "ci", "review", "comments", "merge", "next"]
 
 
@@ -172,7 +174,18 @@ PHASES: dict[str, Span] = {
     "waiting": Span(
         "Waiting for review", AMBER, "Ready, with a review request outstanding."
     ),
-    "ci_failing": Span("CI failing", RED, "From a failed commit until the next push."),
+    "ci_running": Span(
+        "Waiting on CI",
+        AMBER,
+        "From a push until that commit's checks completed, whatever their "
+        "outcome (CI takes time to run even when it fails).",
+    ),
+    "ci_failing": Span(
+        "CI failing",
+        RED,
+        "From the checks completing with a failure until the next push. "
+        "(Without a known completion time, from the push.)",
+    ),
     "approved": Span(
         "Approved",
         GREEN,
@@ -312,6 +325,7 @@ STATES: tuple[StateValue, ...] = (
         "running",
         AMBER,
         "Checks are still running.",
+        _ph("ci_running"),
         _now("ci"),
     ),
     _v(

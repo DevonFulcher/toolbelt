@@ -94,7 +94,7 @@ def test_the_fake_gh_answers_the_aggregate_search_in_the_shape_the_view_parses(
     assert all(r.facts.merged_at for r in merged)
     # A stacked child's base change is parsed and the CI completion times too.
     assert any(r.base_changes for r in everything)
-    assert any(r.ci_done for r in everything)
+    assert any(i.ci_done for r in everything for i in r.facts.items)
     # And the whole thing computes.
     result = aggregate.compute(
         everything,

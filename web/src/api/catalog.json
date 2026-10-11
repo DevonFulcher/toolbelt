@@ -113,10 +113,15 @@
       "tone": "amber",
       "legend": "Ready, with a review request outstanding."
     },
+    "ci_running": {
+      "label": "Waiting on CI",
+      "tone": "amber",
+      "legend": "From a push until that commit's checks completed, whatever their outcome (CI takes time to run even when it fails)."
+    },
     "ci_failing": {
       "label": "CI failing",
       "tone": "red",
-      "legend": "From a failed commit until the next push."
+      "legend": "From the checks completing with a failure until the next push. (Without a known completion time, from the push.)"
     },
     "approved": {
       "label": "Approved",
@@ -287,6 +292,11 @@
       "tone": "amber",
       "legend": "Checks are still running.",
       "reps": [
+        {
+          "how": "phase",
+          "kind": "ci_running",
+          "absent": false
+        },
         {
           "how": "now_state",
           "kind": "ci",

@@ -4,6 +4,7 @@ from them, the GitHub fetch and the endpoint. Pure inputs and an injected
 
 import asyncio
 import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -103,7 +104,17 @@ def pr(
         closed_at=at(closed_at) if closed_at is not None else None,
         requested_reviewers=(),
         commit_rollups=(),
-        items=tuple(sorted(items, key=lambda i: i.time)),
+        items=tuple(
+            sorted(
+                (
+                    replace(i, ci_done=ci_done[i.oid])
+                    if i.oid in (ci_done or {})
+                    else i
+                    for i in items
+                ),
+                key=lambda i: i.time,
+            )
+        ),
     )
     return PrRecord(
         repo=repo,
@@ -111,7 +122,6 @@ def pr(
         facts=facts,
         review_now=review_now,
         base_changes=base_changes,
-        ci_done=ci_done or {},
         node_id=node_id,
     )
 
@@ -147,6 +157,7 @@ def test_the_phases_match_the_card_timelines_for_the_shared_vectors(case):
             subject=e["subject"],
             oid=f"oid{e['t']}",
             ci=_CI_BACK[e["ci"]],
+            ci_done=start + timedelta(minutes=e["ciDone"]) if "ciDone" in e else None,
         )
         for e in case["events"]
     )
@@ -224,6 +235,45 @@ def test_ci_failing_then_running_then_waiting_for_review():
         (2, 4, "ci_failing"),
         (4, 5, "ci_running"),
         (5, 10, "waiting"),
+    ]
+
+
+def test_a_failing_commit_waits_on_ci_until_its_checks_complete_then_fails():
+    record = pr(
+        items=(
+            request(1),
+            commit(2, "FAILURE", "c1"),
+            commit(6, "SUCCESS", "c2"),
+        ),
+        ci_done={"c1": at(3), "c2": at(7)},
+    )
+
+    assert states(record, now_hours=10) == [
+        (0, 1, "ready"),
+        (1, 2, "waiting"),
+        (2, 3, "ci_running"),  # CI took an hour to fail
+        (3, 6, "ci_failing"),
+        (6, 7, "ci_running"),
+        (7, 10, "waiting"),
+    ]
+
+
+def test_a_failed_commit_with_no_completion_time_fails_from_its_push():
+    record = pr(items=(commit(2, "FAILURE", "c1"),))
+
+    assert states(record, now_hours=6) == [(0, 2, "ready"), (2, 6, "ci_failing")]
+
+
+def test_a_commit_that_is_superseded_while_running_stops_running_at_the_push():
+    record = pr(
+        items=(commit(2, "FAILURE", "c1"), commit(3, "SUCCESS", "c2")),
+        ci_done={"c1": at(9), "c2": at(3)},
+    )
+
+    assert states(record, now_hours=12) == [
+        (0, 2, "ready"),
+        (2, 3, "ci_running"),
+        (3, 12, "ready"),
     ]
 
 
@@ -828,7 +878,11 @@ def test_a_page_is_parsed_into_pr_records():
     )
     kinds = [i.kind for i in record.facts.items]
     assert kinds.count(act.MERGED) == 1 and act.CLOSED not in kinds  # merge dedupe
-    assert record.ci_done == {"abc": datetime(2026, 10, 6, 11, 30, tzinfo=UTC)}
+    done = {i.oid: i.ci_done for i in record.facts.items if i.kind == act.COMMIT}
+    assert done == {
+        "abc": datetime(2026, 10, 6, 11, 30, tzinfo=UTC),
+        "def": None,  # still in progress
+    }
     assert record.base_changes == (
         (datetime(2026, 10, 7, 9, tzinfo=UTC), "parent", "main"),
     )

@@ -19,6 +19,7 @@ describe("phaseSpans against the shared vectors", () => {
         detail: e.detail,
         ci: e.ci,
         ms: e.t * MINUTE,
+        ciDone: "ciDone" in e && typeof e.ciDone === "number" ? e.ciDone * MINUTE : null,
       }));
       const track = {
         state: vector.state,

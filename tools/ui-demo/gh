@@ -62,7 +62,15 @@ def review(login, st, **kw):
     }
 
 
-def commit(oid, msg, ci, **kw):
+def commit(oid, msg, ci, suite=None, **kw):
+    """A pushed commit. `suite`: minutes after the push at which its check
+    suites completed (omitted: still running, or no CI)."""
+    suites = []
+    if suite is not None:
+        done = NOW - timedelta(**kw) + timedelta(minutes=suite)
+        suites = [
+            {"status": "COMPLETED", "updatedAt": done.strftime("%Y-%m-%dT%H:%M:%SZ")}
+        ]
     return {
         "__typename": "PullRequestCommit",
         "commit": {
@@ -71,6 +79,7 @@ def commit(oid, msg, ci, **kw):
             "committedDate": t(**kw),
             "author": {"user": user("devon"), "name": "Devon"},
             "statusCheckRollup": {"state": ci} if ci else None,
+            "checkSuites": {"nodes": suites},
         },
     }
 
@@ -159,7 +168,7 @@ SCENARIOS = {
         reviewDecision="APPROVED",
         createdAt=t(days=6),
         items=[
-            commit("a1", "Add user model", "SUCCESS", days=6),
+            commit("a1", "Add user model", "SUCCESS", suite=30, days=6),
             req("sam", days=5),
             review("sam", "APPROVED", days=2),
         ],
@@ -175,8 +184,8 @@ SCENARIOS = {
             {"commit": {"oid": "b2", "statusCheckRollup": {"state": "SUCCESS"}}},
         ],
         items=[
-            commit("b1", "Add login endpoint", "FAILURE", days=4),
-            commit("b2", "Fix lint", "SUCCESS", days=3, hours=20),
+            commit("b1", "Add login endpoint", "FAILURE", suite=40, days=4),
+            commit("b2", "Fix lint", "SUCCESS", suite=25, days=3, hours=20),
             req("sam", days=2),
             review("sam", "COMMENTED", days=1),
         ],
@@ -204,8 +213,8 @@ SCENARIOS = {
             for i in range(2)
         ],
         items=[
-            commit("d0", "Write docs", "FAILURE", days=3),
-            commit("d1", "Fix links", "FAILURE", days=2),
+            commit("d0", "Write docs", "FAILURE", suite=35, days=3),
+            commit("d1", "Fix links", "FAILURE", suite=50, days=2),
             req("lee", days=2),
             review("lee", "CHANGES_REQUESTED", hours=20),
         ],
