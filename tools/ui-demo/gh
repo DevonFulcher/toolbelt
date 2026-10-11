@@ -18,6 +18,7 @@ Anything else exits 1, like `gh pr view` for a branch without a PR.
 
 import json
 import os
+import re
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -113,6 +114,7 @@ def pr(n, title, **o):
         "state": "OPEN",
         "isDraft": False,
         "createdAt": t(days=5),
+        "updatedAt": t(minutes=30),
         "mergedAt": None,
         "closedAt": None,
         "headRefOid": f"{n:07x}",
@@ -339,6 +341,7 @@ def history_node(spec):
         "state": spec["state"],
         "isDraft": spec.get("draft", False),
         "createdAt": spec["created"],
+        "updatedAt": spec["updated"],
         "mergedAt": spec.get("merged"),
         "closedAt": spec.get("merged") or spec.get("closed"),
         "headRefName": spec["head"],
@@ -368,6 +371,14 @@ if searching:
     found += [scenario_search_node(h, n) for h, n in SCENARIOS.items()]
     if any("is:open" in x for x in a):
         found = [n for n in found if n["state"] == "OPEN"]
+    # `updated:>=<date or timestamp>`: only PRs updated since (the view asks
+    # for what changed since its newest cached `updatedAt`).
+    for x in a:
+        since = re.search(r"updated:>=(\S+)", x)
+        if since:
+            bound = since.group(1)
+            bound += "" if "T" in bound else "T00:00:00Z"
+            found = [n for n in found if n["updatedAt"] >= bound]
     page = {
         "issueCount": len(found),
         "pageInfo": {"hasNextPage": False, "endCursor": None},

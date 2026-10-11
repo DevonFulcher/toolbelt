@@ -95,6 +95,7 @@ export interface Aggregate {
   lead_time: LeadStage[];
   mix: StatusMix;
   notes: AggregateNote[];
+  refreshed: number;
   throughput: Throughput;
   weeks: number;
   window_end: string;

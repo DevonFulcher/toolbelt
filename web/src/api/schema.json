@@ -65,6 +65,9 @@
           },
           "type": "array"
         },
+        "refreshed": {
+          "type": "integer"
+        },
         "throughput": {
           "$ref": "#/$defs/Throughput"
         },
@@ -83,6 +86,7 @@
         "window_start",
         "window_end",
         "fetched_at",
+        "refreshed",
         "throughput",
         "lead_time",
         "mix",

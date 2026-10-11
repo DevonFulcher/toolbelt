@@ -1,7 +1,7 @@
 // The aggregate view: how work has been flowing over a window. Fetches
 // `/api/aggregate` when opened (and when the window changes); it is not part
 // of the live stream.
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchAggregate } from "../api/client";
 import type { Aggregate, MixWho, Tone } from "../api/generated";
 import { formatBucketDate } from "../logic/aggregateChart";
@@ -13,23 +13,62 @@ type Load =
   | { weeks: number; state: "ready"; data: Aggregate }
   | { weeks: number; state: "error"; message: string };
 
-/** The aggregate for `weeks`, or `null` while it is being fetched. */
-export function useAggregate(weeks: number, fetchImpl: typeof fetch = fetch): Load | null {
+/** A fetch older than this is repeated when the page becomes visible again. */
+export const STALE_AFTER_MS = 60_000;
+
+export interface AggregateHandle {
+  /** The aggregate for `weeks`, or `null` while it is first being fetched. */
+  load: Load | null;
+  /** Fetch again now (the previous result stays shown meanwhile). */
+  refresh: () => void;
+  refreshing: boolean;
+}
+
+/**
+ * The aggregate for `weeks`. The server keeps its answer fresh on every
+ * request (there is no cache to wait out), so this fetches when mounted and
+ * when the window changes, again when the page becomes visible after more
+ * than `STALE_AFTER_MS`, and on `refresh()`.
+ */
+export function useAggregate(weeks: number, fetchImpl: typeof fetch = fetch): AggregateHandle {
   const [load, setLoad] = useState<Load | null>(null);
-  useEffect(() => {
-    let current = true;
+  const [refreshing, setRefreshing] = useState(false);
+  const fetchedAt = useRef(0);
+  const latest = useRef(0);
+  const run = useCallback(() => {
+    const id = ++latest.current;
+    setRefreshing(true);
     fetchAggregate(weeks, fetchImpl).then(
-      (data) => current && setLoad({ weeks, state: "ready", data }),
-      (error: unknown) =>
-        current &&
-        setLoad({ weeks, state: "error", message: error instanceof Error ? error.message : String(error) }),
+      (data) => {
+        if (id !== latest.current) return;
+        fetchedAt.current = Date.now();
+        setLoad({ weeks, state: "ready", data });
+        setRefreshing(false);
+      },
+      (error: unknown) => {
+        if (id !== latest.current) return;
+        setLoad({ weeks, state: "error", message: error instanceof Error ? error.message : String(error) });
+        setRefreshing(false);
+      },
     );
-    return () => {
-      current = false;
-    };
   }, [weeks, fetchImpl]);
+  // A result still in flight for another window (or after unmount) is dropped.
+  const abandon = useCallback(() => {
+    latest.current++;
+  }, []);
+  useEffect(() => {
+    run();
+    return abandon;
+  }, [run, abandon]);
+  useEffect(() => {
+    const onVisible = (): void => {
+      if (document.visibilityState === "visible" && Date.now() - fetchedAt.current > STALE_AFTER_MS) run();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [run]);
   // A result for another window is stale: say "loading" until this one's in.
-  return load && load.weeks === weeks ? load : null;
+  return { load: load && load.weeks === weeks ? load : null, refresh: run, refreshing };
 }
 
 /** The coarse classes: the sections of the grouped view, so the legend reads
@@ -38,17 +77,25 @@ const WHO_TONE: Record<MixWho, Tone> = { you: "accent", ci: "amber", others: "gr
 
 export function AggregateView({ fetchImpl = fetch }: { fetchImpl?: typeof fetch }) {
   const weeks = useApp((s) => s.view.weeks);
-  const load = useAggregate(weeks, fetchImpl);
+  const { load, refresh, refreshing } = useAggregate(weeks, fetchImpl);
   if (load === null) {
     return <div className="empty">{`Loading the last ${weeks} weeks…`}</div>;
   }
   if (load.state === "error") {
     return <div className="empty error">{`Could not load the aggregate: ${load.message}`}</div>;
   }
-  return <AggregatePanels data={load.data} />;
+  return <AggregatePanels data={load.data} onRefresh={refresh} refreshing={refreshing} />;
 }
 
-export function AggregatePanels({ data }: { data: Aggregate }) {
+export function AggregatePanels({
+  data,
+  onRefresh,
+  refreshing = false,
+}: {
+  data: Aggregate;
+  onRefresh?: () => void;
+  refreshing?: boolean;
+}) {
   const catalog = useApp((s) => s.catalog);
   const { throughput, mix, coverage } = data;
   const opened = catalog?.events.opened;
@@ -80,7 +127,12 @@ export function AggregatePanels({ data }: { data: Aggregate }) {
       <p className="agg-summary">
         {`${formatBucketDate(data.window_start)} to ${formatBucketDate(data.window_end)} (${data.weeks} weeks): ${coverage.prs} of your PRs`}
         {coverage.tasks_without_pr > 0 && `, ${coverage.tasks_without_pr} task${coverage.tasks_without_pr === 1 ? "" : "s"} without a PR yet`}
-        {`. GitHub history fetched ${new Date(data.fetched_at).toLocaleTimeString()} (cached for a few minutes).`}
+        {`. Fetched ${new Date(data.fetched_at).toLocaleTimeString()}, ${data.refreshed} PR${data.refreshed === 1 ? "" : "s"} refreshed from GitHub. `}
+        {onRefresh && (
+          <button type="button" className="agg-refresh" disabled={refreshing} onClick={onRefresh}>
+            {refreshing ? "Refreshing…" : "Refresh"}
+          </button>
+        )}
       </p>
       <div className="agg-notices">
         {coverage.prs === 0 && (

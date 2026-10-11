@@ -53,6 +53,7 @@ export function aggregate(overrides: Partial<Aggregate> = {}): Aggregate {
     window_start: "2026-09-21T00:00:00Z",
     window_end: "2026-10-08T12:00:00Z",
     fetched_at: "2026-10-08T11:58:00Z",
+    refreshed: 4,
     throughput: {
       starts: ["2026-09-21T00:00:00Z", "2026-09-28T00:00:00Z", "2026-10-05T00:00:00Z"],
       opened: [2, 4, 3],

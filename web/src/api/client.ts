@@ -12,7 +12,7 @@ export async function fetchSnapshot(fetchImpl: typeof fetch = fetch): Promise<Sn
 export const AGGREGATE_URL = "/api/aggregate";
 
 /** The aggregate view's numbers for the last `weeks` weeks. Computed by the
- * server on demand (GitHub is asked at most every few minutes). */
+ * server on demand: it asks GitHub what changed on every request. */
 export async function fetchAggregate(weeks: number, fetchImpl: typeof fetch = fetch): Promise<Aggregate> {
   const response = await fetchImpl(`${AGGREGATE_URL}?weeks=${weeks}`, {
     headers: { Accept: "application/json" },

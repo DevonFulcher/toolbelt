@@ -149,6 +149,8 @@ class PrRecord:
     #: GitHub's node id of the PR: the identity tasks are joined on (``""``
     #: when the payload did not carry it).
     node_id: str = ""
+    #: GitHub's ``updatedAt`` of the PR (``None`` when the payload had none).
+    updated_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -717,6 +719,7 @@ def compute(
     weeks: int,
     archive_since: datetime,
     fetched_at: datetime,
+    refreshed: int = 0,
     truncated: bool = False,
     hidden: int = 0,
 ) -> api.Aggregate:
@@ -753,6 +756,7 @@ def compute(
         window_start=_iso(start),
         window_end=_iso(now),
         fetched_at=_iso(fetched_at),
+        refreshed=refreshed,
         throughput=_throughput(records, start, now),
         lead_time=_lead_time(with_pr, start),
         mix=_mix(lives, sample_instants(start, now, weeks), weeks),

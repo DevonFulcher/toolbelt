@@ -610,8 +610,12 @@ class Aggregate(Model):
     weeks: int
     window_start: str
     window_end: str
-    #: When the GitHub history was fetched (it is cached for a while).
+    #: When the GitHub history was fetched: on every request, so this is
+    #: that request's time, and ``refreshed`` how many PRs were queried again
+    #: (the open ones and those updated since the last request; the first
+    #: request fetches the whole window).
     fetched_at: str
+    refreshed: int
     throughput: Throughput
     lead_time: list[LeadStage]
     mix: StatusMix

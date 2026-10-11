@@ -5,12 +5,14 @@
 * **GitHub**: the user's PRs that were updated in the window (every state)
   plus every PR still open (a quiet open PR is in flight for the whole window
   but was not "updated"), each with the timeline items the card timeline
-  uses. Paginated GraphQL searches (``author:@me``, archived repos left out),
-  fetched when the view is opened and cached for ``DEFAULT_TTL_SECONDS``
-  (merged PRs are immutable, open ones change slowly at this scale). A larger
-  cached window serves a smaller one. A page that fails after the first, or
-  an organization the token is not authorized for, yields a partial result
-  that is flagged, as the untracked-PR callout does.
+  uses. Paginated GraphQL searches (``author:@me``, archived repos left out).
+  There is no time-to-live: the PRs are kept in memory keyed by
+  ``(repo, number)`` with GitHub's ``updatedAt``, and every request re-fetches
+  the open PRs and whatever was updated since the newest one held (see
+  ``AggregateService``). A larger cached window serves a smaller one. A page
+  that fails after the first, or an organization the token is not authorized
+  for, yields a partial result that is flagged, as the untracked-PR callout
+  does.
 * **The stack DB**: tracked and archived branches (``removed_branches``),
   which date each task's start. They are read on every request (cheap, local)
   and joined to PRs by the PR identity the CLI recorded for the task (node id,
@@ -22,7 +24,6 @@ injected, so tests drive it with canned payloads.
 """
 
 import asyncio
-import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -44,7 +45,10 @@ from toolbelt.ui.untracked_prs import (
     run_search_graphql,
 )
 
-DEFAULT_TTL_SECONDS = 15 * 60.0
+#: Subtracted from the newest ``updatedAt`` held when asking GitHub what
+#: changed since (clock skew, and a search index that lags a little).
+UPDATED_MARGIN = timedelta(minutes=5)
+OPEN_NOW = "is:pr is:open author:@me archived:false sort:updated-desc"
 PAGE_SIZE = 25
 #: Pages per search; more PRs than this many pages hold are flagged as
 #: truncated.
@@ -68,7 +72,7 @@ query($search: String!, $after: String) {{
     pageInfo {{ hasNextPage endCursor }}
     nodes {{
       ... on PullRequest {{
-        id number title state isDraft createdAt mergedAt closedAt
+        id number title state isDraft createdAt updatedAt mergedAt closedAt
         headRefName baseRefName reviewDecision
         author {{ login }}
         repository {{ nameWithOwner isArchived }}
@@ -159,6 +163,7 @@ def parse_pr(node: dict) -> aggregate.PrRecord:
         review_now=_review_now(node),
         base_changes=tuple(changes),
         node_id=node.get("id") or "",
+        updated_at=_time(node["updatedAt"]) if node.get("updatedAt") else None,
     )
 
 
@@ -242,17 +247,36 @@ async def task_facts(
     return facts
 
 
-@dataclass(frozen=True)
-class _Fetched:
+@dataclass
+class _Cache:
+    """The PRs fetched so far, by ``(repo, number)``, for the widest window
+    asked for."""
+
     weeks: int
-    at: datetime
-    taken: float
-    prs: list[aggregate.PrRecord]
+    records: dict[tuple[str, int], aggregate.PrRecord]
+    #: The first (full) fetch was cut short, or hid some organizations: older
+    #: PRs missing from it are never fetched by the incremental ones.
     truncated: bool
     hidden: int
 
 
+def _key(record: aggregate.PrRecord) -> tuple[str, int]:
+    return (record.repo, record.facts.number)
+
+
 class AggregateService:
+    """Serves the aggregate view from PRs it keeps in memory and keeps fresh
+    on every request (there is no time-to-live).
+
+    The first request (or one for a wider window than any before) pages
+    through the whole window. Every later one asks GitHub for (a) all PRs
+    that are open now and (b) those updated since the newest ``updatedAt``
+    held (less a small margin), and merges them by key: so only PRs that
+    changed are queried again, a PR that was closed, merged, reopened or
+    commented on is replaced, and the answer is never older than the request.
+    The cache is not persisted: a restart is a first request again.
+    """
+
     def __init__(
         self,
         *,
@@ -260,20 +284,18 @@ class AggregateService:
         history: Callable[[], StoredHistory],
         remote_of: RemoteLookup,
         finished: Callable[[int, str], bool],
-        clock: Callable[[], float] = time.monotonic,
         wall_clock: Callable[[], datetime],
-        ttl: float = DEFAULT_TTL_SECONDS,
         max_pages: int = MAX_PAGES,
+        margin: timedelta = UPDATED_MARGIN,
     ) -> None:
         self._search = search
         self._history = history
         self._remote_of = remote_of
         self._finished = finished
-        self._clock = clock
         self._wall_clock = wall_clock
-        self._ttl = ttl
         self._max_pages = max_pages
-        self._cached: _Fetched | None = None
+        self._margin = margin
+        self._cache: _Cache | None = None
         self._lock = asyncio.Lock()
 
     async def _pages(self, query: str) -> tuple[list[aggregate.PrRecord], bool, int]:
@@ -294,50 +316,78 @@ class AggregateService:
                 return records, False, hidden
         return records, True, hidden
 
-    async def _fetch(self, weeks: int) -> _Fetched:
-        now = self._wall_clock()
+    async def _first_fetch(self, weeks: int, now: datetime) -> tuple[_Cache, int]:
         start = aggregate.window_start(now, weeks) - timedelta(days=1)
         updated = (
             f"is:pr author:@me archived:false updated:>={start:%Y-%m-%d} "
             "sort:updated-desc"
         )
-        open_now = "is:pr is:open author:@me archived:false sort:updated-desc"
         by_id: dict[tuple[str, int], aggregate.PrRecord] = {}
         truncated = False
         hidden = 0
-        for query in (updated, open_now):
+        for query in (updated, OPEN_NOW):
             records, cut, errors = await self._pages(query)
             truncated = truncated or cut
             hidden = max(hidden, errors)
             for record in records:
-                by_id[(record.repo, record.facts.number)] = record
-        return _Fetched(
-            weeks=weeks,
-            at=now,
-            taken=self._clock(),
-            prs=list(by_id.values()),
-            truncated=truncated,
-            hidden=hidden,
+                by_id[_key(record)] = record
+        return _Cache(weeks, by_id, truncated, hidden), len(by_id)
+
+    async def _refresh(self, cache: _Cache, since: datetime) -> tuple[int, bool, int]:
+        """Re-fetches the open PRs and those updated since ``since``, merging
+        them into ``cache``. Returns ``(PRs refreshed, cut short, hidden)``."""
+        open_now, open_cut, open_hidden = await self._pages(OPEN_NOW)
+        changed, cut, hidden = await self._pages(
+            "is:pr author:@me archived:false "
+            f"updated:>={since:%Y-%m-%dT%H:%M:%SZ} sort:updated-desc"
         )
+        fresh = {_key(r): r for r in [*changed, *open_now]}
+        cache.records.update(fresh)
+        if not open_cut:
+            # An open PR that is neither open now nor was updated has gone
+            # (deleted, or transferred out of reach): do not keep showing it.
+            for key, record in list(cache.records.items()):
+                if record.facts.state == "OPEN" and key not in fresh:
+                    del cache.records[key]
+        return len(fresh), open_cut or cut, max(open_hidden, hidden)
 
     async def get(self, weeks: int) -> api.Aggregate:
         async with self._lock:
-            cached = self._cached
-            if (
-                cached is None
-                or cached.weeks < weeks
-                or self._clock() - cached.taken >= self._ttl
-            ):
-                cached = self._cached = await self._fetch(weeks)
+            now = self._wall_clock()
+            cache = self._cache
+            newest = (
+                max(
+                    (
+                        r.updated_at
+                        for r in cache.records.values()
+                        if r.updated_at is not None
+                    ),
+                    default=None,
+                )
+                if cache is not None
+                else None
+            )
+            if cache is None or cache.weeks < weeks or newest is None:
+                cache, refreshed = await self._first_fetch(weeks, now)
+                self._cache = cache
+                truncated, hidden = cache.truncated, cache.hidden
+            else:
+                refreshed, cut, errors = await self._refresh(
+                    cache, newest - self._margin
+                )
+                truncated = cache.truncated or cut
+                hidden = max(cache.hidden, errors)
+            prs = list(cache.records.values())
         history = self._history()
         facts = await task_facts(history, self._remote_of, self._finished)
         return aggregate.compute(
-            cached.prs,
+            prs,
             facts,
             now=self._wall_clock(),
             weeks=weeks,
             archive_since=history.since,
-            fetched_at=cached.at,
-            truncated=cached.truncated,
-            hidden=cached.hidden,
+            fetched_at=now,
+            refreshed=refreshed,
+            truncated=truncated,
+            hidden=hidden,
         )

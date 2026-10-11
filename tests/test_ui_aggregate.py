@@ -4,6 +4,7 @@ from them, the GitHub fetch and the endpoint. Pure inputs and an injected
 
 import asyncio
 import json
+import re
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -960,14 +961,6 @@ class Pages:
         return result
 
 
-class Clock:
-    def __init__(self) -> None:
-        self.now = 0.0
-
-    def __call__(self) -> float:
-        return self.now
-
-
 NOW = datetime(2026, 10, 8, 12, 0, tzinfo=UTC)
 
 
@@ -975,55 +968,205 @@ async def _no_remote(path: Path) -> str | None:
     return None
 
 
-def service(pages: Pages, clock: Clock | None = None, history=None, **kwargs):
+def service(pages, history=None, wall_clock=lambda: NOW, **kwargs):
     return AggregateService(
         search=pages,
         history=history
         or (lambda: StoredHistory(repos=[], removed=[], tracked=[], since=at(-100))),
         remote_of=_no_remote,
         finished=lambda repo_id, branch: False,
-        clock=clock or Clock(),
-        wall_clock=lambda: NOW,
+        wall_clock=wall_clock,
         **kwargs,
     )
 
 
-def test_both_searches_are_paged_deduplicated_and_cached():
-    pages = Pages(
-        updated=[
-            page(node(1), node(2), next_cursor="1"),
-            page(node(3)),
-        ],
-        open_now=[page(node(2), node(4))],
+class FakeGitHub:
+    """A `gh` page runner over a set of PR nodes that answers the two kinds
+    of search the service makes (``is:open`` and ``updated:>=``) from their
+    ``updatedAt``, like GitHub's, and records what each call returned."""
+
+    def __init__(self, *nodes: dict) -> None:
+        self.nodes = {n["number"]: n for n in nodes}
+        self.calls: list[str] = []
+        #: PR numbers returned by each call, in order.
+        self.returned: list[list[int]] = []
+        self.page_size = 25
+
+    def put(self, node: dict) -> None:
+        self.nodes[node["number"]] = node
+
+    def drop(self, number: int) -> None:
+        del self.nodes[number]
+
+    async def __call__(self, search: str, after: str | None) -> dict:
+        found = list(self.nodes.values())
+        if "is:open" in search:
+            found = [n for n in found if n["state"] == "OPEN"]
+        match = re.search(r"updated:>=(\S+)", search)
+        if match:
+            since = match.group(1)
+            if "T" not in since:
+                since += "T00:00:00Z"
+            found = [n for n in found if n["updatedAt"] >= since]
+        found.sort(key=lambda n: n["updatedAt"], reverse=True)
+        start = int(after or 0)
+        chunk = found[start : start + self.page_size]
+        more = start + self.page_size < len(found)
+        self.calls.append(search)
+        self.returned.append([n["number"] for n in chunk])
+        return page(*chunk, next_cursor=str(start + self.page_size) if more else None)
+
+
+def pr_node(number: int, updated: str, **kwargs) -> dict:
+    return {**node(number, **kwargs), "updatedAt": updated}
+
+
+def test_the_first_request_pages_through_the_whole_window_and_dedupes():
+    github = FakeGitHub(
+        pr_node(1, "2026-10-06T09:00:00Z"),
+        pr_node(2, "2026-10-07T09:00:00Z"),
+        pr_node(3, "2026-10-08T09:00:00Z"),
     )
-    clock = Clock()
-    svc = service(pages, clock, ttl=900)
+    github.page_size = 2
+    svc = service(github)
+
+    result = asyncio.run(svc.get(12))
+
+    assert result.throughput.opened[-1] == 3  # 1, 2, 3 once each
+    assert result.refreshed == 3
+    assert any("updated:>=2026-07-19" in call for call in github.calls)
+    assert all("author:@me" in c and "archived:false" in c for c in github.calls)
+    assert [len(r) for r in github.returned] == [2, 1, 2, 1]  # 2 searches, 2 pages
+
+
+def test_a_later_request_re_fetches_only_open_and_recently_updated_prs():
+    old_merged = pr_node(
+        1,
+        "2026-09-20T09:00:00Z",
+        state="MERGED",
+        merged_at="2026-09-20T09:00:00Z",
+        created="2026-09-19T09:00:00Z",
+    )
+    github = FakeGitHub(
+        old_merged,
+        pr_node(2, "2026-10-01T09:00:00Z"),
+        pr_node(3, "2026-10-07T09:00:00Z"),
+        pr_node(
+            4,
+            "2026-10-08T11:00:00Z",
+            state="MERGED",
+            merged_at="2026-10-08T11:00:00Z",
+        ),
+    )
+    svc = service(github)
+    asyncio.run(svc.get(12))
+    github.calls.clear()
+    github.returned.clear()
+
+    result = asyncio.run(svc.get(12))
+
+    # The open PRs (2, 3) and what changed since the newest one held (4).
+    assert sorted(sum(github.returned, [])) == [2, 3, 4]
+    assert result.refreshed == 3
+    assert result.throughput.opened[-1] + sum(result.throughput.opened[:-1]) == 4
+    updated_query = next(c for c in github.calls if "is:open" not in c)
+    assert "updated:>=2026-10-08T10:55:00Z" in updated_query  # newest - 5 min
+
+
+def test_a_changed_pr_replaces_its_cached_record_and_deletions_are_dropped():
+    github = FakeGitHub(
+        pr_node(1, "2026-10-06T09:00:00Z"),
+        pr_node(2, "2026-10-06T10:00:00Z"),
+    )
+    svc = service(github)
+    first = asyncio.run(svc.get(12))
+    assert first.throughput.merged == [0] * len(first.throughput.merged)
+
+    github.put(
+        pr_node(
+            1,
+            "2026-10-07T09:00:00Z",
+            state="MERGED",
+            merged_at="2026-10-07T09:00:00Z",
+        )
+    )
+    github.drop(2)  # deleted / transferred away
+    result = asyncio.run(svc.get(12))
+
+    assert sum(result.throughput.merged) == 1
+    assert sum(result.throughput.opened) == 1  # PR 2 is gone
+
+
+def test_a_closed_pr_that_is_reopened_is_open_again():
+    github = FakeGitHub(
+        pr_node(
+            1,
+            "2026-10-06T09:00:00Z",
+            state="CLOSED",
+            merged_at="2026-10-06T09:00:00Z",
+        )
+    )
+    svc = service(github)
+    closed = asyncio.run(svc.get(12))
+    assert sum(closed.throughput.closed) == 1
+
+    github.put(pr_node(1, "2026-10-08T09:00:00Z"))
+    reopened = asyncio.run(svc.get(12))
+
+    assert sum(reopened.throughput.closed) == 0
+    assert github.returned[-2] == [1]  # found by the open search
+
+
+def test_every_answer_is_as_fresh_as_its_request():
+    github = FakeGitHub(pr_node(1, "2026-10-06T09:00:00Z"))
+    times = iter(
+        [
+            datetime(2026, 10, 8, 12, 0, tzinfo=UTC),
+            datetime(2026, 10, 8, 12, 0, tzinfo=UTC),
+            datetime(2026, 10, 8, 12, 0, 5, tzinfo=UTC),
+            datetime(2026, 10, 8, 12, 0, 5, tzinfo=UTC),
+        ]
+    )
+    svc = service(github, wall_clock=lambda: next(times))
 
     first = asyncio.run(svc.get(12))
-    calls = len(pages.calls)
-    asyncio.run(svc.get(4))  # a smaller window is served from the same fetch
-    clock.now += 899
-    asyncio.run(svc.get(12))
+    second = asyncio.run(svc.get(12))
 
-    assert first.throughput.opened[-1] == 4  # 1, 2, 3, 4 once each
-    assert calls == 3 and len(pages.calls) == 3
-    assert any("updated:>=2026-07-19" in call[0] for call in pages.calls)
-    assert all(
-        "author:@me" in call[0] and "archived:false" in call[0] for call in pages.calls
+    assert (first.fetched_at, second.fetched_at) == (
+        "2026-10-08T12:00:00Z",
+        "2026-10-08T12:00:05Z",
     )
-    clock.now += 2
-    asyncio.run(svc.get(12))
-    assert len(pages.calls) == 6  # expired: fetched again
+    assert len(github.calls) == 4  # the second request asked GitHub again
 
 
-def test_a_larger_window_than_the_cached_one_fetches_again():
-    pages = Pages(updated=[page(node(1))])
-    svc = service(pages)
+def test_a_wider_window_than_the_cached_one_is_fetched_whole_and_a_narrower_is_served():
+    github = FakeGitHub(pr_node(1, "2026-10-06T09:00:00Z"))
+    svc = service(github)
 
     asyncio.run(svc.get(4))
-    asyncio.run(svc.get(26))
+    wide = asyncio.run(svc.get(26))
+    github.calls.clear()
+    narrow = asyncio.run(svc.get(4))
 
-    assert len(pages.calls) == 4
+    assert wide.weeks == 26 and narrow.weeks == 4
+    # The narrow one asks for changes only: no whole-window query.
+    assert not any("updated:>=2026-0" in c and "T" not in c for c in github.calls)
+    assert len(github.calls) == 2
+
+
+def test_the_updated_search_is_paged_too():
+    github = FakeGitHub(*(pr_node(n, f"2026-10-0{n}T09:00:00Z") for n in range(1, 7)))
+    github.page_size = 2
+    svc = service(github)
+    asyncio.run(svc.get(12))
+    github.calls.clear()
+    github.returned.clear()
+    for n in range(1, 7):  # all of them changed
+        github.put(pr_node(n, f"2026-10-08T0{n}:00:00Z"))
+
+    result = asyncio.run(svc.get(12))
+
+    assert result.refreshed == 6
 
 
 def test_a_failure_after_the_first_page_gives_a_partial_flagged_result():

@@ -54,9 +54,6 @@ from toolbelt.ui import aggregate as aggregate_view
 from toolbelt.ui import api_models as api
 from toolbelt.ui import branch_links
 from toolbelt.ui.aggregate_feed import (
-    DEFAULT_TTL_SECONDS as DEFAULT_AGGREGATE_TTL_SECONDS,
-)
-from toolbelt.ui.aggregate_feed import (
     AggregateService,
     PageRunner,
     StoredHistory,
@@ -205,7 +202,6 @@ def create_app(
     untracked_interval: float = DEFAULT_UNTRACKED_INTERVAL_SECONDS,
     search_history: PageRunner = gh_page,
     stored_history: Callable[[], StoredHistory] = read_history,
-    aggregate_ttl: float = DEFAULT_AGGREGATE_TTL_SECONDS,
 ) -> FastAPI:
     """``cwd_root``: the repo `tt ui` was launched from; its checked-out
     branch is marked current, as `tt g tree` does. ``fetch`` looks up a
@@ -222,7 +218,8 @@ def create_app(
     user's open PRs (one GitHub call per ``untracked_interval``) and
     ``remote_of`` looks up a checkout's origin: see ``untracked_prs.py``.
     ``search_history`` pages through the user's PRs for the aggregate view
-    (cached for ``aggregate_ttl`` seconds) and ``stored_history`` reads the
+    (kept fresh incrementally, see ``AggregateService``) and
+    ``stored_history`` reads the
     stack DB's tracked and archived branches: see ``aggregate_feed.py``."""
     task_cache = TaskInfoCache(ttl_seconds=task_ttl_seconds, clock=clock)
     hub = EventHub(clock=clock, grace=grace_seconds)
@@ -286,9 +283,7 @@ def create_app(
         history=stored_history,
         remote_of=remote_of,
         finished=pr_finished,
-        clock=clock,
         wall_clock=wall_clock,
-        ttl=aggregate_ttl,
     )
 
     # The default change signal needs a connection held for as long as the app
@@ -395,7 +390,7 @@ def create_app(
         weeks: int = Query(aggregate_view.DEFAULT_WEEKS),
     ) -> api.Aggregate:
         # Computed on demand, not part of the live poll loop: GitHub is asked
-        # (at most once per ``aggregate_ttl``) only while the view is open.
+        # (for what changed) on each request, only while the view is open.
         if weeks not in aggregate_view.WINDOWS:
             raise HTTPException(
                 status_code=400,

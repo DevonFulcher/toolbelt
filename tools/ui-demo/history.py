@@ -251,6 +251,13 @@ def history(now: datetime, rng: random.Random) -> tuple[list[dict], list[dict]]:
         )
 
     for spec in prs:
+        # GitHub's `updatedAt`: the last thing that happened to the PR.
+        spec["updated"] = iso(
+            max(
+                [spec["created"], *(event[1] for event in spec["events"])]
+                + [spec[k] for k in ("merged", "closed") if k in spec]
+            )
+        )
         spec["created"] = iso(spec["created"])
         spec["draft"] = False
         spec["events"] = [

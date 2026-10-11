@@ -2,6 +2,7 @@
    --tone, see styles.css), so light/dark follow the rest of the page. */
 .aggregate { display: grid; gap: 16px; min-width: 0; }
 .agg-summary { color: var(--muted); font-size: 12px; margin: 0; }
+.agg-refresh { font-size: 12px; padding: 0 8px; margin-left: 4px; }
 .agg-notices { display: grid; gap: 4px; }
 .agg-notices .notice { padding: 0; }
 .agg-chart { background: var(--card); border: 1px solid var(--line); border-radius: 8px;

@@ -61,6 +61,42 @@ describe("the aggregate view", () => {
     await screen.findByRole("heading", { name: "Throughput" });
   });
 
+  test("says when it was fetched and how many PRs were refreshed, and has a refresh button", async () => {
+    const fetchMock = serve(aggregate());
+    show();
+    await screen.findByRole("heading", { name: "Throughput" });
+    expect(screen.getByText(/4 PRs refreshed from GitHub/)).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    // The previous result stays up while it refreshes.
+    expect(screen.getByRole("heading", { name: "Throughput" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled());
+  });
+
+  test("becoming visible again refetches only when the last fetch is older than a minute", async () => {
+    const fetchMock = serve(aggregate());
+    const clock = vi.spyOn(Date, "now");
+    clock.mockReturnValue(1_000_000);
+    show();
+    await screen.findByRole("heading", { name: "Throughput" });
+    const becomeVisible = (): void => {
+      Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+    };
+
+    clock.mockReturnValue(1_000_000 + 30_000);
+    becomeVisible();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    clock.mockReturnValue(1_000_000 + 61_000);
+    becomeVisible();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    clock.mockRestore();
+  });
+
   test("a weeks parameter in the URL selects the window", async () => {
     const fetchMock = serve(aggregate({ weeks: 4 }));
     show("?view=aggregate&weeks=4");
