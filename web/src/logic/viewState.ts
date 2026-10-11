@@ -1,13 +1,18 @@
 // The view state (view, filters, sort) and its URL query string. Same
-// parameters as the previous page: `view=table|stacked|grouped`, `mode=flat`,
+// parameters as the previous page: `view=table|stacked|grouped|aggregate`
+// (`weeks=4|26|52` for the aggregate's window; 12 is the default), `mode=flat`,
 // `compact=1`, `done=1`, `sort`/`dir`, `q`, `repo`, `root` (the branch id the
 // stacked view and the table's tree are focused on) and the per-column
 // filters. Only non-default values are written, so the default view is a
 // bare URL.
 import type { FilterKey } from "../api/generated";
 
-export const VIEWS = ["table", "stacked", "grouped"] as const;
+export const VIEWS = ["table", "stacked", "grouped", "aggregate"] as const;
 export type View = (typeof VIEWS)[number];
+
+// The aggregate view's time windows, in weeks (the server's `WINDOWS`).
+export const WINDOWS = [4, 12, 26, 52] as const;
+export type Weeks = (typeof WINDOWS)[number];
 
 // How the table view lays its rows out.
 export const MODES = ["tree", "flat"] as const;
@@ -54,6 +59,8 @@ export interface ViewState {
   merge: string;
   /** "1" includes merged/closed branches, which are hidden by default. */
   done: "" | "1";
+  /** Aggregate view only: how many weeks back it looks. */
+  weeks: Weeks;
   /** "1" collapses the PR/CI/Review/Comments/Merge columns into one. */
   compact: "" | "1";
   /**
@@ -78,6 +85,7 @@ export const DEFAULT_STATE: ViewState = {
   comments: "",
   merge: "",
   done: "",
+  weeks: 12,
   compact: "",
   root: "",
 };
@@ -115,6 +123,8 @@ export function parseState(search: string): ViewState {
   for (const key of VALUE_FILTERS) state[key] = params.get(key) ?? "";
   if (params.get("done") === "1") state.done = "1";
   if (params.get("compact") === "1") state.compact = "1";
+  const weeks = Number(params.get("weeks"));
+  if ((WINDOWS as readonly number[]).includes(weeks)) state.weeks = weeks as Weeks;
   state.root = params.get("root") ?? "";
   return state;
 }
@@ -147,6 +157,10 @@ export function serializeState(state: ViewState): string {
     if (state[key]) params.set(key, state[key]);
   }
   if (state.done) params.set("done", "1");
+  // The aggregate view's own window.
+  if (state.view === "aggregate" && state.weeks !== DEFAULT_STATE.weeks) {
+    params.set("weeks", String(state.weeks));
+  }
   // Table-only, like `mode`: a card view's URL does not carry it.
   if (state.view === "table" && state.compact) params.set("compact", "1");
   // The views that draw a tree; the grouped view and the flat table ignore it.

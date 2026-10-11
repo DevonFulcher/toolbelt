@@ -1,15 +1,26 @@
 import type { FilterKey } from "../api/generated";
-import { COLUMNS, DEFAULT_STATE, type Column, type View, type ViewState } from "../logic/viewState";
+import {
+  COLUMNS,
+  DEFAULT_STATE,
+  WINDOWS,
+  type Column,
+  type View,
+  type ViewState,
+} from "../logic/viewState";
 import type { Counts } from "../store/selectors";
 import { useApp, useAppStore } from "../store/StoreContext";
 
 // The default view first.
-const ORDER: View[] = ["grouped", "stacked", "table"];
+const ORDER: View[] = ["grouped", "stacked", "table", "aggregate"];
 
 const VIEW_LABELS: Record<View, { label: string; title: string }> = {
   grouped: { label: "Grouped", title: "Cards grouped by what happens next" },
   stacked: { label: "Stacked", title: "Cards by repo and stack, with the stack drawn" },
   table: { label: "Table", title: "One row per branch" },
+  aggregate: {
+    label: "Aggregate",
+    title: "How work is flowing: throughput, lead time and where tasks wait, over time",
+  },
 };
 
 const COLUMN_LABELS: Record<Column, string> = {
@@ -35,45 +46,49 @@ export function FilterBar({ counts }: { counts: Counts }) {
 
   return (
     <form id="controls" onSubmit={(event) => event.preventDefault()}>
-      <label>
-        Filter
-        <input
-          type="search"
-          name="q"
-          placeholder="branch, PR #, task…"
-          autoComplete="off"
-          value={view.q}
-          onChange={(event) => set({ q: event.target.value })}
-        />
-      </label>
-      <label>
-        Repo
-        <select name="repo" value={view.repo} onChange={(event) => set({ repo: event.target.value })}>
-          <option value="">All</option>
-          {repos.map((repo) => (
-            <option key={repo.id} value={String(repo.id)}>
-              {repo.name}
-            </option>
+      {view.view !== "aggregate" && (
+        <>
+          <label>
+            Filter
+            <input
+              type="search"
+              name="q"
+              placeholder="branch, PR #, task…"
+              autoComplete="off"
+              value={view.q}
+              onChange={(event) => set({ q: event.target.value })}
+            />
+          </label>
+          <label>
+            Repo
+            <select name="repo" value={view.repo} onChange={(event) => set({ repo: event.target.value })}>
+              <option value="">All</option>
+              {repos.map((repo) => (
+                <option key={repo.id} value={String(repo.id)}>
+                  {repo.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          {filters.map((filter) => (
+            <label key={filter.key}>
+              {filter.label}
+              <select
+                name={filter.key}
+                value={view[filter.key as FilterKey]}
+                onChange={(event) => set({ [filter.key]: event.target.value })}
+              >
+                <option value="">Any</option>
+                {filter.options.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
           ))}
-        </select>
-      </label>
-      {filters.map((filter) => (
-        <label key={filter.key}>
-          {filter.label}
-          <select
-            name={filter.key}
-            value={view[filter.key as FilterKey]}
-            onChange={(event) => set({ [filter.key]: event.target.value })}
-          >
-            <option value="">Any</option>
-            {filter.options.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      ))}
+        </>
+      )}
       <span className="seg" role="group" aria-label="View">
         {ORDER.map((name) => (
           <button
@@ -88,6 +103,22 @@ export function FilterBar({ counts }: { counts: Counts }) {
           </button>
         ))}
       </span>
+      {view.view === "aggregate" && (
+        <span className="seg" role="group" aria-label="Window">
+          {WINDOWS.map((weeks) => (
+            <button
+              key={weeks}
+              type="button"
+              data-weeks={weeks}
+              aria-pressed={view.weeks === weeks}
+              title={`The last ${weeks} weeks`}
+              onClick={() => set({ weeks })}
+            >
+              {`${weeks} weeks`}
+            </button>
+          ))}
+        </span>
+      )}
       {view.view === "table" && (
         <span className="seg" role="group" aria-label="Table layout">
           {(["tree", "flat"] as const).map((mode) => (
@@ -103,7 +134,7 @@ export function FilterBar({ counts }: { counts: Counts }) {
           ))}
         </span>
       )}
-      {view.view !== "table" && (
+      {view.view !== "table" && view.view !== "aggregate" && (
         <label>
           Sort
           <select
@@ -120,45 +151,49 @@ export function FilterBar({ counts }: { counts: Counts }) {
           </select>
         </label>
       )}
-      <button
-        type="button"
-        id="done"
-        aria-pressed={view.done === "1"}
-        title="Show merged and closed branches"
-        onClick={() => set({ done: view.done ? "" : "1" })}
-      >
-        Include done
-      </button>
-      {view.view === "table" && (
-        <button
-          type="button"
-          id="compact"
-          aria-pressed={view.compact === "1"}
-          title="Combine the PR, CI, review, comments and merge columns"
-          onClick={() => set({ compact: view.compact ? "" : "1" })}
-        >
-          Compact
-        </button>
+      {view.view !== "aggregate" && (
+        <>
+          <button
+            type="button"
+            id="done"
+            aria-pressed={view.done === "1"}
+            title="Show merged and closed branches"
+            onClick={() => set({ done: view.done ? "" : "1" })}
+          >
+            Include done
+          </button>
+          {view.view === "table" && (
+            <button
+              type="button"
+              id="compact"
+              aria-pressed={view.compact === "1"}
+              title="Combine the PR, CI, review, comments and merge columns"
+              onClick={() => set({ compact: view.compact ? "" : "1" })}
+            >
+              Compact
+            </button>
+          )}
+          <button
+            type="button"
+            id="clear"
+            onClick={() =>
+              store.getState().setView({
+                ...DEFAULT_STATE,
+                view: view.view,
+                mode: view.mode,
+                compact: view.compact,
+                root: view.root,
+              })
+            }
+          >
+            Clear
+          </button>
+          <span id="count" aria-live="polite">
+            {`${counts.visible} of ${counts.inRepo} branches`}
+            {counts.doneHidden > 0 ? ` (${counts.doneHidden} done hidden)` : ""}
+          </span>
+        </>
       )}
-      <button
-        type="button"
-        id="clear"
-        onClick={() =>
-          store.getState().setView({
-            ...DEFAULT_STATE,
-            view: view.view,
-            mode: view.mode,
-            compact: view.compact,
-            root: view.root,
-          })
-        }
-      >
-        Clear
-      </button>
-      <span id="count" aria-live="polite">
-        {`${counts.visible} of ${counts.inRepo} branches`}
-        {counts.doneHidden > 0 ? ` (${counts.doneHidden} done hidden)` : ""}
-      </span>
     </form>
   );
 }
