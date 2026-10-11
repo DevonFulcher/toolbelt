@@ -25,13 +25,26 @@ def ui(
     port: int = typer.Option(
         8765, "--port", "-p", help="Port to listen on (0 picks a free one)."
     ),
+    build: bool = typer.Option(
+        True,
+        "--build/--no-build",
+        help="Build the web client first when it is missing or out of date "
+        "(needs node and pnpm).",
+    ),
 ):
     """Serve a read-only web view of every known repo's stacks on 127.0.0.1"""
     # Imported here so the web stack doesn't slow down every other command.
     from toolbelt.git.stack import lineage
     from toolbelt.git.stack.cli import _repo_root_or_none
+    from toolbelt.ui.client_build import ClientBuildError, build_client
     from toolbelt.ui.server import serve
 
+    if build:
+        try:
+            build_client(say=lambda message: typer.echo(message, err=True))
+        except ClientBuildError as error:
+            typer.echo(f"tt ui: {error}", err=True)
+            raise typer.Exit(1) from error
     cwd_root = _repo_root_or_none()
     if cwd_root is not None:
         # Same as `tt g tree`: make sure the current repo is registered.
@@ -52,6 +65,15 @@ def upgrade():
         ],
         check=True,
     )
+    from toolbelt.ui.client_build import ClientBuildError, build_client
+
+    try:
+        build_client(force=True, say=typer.echo)
+    except ClientBuildError as error:
+        # The upgrade itself succeeded; `tt ui` retries the build.
+        typer.echo(
+            f"toolbelt upgraded, but the web client was not built: {error}", err=True
+        )
 
 
 @app.command()

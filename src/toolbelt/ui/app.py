@@ -48,6 +48,7 @@ from toolbelt.tasks.config import configured_tracker
 from toolbelt.tasks.tracker import TaskTracker
 from toolbelt.ui import api_models as api
 from toolbelt.ui import branch_links
+from toolbelt.ui.client_build import CLIENT_DIST
 from toolbelt.ui.live_status import (
     DEFAULT_CONCURRENCY,
     DEFAULT_GRACE_SECONDS,
@@ -83,9 +84,6 @@ from toolbelt.ui.untracked_prs import (
     origin_remote,
 )
 
-_HERE = Path(__file__).parent
-#: The web client's build output (``pnpm build`` in ``web/``).
-CLIENT_DIST = _HERE / "static" / "dist"
 
 # Sent when no event has gone out for this long, so intermediaries keep the
 # stream open and a dead client is noticed.

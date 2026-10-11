@@ -898,6 +898,7 @@ def test_tt_ui_serves_over_uvicorn(tmp_path):
             "ui",
             "--port",
             "0",
+            "--no-build",
         ],
         cwd=tmp_path,
         stdout=subprocess.PIPE,
