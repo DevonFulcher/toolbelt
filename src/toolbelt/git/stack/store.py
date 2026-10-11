@@ -7,6 +7,10 @@ Schema versioning uses ``PRAGMA user_version`` plus the ordered ``_MIGRATIONS``
 list below: migration ``i`` takes the database from version ``i`` to ``i + 1``.
 To change the schema, append a migration — never edit an existing one.
 
+Rows are read through ``sqlite3.Row`` (columns by name, never by position)
+and handed out as the frozen dataclasses below. The SQL stays hand-written
+here.
+
 Several agents write concurrently, so connections use WAL + a busy timeout and
 every multi-statement change runs in a ``BEGIN IMMEDIATE`` transaction.
 
@@ -198,6 +202,10 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _optional_time(value: str | None) -> datetime | None:
+    return datetime.fromisoformat(value) if value else None
+
+
 class StackStore:
     def __init__(self, db_path: Path) -> None:
         db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -205,6 +213,7 @@ class StackStore:
         self._conn = sqlite3.connect(
             db_path, timeout=_BUSY_TIMEOUT_MS / 1000, isolation_level=None
         )
+        self._conn.row_factory = sqlite3.Row
         self._conn.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS}")
         self._conn.execute("PRAGMA journal_mode = WAL")
         self._conn.execute("PRAGMA foreign_keys = ON")
@@ -226,10 +235,10 @@ class StackStore:
     def data_version(self) -> int:
         """Changes whenever another connection commits to the database, so a
         long-lived store can tell that something was written."""
-        return self._conn.execute("PRAGMA data_version").fetchone()[0]
+        return self._conn.execute("PRAGMA data_version").fetchone()["data_version"]
 
     def schema_version(self) -> int:
-        return self._conn.execute("PRAGMA user_version").fetchone()[0]
+        return self._conn.execute("PRAGMA user_version").fetchone()["user_version"]
 
     def _migrate(self) -> None:
         if self.schema_version() == len(_MIGRATIONS):
@@ -250,7 +259,7 @@ class StackStore:
                 (str(identity.git_common_dir),),
             ).fetchone()
             if row is not None:
-                return row[0]
+                return row["id"]
             cursor = conn.execute(
                 "INSERT INTO repos "
                 "(git_common_dir, path, name, remote_url, created_at) "
@@ -287,7 +296,7 @@ class StackStore:
             "SELECT parent FROM branches WHERE repo_id = ? AND name = ?",
             (repo_id, branch),
         ).fetchone()
-        return row[0] if row else None
+        return row["parent"] if row else None
 
     def set_parent(
         self,
@@ -339,7 +348,9 @@ class StackStore:
             "SELECT started_at FROM branches WHERE repo_id = ? AND name = ?",
             (repo_id, branch),
         ).fetchone()
-        return datetime.fromisoformat(row[0]) if row and row[0] else None
+        if row is None:
+            return None
+        return _optional_time(row["started_at"])
 
     def get_links(self, repo_id: int, branch: str) -> BranchLinks | None:
         """``branch``'s links, or ``None`` if the branch is not tracked."""
@@ -350,7 +361,11 @@ class StackStore:
         ).fetchone()
         if row is None:
             return None
-        return BranchLinks(task=row[0], task_tracker=row[1], agent_link=row[2])
+        return BranchLinks(
+            task=row["task"],
+            task_tracker=row["task_tracker"],
+            agent_link=row["agent_link"],
+        )
 
     def set_links(
         self,
@@ -400,13 +415,13 @@ class StackStore:
         )
         return [
             RemovedBranch(
-                repo_id=r[0],
-                name=r[1],
-                task=r[2],
-                task_tracker=r[3],
-                started_at=datetime.fromisoformat(r[4]) if r[4] else None,
-                removed_at=datetime.fromisoformat(r[5]),
-                landed=bool(r[6]),
+                repo_id=r["repo_id"],
+                name=r["name"],
+                task=r["task"],
+                task_tracker=r["task_tracker"],
+                started_at=_optional_time(r["started_at"]),
+                removed_at=datetime.fromisoformat(r["removed_at"]),
+                landed=bool(r["landed"]),
             )
             for r in rows
         ]
@@ -417,10 +432,10 @@ class StackStore:
         )
         return [
             TrackedBranchFacts(
-                repo_id=r[0],
-                name=r[1],
-                task=r[2],
-                started_at=datetime.fromisoformat(r[3]) if r[3] else None,
+                repo_id=r["repo_id"],
+                name=r["name"],
+                task=r["task"],
+                started_at=_optional_time(r["started_at"]),
             )
             for r in rows
         ]
@@ -428,19 +443,19 @@ class StackStore:
     def archive_since(self) -> datetime:
         """When archiving began: earlier removals are not in the archive."""
         row = self._conn.execute("SELECT since FROM archive_info").fetchone()
-        return datetime.fromisoformat(row[0])
+        return datetime.fromisoformat(row["since"])
 
     def all_parents(self, repo_id: int) -> Parents:
         rows = self._conn.execute(
             "SELECT name, parent FROM branches WHERE repo_id = ?", (repo_id,)
         )
-        return dict(rows.fetchall())
+        return {r["name"]: r["parent"] for r in rows}
 
     def gh_stack_unsupported_at(self, repo_id: int) -> datetime | None:
         row = self._conn.execute(
             "SELECT gh_stack_unsupported_at FROM repos WHERE id = ?", (repo_id,)
         ).fetchone()
-        return datetime.fromisoformat(row[0]) if row[0] else None
+        return _optional_time(row["gh_stack_unsupported_at"])
 
     def set_gh_stack_unsupported_at(self, repo_id: int, at: datetime | None) -> None:
         with self._write() as conn:
@@ -455,7 +470,9 @@ class StackStore:
             "WHERE repo_id = ? AND bottom = ?",
             (repo_id, bottom),
         ).fetchone()
-        return PublishedChain(row[0], row[1].split("\n")) if row else None
+        if row is None:
+            return None
+        return PublishedChain(row["chain_hash"], row["branches"].split("\n"))
 
     def set_published_chain(
         self,
@@ -490,11 +507,11 @@ class StackStore:
         )
         return [
             RepoRecord(
-                id=r[0],
-                name=r[1],
-                path=Path(r[2]),
-                git_common_dir=Path(r[3]),
-                remote_url=r[4],
+                id=r["id"],
+                name=r["name"],
+                path=Path(r["path"]),
+                git_common_dir=Path(r["git_common_dir"]),
+                remote_url=r["remote_url"],
             )
             for r in rows
         ]
