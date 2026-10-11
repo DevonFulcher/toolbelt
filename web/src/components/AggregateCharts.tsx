@@ -137,10 +137,11 @@ export function Legend({
   return (
     <ul className="agg-legend">
       {series.map((s) => (
-        <li key={s.key} title={s.legend}>
+        <li key={s.key} className="agg-legend-entry" tabIndex={0} aria-describedby={`${id}-legend-${s.key}`}>
           <Swatch id={id} series={s} />
           <span>{s.label}</span>
           {values?.[s.key] !== undefined && <span className="agg-legend-value">{values[s.key]}</span>}
+          <span id={`${id}-legend-${s.key}`} className="agg-legend-help" role="tooltip">{s.legend}</span>
         </li>
       ))}
     </ul>
@@ -544,6 +545,12 @@ export function LeadTimeChart({
   const xMs = (ms: number): number => MARGIN.left + (Math.min(Math.max(ms - windowStart, 0), span) / span) * plotW;
   const centres = series.buckets.map((b) => xMs(eventMode ? b.start : (b.start + Math.min(b.end, now)) / 2));
   const bucketX = (i: number): number => centres[i];
+  const axisLabels = eventMode
+    ? series.buckets.reduce<number[]>((picked, bucket, i) => {
+        if (!picked.length || xMs(bucket.start) - xMs(series.buckets[picked[picked.length - 1]].start) >= 70) picked.push(i);
+        return picked;
+      }, [])
+    : labelIndexes(series.buckets.length, Math.max(2, Math.floor(plotW / 70)));
   const style = (key: StageKey): LeadStageStyle => styles.find((x) => x.key === key) as LeadStageStyle;
   const label = (ms: number): string => formatLocalDate(ms, timeZone);
   const rangeLabel = (i: number): string => {
@@ -598,16 +605,18 @@ export function LeadTimeChart({
         <div className="agg-lead-controls">
           <ul className="agg-legend">
             {styles.map((s) => (
-              <li key={s.key} title={s.legend}>
+              <li key={s.key} className="agg-legend-entry">
                 <button
                   type="button"
                   className="agg-legend-toggle"
+                  aria-describedby={`${id}-legend-${s.key}`}
                   aria-pressed={!hidden.has(s.key)}
                   onClick={() => toggle(s.key)}
                 >
                   <Swatch id={id} series={s} />
                   <span>{s.label}</span>
                 </button>
+                <span id={`${id}-legend-${s.key}`} className="agg-legend-help" role="tooltip">{s.legend}</span>
               </li>
             ))}
           </ul>
@@ -697,7 +706,7 @@ export function LeadTimeChart({
                 </text>
               </g>
             ))}
-            {labelIndexes(series.buckets.length, Math.max(2, Math.floor(plotW / 70))).map((i) => (
+            {axisLabels.map((i) => (
               <text key={i} className="agg-tick" x={xMs(series.buckets[i].start)} y={height - 10} textAnchor="start">
                 {label(series.buckets[i].start)}
               </text>

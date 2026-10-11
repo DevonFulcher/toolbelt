@@ -125,6 +125,14 @@ const LEAD_TONES: Record<StageKey, Tone> = {
   start_to_merge: "accent",
 };
 
+const LEAD_DESCRIPTIONS: Record<StageKey, string> = {
+  start_to_open: "Time from the recorded task start until its PR was opened.",
+  open_to_request: "Time from PR opened until review was first requested.",
+  request_to_review: "Time from the first review request until the first review after it.",
+  review_to_merge: "Time from the PR's first review until it was merged.",
+  start_to_merge: "Total time from the recorded task start until the PR was merged.",
+};
+
 /**
  * The aggregate view's whole page: the controls (the shared bar, with this
  * view's fetch time and refresh button in its options row) and the charts.
@@ -221,15 +229,15 @@ export function AggregatePanels({
     }),
   );
   const throughputStyles = withHatches([
-    { key: "opened", label: "PRs opened", tone: opened?.tone ?? "green", legend: opened?.legend ?? "" },
-    { key: "merged", label: "PRs merged", tone: merged?.tone ?? "purple", legend: merged?.legend ?? "" },
+    { key: "opened", label: "PRs opened", tone: opened?.tone ?? "green", legend: "PRs opened in each local day or week." },
+    { key: "merged", label: "PRs merged", tone: merged?.tone ?? "purple", legend: "PRs merged in each local day or week." },
   ]);
   const leadStyles = withHatches(
     STAGES.map(({ key, label }) => ({
       key,
       label,
       tone: LEAD_TONES[key],
-      legend: weeks <= 12 ? `${label}: one value per merged PR.` : `${label}: the median over the PRs merged in each week.`,
+      legend: `${LEAD_DESCRIPTIONS[key]} ${weeks <= 12 ? "Each point is one merged PR." : "The line shows the weekly median."}`,
     })),
   ) as LeadStageStyle[];
   const startsAfterWindow = Date.parse(coverage.task_starts_since) > start;

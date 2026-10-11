@@ -59,6 +59,29 @@ describe("the aggregate view", () => {
     expect(within(who).getByText("Waiting on others / team")).toBeInTheDocument();
   });
 
+  test("each chart legend describes its properties on hover and focus", async () => {
+    serve(aggregate());
+    show();
+    const throughput = await screen.findByRole("region", { name: "Throughput" });
+    const opened = within(throughput).getByText("PRs opened").closest("li")!;
+    const openedHelp = within(opened).getByRole("tooltip", { hidden: true });
+    expect(openedHelp).toHaveTextContent("PRs opened in each local day or week.");
+    expect(opened).toHaveAttribute("aria-describedby", openedHelp.id);
+
+    const lead = screen.getByRole("region", { name: "Lead time over time (All time)" });
+    const leadButton = within(lead).getByRole("button", { name: "Task started to PR opened" });
+    const leadHelp = within(leadButton.closest("li")!).getByRole("tooltip", { hidden: true });
+    expect(leadHelp).toHaveTextContent("Time from the recorded task start until its PR was opened.");
+    expect(leadButton).toHaveAttribute("aria-describedby", leadHelp.id);
+
+    const mix = screen.getByRole("region", { name: "Status mix" });
+    expect(within(within(mix).getByText("Waiting for review").closest("li")!).getByRole("tooltip", { hidden: true }))
+      .toHaveTextContent("Waiting for review.");
+    const who = screen.getByRole("region", { name: "Who is it waiting on" });
+    expect(within(within(who).getByText("Needs me").closest("li")!).getByRole("tooltip", { hidden: true }))
+      .toHaveTextContent("Your move: fix, resolve, publish, request review or merge.");
+  });
+
   test("the window control refetches and the URL follows", async () => {
     const fetchMock = serve((weeks) => aggregate({ weeks }));
     const { url } = show("?view=aggregate");
