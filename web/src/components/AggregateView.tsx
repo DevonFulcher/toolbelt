@@ -7,7 +7,7 @@ import type { Aggregate, MixWho, Tone } from "../api/generated";
 import { formatBucketDate } from "../logic/aggregateChart";
 import { NEXT_SECTIONS } from "../logic/layout";
 import { useApp } from "../store/StoreContext";
-import { LeadTimeChart, ShareChart, ThroughputChart, withHatches } from "./AggregateCharts";
+import { LeadTimeChart, MixChart, ThroughputChart, withHatches } from "./AggregateCharts";
 
 type Load =
   | { weeks: number; state: "ready"; data: Aggregate }
@@ -116,24 +116,24 @@ export function AggregatePanels({ data }: { data: Aggregate }) {
         startsSince={coverage.task_starts_since}
         tone="accent"
       />
-      <ShareChart
+      <MixChart
         title="Status mix"
-        description="The share of in-flight task time spent in each state, per day (per week beyond 12 weeks). Each column sums to 100%. Merge conflicts and unresolved comments have no history, so they are not separated."
+        description={`A snapshot, not an average: at each instant (every ${mix.step_hours} hours) every task in flight has exactly one state, and each line is the share of those tasks in that state, so the lines sum to 100%. Gaps are instants with nothing in flight. Merge conflicts and unresolved comments have no history, so they are not separated.`}
         series={stateSeries}
         shares={mix.series.map((s) => s.share)}
+        counts={mix.series.map((s) => s.count)}
         starts={mix.starts}
         inflight={mix.inflight}
-        granularity={mix.granularity}
         empty={`No task was in flight in this window${startsAfterWindow ? ` (task starts are recorded since ${formatBucketDate(coverage.task_starts_since)})` : ""}.`}
       />
-      <ShareChart
+      <MixChart
         title="Who is it waiting on"
-        description="The same time, grouped by who the next action waits on: you (open, publish, fix, address review, merge), CI, or others (a reviewer, or a parent PR that waits on one). Derived with the rules of the Next column."
+        description="The same snapshots, grouped by who the next action waits on: you (open, publish, fix, address review, merge), CI, or others (a reviewer, or a parent PR that waits on one). Derived with the rules of the Next column."
         series={whoSeries}
         shares={mix.who.map((s) => s.share)}
+        counts={mix.who.map((s) => s.count)}
         starts={mix.starts}
         inflight={mix.inflight}
-        granularity={mix.granularity}
         empty="No task was in flight in this window."
       />
       <details className="agg-notes">

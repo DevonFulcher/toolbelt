@@ -527,23 +527,30 @@ class MixStateInfo(Model):
 
 class MixSeries(Model):
     key: MixState
-    #: Share of the in-flight task time of each bucket, 0..1; ``None`` for a
-    #: bucket in which nothing was in flight.
+    #: The share (0..1) of the tasks in flight at each sampled instant that
+    #: are in this state; ``None`` where no task was in flight. Across the
+    #: states the shares of an instant sum to 1.
     share: list[float | None]
+    #: How many tasks that is.
+    count: list[int]
 
 
 class MixWhoSeries(Model):
     key: MixWho
     share: list[float | None]
+    count: list[int]
 
 
 class StatusMix(Model):
-    #: ``day`` for windows up to 12 weeks, ``week`` beyond.
-    granularity: Literal["day", "week"]
-    #: ISO start of each bucket (the last one ends now).
+    """A snapshot of the tasks in flight at each sampled instant (not an
+    average over time)."""
+
+    #: Hours between samples (the last sample is now, so it may be nearer).
+    step_hours: int
+    #: ISO time of each sampled instant.
     starts: list[str]
-    #: Mean number of tasks in flight over each bucket.
-    inflight: list[float]
+    #: How many tasks were in flight at each instant.
+    inflight: list[int]
     states: list[MixStateInfo]
     series: list[MixSeries]
     who: list[MixWhoSeries]

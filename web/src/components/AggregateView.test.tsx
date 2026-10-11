@@ -100,15 +100,48 @@ describe("the aggregate view", () => {
     fireEvent.keyDown(chart, { key: "ArrowRight" });
 
     const tip = within(mix).getByRole("status");
-    expect(tip).toHaveTextContent("Oct 5");
-    expect(tip).toHaveTextContent("1.0 tasks in flight on average");
-    expect(within(tip).getByText("In draft").nextSibling).toHaveTextContent("50%");
+    expect(tip).toHaveTextContent("Oct 5, 00:00 UTC");
+    expect(tip).toHaveTextContent("2 tasks in flight");
+    expect(within(tip).getByText("In draft").nextSibling).toHaveTextContent("50% (1 of 2)");
 
     fireEvent.keyDown(chart, { key: "ArrowRight" });
+    expect(within(mix).getByRole("status")).toHaveTextContent("Oct 5, 06:00 UTC");
     fireEvent.keyDown(chart, { key: "ArrowRight" });
     expect(within(mix).getByRole("status")).toHaveTextContent("nothing in flight");
     fireEvent.keyDown(chart, { key: "Escape" });
     expect(within(mix).queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  test("the status mix is lines by default, with a stacked area on the same data", async () => {
+    serve(aggregate());
+    show();
+    const mix = await screen.findByRole("region", { name: "Status mix" });
+
+    expect(within(mix).getByRole("button", { name: "Lines" })).toHaveAttribute("aria-pressed", "true");
+    expect(mix.querySelectorAll("path.agg-line").length).toBeGreaterThan(0);
+    expect(mix.querySelectorAll("path.agg-band")).toHaveLength(0);
+    // The tasks-in-flight strip is drawn for the sampled instants with tasks.
+    expect(mix.querySelectorAll("rect.agg-inflight")).toHaveLength(3);
+
+    fireEvent.click(within(mix).getByRole("button", { name: "Stacked area" }));
+
+    expect(mix.querySelectorAll("path.agg-line")).toHaveLength(0);
+    expect(mix.querySelectorAll("path.agg-band").length).toBeGreaterThan(0);
+    expect(within(mix).getByRole("button", { name: "Stacked area" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  test("few tasks in flight are called out as coarse, and the table gives counts", async () => {
+    serve(aggregate());
+    show();
+    const mix = await screen.findByRole("region", { name: "Status mix" });
+
+    expect(mix).toHaveTextContent("Typically 4 tasks in flight: the percentages are coarse.");
+    fireEvent.click(within(mix).getByRole("button", { name: "Show data table" }));
+
+    const rows = within(within(mix).getByRole("table")).getAllByRole("row");
+    expect(rows[1]).toHaveTextContent("Oct 5, 00:00");
+    expect(rows[1]).toHaveTextContent("50% (1)");
+    expect(rows[3]).toHaveTextContent("Oct 5, 12:00");
   });
 
   test("every chart summarizes itself for assistive technology", async () => {
@@ -120,7 +153,7 @@ describe("the aggregate view", () => {
       "9 PRs opened and 6 merged over 3 weeks, from the week of Sep 21.",
     );
     const mix = screen.getByRole("region", { name: "Status mix" });
-    expect(within(mix).getByRole("img").getAttribute("aria-label")).toMatch(/Latest: .*Approved 40%/);
+    expect(within(mix).getByRole("img").getAttribute("aria-label")).toMatch(/\(10 tasks\): .*Approved 40%/);
   });
 
   test("the data table toggle shows exact values", async () => {
@@ -166,8 +199,9 @@ describe("the aggregate view", () => {
 
   test("an empty window says why", async () => {
     const empty = aggregate();
-    empty.mix.series = empty.mix.series.map((s) => ({ ...s, share: s.share.map(() => null) }));
-    empty.mix.who = empty.mix.who.map((s) => ({ ...s, share: s.share.map(() => null) }));
+    empty.mix.inflight = empty.mix.inflight.map(() => 0);
+    empty.mix.series = empty.mix.series.map((s) => ({ ...s, share: s.share.map(() => null), count: s.count.map(() => 0) }));
+    empty.mix.who = empty.mix.who.map((s) => ({ ...s, share: s.share.map(() => null), count: s.count.map(() => 0) }));
     empty.coverage.prs = 0;
     serve(empty);
     show();

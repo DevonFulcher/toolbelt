@@ -29,6 +29,12 @@
 .agg-col-active { opacity: 1; }
 .agg-col-active rect { stroke: var(--fg); stroke-width: 1; }
 .agg-band { stroke: var(--card); stroke-width: .5; }
+.agg-line { stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.agg-inflight { fill: var(--muted); fill-opacity: .55; }
+.agg-mode { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; }
+.agg-mode button { font-size: 12px; padding: 1px 8px; }
+.agg-mode button[aria-pressed=true] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.agg-coarse { color: var(--muted); margin-left: 6px; }
 .agg-tip { position: absolute; top: 6px; z-index: 2; pointer-events: none; font-size: 12px;
            background: var(--card); color: var(--fg); border: 1px solid var(--line);
            border-radius: 6px; padding: 6px 8px; box-shadow: 0 2px 8px rgba(0, 0, 0, .25);

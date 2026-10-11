@@ -30,11 +30,12 @@ function stage(key: LeadStage["key"], label: string, values: number[], unknown =
   };
 }
 
-/** Four days of status mix over three weeks of throughput. The third day has
- * nothing in flight. */
+/** Four sampled instants of status mix over three weeks of throughput. The
+ * third has nothing in flight. */
 export function aggregate(overrides: Partial<Aggregate> = {}): Aggregate {
-  const days = ["2026-10-05T00:00:00Z", "2026-10-06T00:00:00Z", "2026-10-07T00:00:00Z", "2026-10-08T00:00:00Z"];
-  // Shares per day for the nine states; null where nothing was in flight.
+  const days = ["2026-10-05T00:00:00Z", "2026-10-05T06:00:00Z", "2026-10-05T12:00:00Z", "2026-10-05T18:00:00Z"];
+  const inflight = [2, 4, 0, 10];
+  // Shares per sample for the nine states; null where nothing was in flight.
   const columns: (number[] | null)[] = [
     [0.5, 0.5, 0, 0, 0, 0, 0, 0, 0],
     [0.25, 0.25, 0.25, 0.25, 0, 0, 0, 0, 0],
@@ -66,14 +67,19 @@ export function aggregate(overrides: Partial<Aggregate> = {}): Aggregate {
       stage("start_to_merge", "Task started to merged", []),
     ],
     mix: {
-      granularity: "day",
+      step_hours: 6,
       starts: days,
-      inflight: [1, 4, 0, 2.5],
+      inflight,
       states: STATES.map((s) => ({ ...s, legend: `${s.label}.` })),
-      series: STATES.map((s, k) => ({ key: s.key, share: columns.map((c) => (c ? c[k] : null)) })),
+      series: STATES.map((s, k) => ({
+        key: s.key,
+        share: columns.map((c) => (c ? c[k] : null)),
+        count: columns.map((c, i) => (c ? Math.round(c[k] * inflight[i]) : 0)),
+      })),
       who: who.map((key, k) => ({
         key,
         share: columns.map((c) => (c ? whoOf(c)[k] : null)),
+        count: columns.map((c, i) => (c ? Math.round(whoOf(c)[k] * inflight[i]) : 0)),
       })),
     },
     coverage: {

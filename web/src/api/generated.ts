@@ -119,15 +119,20 @@ export interface LeadStage {
   unknown: number;
   values_s: number[];
 }
+/**
+ * A snapshot of the tasks in flight at each sampled instant (not an
+ * average over time).
+ */
 export interface StatusMix {
-  granularity: "day" | "week";
   inflight: number[];
   series: MixSeries[];
   starts: string[];
   states: MixStateInfo[];
+  step_hours: number;
   who: MixWhoSeries[];
 }
 export interface MixSeries {
+  count: number[];
   key: MixState;
   share: (number | null)[];
 }
@@ -142,6 +147,7 @@ export interface MixStateInfo {
   tone: Tone;
 }
 export interface MixWhoSeries {
+  count: number[];
   key: MixWho;
   share: (number | null)[];
 }

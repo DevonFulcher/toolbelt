@@ -44,8 +44,11 @@ from toolbelt.ui.pr_activity import PrFacts, TimelineItem
 
 WINDOWS = (4, 12, 26, 52)
 DEFAULT_WEEKS = 12
-#: Windows up to this many weeks are bucketed per day, longer ones per week.
-DAILY_UP_TO_WEEKS = 12
+#: The status mix is sampled every ``SAMPLE_HOURS`` hours for windows up to
+#: ``SAMPLE_HOURS_UP_TO_WEEKS`` weeks (at most 336 samples), daily beyond
+#: (at most 364): a small payload either way.
+SAMPLE_HOURS = 6
+SAMPLE_HOURS_UP_TO_WEEKS = 12
 
 WHO_YOU = "you"
 WHO_CI = "ci"
@@ -105,9 +108,13 @@ NOTES: tuple[tuple[str, str], ...] = (
         "does.",
     ),
     (
-        "Weighting",
-        "Each bucket is the share of the task time spent in a state "
-        "(time-weighted), so a task counts for as long as it was in flight.",
+        "Status mix is a snapshot",
+        "At each sampled instant (every 6 hours for windows up to 12 weeks, "
+        "daily beyond) every task in flight is in exactly one state, and the "
+        "chart shows each state's share of those tasks. It is not averaged "
+        "over time. An instant with no task in flight is a gap, and with only "
+        "a few tasks the percentages are coarse: the number of tasks in "
+        "flight is shown beside them.",
     ),
     (
         "Long PRs",
@@ -748,7 +755,7 @@ def compute(
         fetched_at=_iso(fetched_at),
         throughput=_throughput(records, start, now),
         lead_time=_lead_time(with_pr, start),
-        mix=_mix(lives, start, now, weeks),
+        mix=_mix(lives, sample_instants(start, now, weeks), weeks),
         coverage=api.AggregateCoverage(
             prs=sum(1 for r in records if _in_window(r, start, now)),
             prs_with_start=sum(
@@ -845,52 +852,74 @@ def _lead_time(tasks: Sequence[Task], start: datetime) -> list[api.LeadStage]:
     return stages
 
 
+def sample_instants(start: datetime, now: datetime, weeks: int) -> list[datetime]:
+    """The instants the status mix is sampled at: every ``SAMPLE_HOURS`` hours
+    from the window's start (daily beyond ``HOURLY_UP_TO_WEEKS``), and ``now``
+    last."""
+    step = (
+        timedelta(hours=SAMPLE_HOURS)
+        if weeks <= SAMPLE_HOURS_UP_TO_WEEKS
+        else timedelta(days=1)
+    )
+    instants = [start]
+    while instants[-1] + step < now:
+        instants.append(instants[-1] + step)
+    if now > instants[-1]:
+        instants.append(now)
+    return instants
+
+
 def _mix(
     lives: Sequence[Sequence[Segment]],
-    window_start: datetime,
-    now: datetime,
+    instants: Sequence[datetime],
     weeks: int,
 ) -> api.StatusMix:
-    daily = weeks <= DAILY_UP_TO_WEEKS
-    edges = _bucket_edges(
-        window_start, now, timedelta(days=1) if daily else timedelta(weeks=1)
-    )
-    count = len(edges) - 1
-    by_state = {state.key: [0.0] * count for state in STATES}
-    by_who = {who: [0.0] * count for who in WHOS}
+    """A snapshot of the tasks in flight at each instant: every task has
+    exactly one state then, and the series are each state's share of them
+    (and its count). An instant with no task in flight has no shares."""
+    count = len(instants)
+    by_state = {state.key: [0] * count for state in STATES}
+    by_who = {who: [0] * count for who in WHOS}
     for life in lives:
-        for segment in life:
-            if segment.end <= window_start or segment.start >= now:
+        ordered = sorted(life, key=lambda segment: segment.start)
+        starts = [segment.start for segment in ordered]
+        for index, instant in enumerate(instants):
+            position = bisect.bisect_right(starts, instant) - 1
+            # In flight on [start, end): a task that ended at the instant is
+            # no longer. (Still-open ones end at ``now``, the last instant,
+            # where they are in flight.)
+            if position < 0:
                 continue
-            first = max(bisect.bisect_right(edges, segment.start) - 1, 0)
-            for index in range(first, count):
-                if edges[index] >= segment.end:
-                    break
-                lo = max(edges[index], segment.start)
-                hi = min(edges[index + 1], segment.end)
-                if hi > lo:
-                    seconds = (hi - lo).total_seconds()
-                    by_state[segment.state][index] += seconds
-                    by_who[segment.who][index] += seconds
-    totals = [sum(by_state[state.key][i] for state in STATES) for i in range(count)]
+            end = ordered[position].end
+            if end < instant or (end == instant and instant < instants[-1]):
+                continue
+            segment = ordered[position]
+            by_state[segment.state][index] += 1
+            by_who[segment.who][index] += 1
+    inflight = [sum(by_state[state.key][i] for state in STATES) for i in range(count)]
 
-    def shares(values: list[float]) -> list[float | None]:
-        return [v / t if t > 0 else None for v, t in zip(values, totals, strict=True)]
+    def share(counts: list[int]) -> list[float | None]:
+        return [c / n if n else None for c, n in zip(counts, inflight, strict=True)]
 
     return api.StatusMix(
-        granularity="day" if daily else "week",
-        starts=[_iso(edge) for edge in edges[:-1]],
-        inflight=[
-            total / (edges[i + 1] - edges[i]).total_seconds()
-            for i, total in enumerate(totals)
-        ],
+        step_hours=SAMPLE_HOURS if weeks <= SAMPLE_HOURS_UP_TO_WEEKS else 24,
+        starts=[_iso(instant) for instant in instants],
+        inflight=inflight,
         states=mix_state_infos(),
         series=[
-            api.MixSeries(key=state.key, share=shares(by_state[state.key]))  # type: ignore[arg-type]
+            api.MixSeries(
+                key=state.key,  # type: ignore[arg-type]
+                share=share(by_state[state.key]),
+                count=by_state[state.key],
+            )
             for state in STATES
         ],
         who=[
-            api.MixWhoSeries(key=who, share=shares(by_who[who]))  # type: ignore[arg-type]
+            api.MixWhoSeries(
+                key=who,  # type: ignore[arg-type]
+                share=share(by_who[who]),
+                count=by_who[who],
+            )
             for who in WHOS
         ],
     )

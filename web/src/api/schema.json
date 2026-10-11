@@ -1206,6 +1206,12 @@
     "MixSeries": {
       "additionalProperties": false,
       "properties": {
+        "count": {
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        },
         "key": {
           "$ref": "#/$defs/MixState"
         },
@@ -1225,7 +1231,8 @@
       },
       "required": [
         "key",
-        "share"
+        "share",
+        "count"
       ],
       "title": "MixSeries",
       "type": "object"
@@ -1281,6 +1288,12 @@
     "MixWhoSeries": {
       "additionalProperties": false,
       "properties": {
+        "count": {
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        },
         "key": {
           "$ref": "#/$defs/MixWho"
         },
@@ -1300,7 +1313,8 @@
       },
       "required": [
         "key",
-        "share"
+        "share",
+        "count"
       ],
       "title": "MixWhoSeries",
       "type": "object"
@@ -2178,17 +2192,11 @@
     },
     "StatusMix": {
       "additionalProperties": false,
+      "description": "A snapshot of the tasks in flight at each sampled instant (not an\naverage over time).",
       "properties": {
-        "granularity": {
-          "enum": [
-            "day",
-            "week"
-          ],
-          "type": "string"
-        },
         "inflight": {
           "items": {
-            "type": "number"
+            "type": "integer"
           },
           "type": "array"
         },
@@ -2210,6 +2218,9 @@
           },
           "type": "array"
         },
+        "step_hours": {
+          "type": "integer"
+        },
         "who": {
           "items": {
             "$ref": "#/$defs/MixWhoSeries"
@@ -2218,7 +2229,7 @@
         }
       },
       "required": [
-        "granularity",
+        "step_hours",
         "starts",
         "inflight",
         "states",

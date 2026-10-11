@@ -590,65 +590,121 @@ def test_throughput_counts_prs_per_week_across_the_window():
     assert t.closed == [0, 0, 0, 1]
 
 
-def test_each_status_mix_bucket_sums_to_one_and_empty_ones_are_none():
+def _column(mix, instant: datetime) -> dict[str, int]:
+    index = mix.starts.index(instant.strftime("%Y-%m-%dT%H:%M:%SZ"))
+    return {s.key: s.count[index] for s in mix.series if s.count[index]}
+
+
+def test_every_sample_sums_to_one_and_has_counts_that_agree():
     record = pr(
         created=24,
         merged_at=24 * 3,
         items=(request(30), review(50, "approved"), merged(24 * 3)),
     )
 
-    mix = compute([record], facts=[fact("branch-1", 12)]).mix
+    mix = compute([record], facts=[fact("branch-1", 12), fact("idea", 1)]).mix
 
-    assert mix.granularity == "day"
-    count = len(mix.starts)
-    for index in range(count):
+    assert mix.step_hours == 6
+    for index in range(len(mix.starts)):
         column = [s.share[index] for s in mix.series]
-        if all(v is None for v in column):
-            assert mix.inflight[index] == 0
+        counts = [s.count[index] for s in mix.series]
+        assert sum(counts) == mix.inflight[index]
+        if mix.inflight[index] == 0:
+            assert all(v is None for v in column)
         else:
             assert sum(v for v in column if v is not None) == pytest.approx(1)
+            for share, count in zip(column, counts):
+                assert share == pytest.approx(count / mix.inflight[index])
         who = [s.share[index] for s in mix.who]
-        assert (sum(v for v in who if v is not None) or 1) == pytest.approx(1)
-    # Before the task started nothing was in flight.
-    assert all(s.share[0] is None for s in mix.series)
+        assert sum(s.count[index] for s in mix.who) == mix.inflight[index]
+        assert sum(v for v in who if v is not None) == pytest.approx(
+            1 if mix.inflight[index] else 0
+        )
     assert {s.key for s in mix.series} == {s.key for s in agg.STATES}
 
 
-def test_time_in_each_state_is_weighted_by_duration():
-    # Started Monday 12:00; the PR opened Tuesday 00:00 as a draft and was
-    # marked ready at 12:00. Monday has 12h of working only; Tuesday has 12h
-    # of draft and 12h of ready.
+def test_an_instant_with_nothing_in_flight_is_a_gap_not_zero():
+    # Started Monday 12:00 and removed Tuesday 12:00 (an idea, no PR).
+    mix = compute([], facts=[fact("idea", 12, removed=36)], now=at(60)).mix
+
+    working = {s.key: s for s in mix.series}["working"]
+    before = mix.starts.index("2026-10-05T06:00:00Z")
+    during = mix.starts.index("2026-10-05T18:00:00Z")
+    after = mix.starts.index("2026-10-06T18:00:00Z")
+    assert working.share[before] is None and mix.inflight[before] == 0
+    assert working.share[during] == 1 and working.count[during] == 1
+    assert working.share[after] is None
+
+
+def test_a_sample_is_a_snapshot_of_each_tasks_state_at_that_instant():
+    # Task A: PR opened Mon 00:00 as a draft, ready Mon 13:00 (a ready PR
+    # with no request). Task B: only working, from Mon 03:00.
+    a = pr(1, created=0, draft=True, items=(ready(13),))
+    mix = compute([a], facts=[fact("idea", 3)], now=at(30)).mix
+
+    assert _column(mix, at(0)) == {"draft": 1}
+    assert _column(mix, at(6)) == {"draft": 1, "working": 1}
+    assert _column(mix, at(12)) == {"draft": 1, "working": 1}
+    assert _column(mix, at(18)) == {"ready": 1, "working": 1}
+    index = mix.starts.index("2026-10-05T18:00:00Z")
+    shares = {s.key: s.share[index] for s in mix.series}
+    assert shares["ready"] == 0.5 and shares["working"] == 0.5
+
+
+def test_a_task_that_ended_at_the_instant_is_no_longer_in_flight():
+    mix = compute([pr(created=0, merged_at=6, items=(merged(6),))], now=at(24)).mix
+
+    assert _column(mix, at(0)) == {"ready": 1}
+    assert _column(mix, at(6)) == {}
+
+
+def test_the_window_is_sampled_from_its_first_instant_to_now():
+    now = at(24 * 4 + 5)  # Friday 05:00
+    mix = compute([pr(created=0)], now=now, weeks=4).mix
+
+    assert mix.starts[0] == "2026-09-14T00:00:00Z"  # four weeks back, Monday
+    assert mix.starts[-1] == "2026-10-09T05:00:00Z"
+    gaps = {
+        datetime.fromisoformat(b.replace("Z", "+00:00"))
+        - datetime.fromisoformat(a.replace("Z", "+00:00"))
+        for a, b in zip(mix.starts, mix.starts[1:])
+    }
+    assert gaps <= {timedelta(hours=6), timedelta(hours=5)}
+    assert len(mix.starts) == 3 * 7 * 4 + 4 * 4 + 1 + 1
+
+
+def test_a_task_that_began_after_the_last_sample_is_in_flight_only_at_now():
+    mix = compute([pr(created=24 * 4 + 4.5)], now=at(24 * 4 + 5), weeks=4).mix
+
+    assert mix.inflight[-1] == 1
+    assert sum(mix.inflight[:-1]) == 0
+
+
+def test_the_working_time_before_a_pr_counts_as_in_flight():
     record = pr(created=24, items=(ready(36),))
     mix = compute([record], facts=[fact("branch-1", 12)]).mix
-    monday = next(i for i, s in enumerate(mix.starts) if s == "2026-10-05T00:00:00Z")
-    tuesday = monday + 1
-    share = {s.key: s.share for s in mix.series}
 
-    assert share["working"][monday] == pytest.approx(1.0)
-    assert share["working"][tuesday] == 0
-    assert share["draft"][tuesday] == pytest.approx(0.5)
-    assert share["ready"][tuesday] == pytest.approx(0.5)
-    assert mix.inflight[monday] == pytest.approx(0.5)
-    assert mix.inflight[tuesday] == pytest.approx(1.0)
+    assert _column(mix, at(12)) == {"working": 1}
+    assert _column(mix, at(24)) == {"draft": 1}
+    assert _column(mix, at(36)) == {"ready": 1}
 
 
 def test_who_classes_follow_the_state_rules():
     record = pr(created=0, items=(request(1), commit(2, "PENDING", "c")))
     mix = compute([record], now=at(10), weeks=4).mix
-    shares = {s.key: s.share for s in mix.who}
-    today = len(mix.starts) - 1
+    who = {s.key: s for s in mix.who}
+    at_hour = mix.starts.index("2026-10-05T06:00:00Z")  # CI running since 2h
 
-    # 10h of the day: 1h you (ready), 1h others (waiting), 8h CI.
-    assert shares["you"][today] == pytest.approx(0.1)
-    assert shares["others"][today] == pytest.approx(0.1)
-    assert shares["ci"][today] == pytest.approx(0.8)
+    assert who["ci"].count[at_hour] == 1 and who["ci"].share[at_hour] == 1
+    assert who["you"].count[at_hour] == 0
+    assert who["others"].count[at_hour] == 0
 
 
-def test_weekly_buckets_beyond_twelve_weeks():
+def test_daily_samples_beyond_twelve_weeks():
     result = compute([pr(created=0)], weeks=26, now=at(24 * 4))
 
-    assert result.mix.granularity == "week"
-    assert len(result.mix.starts) == 26
+    assert result.mix.step_hours == 24
+    assert len(result.mix.starts) == 25 * 7 + 4 + 1
 
 
 def test_lead_time_stats_and_unknown_intervals():
@@ -714,12 +770,10 @@ def test_tasks_without_a_pr_are_working_until_removed():
     result = compute([], facts=[fact("idea", 24, removed=48, repo="o/api")], now=at(96))
 
     assert result.coverage.tasks_without_pr == 1
-    share = {s.key: s.share for s in result.mix.series}["working"]
-    monday = next(
-        i for i, s in enumerate(result.mix.starts) if s == "2026-10-06T00:00:00Z"
-    )
-    assert share[monday] == pytest.approx(1.0)
-    assert share[monday + 2] is None  # removed: nothing in flight
+    mix = result.mix
+    assert _column(mix, at(24)) == {"working": 1}
+    assert _column(mix, at(42)) == {"working": 1}
+    assert _column(mix, at(48)) == {}  # removed: nothing in flight
 
 
 def test_coverage_says_how_much_has_a_recorded_start():
@@ -1144,7 +1198,7 @@ def test_the_aggregate_endpoint_serves_the_computed_view(client_and_pages):
     assert body["throughput"]["opened"][-1] == 1
     assert body["throughput"]["merged"][-1] == 1
     assert [s["key"] for s in body["lead_time"]][0] == "start_to_open"
-    assert body["mix"]["granularity"] == "day"
+    assert body["mix"]["step_hours"] == 6
     assert body["mix"]["states"][0]["label"] == pr_states.PHASES["working"].label
     assert body["notes"]
 

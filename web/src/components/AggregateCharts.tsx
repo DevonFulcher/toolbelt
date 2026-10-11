@@ -21,11 +21,14 @@ import {
   countTicks,
   durationAxis,
   formatBucketDate,
-  formatBucketRange,
+  formatInstant,
   formatDuration,
   labelIndexes,
   linearScale,
+  linePath,
   logScale,
+  medianPositive,
+  nearestIndex,
   niceMax,
   packStrip,
   rowOffset,
@@ -568,47 +571,56 @@ function LeadRow({
   );
 }
 
-// ---- stacked shares --------------------------------------------------------------------------------
+// ---- the status mix: a snapshot of the tasks in flight -------------------------------
 
-export function ShareChart({
+/** Below this many tasks in flight (typically) the percentages are coarse. */
+const COARSE_BELOW = 5;
+
+export function MixChart({
   title,
   description,
   series,
   shares,
+  counts,
   starts,
   inflight,
-  granularity,
   empty,
 }: {
   title: string;
   description: ReactNode;
   series: SeriesStyle[];
-  /** Per series (bottom to top), the share of each bucket or null. */
+  /** Per series, the share (0..1) of the tasks in flight at each sampled
+   * instant, or null where none was in flight. */
   shares: (number | null)[][];
+  /** Per series, how many tasks that is. */
+  counts: number[][];
+  /** The sampled instants (ISO) and how many tasks were in flight at each. */
   starts: string[];
   inflight: number[];
-  granularity: "day" | "week";
   /** Said when nothing was in flight in the whole window. */
   empty: ReactNode;
 }) {
   const [ref, width] = useWidth();
   const id = useId();
   const [hover, setHover] = useState<Hover | null>(null);
+  const [mode, setMode] = useState<"lines" | "area">("lines");
   const height = 240;
+  const stripHeight = 52;
   const plotW = Math.max(width - MARGIN.left - MARGIN.right, 50);
   const plotH = height - MARGIN.top - MARGIN.bottom;
   const count = starts.length;
-  const slot = plotW / Math.max(count, 1);
-  const centre = (i: number): number => MARGIN.left + slot * (i + 0.5);
+  const times = starts.map((t) => Date.parse(t));
+  const span = Math.max(times[count - 1] - times[0], 1);
+  const xs = times.map((t) => MARGIN.left + ((t - times[0]) / span) * plotW);
+  const x = (i: number): number => xs[i];
   const y = linearScale([0, 1], [MARGIN.top + plotH, MARGIN.top]);
-  const bands = stackShares(shares);
-  const days = granularity === "day" ? 1 : 7;
-  const hasData = shares.some((row) => row.some((v) => v !== null));
+  const hasData = inflight.some((n) => n > 0);
   const last = (() => {
-    for (let i = count - 1; i >= 0; i--) if (shares.some((row) => row[i] !== null)) return i;
+    for (let i = count - 1; i >= 0; i--) if (inflight[i] > 0) return i;
     return -1;
   })();
   const pct = (v: number | null): string => (v === null ? "-" : `${Math.round(v * 100)}%`);
+  const typical = medianPositive(inflight);
 
   if (!hasData) {
     return (
@@ -618,28 +630,37 @@ export function ShareChart({
     );
   }
 
+  const at = (index: number): void => setHover({ index, x: xs[index] });
   const move = (event: PointerEvent<SVGRectElement>): void => {
     const box = event.currentTarget.getBoundingClientRect();
-    const index = Math.min(count - 1, Math.max(0, Math.floor((event.clientX - box.left) / slot)));
-    setHover({ index, x: centre(index) });
+    const ms = times[0] + ((event.clientX - box.left) / Math.max(box.width, 1)) * span;
+    at(nearestIndex(times, ms));
   };
   const key = (event: KeyboardEvent): void => {
-    const step = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
     if (event.key === "Escape") setHover(null);
+    const step = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
     if (!step) return;
     event.preventDefault();
-    const next = Math.min(count - 1, Math.max(0, (hover?.index ?? (step > 0 ? -1 : count)) + step));
-    setHover({ index: next, x: centre(next) });
+    const from = hover?.index ?? (step > 0 ? -1 : count);
+    at(Math.min(count - 1, Math.max(0, from + step)));
   };
 
   const latest: Record<string, string> = {};
   series.forEach((s, i) => {
     latest[s.key] = last >= 0 ? pct(shares[i][last]) : "-";
   });
-  const summary = `${title}, ${formatBucketDate(starts[0])} to ${formatBucketDate(starts[count - 1])}. Latest: ${series
+  const summary = `${title}, ${formatBucketDate(starts[0])} to ${formatBucketDate(starts[count - 1])}. At the latest sample with tasks in flight (${inflight[last]} tasks): ${series
     .map((s) => `${s.label} ${latest[s.key]}`)
     .join(", ")}.`;
+  const bands = stackShares(shares);
+  const drawn = series
+    .map((s, i) => ({ s, i }))
+    .filter(({ i }) => shares[i].some((v) => v !== null && v > 0));
+  const stripMax = niceMax(Math.max(...inflight));
+  const stripY = linearScale([0, stripMax], [stripHeight - 6, 4]);
+  const barW = Math.max(plotW / count, 1);
   const ticks = [0, 0.25, 0.5, 0.75, 1];
+  const labels = labelIndexes(count, Math.max(2, Math.floor(plotW / 80)));
 
   return (
     <ChartFrame
@@ -648,11 +669,11 @@ export function ShareChart({
       legend={<Legend id={id} series={series} values={latest} />}
       table={
         <table className="agg-table">
-          <caption>{`${title}, share of in-flight task time per ${granularity}`}</caption>
+          <caption>{`${title}: share (and number) of the tasks in flight at each sampled instant`}</caption>
           <thead>
             <tr>
-              <th scope="col">{granularity === "day" ? "Day" : "Week of"}</th>
-              <th scope="col">In flight</th>
+              <th scope="col">Instant (UTC)</th>
+              <th scope="col">Tasks in flight</th>
               {series.map((s) => (
                 <th key={s.key} scope="col">
                   {s.label}
@@ -663,10 +684,10 @@ export function ShareChart({
           <tbody>
             {starts.map((start, i) => (
               <tr key={start}>
-                <th scope="row">{formatBucketDate(start)}</th>
-                <td>{inflight[i].toFixed(1)}</td>
+                <th scope="row">{formatInstant(start)}</th>
+                <td>{inflight[i]}</td>
                 {series.map((s, k) => (
-                  <td key={s.key}>{pct(shares[k][i])}</td>
+                  <td key={s.key}>{shares[k][i] === null ? "-" : `${pct(shares[k][i])} (${counts[k][i]})`}</td>
                 ))}
               </tr>
             ))}
@@ -674,10 +695,27 @@ export function ShareChart({
         </table>
       }
     >
+      <div className="agg-mode" role="group" aria-label={`${title} chart type`}>
+        {(
+          [
+            ["lines", "Lines"],
+            ["area", "Stacked area"],
+          ] as const
+        ).map(([value, label]) => (
+          <button key={value} type="button" aria-pressed={mode === value} onClick={() => setMode(value)}>
+            {label}
+          </button>
+        ))}
+        {typical < COARSE_BELOW && (
+          <span className="agg-coarse">
+            {`Typically ${typical} task${typical === 1 ? "" : "s"} in flight: the percentages are coarse.`}
+          </span>
+        )}
+      </div>
       <div className="agg-plot" ref={ref}>
         <svg
           width={width}
-          height={height}
+          height={height + stripHeight}
           role="img"
           aria-label={summary}
           tabIndex={0}
@@ -693,31 +731,67 @@ export function ShareChart({
               </text>
             </g>
           ))}
-          {labelIndexes(count, Math.max(2, Math.floor(plotW / 70))).map((i) => (
-            <text key={i} className="agg-tick" x={centre(i)} y={height - 10} textAnchor="middle">
+          {labels.map((i) => (
+            <text key={i} className="agg-tick" x={xs[i]} y={height - 10} textAnchor="middle">
               {formatBucketDate(starts[i])}
             </text>
           ))}
           <text className="agg-axis-title" transform={`translate(11 ${MARGIN.top + plotH / 2}) rotate(-90)`} textAnchor="middle">
-            share of in-flight time
+            share of tasks in flight
           </text>
-          {series.map((s, i) => (
-            <path
-              key={s.key}
-              className={`tone-${s.tone} agg-band`}
-              d={bandPath(bands[i], centre, y, Math.min(slot, 24))}
-              fill={fillOf(id, s)}
-            />
-          ))}
+          {mode === "area"
+            ? series.map((s, i) => (
+                <path
+                  key={s.key}
+                  className={`tone-${s.tone} agg-band`}
+                  d={bandPath(bands[i], x, y, Math.max(barW, 2))}
+                  fill={fillOf(id, s)}
+                />
+              ))
+            : drawn.map(({ s, i }) => (
+                <path
+                  key={s.key}
+                  className={`tone-${s.tone} agg-line`}
+                  d={linePath(shares[i], x, y)}
+                  fill="none"
+                  stroke="var(--tone)"
+                  strokeDasharray={s.hatch ? "5 3" : undefined}
+                />
+              ))}
+          {/* Tasks in flight: n at each sample, on the same time axis. */}
+          <g transform={`translate(0 ${height})`}>
+            <text className="agg-tick" x={MARGIN.left - 6} y={stripY(0)} textAnchor="end" dominantBaseline="middle">
+              0
+            </text>
+            <text className="agg-tick" x={MARGIN.left - 6} y={stripY(stripMax)} textAnchor="end" dominantBaseline="middle">
+              {stripMax}
+            </text>
+            <text className="agg-axis-title" x={MARGIN.left + plotW} y={2} textAnchor="end" dominantBaseline="hanging">
+              tasks in flight
+            </text>
+            <line className="agg-axis" x1={MARGIN.left} x2={MARGIN.left + plotW} y1={stripY(0)} y2={stripY(0)} />
+            {inflight.map((n, i) =>
+              n > 0 ? (
+                <rect
+                  key={starts[i]}
+                  className="agg-inflight"
+                  x={xs[i] - barW / 2}
+                  y={stripY(n)}
+                  width={barW}
+                  height={stripY(0) - stripY(n)}
+                />
+              ) : null,
+            )}
+          </g>
           {hover && (
-            <line className="agg-cursor" x1={hover.x} x2={hover.x} y1={MARGIN.top} y2={MARGIN.top + plotH} />
+            <line className="agg-cursor" x1={hover.x} x2={hover.x} y1={MARGIN.top} y2={height + stripHeight - 6} />
           )}
           <rect
             className="agg-hit"
             x={MARGIN.left}
             y={MARGIN.top}
             width={plotW}
-            height={plotH}
+            height={plotH + stripHeight}
             onPointerMove={move}
             onPointerLeave={() => setHover(null)}
           />
@@ -725,20 +799,22 @@ export function ShareChart({
         <ChartTooltip hover={hover} width={width}>
           {hover && (
             <>
-              <strong>{formatBucketRange(starts[hover.index], days)}</strong>
+              <strong>{`${formatInstant(starts[hover.index])} UTC`}</strong>
               <div className="agg-tip-sub">
                 {inflight[hover.index] > 0
-                  ? `${inflight[hover.index].toFixed(1)} tasks in flight on average`
+                  ? `${inflight[hover.index]} task${inflight[hover.index] === 1 ? "" : "s"} in flight`
                   : "nothing in flight"}
               </div>
               {[...series]
                 .reverse()
-                .filter((s) => (shares[series.indexOf(s)][hover.index] ?? 0) > 0)
+                .filter((s) => counts[series.indexOf(s)][hover.index] > 0)
                 .map((s) => (
                   <div key={s.key} className="agg-tip-row">
                     <Swatch id={id} series={s} />
                     <span>{s.label}</span>
-                    <span className="agg-tip-value">{pct(shares[series.indexOf(s)][hover.index])}</span>
+                    <span className="agg-tip-value">
+                      {`${pct(shares[series.indexOf(s)][hover.index])} (${counts[series.indexOf(s)][hover.index]} of ${inflight[hover.index]})`}
+                    </span>
                   </div>
                 ))}
             </>

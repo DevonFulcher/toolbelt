@@ -116,6 +116,64 @@ export function bandPath(
   return parts.join("");
 }
 
+// ---- lines over sampled instants -----------------------------------------------
+
+/** The index of the sample nearest to `ms` in the ascending `times`. */
+export function nearestIndex(times: readonly number[], ms: number): number {
+  if (times.length === 0) return -1;
+  let lo = 0;
+  let hi = times.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (times[mid] < ms) lo = mid + 1;
+    else hi = mid;
+  }
+  if (lo > 0 && ms - times[lo - 1] <= times[lo] - ms) return lo - 1;
+  return lo;
+}
+
+/**
+ * The SVG path of a line through `values` (one per sample, `null` for a gap):
+ * one subpath per run of consecutive samples with data, so the line breaks at
+ * a gap rather than being drawn across it. A run of a single sample is a
+ * zero-length segment (drawn as a dot by a round line cap).
+ */
+export function linePath(
+  values: readonly (number | null)[],
+  x: (index: number) => number,
+  y: (value: number) => number,
+): string {
+  const parts: string[] = [];
+  let run: string[] = [];
+  const flush = (): void => {
+    if (run.length === 1) run.push(run[0].replace("M", "L"));
+    if (run.length) parts.push(run.join(""));
+    run = [];
+  };
+  values.forEach((value, i) => {
+    if (value === null) flush();
+    else run.push(`${run.length ? "L" : "M"}${x(i)},${y(value)}`);
+  });
+  flush();
+  return parts.join("");
+}
+
+/** "Oct 5, 06:00" for an ISO time, in UTC (the samples are UTC instants). */
+export function formatInstant(iso: string): string {
+  const date = new Date(iso);
+  const hh = String(date.getUTCHours()).padStart(2, "0");
+  const mm = String(date.getUTCMinutes()).padStart(2, "0");
+  return `${formatBucketDate(iso)}, ${hh}:${mm}`;
+}
+
+/** The median of the positive entries (0 when there are none). */
+export function medianPositive(values: readonly number[]): number {
+  const sorted = values.filter((v) => v > 0).sort((a, b) => a - b);
+  if (sorted.length === 0) return 0;
+  const middle = sorted.length >> 1;
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
 // ---- durations --------------------------------------------------------------------
 
 const MINUTE = 60;

@@ -6,9 +6,13 @@ import {
   formatBucketDate,
   formatBucketRange,
   formatDuration,
+  formatInstant,
   labelIndexes,
+  linePath,
   linearScale,
   logScale,
+  medianPositive,
+  nearestIndex,
   niceMax,
   packStrip,
   rowOffset,
@@ -133,5 +137,38 @@ describe("dates", () => {
     expect(formatBucketDate("2026-10-05T00:00:00Z")).toBe("Oct 5");
     expect(formatBucketRange("2026-10-05T00:00:00Z", 7)).toBe("Oct 5 - Oct 11");
     expect(formatBucketRange("2026-10-05T00:00:00Z", 1)).toBe("Oct 5");
+  });
+});
+
+describe("lines over sampled instants", () => {
+  test("a line breaks at a gap instead of being drawn across it", () => {
+    const path = linePath(
+      [0.5, 0.25, null, null, 1],
+      (i) => i * 10,
+      (v) => 100 - v * 100,
+    );
+
+    expect(path).toBe("M0,50L10,75" + "M40,0L40,0");
+  });
+
+  test("all gaps draw nothing", () => {
+    expect(linePath([null, null], (i) => i, (v) => v)).toBe("");
+  });
+
+  test("the nearest sample to a pointer time", () => {
+    const times = [0, 10, 20, 40];
+
+    expect([nearestIndex(times, -5), nearestIndex(times, 4), nearestIndex(times, 16)]).toEqual([0, 0, 2]);
+    expect([nearestIndex(times, 31), nearestIndex(times, 29), nearestIndex(times, 99)]).toEqual([3, 2, 3]);
+    expect(nearestIndex([], 5)).toBe(-1);
+  });
+
+  test("instants are written in UTC to the minute", () => {
+    expect(formatInstant("2026-10-05T06:00:00Z")).toBe("Oct 5, 06:00");
+  });
+
+  test("the typical number in flight ignores empty instants", () => {
+    expect(medianPositive([0, 0, 2, 4, 0, 3])).toBe(3);
+    expect(medianPositive([0, 0])).toBe(0);
   });
 });
