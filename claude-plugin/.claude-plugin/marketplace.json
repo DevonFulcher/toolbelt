@@ -2,5 +2,8 @@
   "name": "toolbelt",
   "description": "Claude Code mods that belong to the toolbelt repo.",
   "owner": { "name": "Devon Fulcher" },
-  "plugins": [{ "name": "toolbelt-claims", "source": "./" }]
+  "plugins": [
+    { "name": "toolbelt-claims", "source": "./" },
+    { "name": "toolbelt-usage", "source": "./mods/usage-limits" }
+  ]
 }

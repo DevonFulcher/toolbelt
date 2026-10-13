@@ -1,4 +1,16 @@
-# toolbelt-claims
+# toolbelt Claude Code mods
+
+This folder is a plugin marketplace (`toolbelt`) holding two independent mods.
+`install.sh` installs both; either can be disabled on its own.
+
+## Mods
+
+| Mod | Folder | What it does |
+| --- | --- | --- |
+| `toolbelt-claims` | this folder | writes claim files so `tt` knows which worktrees an agent is using (below) |
+| `toolbelt-usage` | `mods/usage-limits/` | draws the account's usage limits above the prompt as a bar per window with a pace line; see `mods/usage-limits/README.md` |
+
+## toolbelt-claims
 
 A Claude Code mod (function hooks) that tells toolbelt which tracked
 branches and worktrees an agent session is working on. It does this by writing
@@ -50,8 +62,8 @@ claude-plugin/install.sh
 ```
 
 That is `claude plugin marketplace add <this folder>` followed by
-`claude plugin install toolbelt-claims@toolbelt --scope user`, made idempotent
-(a second run updates). The dotfiles `bootstrap.sh` runs it. It exits 0 with a
+`claude plugin install <mod>@toolbelt --scope user` for each of
+`toolbelt-claims` and `toolbelt-usage`, made idempotent (a second run updates). The dotfiles `bootstrap.sh` runs it. It exits 0 with a
 message when `claude` is not on PATH, and honours `CLAUDE_CONFIG_DIR`.
 
 Start a new session afterwards; the mod loads at session start. A user-scope
@@ -61,6 +73,7 @@ install is also what makes it load in the desktop app's Code tab.
 
 ```sh
 claude plugin uninstall toolbelt-claims@toolbelt
+claude plugin uninstall toolbelt-usage@toolbelt
 claude plugin marketplace remove toolbelt
 ```
 
@@ -93,7 +106,14 @@ recovering: claims are turn-scoped.
 ```sh
 claude plugin validate claude-plugin
 claude plugin test claude-plugin
+claude plugin validate claude-plugin/mods/usage-limits
+claude plugin test claude-plugin/mods/usage-limits
 ```
+
+`claude plugin test claude-plugin` also finds the tests under `mods/` and runs
+them against the claims plugin; the usage mod's band tests detect that (the
+engine stamps the plugin's folder as the session `cwd`) and return early, so
+the claims run stays green.
 
 Tests use the engine's test kit (`claude plugin test` needs Claude Code 2.1.295
 or newer). `tests/claims.test.ts` carries an inline copy of
