@@ -68,7 +68,13 @@ from toolbelt.ui.aggregate_feed import (
     gh_page,
     read_history,
 )
-from toolbelt.ui.claims_feed import CLAIMS_TICK_SECONDS, BranchKey, ClaimsFeed
+from toolbelt.ui.claims_feed import (
+    CLAIMS_TICK_SECONDS,
+    SPAN_MAX_GAP,
+    BranchKey,
+    ClaimObservation,
+    ClaimsFeed,
+)
 from toolbelt.ui.client_build import CLIENT_DIST
 from toolbelt.ui.live_status import (
     DEFAULT_CONCURRENCY,
@@ -190,6 +196,25 @@ def _claims_dir() -> Path:
     return state_dir() / CLAIMS_DIRNAME
 
 
+def _record_claim(observation: ClaimObservation) -> None:
+    store = StackStore(default_db_path())
+    try:
+        store.record_claim_seen(
+            holder=observation.holder,
+            session_id=observation.session_id,
+            agent_id=observation.agent_id,
+            holder_kind=observation.holder_kind,
+            claim_kind=observation.claim_kind,
+            target=observation.target,
+            task_id=observation.task_id,
+            touched_at=observation.touched_at,
+            seen_at=observation.seen_at,
+            max_gap=SPAN_MAX_GAP,
+        )
+    finally:
+        store.close()
+
+
 def _claim_tasks() -> list[TrackedTask]:
     store = StackStore(default_db_path())
     try:
@@ -225,6 +250,7 @@ def create_app(
     stored_history: Callable[[], StoredHistory] = read_history,
     claims_dir: Callable[[], Path] = _claims_dir,
     claim_tasks: Callable[[], list[TrackedTask]] = _claim_tasks,
+    record_claim: Callable[[ClaimObservation], None] = _record_claim,
     claims_tick: float | None = None,
 ) -> FastAPI:
     """``cwd_root``: the repo `tt ui` was launched from; its checked-out
@@ -246,9 +272,9 @@ def create_app(
     ``stored_history`` reads the
     stack DB's tracked and archived branches: see ``aggregate_feed.py``.
     ``claims_dir`` is where agents' claim files are (re-read every
-    ``claims_tick`` seconds while watched; default: ``tick``) and
-    ``claim_tasks`` lists the tracked branches a claim can resolve to: see
-    ``claims_feed.py``."""
+    ``claims_tick`` seconds, browser or not; default: ``tick``),
+    ``claim_tasks`` lists the tracked branches a claim can resolve to, and
+    ``record_claim`` stores each claim read: see ``claims_feed.py``."""
     task_cache = TaskInfoCache(ttl_seconds=task_ttl_seconds, clock=clock)
     hub = EventHub(clock=clock, grace=grace_seconds)
 
@@ -307,8 +333,8 @@ def create_app(
     claims = ClaimsFeed(
         directory=claims_dir,
         tasks=claim_tasks,
-        hub=hub,
         on_change=publish_claims,
+        record=record_claim,
         wall_clock=wall_clock,
         tick=min(tick, CLAIMS_TICK_SECONDS) if claims_tick is None else claims_tick,
     )
@@ -446,10 +472,11 @@ def create_app(
 
     @app.get("/api/snapshot", response_model=api.Snapshot)
     async def snapshot() -> api.Snapshot:
-        # Claims are only polled while a browser is connected, and a page
-        # asks for the snapshot before its stream opens: bring them up to
-        # date first (on the event loop, where the feed lives; a change is
-        # published before the version is read, so it is in this snapshot).
+        # The claims loop ticks about once a second; bring the claims up to
+        # date first, so a page that asks for the snapshot before its stream
+        # opens never sees them older than its own request (on the event
+        # loop, where the feed lives; a change is published before the
+        # version is read, so it is in this snapshot).
         claims.poll()
         # Read before the branches: an event published meanwhile then makes
         # the snapshot look stale to /api/events, never the other way round.

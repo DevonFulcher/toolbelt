@@ -19,8 +19,7 @@ from toolbelt.git.stack.status import ReviewState
 from toolbelt.task_claims.resolution import TrackedTask
 from toolbelt.ui import api_models
 from toolbelt.ui.app import create_app
-from toolbelt.ui.claims_feed import ClaimsFeed
-from toolbelt.ui.live_status import EventHub
+from toolbelt.ui.claims_feed import ClaimObservation, ClaimsFeed
 
 
 class Clock:
@@ -50,6 +49,7 @@ class Feed:
         self.dir = tmp_path / "claims"
         self.clock = Clock()
         self.changes: list[set[tuple[int, str]]] = []
+        self.recorded: list[ClaimObservation] = []
         self.task_calls = 0
         self.names = names
 
@@ -60,8 +60,8 @@ class Feed:
         self.feed = ClaimsFeed(
             directory=lambda: self.dir,
             tasks=tasks,
-            hub=EventHub(),
             on_change=self.changes.append,
+            record=self.recorded.append,
             wall_clock=self.clock,
             resolve_ttl=15,
         )
@@ -205,9 +205,8 @@ def test_worktree_claims_resolve_and_two_holders_on_one_branch_both_show(tmp_pat
     assert [h.holder for h in f.feed.holders(1, "devon/a")] == ["s1", "s1.sub"]
 
 
-def test_the_loop_waits_for_a_browser_and_polls_while_one_is_connected(tmp_path):
+def test_the_loop_polls_every_tick_with_no_browser_connected(tmp_path):
     f = Feed(tmp_path)
-    hub = f.feed._hub
     polls: list[int] = []
     real = f.feed.poll
     f.feed.poll = lambda: polls.append(1) or real()  # type: ignore[method-assign]
@@ -223,23 +222,68 @@ def test_the_loop_waits_for_a_browser_and_polls_while_one_is_connected(tmp_path)
         task = asyncio.create_task(f.feed.run())
         for _ in range(10):
             await asyncio.sleep(0)
-        assert polls == []  # nobody is watching
-        queue = hub.subscribe()
-        for _ in range(10):
-            await asyncio.sleep(0)
         assert len(polls) == 1
-        ticks.set()
-        for _ in range(10):
-            await asyncio.sleep(0)
-        assert len(polls) == 2
-        hub.unsubscribe(queue)
-        ticks.set()
-        for _ in range(10):
-            await asyncio.sleep(0)
-        assert len(polls) == 2
+        for expected in (2, 3):
+            ticks.set()
+            for _ in range(10):
+                await asyncio.sleep(0)
+            assert len(polls) == expected
         task.cancel()
 
     asyncio.run(scenario())
+
+
+def test_each_live_claim_is_recorded_with_its_resolved_task(tmp_path):
+    f = Feed(tmp_path)
+    write_holder(
+        f.dir,
+        "s1",
+        claims=[
+            worktree_claim("/wt/api/a"),
+            ref_claim("devon/b"),
+            ref_claim("NOPE-1"),
+        ],
+    )
+
+    f.feed.poll()
+
+    seen = sorted((o.claim_kind, o.target, o.task_id) for o in f.recorded)
+    assert seen == [
+        ("ref", "NOPE-1", None),
+        ("ref", "devon/b", "id-1"),
+        ("worktree", "/wt/api/a", "id-0"),
+    ]
+    assert {o.holder for o in f.recorded} == {"s1"}
+    assert {o.seen_at for o in f.recorded} == {NOW}
+
+
+def test_a_claim_is_recorded_again_only_after_the_record_interval(tmp_path):
+    f = Feed(tmp_path)
+    write_holder(f.dir, "s1", claims=[ref_claim("devon/a")])
+
+    f.feed.poll()
+    f.clock.now = NOW + timedelta(seconds=2)
+    f.feed.poll()
+    assert len(f.recorded) == 1
+
+    f.clock.now = NOW + timedelta(seconds=6)
+    f.feed.poll()
+    assert len(f.recorded) == 2
+
+
+def test_a_claim_that_is_released_and_taken_again_is_recorded_at_once(tmp_path):
+    f = Feed(tmp_path)
+    write_holder(f.dir, "s1", claims=[ref_claim("devon/a")])
+    f.feed.poll()
+    write_holder(f.dir, "s1", claims=[])
+    f.clock.now = NOW + timedelta(seconds=1)
+    f.feed.poll()
+
+    write_holder(f.dir, "s1", claims=[ref_claim("devon/a")])
+    f.clock.now = NOW + timedelta(seconds=2)
+    f.feed.poll()
+
+    assert len(f.recorded) == 2
 
 
 # ---- through the app ---------------------------------------------------------------------------

@@ -172,14 +172,20 @@ not. `release` exits 1 when it released nothing or refused something.
   holder is flagged.
 - Grouped and Priorities have a **With an agent** section after **Needs me**;
   the Next filter has the value; a rolled-up stacked card counts them.
-- **Live**: while a browser is connected the server re-reads the directory
-  about once a second (the same gating and grace as the GitHub polling),
-  re-evaluates TTL expiry on each tick, and pushes a `claims` event listing
-  the branches whose holders changed *and* the branches stacked on them with
-  their re-derived status. `git worktree list` is asked only when the set of
-  claims changed (or every 15 s), never on a heartbeat.
-- Each `/api/snapshot` first brings the claims up to date (they are only
-  polled while a stream is open, and a page asks for the snapshot first).
+- **Live**: while `tt ui` runs, with or without a browser (unlike the GitHub
+  polling, which waits for one), the server re-reads the directory about once
+  a second, re-evaluates TTL expiry on each tick, and pushes a `claims` event
+  listing the branches whose holders changed *and* the branches stacked on
+  them with their re-derived status. `git worktree list` is asked only when
+  the set of claims changed (or every 15 s), never on a heartbeat.
+- **Recorded**: each live claim the server reads is also written to the
+  `claim_spans` table of `stacks.db` (at most every 5 s per claim): holder,
+  session id, the claim, the tracked task it resolved to (null if none), and
+  the first and last time it was seen live. A claim's first time is its
+  `touched_at` when that is earlier than the first read. A gap of more than 30
+  s starts a new span. The record covers only the time `tt ui` was running.
+- Each `/api/snapshot` first brings the claims up to date, so a page never
+  sees them older than its own request.
 - The **aggregate view** is unchanged: claims have no history. Its notes say
   so.
 - The snapshot's `Branch.claim.holders[]` has `holder`, `kind`, `state`,

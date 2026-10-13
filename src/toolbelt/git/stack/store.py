@@ -24,7 +24,7 @@ import sqlite3
 import uuid
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 STATE_DIR_ENV_VAR = "TOOLBELT_HOME"
@@ -152,6 +152,31 @@ _MIGRATIONS: list[tuple[str, ...]] = [
         "ALTER TABLE removed_branches ADD COLUMN pr_node_id TEXT",
         "UPDATE removed_branches SET task_id = lower(hex(randomblob(16)))",
     ),
+    (
+        # What claims were held, when: one row per (holder, claim) while it
+        # stays continuously live, written by the claims reader as it reads
+        # the claim files (which are overwritten every turn and expire).
+        # ``first_seen`` is the claim's own ``touched_at`` when that is
+        # earlier than the first read. ``task_id`` is the tracked task the
+        # claim resolved to; NULL when it matched none. ``holder_kind`` is
+        # the claim file's ``kind``.
+        """
+        CREATE TABLE claim_spans (
+            id INTEGER PRIMARY KEY,
+            holder TEXT NOT NULL,
+            session_id TEXT,
+            agent_id TEXT,
+            holder_kind TEXT NOT NULL,
+            claim_kind TEXT NOT NULL,
+            target TEXT NOT NULL,
+            task_id TEXT,
+            first_seen TEXT NOT NULL,
+            last_seen TEXT NOT NULL
+        )
+        """,
+        "CREATE INDEX claim_spans_by_holder ON claim_spans (holder, last_seen)",
+        "CREATE INDEX claim_spans_by_session ON claim_spans (session_id, first_seen)",
+    ),
 ]
 
 
@@ -216,6 +241,21 @@ class TrackedBranchFacts:
     name: str
     task: str | None
     started_at: datetime | None
+
+
+@dataclass(frozen=True)
+class ClaimSpan:
+    """A claim held continuously from ``first_seen`` to ``last_seen``."""
+
+    holder: str
+    session_id: str | None
+    agent_id: str | None
+    holder_kind: str
+    claim_kind: str
+    target: str
+    task_id: str | None
+    first_seen: datetime
+    last_seen: datetime
 
 
 @dataclass(frozen=True)
@@ -564,6 +604,83 @@ class StackStore:
                 name=r["name"],
                 task=r["task"],
                 started_at=_optional_time(r["started_at"]),
+            )
+            for r in rows
+        ]
+
+    def record_claim_seen(
+        self,
+        *,
+        holder: str,
+        session_id: str | None,
+        agent_id: str | None,
+        holder_kind: str,
+        claim_kind: str,
+        target: str,
+        task_id: str | None,
+        touched_at: datetime,
+        seen_at: datetime,
+        max_gap: timedelta,
+    ) -> None:
+        """Note that ``holder`` held this claim at ``seen_at``. Extends the
+        holder's latest span for the same claim when it was last seen within
+        ``max_gap``; otherwise starts a new one (at ``touched_at`` when that
+        is earlier than ``seen_at``)."""
+        seen = seen_at.astimezone(UTC)
+        with self._write() as conn:
+            row = conn.execute(
+                "SELECT id, last_seen FROM claim_spans WHERE holder = ? "
+                "AND claim_kind = ? AND target = ? AND task_id IS ? "
+                "ORDER BY id DESC LIMIT 1",
+                (holder, claim_kind, target, task_id),
+            ).fetchone()
+            if (
+                row is not None
+                and datetime.fromisoformat(row["last_seen"]) >= seen - max_gap
+            ):
+                conn.execute(
+                    "UPDATE claim_spans SET last_seen = ? WHERE id = ?",
+                    (
+                        max(datetime.fromisoformat(row["last_seen"]), seen).isoformat(),
+                        row["id"],
+                    ),
+                )
+                return
+            conn.execute(
+                "INSERT INTO claim_spans (holder, session_id, agent_id, "
+                "holder_kind, claim_kind, target, task_id, first_seen, "
+                "last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    holder,
+                    session_id,
+                    agent_id,
+                    holder_kind,
+                    claim_kind,
+                    target,
+                    task_id,
+                    min(touched_at.astimezone(UTC), seen).isoformat(),
+                    seen.isoformat(),
+                ),
+            )
+
+    def claim_spans(self, *, since: datetime | None = None) -> list[ClaimSpan]:
+        """Every recorded span, or those last seen at or after ``since``,
+        oldest first."""
+        rows = self._conn.execute(
+            "SELECT * FROM claim_spans WHERE last_seen >= ? ORDER BY first_seen, id",
+            ((since or datetime.min.replace(tzinfo=UTC)).astimezone(UTC).isoformat(),),
+        )
+        return [
+            ClaimSpan(
+                holder=r["holder"],
+                session_id=r["session_id"],
+                agent_id=r["agent_id"],
+                holder_kind=r["holder_kind"],
+                claim_kind=r["claim_kind"],
+                target=r["target"],
+                task_id=r["task_id"],
+                first_seen=datetime.fromisoformat(r["first_seen"]),
+                last_seen=datetime.fromisoformat(r["last_seen"]),
             )
             for r in rows
         ]

@@ -1,12 +1,16 @@
-"""Keeps each branch's claim holders current for the connected pages.
+"""Keeps each branch's claim holders current, and records what was claimed.
 
-Like ``StatusRefresher`` and ``TaskFeed`` it only works while a browser is
-watching (it parks on the ``EventHub``; the same grace period applies). Every
-tick (about a second) it re-reads the claims directory (cheap: a listing and
-a few small JSON files) at the current time, so a holder whose ttl ran out
-drops away on its own, and calls ``on_change`` with the branches whose holders
-changed. The app turns that into one ``claims`` event that re-derives those
-branches' next action and their stacked children's.
+Unlike ``StatusRefresher`` and ``TaskFeed`` it runs whenever ``tt ui`` does,
+browser or not: reading the claims directory is local and cheap (a listing
+and a few small JSON files), and the claim files are overwritten every turn,
+so the record of who claimed what is only as complete as the reads. Every
+tick (about a second) it re-reads the directory at the current time, so a
+holder whose ttl ran out drops away on its own, and calls ``on_change`` with
+the branches whose holders changed. The app turns that into one ``claims``
+event that re-derives those branches' next action and their stacked
+children's. Each live claim it reads is also passed to ``record`` (at most
+every ``RECORD_INTERVAL``), which is how claims reach the ``claim_spans``
+table.
 
 Resolving claims to branches asks git (``git worktree list`` per repo), so
 that is done only when the *identity* of the live claims changed (a holder
@@ -25,18 +29,44 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from toolbelt.task_claims.claim_file import Claim
 from toolbelt.task_claims.operations import collect_garbage
 from toolbelt.task_claims.reading import Holder, Reading, read_claims, reclassify
 from toolbelt.task_claims.resolution import TrackedTask, resolve_claim
-from toolbelt.ui.live_status import EventHub
 
 CLAIMS_TICK_SECONDS = 1.0
 DEFAULT_RESOLVE_TTL_SECONDS = 15.0
 #: An expired file is deleted once it has been expired this long (so a
 #: heartbeat racing the deletion cannot lose a claim).
 EXPIRED_FILE_GRACE = timedelta(seconds=10)
+#: A claim already recorded is not recorded again for this long.
+RECORD_INTERVAL = timedelta(seconds=5)
+#: The longest a claim may go unrecorded and still be one span (it must
+#: exceed ``RECORD_INTERVAL`` and ride out a stalled poll).
+SPAN_MAX_GAP = timedelta(seconds=30)
 
 type BranchKey = tuple[int, str]
+
+
+@dataclass(frozen=True)
+class ClaimObservation:
+    """One live claim as read at ``seen_at``, for the claim record."""
+
+    holder: str
+    session_id: str | None
+    agent_id: str | None
+    holder_kind: str
+    claim_kind: str
+    #: The claimed worktree path or ref.
+    target: str
+    #: The tracked task it resolved to (None: it matched none).
+    task_id: str | None
+    touched_at: datetime
+    seen_at: datetime
+
+
+def _target(claim: Claim) -> str:
+    return claim.path if claim.kind == "worktree" else claim.ref
 
 
 @dataclass(frozen=True)
@@ -58,8 +88,8 @@ class ClaimsFeed:
         *,
         directory: Callable[[], Path],
         tasks: Callable[[], list[TrackedTask]],
-        hub: EventHub,
         on_change: Callable[[set[BranchKey]], None],
+        record: Callable[[ClaimObservation], None],
         wall_clock: Callable[[], datetime],
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         tick: float = CLAIMS_TICK_SECONDS,
@@ -67,8 +97,10 @@ class ClaimsFeed:
     ) -> None:
         self._directory = directory
         self._tasks = tasks
-        self._hub = hub
         self._on_change = on_change
+        self._record = record
+        #: When each live claim was last recorded.
+        self._recorded_at: dict[tuple, datetime] = {}
         self._wall_clock = wall_clock
         self._sleep = sleep
         self._tick = tick
@@ -151,9 +183,11 @@ class ClaimsFeed:
         if not holders:
             self._resolved_for = None
         new: dict[BranchKey, dict[str, BranchHolder]] = {}
+        recorded: dict[tuple, datetime] = {}
         for holder in holders:
             for claim in holder.claims:
-                for task in resolve_claim(claim, self._resolved):
+                matched = resolve_claim(claim, self._resolved)
+                for task in matched:
                     new.setdefault(task.key, {})[holder.holder] = BranchHolder(
                         holder=holder.holder,
                         kind=holder.file.kind,
@@ -162,6 +196,29 @@ class ClaimsFeed:
                         started_at=holder.file.started_at,
                         stale=holder.stale,
                     )
+                task_ids: list[str | None] = [task.task_id for task in matched] or [
+                    None
+                ]
+                for task_id in task_ids:
+                    key = (holder.holder, claim.kind, _target(claim), task_id)
+                    last = self._recorded_at.get(key)
+                    if last is None or now - last >= RECORD_INTERVAL:
+                        self._record(
+                            ClaimObservation(
+                                holder=holder.holder,
+                                session_id=holder.file.session_id,
+                                agent_id=holder.file.agent_id,
+                                holder_kind=holder.file.kind,
+                                claim_kind=claim.kind,
+                                target=_target(claim),
+                                task_id=task_id,
+                                touched_at=claim.touched_at,
+                                seen_at=now,
+                            )
+                        )
+                        last = now
+                    recorded[key] = last
+        self._recorded_at = recorded
         view = {
             key: tuple(sorted(by_holder.values(), key=lambda h: h.holder))
             for key, by_holder in new.items()
@@ -178,7 +235,5 @@ class ClaimsFeed:
 
     async def run(self) -> None:
         while True:
-            await self._hub.wait_for_subscriber()
-            while self._hub.watched():
-                self.poll()
-                await self._sleep(self._tick)
+            self.poll()
+            await self._sleep(self._tick)

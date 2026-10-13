@@ -4,7 +4,7 @@ multi-repo `tree`."""
 import shutil
 import sqlite3
 import subprocess
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -353,3 +353,75 @@ def test_archiving_began_when_the_table_was_created(tmp_path: Path):
     # Reopening does not reset it.
     s.close()
     assert StackStore(tmp_path / "stacks.db").archive_since() <= after
+
+
+def _seen(
+    s: StackStore,
+    at: datetime,
+    *,
+    target: str = "/wt/api/a",
+    task_id: str | None = "t1",
+    touched_at: datetime | None = None,
+) -> None:
+    s.record_claim_seen(
+        holder="sess",
+        session_id="sess",
+        agent_id=None,
+        holder_kind="agent",
+        claim_kind="worktree",
+        target=target,
+        task_id=task_id,
+        touched_at=touched_at or at,
+        seen_at=at,
+        max_gap=timedelta(seconds=30),
+    )
+
+
+def test_a_claim_seen_again_within_the_gap_extends_one_span(tmp_path: Path):
+    s = StackStore(tmp_path / "stacks.db")
+    t0 = datetime(2026, 10, 13, 12, 0, tzinfo=UTC)
+    _seen(s, t0, touched_at=t0 - timedelta(seconds=40))
+    _seen(s, t0 + timedelta(seconds=5))
+    _seen(s, t0 + timedelta(seconds=25))
+
+    (span,) = s.claim_spans()
+    assert span.first_seen == t0 - timedelta(seconds=40)
+    assert span.last_seen == t0 + timedelta(seconds=25)
+    assert (span.holder, span.session_id, span.task_id) == ("sess", "sess", "t1")
+
+
+def test_a_gap_longer_than_the_limit_starts_a_new_span(tmp_path: Path):
+    s = StackStore(tmp_path / "stacks.db")
+    t0 = datetime(2026, 10, 13, 12, 0, tzinfo=UTC)
+    _seen(s, t0)
+    _seen(s, t0 + timedelta(seconds=31))
+
+    assert [span.first_seen for span in s.claim_spans()] == [
+        t0,
+        t0 + timedelta(seconds=31),
+    ]
+
+
+def test_spans_are_kept_apart_by_claim_and_task(tmp_path: Path):
+    s = StackStore(tmp_path / "stacks.db")
+    t0 = datetime(2026, 10, 13, 12, 0, tzinfo=UTC)
+    _seen(s, t0)
+    _seen(s, t0, target="/wt/api/b", task_id="t2")
+    _seen(s, t0, target="/wt/other", task_id=None)
+    _seen(s, t0 + timedelta(seconds=5), target="/wt/other", task_id=None)
+
+    spans = s.claim_spans()
+    assert sorted((span.target, span.task_id) for span in spans) == [
+        ("/wt/api/a", "t1"),
+        ("/wt/api/b", "t2"),
+        ("/wt/other", None),
+    ]
+
+
+def test_claim_spans_can_be_limited_to_those_seen_since(tmp_path: Path):
+    s = StackStore(tmp_path / "stacks.db")
+    t0 = datetime(2026, 10, 13, 12, 0, tzinfo=UTC)
+    _seen(s, t0, target="/old", task_id=None)
+    _seen(s, t0 + timedelta(hours=2), target="/new", task_id=None)
+
+    assert [x.target for x in s.claim_spans(since=t0 + timedelta(hours=1))] == ["/new"]
