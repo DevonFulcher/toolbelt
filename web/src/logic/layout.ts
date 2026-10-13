@@ -9,7 +9,7 @@
 //            CI / Waiting on others / Done), flat within a section but
 //            ordered by stack so related branches are adjacent; a finished
 //            parent is a slim stub above its children there too.
-import { capEntries, focusedRows } from "./focus";
+import { capEntries, foldEntries, focusedRows } from "./focus";
 import type { Row } from "./rows";
 import { type Column, type ViewState, VALUE_FILTERS } from "./viewState";
 
@@ -23,7 +23,14 @@ export interface Entry {
    * that are not shown: how many more levels, and how many branches.
    */
   hidden?: { levels: number; branches: number };
+  /**
+   * Set by `foldEntries` on an entry the user collapsed: how many descendants
+   * are not shown under it.
+   */
+  folded?: { branches: number };
 }
+
+const NOTHING_FOLDED: ReadonlySet<string> = new Set();
 
 export interface Section {
   key: string;
@@ -290,10 +297,14 @@ export function groupedLayout(rows: Row[], state: ViewState): Section[] {
  * the stack's finished/filtered-out ancestors as context entries. It shows
  * the focus root's subtree (when set), down to the depth cap.
  */
-export function stackedLayout(rows: Row[], state: ViewState): Section[] {
+export function stackedLayout(
+  rows: Row[],
+  state: ViewState,
+  folded: ReadonlySet<string> = NOTHING_FOLDED,
+): Section[] {
   const byId = new Map(rows.map((row) => [row.id, row]));
   const sections: Section[] = [];
-  for (const entry of capEntries(layout(rows, { ...state, view: "stacked" }))) {
+  for (const entry of capEntries(foldEntries(layout(rows, { ...state, view: "stacked" }), folded))) {
     const row = byId.get(entry.id);
     if (!row) continue;
     let section = sections[sections.length - 1];

@@ -7,6 +7,7 @@ import {
   focusCounts,
   focusedRows,
   focusSize,
+  foldEntries,
   knownRoot,
   MAX_VISIBLE_DEPTH,
   stackViewRoot,
@@ -228,5 +229,47 @@ describe("the depth cap", () => {
 
     expect(sections).toHaveLength(1);
     expect(sections[0].entries).toHaveLength(MAX_VISIBLE_DEPTH + 1);
+  });
+});
+
+describe("folding (collapsing the descendants of a card)", () => {
+  // a <- b <- c, and a <- d: a has descendants b, c, d.
+  const tree = (): Row[] => [row("a", null, 0), row("b", "a", 1), row("c", "b", 2), row("d", "a", 3)];
+  const entries = () => layout(tree(), state({ view: "stacked" }));
+
+  test("hides everything below a folded card and says how many", () => {
+    const folded = foldEntries(entries(), new Set(["a"]));
+
+    expect(folded.map((e) => e.id)).toEqual(["a"]);
+    expect(folded[0].folded).toEqual({ branches: 3 });
+  });
+
+  test("a folded child hides only its own subtree", () => {
+    const folded = foldEntries(entries(), new Set(["b"]));
+
+    expect(folded.map((e) => e.id)).toEqual(["a", "b", "d"]);
+    expect(folded.find((e) => e.id === "b")!.folded).toEqual({ branches: 1 });
+    expect(folded.find((e) => e.id === "a")!.folded).toBeUndefined();
+  });
+
+  test("folding a leaf, an unknown id or nothing changes nothing", () => {
+    const base = entries();
+
+    expect(foldEntries(base, new Set(["c"]))).toEqual(base);
+    expect(foldEntries(base, new Set(["zzz"]))).toEqual(base);
+    expect(foldEntries(base, new Set())).toBe(base);
+  });
+
+  test("a fold inside a folded subtree is moot, and the cap still applies after it", () => {
+    const folded = foldEntries(entries(), new Set(["a", "b"]));
+
+    expect(folded.map((e) => e.id)).toEqual(["a"]);
+    expect(folded[0].folded).toEqual({ branches: 3 });
+  });
+
+  test("stackedLayout applies the folded ids", () => {
+    const sections = stackedLayout(tree(), state({ view: "stacked" }), new Set(["a"]));
+
+    expect(sections.flatMap((section) => section.entries.map((e) => e.id))).toEqual(["a"]);
   });
 });

@@ -38,6 +38,9 @@ export interface Preferences {
   /** The ids of the cards whose chronological log is open. */
   loadLogOpen(): string[];
   saveLogOpen(ids: string[]): void;
+  /** The ids of the stacked cards whose descendants are collapsed. */
+  loadFolded(): string[];
+  saveFolded(ids: string[]): void;
 }
 
 export interface AppState {
@@ -69,6 +72,8 @@ export interface AppState {
   collapsed: string[];
   /** Ids of the cards whose chronological log is open (remembered). */
   logOpen: string[];
+  /** Stacked view: cards whose descendants are hidden. */
+  folded: string[];
 
   // -- actions --
   applySnapshot(snapshot: Snapshot, now?: number): void;
@@ -88,6 +93,7 @@ export interface AppState {
   focusRoot(root: string, view?: View): void;
   patchCardUi(id: string, patch: CardUi): void;
   toggleLog(id: string): void;
+  toggleFold(id: string): void;
   toggleSection(key: string): void;
   expandSection(key: string): void;
 }
@@ -110,6 +116,8 @@ export const noPreferences: Preferences = {
   saveCollapsed: () => {},
   loadLogOpen: () => [],
   saveLogOpen: () => {},
+  loadFolded: () => [],
+  saveFolded: () => {},
 };
 
 export interface StoreInit {
@@ -142,6 +150,7 @@ export function createAppStore(init: StoreInit = {}): AppStore {
     cardUi: {},
     collapsed: preferences.loadCollapsed(),
     logOpen: preferences.loadLogOpen(),
+    folded: preferences.loadFolded(),
 
     applySnapshot(snapshot, now = clock()) {
       const prev = get();
@@ -247,6 +256,12 @@ export function createAppStore(init: StoreInit = {}): AppStore {
       const next = open.includes(id) ? open.filter((k) => k !== id) : [...open, id];
       preferences.saveLogOpen(next);
       set({ logOpen: next });
+    },
+    toggleFold(id) {
+      const folded = get().folded;
+      const next = folded.includes(id) ? folded.filter((key) => key !== id) : [...folded, id];
+      preferences.saveFolded(next);
+      set({ folded: next });
     },
 
     toggleSection(key) {

@@ -66,7 +66,13 @@ export interface Rendered {
 export function renderWith(
   ui: ReactElement,
   snapshot: Snapshot | null,
-  options: { search?: string; storedCompact?: string | null; collapsed?: string[]; logOpen?: string[] } = {},
+  options: {
+    search?: string;
+    storedCompact?: string | null;
+    collapsed?: string[];
+    logOpen?: string[];
+    folded?: string[];
+  } = {},
 ): Rendered & ReturnType<typeof render> {
   const saved: Record<string, unknown> = {};
   const preferences = {
@@ -82,6 +88,10 @@ export function renderWith(
     loadLogOpen: () => options.logOpen ?? [],
     saveLogOpen: (ids: string[]) => {
       saved.logOpen = ids;
+    },
+    loadFolded: () => options.folded ?? [],
+    saveFolded: (ids: string[]) => {
+      saved.folded = ids;
     },
   };
   const search = options.search ?? "";

@@ -6,6 +6,8 @@ const COMPACT_KEY = "tt-ui-compact";
 const COLLAPSED_KEY = "tt-ui-collapsed";
 // The cards (by id: repo id and branch) whose chronological log is open.
 const LOG_OPEN_KEY = "tt-ui-log-open";
+// The stacked cards (by id) whose descendants are collapsed.
+const FOLDED_KEY = "tt-ui-folded";
 
 /**
  * Preferences in `localStorage`. Remembering is a convenience: a blocked or
@@ -41,6 +43,8 @@ export function localPreferences(storage: Storage | null): Preferences {
     saveCollapsed: (keys) => write(COLLAPSED_KEY, JSON.stringify(keys)),
     loadLogOpen: () => readList(LOG_OPEN_KEY),
     saveLogOpen: (ids) => write(LOG_OPEN_KEY, JSON.stringify(ids)),
+    loadFolded: () => readList(FOLDED_KEY),
+    saveFolded: (ids) => write(FOLDED_KEY, JSON.stringify(ids)),
   };
 }
 

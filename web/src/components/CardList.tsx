@@ -17,10 +17,16 @@ export function CardList({ rows }: { rows: Row[] }) {
   const store = useAppStore();
   const view = useApp((s) => s.view);
   const collapsed = useApp((s) => s.collapsed);
+  const folded = useApp((s) => s.folded);
   const stacked = view.view === "stacked";
   const sections = useMemo(
-    () => stacked ? stackedLayout(rows, view) : view.view === "priorities" ? prioritiesLayout(rows, view) : groupedLayout(rows, view),
-    [rows, view, stacked],
+    () =>
+      stacked
+        ? stackedLayout(rows, view, new Set(folded))
+        : view.view === "priorities"
+          ? prioritiesLayout(rows, view)
+          : groupedLayout(rows, view),
+    [rows, view, stacked, folded],
   );
 
   // Where each card is placed (section key).

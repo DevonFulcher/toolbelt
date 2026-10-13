@@ -370,3 +370,51 @@ describe("with filters", () => {
     expect(cardNames()[0]).toBe("l3");
   });
 });
+
+describe("collapsing the descendants of a stacked card", () => {
+  const toggle = (name: string): HTMLElement =>
+    within(document.querySelector(`.card[data-id="1:${name}"]`) as HTMLElement).getByRole("button", {
+      name: new RegExp(`(Collapse|Expand) \\d+ descendants? of ${name}$`),
+    });
+
+  test("a card with descendants has a toggle that hides and shows them", () => {
+    const { preferences } = show(linear(4), "?view=stacked");
+    expect(cardNames()).toEqual(["l0", "l1", "l2", "l3"]);
+    expect(toggle("l1")).toHaveAttribute("aria-expanded", "true");
+    expect(toggle("l1")).toHaveAccessibleName("Collapse 2 descendants of l1");
+
+    fireEvent.click(toggle("l1"));
+
+    expect(cardNames()).toEqual(["l0", "l1"]);
+    expect(toggle("l1")).toHaveAttribute("aria-expanded", "false");
+    expect(toggle("l1")).toHaveAccessibleName("Expand 2 descendants of l1");
+    expect(preferences.saved.folded).toEqual(["1:l1"]);
+
+    fireEvent.click(toggle("l1"));
+
+    expect(cardNames()).toEqual(["l0", "l1", "l2", "l3"]);
+    expect(preferences.saved.folded).toEqual([]);
+  });
+
+  test("a leaf has no toggle, and neither do the other views", () => {
+    show(linear(3), "?view=stacked");
+    expect(
+      within(document.querySelector('.card[data-id="1:l2"]') as HTMLElement).queryByRole("button", {
+        name: /descendant/,
+      }),
+    ).toBeNull();
+  });
+
+  test("the grouped view has no toggle", () => {
+    show(linear(3), "?view=grouped");
+
+    expect(screen.queryByRole("button", { name: /descendant/ })).toBeNull();
+  });
+
+  test("folded cards are remembered, and the rest of the stack keeps its rails", () => {
+    renderWith(<App clock={() => NOW} />, snapshot(linear(4)), { search: "?view=stacked", folded: ["1:l1"] });
+
+    expect(cardNames()).toEqual(["l0", "l1"]);
+    expect(toggle("l1")).toHaveAttribute("aria-expanded", "false");
+  });
+});

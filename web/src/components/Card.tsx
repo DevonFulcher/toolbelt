@@ -118,6 +118,9 @@ export const Card = memo(
       s.view.view === "stacked" && s.view.root !== id ? serializeState({ ...s.view, root: id }) : null,
     );
     const branch = useApp((s) => s.branchesById[id]);
+    // Stacked view only: whether this card's descendants are collapsed.
+    const stackedView = useApp((s) => s.view.view === "stacked");
+    const isFolded = useApp((s) => s.folded.includes(id));
     const descendants = useApp((s) => {
       const seen = new Set<string>([id]);
       const pending = [...(s.branchesById[id]?.children ?? [])];
@@ -192,6 +195,18 @@ export const Card = memo(
               >
                 focus on this subtree →
               </a>
+            )}
+            {stackedView && hasChildren && (
+              <button
+                type="button"
+                className="fold-toggle"
+                aria-expanded={!isFolded}
+                aria-label={`${isFolded ? "Expand" : "Collapse"} ${descendants} descendant${descendants === 1 ? "" : "s"} of ${branch.name}`}
+                title={isFolded ? `Show the ${descendants} hidden below` : `Hide the ${descendants} stacked below`}
+                onClick={() => store.getState().toggleFold(id)}
+              >
+                <span aria-hidden="true">{isFolded ? "▸" : "▾"}</span> {descendants}
+              </button>
             )}
           </Slot>
           <Slot id="ancestors" label="Ancestors">{String(branch.depth)}</Slot>

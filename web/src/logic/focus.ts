@@ -184,3 +184,26 @@ export function capEntries(entries: Entry[], max: number = MAX_VISIBLE_DEPTH): E
   });
   return out;
 }
+
+/**
+ * Drops the descendants of every entry whose id is in `folded` (the cards the
+ * user collapsed) and marks that entry with how many it hides. Entries are in
+ * depth-first order, so an entry's descendants are the run of deeper entries
+ * right after it. A context stub is never folded (it is not a card).
+ */
+export function foldEntries(entries: Entry[], folded: ReadonlySet<string>): Entry[] {
+  if (folded.size === 0) return entries;
+  const out: Entry[] = [];
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    out.push(entry);
+    if (entry.context || !folded.has(entry.id)) continue;
+    let branches = 0;
+    while (index + 1 < entries.length && entries[index + 1].depth > entry.depth) {
+      branches += 1;
+      index += 1;
+    }
+    if (branches > 0) out[out.length - 1] = { ...entry, folded: { branches } };
+  }
+  return out;
+}
