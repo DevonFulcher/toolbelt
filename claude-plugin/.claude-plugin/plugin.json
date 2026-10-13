@@ -1,0 +1,6 @@
+{
+  "name": "toolbelt-claims",
+  "version": "0.1.0",
+  "description": "Records which tracked branches and worktrees this session is working on as claim files for toolbelt (tt).",
+  "author": { "name": "Devon Fulcher" }
+}
