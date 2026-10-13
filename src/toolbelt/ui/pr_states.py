@@ -243,6 +243,13 @@ _NEXT_TONES = {
             "claim file; the action it replaced is in the tooltip)."
         ),
     ),
+    na.AUTONOMOUS: (
+        PURPLE,
+        (
+            "One of toolbelt's autonomous agents is working on this task (a "
+            "claim file; the action it replaced is in the tooltip)."
+        ),
+    ),
 }
 
 _NEXT_LABELS = {
@@ -259,6 +266,7 @@ _NEXT_LABELS = {
     na.WAIT_REVIEW: "Waiting for review",
     na.REQUEST_REVIEW: "Request review",
     na.CLAIMED: "With an agent",
+    na.AUTONOMOUS: "Autonomous agent",
 }
 
 STATES: tuple[StateValue, ...] = (

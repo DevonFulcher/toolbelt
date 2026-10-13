@@ -668,6 +668,7 @@ export interface NowChip {
 const WHO_TONES: Record<Who, Tone> = {
   you: "accent",
   agent: "purple",
+  auto: "purple",
   ci: "amber",
   others: "gray",
   none: "gray",

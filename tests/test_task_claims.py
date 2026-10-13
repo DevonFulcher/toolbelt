@@ -118,7 +118,7 @@ def test_unreadable_partial_and_unknown_version_files_are_skipped_and_listed(
     claims = tmp_path / "claims"
     write_holder(claims, "good", claims=[ref_claim("PLAT-1")])
     (claims / "partial.json").write_text('{"version": 1, "holder": "par')
-    write_holder(claims, "future", version=2)
+    write_holder(claims, "future", version=3)
     write_holder(claims, "misnamed").rename(claims / "other-name.json")
     (claims / "notes.txt").write_text("not a claim")
     (claims / ".good.json.123.tmp").write_text("{")
@@ -128,7 +128,7 @@ def test_unreadable_partial_and_unknown_version_files_are_skipped_and_listed(
     assert [h.holder for h in reading.holders] == ["good"]
     skipped = {s.name: s.reason for s in reading.skipped}
     assert set(skipped) == {"partial.json", "future.json", "other-name.json"}
-    assert "unsupported version 2" in skipped["future.json"]
+    assert "unsupported version 3" in skipped["future.json"]
     assert "does not match" in skipped["other-name.json"]
 
 
@@ -815,3 +815,32 @@ def test_gc_grace_keeps_a_file_that_expired_a_moment_ago(tmp_path: Path):
 
     assert sorted(outcome.claim_files) == ["old.json", "tomb.json"]
     assert (claims / "recent.json").exists()
+
+
+def test_a_v2_file_may_be_an_autonomous_holder_with_a_run_id(tmp_path: Path):
+    from toolbelt.task_claims.claim_file import parse_claim_file
+
+    path = write_holder(
+        tmp_path / "claims",
+        "auto.run1",
+        kind="autonomous",
+        version=2,
+        run_id="run1",
+        claims=[ref_claim("devon/a")],
+    )
+
+    parsed = parse_claim_file(path.read_text(), expected_holder="auto.run1")
+
+    assert (parsed.version, parsed.kind, parsed.run_id) == (2, "autonomous", "run1")
+
+
+@pytest.mark.parametrize(
+    ("kind", "version"), [("autonomous", 1), ("agent", 2), ("human", 2)]
+)
+def test_the_autonomous_kind_is_exactly_contract_v2(tmp_path: Path, kind, version):
+    from toolbelt.task_claims.claim_file import UnreadableFile, parse_claim_file
+
+    path = write_holder(tmp_path / "claims", "x", kind=kind, version=version)
+
+    with pytest.raises(UnreadableFile):
+        parse_claim_file(path.read_text(), expected_holder="x")

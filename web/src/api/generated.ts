@@ -37,14 +37,15 @@ export type NextKind =
   | "merge"
   | "wait_review"
   | "request_review"
-  | "claimed";
-export type Who = "you" | "agent" | "others" | "ci" | "none";
+  | "claimed"
+  | "autonomous";
+export type Who = "you" | "agent" | "auto" | "others" | "ci" | "none";
 export type Chip = PrChip | CiChip | ReviewChip | CommentsChip | MergeChip | NextChip;
 export type PrState = "none" | "draft" | "open" | "merged" | "closed";
 export type ReviewState = "none" | "requested" | "approved" | "reviewed";
 export type CommentsValue = "none" | "open";
 export type TaskLive = TaskLoading | TaskDetails | TaskUnavailable;
-export type HolderKind = "agent" | "human";
+export type HolderKind = "agent" | "human" | "autonomous";
 export type HolderState = "working" | "idle" | "blocked";
 export type UntrackedPrs = UntrackedLoading | UntrackedLoaded | UntrackedFailed;
 export type CatalogDimension =

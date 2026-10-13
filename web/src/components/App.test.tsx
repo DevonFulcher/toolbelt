@@ -306,6 +306,7 @@ describe("the controls and the address bar", () => {
       "Any",
       "Needs me",
       "With an agent",
+      "Autonomous agent",
       "Waiting on CI",
       "Waiting on others",
       "Done",

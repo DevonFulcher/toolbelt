@@ -1,21 +1,27 @@
-"""The claim file of contract v1 (``docs/task-claims.md``): one JSON file per
-holder in ``$TOOLBELT_HOME/claims/``."""
+"""The claim file (``docs/task-claims.md``): one JSON file per holder in
+``$TOOLBELT_HOME/claims/``. Contract v1 is what the Claude Code plugin
+writes; v2 is the same file with the ``autonomous`` holder kind, which only
+toolbelt's own agents write. Readers accept both."""
 
 import json
 import re
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 CLAIMS_DIRNAME = "claims"
 REVOKED_DIRNAME = "revoked"
+#: The version the plugin and ``tt task claim`` write.
 SUPPORTED_VERSION = 1
+#: The version of a file with ``kind: "autonomous"``.
+AUTONOMOUS_VERSION = 2
+READABLE_VERSIONS = (SUPPORTED_VERSION, AUTONOMOUS_VERSION)
 
 #: Holder ids are file names, so only these characters are allowed.
 HOLDER_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
 
-type HolderKind = Literal["agent", "human"]
+type HolderKind = Literal["agent", "human", "autonomous"]
 type HolderState = Literal["working", "idle", "blocked"]
 
 
@@ -43,18 +49,26 @@ class ClaimFile(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    version: Literal[1]
+    version: Literal[1, 2]
     holder: str = Field(pattern=HOLDER_PATTERN.pattern)
     kind: HolderKind
     session_id: str | None = None
     agent_id: str | None = None
     link: str | None = None
+    #: An autonomous holder's run (the id of its ``agent_runs`` row).
+    run_id: str | None = None
     state: HolderState
     started_at: AwareDatetime
     updated_at: AwareDatetime
     #: 0 is how a writer ends a holder it cannot delete: dead at once.
     ttl_seconds: int = Field(ge=0)
     claims: list[Annotated[WorktreeClaim | RefClaim, Field(discriminator="kind")]]
+
+    @model_validator(mode="after")
+    def _autonomous_is_v2(self) -> ClaimFile:
+        if (self.kind == "autonomous") != (self.version == AUTONOMOUS_VERSION):
+            raise ValueError('kind "autonomous" is exactly contract version 2')
+        return self
 
     @property
     def expires_at(self) -> datetime:
@@ -77,7 +91,7 @@ def parse_claim_file(text: str, *, expected_holder: str) -> ClaimFile:
         raise UnreadableFile(f"not valid JSON: {error}") from error
     if not isinstance(data, dict):
         raise UnreadableFile("not a JSON object")
-    if data.get("version") != SUPPORTED_VERSION:
+    if data.get("version") not in READABLE_VERSIONS:
         raise UnreadableFile(f"unsupported version {data.get('version')!r}")
     try:
         parsed = ClaimFile.model_validate(data)

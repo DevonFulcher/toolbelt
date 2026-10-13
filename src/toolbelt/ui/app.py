@@ -293,6 +293,7 @@ def create_app(
             parent_context(repo_id, parents, name, refresher, claims),
             now,
             claims.working(repo_id, name),
+            claims.autonomous(repo_id, name),
         )
 
     def publish_claims(changed: set[BranchKey]) -> None:

@@ -38,6 +38,7 @@ COMMENTS_NONE = "none"
 _NEXT_OPTION_LABELS = {
     "you": "Needs me",
     "agent": "With an agent",
+    "auto": "Autonomous agent",
     "ci": "Waiting on CI",
     "others": "Waiting on others",
     "none": "Done",
@@ -82,12 +83,17 @@ class ClaimLookup(Protocol):
 
     def working(self, repo_id: int, branch: str) -> bool: ...
 
+    def autonomous(self, repo_id: int, branch: str) -> bool: ...
+
 
 class _NoClaims:
     def holders(self, repo_id: int, branch: str) -> tuple[BranchHolder, ...]:
         return ()
 
     def working(self, repo_id: int, branch: str) -> bool:
+        return False
+
+    def autonomous(self, repo_id: int, branch: str) -> bool:
         return False
 
 
@@ -163,6 +169,7 @@ def parent_context(
         fetched.status,
         parent_context(repo_id, parents, parent, refresher, claims),
         claims.working(repo_id, parent),
+        claims.autonomous(repo_id, parent),
     )
     return ParentContext(name=parent, pr=fetched.status.pr, next_who=parent_action.who)
 
@@ -238,17 +245,19 @@ def loaded_status(
     facts: PrFacts | None,
     now: datetime,
     claimed: bool = False,
+    autonomous: bool = False,
 ) -> api.LoadedStatus:
     """``parent`` is the stack context for the next action; ``facts`` (with
     ``now``) adds the PR's history as ``detail``; ``claimed``: a live working
-    holder has claimed the branch."""
+    holder has claimed the branch; ``autonomous``: so has an autonomous
+    agent."""
     has_pr = status.pr is not PrState.NONE
     match = _PR_NUMBER_RE.search(status.url) if status.url else None
     merge = "none"
     if status.pr in (PrState.OPEN, PrState.DRAFT):
         merge = "conflicts" if status.has_conflicts else "clean"
     open_comments = status.open_comments if has_pr else 0
-    action = next_action(status, parent, claimed)
+    action = next_action(status, parent, claimed, autonomous)
     chips = pr_states.current_states(
         pr=status.pr.value,
         ci=status.ci.value,
@@ -296,13 +305,19 @@ def live_status(
     parent: ParentContext | None,
     now: datetime,
     claimed: bool = False,
+    autonomous: bool = False,
 ) -> api.LoadingStatus | api.FailedStatus | api.LoadedStatus:
     if fetched is None:
         return api.LoadingStatus(load="loading")
     if fetched.status is None:
         return api.FailedStatus(load="failed")
     return loaded_status(
-        fetched.status, parent=parent, facts=fetched.facts, now=now, claimed=claimed
+        fetched.status,
+        parent=parent,
+        facts=fetched.facts,
+        now=now,
+        claimed=claimed,
+        autonomous=autonomous,
     )
 
 
@@ -390,6 +405,7 @@ def build_snapshot(
                             parent_context(repo.id, parents, name, refresher, claims),
                             now,
                             claims.working(repo.id, name),
+                            claims.autonomous(repo.id, name),
                         ),
                     )
                 )

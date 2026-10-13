@@ -121,8 +121,20 @@ class ClaimsFeed:
         return self._view.get((repo_id, branch), ())
 
     def working(self, repo_id: int, branch: str) -> bool:
-        """A live ``working`` holder claims the branch: it reads "With an agent"."""
-        return any(h.state == "working" for h in self.holders(repo_id, branch))
+        """A live ``working`` holder (not an autonomous agent) claims the
+        branch: it reads "With an agent"."""
+        return any(
+            h.state == "working" and h.kind != "autonomous"
+            for h in self.holders(repo_id, branch)
+        )
+
+    def autonomous(self, repo_id: int, branch: str) -> bool:
+        """A live ``working`` autonomous agent holds the branch: it reads
+        "Autonomous agent" (unless ``working``)."""
+        return any(
+            h.state == "working" and h.kind == "autonomous"
+            for h in self.holders(repo_id, branch)
+        )
 
     @property
     def unreadable(self) -> frozenset[str]:

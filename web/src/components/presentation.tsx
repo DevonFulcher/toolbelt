@@ -32,6 +32,7 @@ export const REVIEW_TONE: Record<ReviewState, Tone> = {
 export const WHO_TEXT: Record<Who, string> = {
   you: "needs you",
   agent: "with an agent",
+  auto: "autonomous agent",
   others: "waiting on others",
   ci: "waiting on CI",
   none: "done",
@@ -39,6 +40,7 @@ export const WHO_TEXT: Record<Who, string> = {
 export const WHO_TONE: Record<Who, Tone> = {
   you: "accent",
   agent: "purple",
+  auto: "purple",
   ci: "amber",
   others: "gray",
   none: "gray",

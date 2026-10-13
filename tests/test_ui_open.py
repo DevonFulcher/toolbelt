@@ -48,7 +48,7 @@ def test_open_goes_to_the_running_ui(opened: list[str]):
 
     assert result.exit_code == 0
     assert opened == [f"http://127.0.0.1:{port}/"]
-    assert result.output.strip() == opened[0]
+    assert result.stdout.strip() == opened[0]
 
 
 def test_open_can_pick_a_view(opened: list[str]):

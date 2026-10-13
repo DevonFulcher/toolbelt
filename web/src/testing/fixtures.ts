@@ -147,6 +147,7 @@ export function snapshot(branches: Branch[], repos: Repo[] = [repo(1, "api")], e
       { key: "next", label: "Next", options: [
         { value: "you", label: "Needs me" },
         { value: "agent", label: "With an agent" },
+        { value: "auto", label: "Autonomous agent" },
         { value: "ci", label: "Waiting on CI" },
         { value: "others", label: "Waiting on others" },
         { value: "none", label: "Done" },

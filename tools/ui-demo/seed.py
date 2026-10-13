@@ -113,14 +113,19 @@ def write_claims(home: Path, now: datetime) -> None:
         ttl: int,
         touched: datetime | None = None,
         session: int | None = None,
+        autonomous: bool = False,
     ) -> None:
         touched = touched or updated
         document = {
-            "version": 1,
+            "version": 2 if autonomous else 1,
             "holder": name,
-            "kind": "agent",
-            "session_id": name.split(".")[0],
-            "agent_id": name.split(".")[1] if "." in name else None,
+            "kind": "autonomous" if autonomous else "agent",
+            "session_id": None if autonomous else name.split(".")[0],
+            "agent_id": None
+            if autonomous
+            else name.split(".")[1]
+            if "." in name
+            else None,
             "link": SESSION.format(n=session) if session else None,
             "state": state,
             "started_at": z(updated - timedelta(minutes=20)),
@@ -130,6 +135,8 @@ def write_claims(home: Path, now: datetime) -> None:
                 {"kind": "ref", "ref": ref, "touched_at": z(touched)} for ref in refs
             ],
         }
+        if autonomous:
+            document["run_id"] = name.removeprefix("auto.")
         (claims / f"{name}.json").write_text(json.dumps(document, indent=2))
 
     day = 8 * 3600
@@ -137,6 +144,16 @@ def write_claims(home: Path, now: datetime) -> None:
     # would be "Fix / re-run CI".
     holder(
         "sess-working", "working", ["devon/auth-docs"], updated=now, ttl=day, session=11
+    )
+    # One of toolbelt's own autonomous agents (contract v2): reads "Autonomous
+    # agent", and would be "Resolve conflicts".
+    holder(
+        "auto.demo-run",
+        "working",
+        ["devon/cache-metrics"],
+        updated=now,
+        ttl=day,
+        autonomous=True,
     )
     # Waiting for you / on a prompt: the status is unchanged, a chip is added.
     holder("sess-idle", "idle", ["devon/cache-layer"], updated=now, ttl=day, session=12)

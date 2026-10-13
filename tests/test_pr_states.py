@@ -65,8 +65,8 @@ def test_next_action_kinds_are_exactly_the_catalogued_ones():
             na.ParentContext("p", PrState.OPEN, na.WHO_CI),
             na.ParentContext("p", PrState.MERGED),
         ):
-            for claimed in (False, True):
-                produced.add(na.next_action(status, parent, claimed).kind)
+            for claimed, autonomous in ((False, False), (True, False), (False, True)):
+                produced.add(na.next_action(status, parent, claimed, autonomous).kind)
 
     assert produced == set(na.KINDS)
     assert dimension_values("next") == set(na.KINDS)

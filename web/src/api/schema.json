@@ -1011,7 +1011,8 @@
     "HolderKind": {
       "enum": [
         "agent",
-        "human"
+        "human",
+        "autonomous"
       ],
       "type": "string"
     },
@@ -1486,7 +1487,8 @@
         "merge",
         "wait_review",
         "request_review",
-        "claimed"
+        "claimed",
+        "autonomous"
       ],
       "type": "string"
     },
@@ -3028,6 +3030,7 @@
       "enum": [
         "you",
         "agent",
+        "auto",
         "others",
         "ci",
         "none"

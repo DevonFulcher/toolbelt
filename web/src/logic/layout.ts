@@ -230,6 +230,12 @@ export const NEXT_SECTIONS = [
     meaning: "An agent session (or a person) has claimed it and is working on it.",
   },
   {
+    key: "auto",
+    label: "Autonomous agent",
+    tone: "auto",
+    meaning: "One of toolbelt's autonomous agents is working on it: nothing for you to do yet.",
+  },
+  {
     key: "ci",
     label: "Waiting on CI",
     tone: "ci",

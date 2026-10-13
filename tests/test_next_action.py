@@ -337,3 +337,37 @@ def test_a_claimed_child_still_reads_with_an_agent_not_blocked():
 
     assert action.kind == "claimed"
     assert action.would_be.kind == "blocked"
+
+
+AUTONOMOUS = ("Autonomous agent", "auto", "autonomous")
+
+
+def test_an_autonomous_agent_replaces_the_action_and_keeps_it_as_would_be():
+    branch = status(ci=CiState.FAILED)
+
+    action = next_action(branch, None, autonomous=True)
+
+    assert (action.label, action.who, action.kind) == AUTONOMOUS
+    assert action.would_be == next_action(branch, None)
+    assert action.would_be.label == "Fix / re-run CI"
+
+
+def test_an_interactive_claim_takes_precedence_over_an_autonomous_agent():
+    action = next_action(status(), None, claimed=True, autonomous=True)
+
+    assert (action.label, action.who, action.kind) == CLAIMED
+
+
+@pytest.mark.parametrize("pr", [PrState.MERGED, PrState.CLOSED])
+def test_an_autonomous_agent_on_a_finished_pr_is_ignored(pr):
+    action = next_action(status(pr=pr), None, autonomous=True)
+
+    assert action.kind == "done"
+
+
+def test_a_child_of_an_autonomous_agents_branch_waits_on_others():
+    parent = ParentContext("devon/base", PrState.OPEN, next_who="auto")
+
+    action = next_action(status(review=ReviewState.APPROVED), parent)
+
+    assert (action.kind, action.who) == ("blocked", "others")

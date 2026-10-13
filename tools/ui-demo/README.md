@@ -32,6 +32,7 @@ would, so the UI's "With an agent" status can be looked at without one:
 | Holder | State | On | What it shows |
 |---|---|---|---|
 | `sess-working` | working | `devon/auth-docs` (failing CI) | "With an agent", "would be: Fix / re-run CI", a session link, and the card in the *With an agent* section |
+| `auto.demo-run` | working, autonomous (contract v2) | `devon/cache-metrics` (merge conflicts) | "Autonomous agent", "would be: Resolve conflicts", and the card in the *Autonomous agent* section |
 | `sess-idle` | idle | `devon/cache-layer` | an "agent idle" chip; the status is unchanged |
 | `sess-blocked` | blocked | `devon/auth-ui` | an "agent blocked on you" chip |
 | `sess-expired` | working, expired 2h ago | `devon/search-index` | nothing: ignored, then deleted by `tt ui` after a grace |

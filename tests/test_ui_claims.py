@@ -504,3 +504,16 @@ def test_the_snapshot_reads_the_claims_even_before_any_stream_is_open(tmp_path):
 
     assert c["status"]["next"]["kind"] == "claimed"
     assert [h["holder"] for h in c["claim"]["holders"]] == ["s1"]
+
+
+def test_an_autonomous_holder_is_not_a_working_agent_but_is_autonomous(tmp_path):
+    f = Feed(tmp_path)
+    write_holder(
+        f.dir, "auto.r1", kind="autonomous", version=2, claims=[ref_claim("devon/a")]
+    )
+    write_holder(f.dir, "s2", claims=[ref_claim("devon/b")])
+
+    f.feed.poll()
+
+    assert f.feed.autonomous(1, "devon/a") and not f.feed.working(1, "devon/a")
+    assert f.feed.working(1, "devon/b") and not f.feed.autonomous(1, "devon/b")

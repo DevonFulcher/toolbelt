@@ -795,6 +795,20 @@
       ],
       "dimension": "next",
       "value": "claimed"
+    },
+    {
+      "label": "Autonomous agent",
+      "tone": "purple",
+      "legend": "One of toolbelt's autonomous agents is working on this task (a claim file; the action it replaced is in the tooltip).",
+      "reps": [
+        {
+          "how": "now_state",
+          "kind": "next",
+          "absent": false
+        }
+      ],
+      "dimension": "next",
+      "value": "autonomous"
     }
   ],
   "not_represented": [

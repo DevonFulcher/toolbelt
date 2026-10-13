@@ -199,6 +199,7 @@ export const Card = memo(
               </Pill>
             )}
             {summary.agent > 0 && <Pill tone={WHO_TONE.agent}>{`${WHO_TEXT.agent}: ${summary.agent}`}</Pill>}
+            {summary.auto > 0 && <Pill tone={WHO_TONE.auto}>{`${WHO_TEXT.auto}: ${summary.auto}`}</Pill>}
             {summary.ci > 0 && <Pill tone={WHO_TONE.ci}>{`${WHO_TEXT.ci}: ${summary.ci}`}</Pill>}
             {summary.others > 0 && <Pill tone={WHO_TONE.others}>{`${WHO_TEXT.others}: ${summary.others}`}</Pill>}
             {summary.done > 0 && <Pill tone={WHO_TONE.none}>{`${WHO_TEXT.none}: ${summary.done}`}</Pill>}
@@ -381,7 +382,8 @@ function ClaimChips({ claim }: { claim: BranchClaim }) {
   return (
     <span className="claim-chips">
       {claim.holders.map((holder) => {
-        const who = holder.kind === "human" ? "claimed by you" : "agent";
+        const who =
+          holder.kind === "human" ? "claimed by you" : holder.kind === "autonomous" ? "autonomous agent" : "agent";
         const text = holder.kind === "human" ? who : `${who} ${HOLDER_TEXT[holder.state]}`;
         const title = holder.stale
           ? "Not heard from for a while: it may be hung (tt task release to take it back)"

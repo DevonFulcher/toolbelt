@@ -46,7 +46,7 @@ const REVIEW_RANK: Record<ReviewState, string> = {
 };
 const MERGE_RANK: Record<MergeValue, string> = { conflicts: "1", clean: "2", none: "" };
 /** "Needs me" first. */
-export const WHO_RANK: Record<Who, string> = { you: "1", agent: "2", ci: "3", others: "4", none: "5" };
+export const WHO_RANK: Record<Who, string> = { you: "1", agent: "2", auto: "3", ci: "4", others: "5", none: "6" };
 
 export const COMMENTS_OPEN = "has comments";
 export const COMMENTS_NONE = "none";

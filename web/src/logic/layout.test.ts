@@ -377,6 +377,23 @@ describe("branches claimed by an agent", () => {
     expect(ids(out[1].entries.filter((e) => !e.context))).toEqual(["b", "d"]);
   });
 
+  test("an autonomous agent's tasks have their own section after With an agent", () => {
+    const withAuto = [...rows, nextRow("f", null, 6, "auto")];
+
+    const out = groupedLayout(withAuto, state({ view: "grouped" }));
+
+    expect(out.map((s) => s.key)).toEqual(["you", "agent", "auto", "ci", "others"]);
+    expect(out[2].label).toBe("Autonomous agent");
+    expect(ids(out[2].entries.filter((e) => !e.context))).toEqual(["f"]);
+  });
+
+  test("priorities leave out an autonomous agent's tasks too", () => {
+    const out = prioritiesLayout([nextRow("a", null, 1, "you"), nextRow("f", null, 2, "auto")], state({ view: "priorities" }));
+
+    expect(out.map((s) => s.key)).toEqual(["priorities"]);
+    expect(ids(out[0].entries)).toEqual(["a"]);
+  });
+
   test("the Next filter can pick them", () => {
     const out = groupedLayout(rows, state({ view: "grouped", next: "agent" }));
 

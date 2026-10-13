@@ -260,7 +260,7 @@ def test_filters_list_every_value_with_friendly_next_labels(tmp_path, make_clien
     filters = {f["key"]: f for f in snap(make_client())["filters"]}
 
     assert {key: [o["value"] for o in f["options"]] for key, f in filters.items()} == {
-        "next": ["you", "agent", "ci", "others", "none"],
+        "next": ["you", "agent", "auto", "ci", "others", "none"],
         "pr": ["none", "draft", "open", "merged", "closed"],
         "ci": ["none", "running", "failed", "success"],
         "review": ["none", "requested", "approved", "reviewed"],
@@ -270,6 +270,7 @@ def test_filters_list_every_value_with_friendly_next_labels(tmp_path, make_clien
     assert [(o["value"], o["label"]) for o in filters["next"]["options"]] == [
         ("you", "Needs me"),
         ("agent", "With an agent"),
+        ("auto", "Autonomous agent"),
         ("ci", "Waiting on CI"),
         ("others", "Waiting on others"),
         ("none", "Done"),

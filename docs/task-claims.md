@@ -32,7 +32,7 @@ file name without `.json` (a file that disagrees is ignored).
 {
   "version": 1,
   "holder": "<holder>",
-  "kind": "agent",                // "agent" | "human"
+  "kind": "agent",                // "agent" | "human" | "autonomous" (v2 only)
   "session_id": "<claude session id or null>",
   "agent_id": null,               // subagent id or null
   "link": "claude://claude.ai/epitaxy/<host session id>",   // or null
@@ -190,6 +190,23 @@ not. `release` exits 1 when it released nothing or refused something.
   so.
 - The snapshot's `Branch.claim.holders[]` has `holder`, `kind`, `state`,
   `link`, `age` and `stale`; only live holders are sent.
+
+## Contract v2: autonomous holders
+
+Version 2 is v1 plus one holder kind. A file with `"kind": "autonomous"` is
+written by one of toolbelt's own agents (`auto.<run id>`, with `"version": 2`
+and `"run_id"`: the id of its run), never by the plugin, which keeps writing
+v1. `kind: "autonomous"` is exactly version 2 (a file that says otherwise is
+ignored), and readers accept both versions. Everything else (ttl, heartbeat,
+claims, revocation) is as in v1.
+
+A live `working` autonomous holder makes the task **Autonomous agent**
+instead of **Needs me**, the same way a `working` interactive holder makes it
+**With an agent**. If both hold the task, the interactive one wins: whoever
+is at the keyboard takes precedence. A child of such a task is "Blocked on
+<parent>" waiting on *others*. The Next filter, the grouped view's sections
+and the rollup counts have it as its own value, and the Priorities view
+leaves it out, since there is nothing for you to do on it.
 
 ## Failure modes
 
