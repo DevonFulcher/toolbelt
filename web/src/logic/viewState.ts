@@ -8,7 +8,7 @@
 // bare URL.
 import type { FilterKey } from "../api/generated";
 
-export const VIEWS = ["priorities", "table", "stacked", "grouped", "aggregate", "spend"] as const;
+export const VIEWS = ["priorities", "table", "stacked", "grouped", "aggregate", "spend", "agents"] as const;
 export type View = (typeof VIEWS)[number];
 
 // The aggregate view's time windows, in weeks (the server's `WINDOWS`).

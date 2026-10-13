@@ -68,7 +68,7 @@ describe("the URL state", () => {
     const parsed = parseState("?view=timeline&kind=review&order=oldest&next=you");
     expect(parsed).toEqual({ ...DEFAULT_STATE, next: "you" });
     expect(serializeState(parsed)).toBe("?next=you");
-    expect(VIEWS).toEqual(["priorities", "table", "stacked", "grouped", "aggregate", "spend"]);
+    expect(VIEWS).toEqual(["priorities", "table", "stacked", "grouped", "aggregate", "spend", "agents"]);
   });
 
   test("old links map onto the current views", () => {

@@ -31,6 +31,7 @@ from toolbelt.autonomous_agents.limits import AgentLimits
 from toolbelt.autonomous_agents.screen import ScreenState
 from toolbelt.git.stack.status import BranchStatus, PrState
 from toolbelt.git.stack.store import AgentRun
+from toolbelt.logger import logger
 from toolbelt.task_claims.resolution import TrackedTask
 from toolbelt.ui.claims_feed import BranchHolder
 from toolbelt.ui.live_status import StatusFetcher
@@ -132,8 +133,8 @@ class Dispatcher:
         self._runs = runs
         self._enabled = enabled
         self.limits = limits
-        self._screen = screen
-        self._signed_in = signed_in
+        self._read_screen = screen
+        self._check_signed_in = signed_in
         self._wall_clock = wall_clock
         self._clock = clock
         self._sleep = sleep
@@ -150,11 +151,21 @@ class Dispatcher:
         self.blockers: list[Reason] = []
         #: When the last tick ended (None: none yet).
         self.ticked_at: datetime | None = None
+        #: Why the last tick failed (None: it did not).
+        self.last_error: str | None = None
+        #: The screen and sign-in as of the last tick (None: unknown).
+        self.screen: ScreenState | None = None
+        self.signed_in: bool | None = None
+
+    @property
+    def dry_run(self) -> bool:
+        """Nothing starts runs: tasks are decided and no more."""
+        return self._launch is None
 
     def _auth_ok(self) -> bool:
         now = self._clock()
         if self._auth is None or now - self._auth[0] >= AUTH_CHECK_SECONDS:
-            self._auth = (now, self._signed_in())
+            self._auth = (now, self._check_signed_in())
         return self._auth[1]
 
     async def _refresh(self, tasks: list[DispatchTask]) -> None:
@@ -182,7 +193,7 @@ class Dispatcher:
             now=now,
             enabled=enabled,
             limits=self.limits,
-            screen=self._screen(),
+            screen=self._read_screen(),
             # Not worth asking while agents are off.
             auth_ok=self._auth_ok() if enabled else None,
             runs=self._runs(),
@@ -191,16 +202,30 @@ class Dispatcher:
     async def tick(self) -> None:
         """One pass: refresh stale PR snapshots, then decide every task.
         While agents are switched off nothing is fetched or decided: the only
-        thing to say is that they are off."""
+        thing to say is that they are off. The blocking parts (database,
+        sign-in check, git) run off the event loop."""
         now = self._wall_clock()
-        world = self._world(now)
+        world = await asyncio.to_thread(self._world, now)
+        self.screen = world.screen
+        self.signed_in = world.auth_ok
         if not world.enabled:
             self.decisions = {}
             self.blockers = global_blockers(world)
             self.ticked_at = now
             return
-        tasks = self._tasks()
+        tasks = await asyncio.to_thread(self._tasks)
         await self._refresh(tasks)
+        self.decisions = await asyncio.to_thread(self._decide_all, tasks, world)
+        self.blockers = global_blockers(world)
+        self.ticked_at = now
+        if self._launch is not None:
+            for decision in self.decisions.values():
+                if decision.may_start:
+                    await self._launch(decision)
+
+    def _decide_all(
+        self, tasks: list[DispatchTask], world: World
+    ) -> dict[tuple[int, str], Decision]:
         decisions: dict[tuple[int, str], Decision] = {}
         for item in tasks:
             entry = self._snapshots.get(item.task.key)
@@ -209,13 +234,7 @@ class Dispatcher:
             decision = self._decide(item, entry[1], world)
             if decision is not None:
                 decisions[item.task.key] = decision
-        self.decisions = decisions
-        self.blockers = global_blockers(world)
-        self.ticked_at = now
-        if self._launch is not None:
-            for decision in decisions.values():
-                if decision.may_start:
-                    await self._launch(decision)
+        return decisions
 
     def _decide(
         self, item: DispatchTask, snapshot: PrSnapshot, world: World
@@ -226,6 +245,20 @@ class Dispatcher:
             return None
         task = item.task
         state = self._inspect(item)
+        if not state.exists:
+            return Decision(
+                task_id=task.task_id,
+                repo_id=task.repo_id,
+                repo=task.repo_name,
+                branch=task.branch,
+                trigger=action.kind,
+                reason=Reason(
+                    "no_worktree",
+                    "There is no local branch of this name to work on.",
+                ),
+                head_sha="",
+                decided_at=world.now,
+            )
         holders = self._holders(task.repo_id, task.branch)
         facts = TaskFacts(
             task_id=task.task_id,
@@ -253,5 +286,12 @@ class Dispatcher:
 
     async def run(self) -> None:
         while True:
-            await self.tick()
+            try:
+                await self.tick()
+                self.last_error = None
+            except Exception as error:  # noqa: BLE001 - a background loop must survive
+                # GitHub, git and the claude CLI can all fail: say so, and
+                # try again next tick instead of ending the dispatcher.
+                logger.exception("the agent dispatcher's pass failed")
+                self.last_error = f"{type(error).__name__}: {error}"
             await self._sleep(self._tick)

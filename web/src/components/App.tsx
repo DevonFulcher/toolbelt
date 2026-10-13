@@ -6,6 +6,7 @@ import { CardList } from "./CardList";
 import { FilterBar } from "./FilterBar";
 import { FocusBar } from "./FocusBar";
 import { LiveIndicator } from "./LiveIndicator";
+import { AgentsPage } from "./AgentsView";
 import { SpendPage } from "./SpendView";
 import { TableView } from "./TableView";
 import { TooltipProvider } from "./Tooltip";
@@ -61,6 +62,9 @@ function Content() {
   if (view === "spend") {
     // Spend is about this machine's sessions, not the tracked stacks.
     return <SpendPage counts={counts} />;
+  }
+  if (view === "agents") {
+    return <AgentsPage counts={counts} />;
   }
   if (rows.length === 0) {
     return (

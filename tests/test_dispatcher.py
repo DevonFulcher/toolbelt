@@ -93,6 +93,7 @@ class Rig:
         self.holders: dict[str, tuple[BranchHolder, ...]] = {}
         self.runs: list[AgentRun] = []
         self.state = BranchState(
+            exists=True,
             head_sha="abc",
             last_commit_at=NOW - timedelta(hours=3),
             clean=True,
@@ -214,15 +215,17 @@ def test_an_autonomous_holder_is_not_another_claimant():
 def test_branch_state_reasons():
     r = rig(a=PrSnapshot(status(), None))
 
-    r.state = BranchState("abc", NOW - timedelta(hours=1), clean=False, busy=False)
+    r.state = BranchState(
+        True, "abc", NOW - timedelta(hours=1), clean=False, busy=False
+    )
     r.tick()
     assert r.decision("a").reason.code == "worktree_dirty"
 
-    r.state = BranchState("abc", NOW - timedelta(hours=1), clean=True, busy=True)
+    r.state = BranchState(True, "abc", NOW - timedelta(hours=1), clean=True, busy=True)
     r.tick()
     assert r.decision("a").reason.code == "worktree_busy"
 
-    r.state = BranchState("abc", NOW - timedelta(days=20), clean=True, busy=False)
+    r.state = BranchState(True, "abc", NOW - timedelta(days=20), clean=True, busy=False)
     r.tick()
     assert r.decision("a").reason.code == "inactive"
 
@@ -410,3 +413,56 @@ def test_a_commit_that_came_in_from_the_default_branch_is_not_work_on_the_branch
     git("merge", "main", cwd=repo)
 
     assert inspect_branch(repo, "devon/stale", repo).last_commit_at is None
+
+
+def test_a_tracked_branch_with_no_local_branch_is_held_back_not_a_crash():
+    r = rig(gone=PrSnapshot(status(), None))
+    r.state = BranchState(
+        exists=False, head_sha="", last_commit_at=None, clean=False, busy=False
+    )
+
+    r.tick()
+
+    assert r.decision("gone").reason.code == "no_worktree"
+    assert r.launched == []
+
+
+def test_inspect_branch_says_when_the_local_branch_does_not_exist(repo: Path):
+    assert inspect_branch(repo, "devon/nope", None).exists is False
+
+
+def test_a_failing_pass_is_reported_and_the_loop_carries_on():
+    r = rig(a=PrSnapshot(status(), None))
+    passes = {"n": 0}
+    real = r.dispatcher.tick
+
+    async def flaky() -> None:
+        passes["n"] += 1
+        if passes["n"] == 1:
+            raise RuntimeError("gh is down")
+        await real()
+
+    r.dispatcher.tick = flaky  # type: ignore[method-assign]
+
+    async def scenario() -> None:
+        ticks = asyncio.Event()
+
+        async def sleep(_seconds: float) -> None:
+            await ticks.wait()
+            ticks.clear()
+
+        r.dispatcher._sleep = sleep
+        task = asyncio.create_task(r.dispatcher.run())
+        for _ in range(20):
+            await asyncio.sleep(0)
+        assert r.dispatcher.last_error == "RuntimeError: gh is down"
+        ticks.set()
+        for _ in range(50):
+            await asyncio.sleep(0.01)
+            if r.dispatcher.ticked_at:
+                break
+        assert r.dispatcher.last_error is None
+        assert r.decision("a") is not None
+        task.cancel()
+
+    asyncio.run(scenario())

@@ -19,6 +19,9 @@ _BUSY_MARKERS = (
 
 @dataclass(frozen=True)
 class BranchState:
+    #: There is a local branch with this name. Without one nothing else here
+    #: is meaningful.
+    exists: bool
     head_sha: str
     #: The newest non-merge commit of the user's own on the branch and not
     #: yet on the default branch (sync's merges say nothing about whether
@@ -58,7 +61,17 @@ def _default_branch_ref(repo: Path) -> str:
 
 
 def inspect_branch(repo: Path, branch: str, worktree: Path | None) -> BranchState:
-    head = _git(repo, "rev-parse", f"refs/heads/{branch}")
+    found = run(
+        ["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"],
+        cwd=repo,
+        capture_output=True,
+        check=False,
+    )
+    if found.returncode != 0:
+        return BranchState(
+            exists=False, head_sha="", last_commit_at=None, clean=False, busy=False
+        )
+    head = found.stdout.strip()
     email = _git(repo, "config", "user.email")
     # Only the branch's own commits: what is already on the default branch
     # (and came in through a merge) is not work on this branch.
@@ -75,6 +88,7 @@ def inspect_branch(repo: Path, branch: str, worktree: Path | None) -> BranchStat
     )
     if worktree is None:
         return BranchState(
+            exists=True,
             head_sha=head,
             last_commit_at=datetime.fromisoformat(newest) if newest else None,
             clean=False,
@@ -86,6 +100,7 @@ def inspect_branch(repo: Path, branch: str, worktree: Path | None) -> BranchStat
         for marker in _BUSY_MARKERS
     )
     return BranchState(
+        exists=True,
         head_sha=head,
         last_commit_at=datetime.fromisoformat(newest) if newest else None,
         clean=_git(worktree, "status", "--porcelain") == "",

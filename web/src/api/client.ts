@@ -1,4 +1,4 @@
-import type { Aggregate, Snapshot, Spend } from "./generated";
+import type { Aggregate, Agents, Snapshot, Spend } from "./generated";
 
 export const SNAPSHOT_URL = "/api/snapshot";
 export const EVENTS_URL = "/api/events";
@@ -39,4 +39,23 @@ export async function fetchSpend(days: number, fetchImpl: typeof fetch = fetch):
   });
   if (!response.ok) throw new Error(`${SPEND_URL}: HTTP ${response.status}`);
   return (await response.json()) as Spend;
+}
+
+export const AGENTS_URL = "/api/agents";
+
+/** What the autonomous agents are doing, may do, and may not do and why. */
+export async function fetchAgents(fetchImpl: typeof fetch = fetch): Promise<Agents> {
+  const response = await fetchImpl(AGENTS_URL, { headers: { Accept: "application/json" } });
+  if (!response.ok) throw new Error(`${AGENTS_URL}: HTTP ${response.status}`);
+  return (await response.json()) as Agents;
+}
+
+/** Switch the autonomous agents on or off. */
+export async function setAgentsEnabled(enabled: boolean, fetchImpl: typeof fetch = fetch): Promise<void> {
+  const response = await fetchImpl(`${AGENTS_URL}/enabled`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ enabled }),
+  });
+  if (!response.ok) throw new Error(`${AGENTS_URL}/enabled: HTTP ${response.status}`);
 }

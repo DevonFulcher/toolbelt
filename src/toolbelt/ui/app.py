@@ -53,9 +53,20 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 
+from toolbelt.autonomous_agents.auth import claude_signed_in
+from toolbelt.autonomous_agents.branch_state import inspect_branch
+from toolbelt.autonomous_agents.dispatcher import Dispatcher, DispatchTask
+from toolbelt.autonomous_agents.limits import AGENTS_ENABLED_SETTING, load_limits
+from toolbelt.autonomous_agents.screen import read_screen_state
 from toolbelt.git.repo_pull import default_config_path
 from toolbelt.git.stack.status import PrState
-from toolbelt.git.stack.store import Parents, StackStore, default_db_path, state_dir
+from toolbelt.git.stack.store import (
+    AgentRun,
+    Parents,
+    StackStore,
+    default_db_path,
+    state_dir,
+)
 from toolbelt.task_claims.claim_file import CLAIMS_DIRNAME
 from toolbelt.task_claims.resolution import TrackedTask, git_worktrees, tracked_tasks
 from toolbelt.tasks.config import configured_tracker
@@ -65,6 +76,7 @@ from toolbelt.ui import aggregate as aggregate_view
 from toolbelt.ui import api_models as api
 from toolbelt.ui import branch_links
 from toolbelt.ui import spend_feed as spend_module
+from toolbelt.ui.agents_view import build_agents, runs_window_start
 from toolbelt.ui.aggregate_feed import (
     AggregateService,
     PageRunner,
@@ -219,6 +231,44 @@ def _record_claim(observation: ClaimObservation) -> None:
         store.close()
 
 
+def _dispatch_tasks() -> list[DispatchTask]:
+    store = StackStore(default_db_path())
+    try:
+        paths = {repo.id: repo.path for repo in store.repos()}
+        return [
+            DispatchTask(task=task, repo_path=paths[task.repo_id])
+            for task in tracked_tasks(store, git_worktrees)
+            if paths[task.repo_id].is_dir()
+        ]
+    finally:
+        store.close()
+
+
+def _agent_runs(now: datetime) -> list[AgentRun]:
+    store = StackStore(default_db_path())
+    try:
+        return store.agent_runs(since=runs_window_start(now))
+    finally:
+        store.close()
+
+
+def _abandon_agent_runs(now: datetime) -> None:
+    """Runs still marked running belong to a toolbelt that stopped."""
+    store = StackStore(default_db_path())
+    try:
+        store.abandon_running_agent_runs(now)
+    finally:
+        store.close()
+
+
+def _agents_enabled() -> bool:
+    store = StackStore(default_db_path())
+    try:
+        return store.get_setting(AGENTS_ENABLED_SETTING, "false") == "true"
+    finally:
+        store.close()
+
+
 def _claim_tasks() -> list[TrackedTask]:
     store = StackStore(default_db_path())
     try:
@@ -258,6 +308,7 @@ def create_app(
     claims_tick: float | None = None,
     transcripts_dir: Callable[[], Path] = projects_dir,
     spend_interval: float = spend_module.DEFAULT_INTERVAL_SECONDS,
+    dispatcher: Dispatcher | None = None,
 ) -> FastAPI:
     """``cwd_root``: the repo `tt ui` was launched from; its checked-out
     branch is marked current, as `tt g tree` does. ``fetch`` looks up a
@@ -283,7 +334,9 @@ def create_app(
     ``record_claim`` stores each claim read: see ``claims_feed.py``.
     ``transcripts_dir`` is where Claude Code's session transcripts are, read
     every ``spend_interval`` seconds for the spend view: see
-    ``spend_feed.py``."""
+    ``spend_feed.py``. ``dispatcher`` decides which tasks an autonomous agent
+    should be on (default: one over the real PR lookups, git, claims, screen
+    and sign-in; it only decides, see ``autonomous_agents``)."""
     task_cache = TaskInfoCache(ttl_seconds=task_ttl_seconds, clock=clock)
     hub = EventHub(clock=clock, grace=grace_seconds)
 
@@ -356,6 +409,22 @@ def create_app(
         interval=spend_interval,
     )
 
+    if dispatcher is None:
+        dispatcher = Dispatcher(
+            tasks=_dispatch_tasks,
+            fetch=fetch,
+            holders=claims.holders,
+            inspect=lambda item: inspect_branch(
+                item.repo_path, item.task.branch, item.task.worktree
+            ),
+            runs=lambda: _agent_runs(wall_clock()),
+            enabled=_agents_enabled,
+            limits=load_limits(default_config_path()),
+            screen=read_screen_state,
+            signed_in=claude_signed_in,
+            wall_clock=wall_clock,
+        )
+
     refresher = StatusRefresher(
         branches=_tracked_branches,
         fetch=fetch,
@@ -417,11 +486,13 @@ def create_app(
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         watcher.check()  # baseline: only later writes are changes
+        _abandon_agent_runs(wall_clock())
         tasks = [
             asyncio.create_task(refresher.run()),
             asyncio.create_task(task_feed.run()),
             asyncio.create_task(claims.run()),
             asyncio.create_task(spend.run()),
+            asyncio.create_task(dispatcher.run()),
             asyncio.create_task(untracked_feed.run()),
             asyncio.create_task(watcher.run()),
             asyncio.create_task(aggregates.run()),
@@ -451,6 +522,7 @@ def create_app(
     app.state.structure_watcher = watcher
     app.state.aggregates = aggregates
     app.state.spend_feed = spend
+    app.state.dispatcher = dispatcher
 
     @app.get("/assets/{path:path}", include_in_schema=False, response_model=None)
     def asset(path: str) -> FileResponse:
@@ -538,6 +610,34 @@ def create_app(
                 detail=f"days must be one of {list(spend_module.BREAKDOWN_DAYS)}",
             )
         return await asyncio.to_thread(spend.spend, days)
+
+    @app.get("/api/agents", response_model=api.Agents)
+    async def agents_view() -> api.Agents:
+        def build() -> api.Agents:
+            store = StackStore(default_db_path())
+            try:
+                enabled = store.get_setting(AGENTS_ENABLED_SETTING, "false") == "true"
+                return build_agents(
+                    dispatcher, store, enabled=enabled, now=wall_clock()
+                )
+            finally:
+                store.close()
+
+        return await asyncio.to_thread(build)
+
+    @app.post("/api/agents/enabled", response_model=api.AgentsEnabled)
+    async def set_agents_enabled(body: api.AgentsEnabled) -> api.AgentsEnabled:
+        def write() -> None:
+            store = StackStore(default_db_path())
+            try:
+                store.set_setting(
+                    AGENTS_ENABLED_SETTING, "true" if body.enabled else "false"
+                )
+            finally:
+                store.close()
+
+        await asyncio.to_thread(write)
+        return body
 
     @app.get("/api/events")
     async def events() -> StreamingResponse:

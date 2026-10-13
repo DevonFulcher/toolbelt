@@ -41,6 +41,389 @@
       "title": "Age",
       "type": "object"
     },
+    "AgentDecision": {
+      "additionalProperties": false,
+      "description": "What the dispatcher concluded about one task whose next action is\nsomething an agent does.",
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "decided_at": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentReason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "repo": {
+          "type": "string"
+        },
+        "trigger": {
+          "$ref": "#/$defs/AgentTrigger"
+        }
+      },
+      "required": [
+        "id",
+        "repo",
+        "branch",
+        "trigger",
+        "reason",
+        "decided_at"
+      ],
+      "title": "AgentDecision",
+      "type": "object"
+    },
+    "AgentLimitsInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "active_working_days": {
+          "type": "integer"
+        },
+        "global_usd_per_day": {
+          "type": "number"
+        },
+        "global_usd_per_month": {
+          "type": "number"
+        },
+        "model": {
+          "type": "string"
+        },
+        "run_timeout_seconds": {
+          "type": "integer"
+        },
+        "run_turns": {
+          "type": "integer"
+        },
+        "run_usd": {
+          "type": "number"
+        },
+        "task_runs_per_day": {
+          "type": "integer"
+        },
+        "task_runs_per_head": {
+          "type": "integer"
+        },
+        "task_usd_per_day": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "model",
+        "run_usd",
+        "run_turns",
+        "run_timeout_seconds",
+        "task_runs_per_head",
+        "task_runs_per_day",
+        "task_usd_per_day",
+        "global_usd_per_day",
+        "global_usd_per_month",
+        "active_working_days"
+      ],
+      "title": "AgentLimitsInfo",
+      "type": "object"
+    },
+    "AgentReason": {
+      "additionalProperties": false,
+      "description": "Why an agent is not (or not yet) on a task, or on any task.",
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/AgentReasonCode"
+        },
+        "text": {
+          "type": "string"
+        },
+        "until": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "code",
+        "text",
+        "until"
+      ],
+      "title": "AgentReason",
+      "type": "object"
+    },
+    "AgentReasonCode": {
+      "enum": [
+        "disabled",
+        "pr_not_open",
+        "inactive",
+        "claimed",
+        "no_worktree",
+        "worktree_dirty",
+        "worktree_busy",
+        "thrash",
+        "runs_per_head",
+        "task_runs_per_day",
+        "task_usd_per_day",
+        "global_usd_per_day",
+        "global_usd_per_month",
+        "auth",
+        "screen_asleep",
+        "screen_locked",
+        "concurrency",
+        "backoff"
+      ],
+      "type": "string"
+    },
+    "AgentRunInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "cost_usd": {
+          "type": "number"
+        },
+        "ended_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "started_at": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/AgentRunState"
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "trigger": {
+          "$ref": "#/$defs/AgentTrigger"
+        },
+        "turns": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "run_id",
+        "id",
+        "repo",
+        "branch",
+        "trigger",
+        "model",
+        "state",
+        "started_at",
+        "ended_at",
+        "turns",
+        "cost_usd",
+        "summary",
+        "error"
+      ],
+      "title": "AgentRunInfo",
+      "type": "object"
+    },
+    "AgentRunState": {
+      "enum": [
+        "running",
+        "succeeded",
+        "failed",
+        "timed_out",
+        "cap_reached",
+        "stopped",
+        "abandoned"
+      ],
+      "type": "string"
+    },
+    "AgentScreen": {
+      "additionalProperties": false,
+      "properties": {
+        "awake": {
+          "type": "boolean"
+        },
+        "locked": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "awake",
+        "locked"
+      ],
+      "title": "AgentScreen",
+      "type": "object"
+    },
+    "AgentSpend": {
+      "additionalProperties": false,
+      "description": "What agents have spent, against the global limits.",
+      "properties": {
+        "last_24_hours_usd": {
+          "type": "number"
+        },
+        "this_month_usd": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "last_24_hours_usd",
+        "this_month_usd"
+      ],
+      "title": "AgentSpend",
+      "type": "object"
+    },
+    "AgentTrigger": {
+      "enum": [
+        "resolve_conflicts",
+        "resolve_comments",
+        "fix_ci"
+      ],
+      "type": "string"
+    },
+    "Agents": {
+      "additionalProperties": false,
+      "properties": {
+        "blockers": {
+          "items": {
+            "$ref": "#/$defs/AgentReason"
+          },
+          "type": "array"
+        },
+        "decisions": {
+          "items": {
+            "$ref": "#/$defs/AgentDecision"
+          },
+          "type": "array"
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "limits": {
+          "$ref": "#/$defs/AgentLimitsInfo"
+        },
+        "runs": {
+          "items": {
+            "$ref": "#/$defs/AgentRunInfo"
+          },
+          "type": "array"
+        },
+        "screen": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentScreen"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "signed_in": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "spend": {
+          "$ref": "#/$defs/AgentSpend"
+        },
+        "ticked_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "enabled",
+        "dry_run",
+        "ticked_at",
+        "error",
+        "blockers",
+        "limits",
+        "spend",
+        "screen",
+        "signed_in",
+        "decisions",
+        "runs"
+      ],
+      "title": "Agents",
+      "type": "object"
+    },
+    "AgentsEnabled": {
+      "additionalProperties": false,
+      "description": "The body of ``POST /api/agents/enabled``.",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "enabled"
+      ],
+      "title": "AgentsEnabled",
+      "type": "object"
+    },
     "Aggregate": {
       "additionalProperties": false,
       "properties": {
@@ -3063,6 +3446,12 @@
   "additionalProperties": false,
   "description": "The schema root: lists everything the client reads (never\ninstantiated).",
   "properties": {
+    "agents": {
+      "$ref": "#/$defs/Agents"
+    },
+    "agents_enabled": {
+      "$ref": "#/$defs/AgentsEnabled"
+    },
     "aggregate": {
       "$ref": "#/$defs/Aggregate"
     },
@@ -3080,7 +3469,9 @@
     "snapshot",
     "event",
     "aggregate",
-    "spend"
+    "spend",
+    "agents",
+    "agents_enabled"
   ],
   "title": "Wire",
   "type": "object"

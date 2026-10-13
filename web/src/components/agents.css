@@ -1,0 +1,33 @@
+/* The agents view. Cards reuse the task card's box (`.card`, `.group`). */
+.agents { display: grid; gap: 16px; min-width: 0; }
+.agents-status { background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+                 padding: 12px 14px; display: grid; gap: 8px; }
+.agents-status-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.agents-status h2 { margin: 0; font-size: 14px; }
+.agents-state-on { color: var(--green); }
+.agents-state-off { color: var(--muted); }
+.agents-description, .agents-empty { margin: 0; color: var(--muted); font-size: 12px; max-width: 75ch; }
+.agents-blockers { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; font-size: 13px; }
+.agents-blockers li::before { content: "⏸ "; color: var(--amber); }
+.agents-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+.agents-tile { background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+               padding: 10px 14px; display: grid; gap: 2px; min-width: 0; }
+.agents-tile-label { color: var(--muted); font-size: 12px; }
+.agents-tile-value { font-size: 16px; font-variant-numeric: tabular-nums; }
+.agents-tile-detail { color: var(--muted); font-size: 12px; }
+.agents-section h2 { margin: 0 0 8px; font-size: 14px; }
+.agents-cards { display: grid; gap: 8px; }
+.agent-card .agent-reason { white-space: normal; }
+.agent-ready { color: var(--green); font-weight: 600; }
+.agent-blocked { color: var(--amber); }
+.agent-runs { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; font-size: 12px; }
+.agent-runs li { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
+.agent-runs .agent-run-summary { color: var(--muted); }
+.agents-table { background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+                padding: 12px 14px; display: grid; gap: 8px; min-width: 0; overflow-x: auto; }
+.agents-table h2 { margin: 0; font-size: 14px; }
+.agents-table table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.agents-table th, .agents-table td { text-align: left; padding: 4px 10px 4px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+.agents-table th { color: var(--muted); font-weight: 500; font-size: 12px; }
+.agents-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.agents-toggle { font-size: 12px; padding: 2px 12px; }

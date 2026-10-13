@@ -1,0 +1,305 @@
+// The agents view: what toolbelt's autonomous agents are on, which tasks one
+// may take next, which it may not and why, the limits they run under, and
+// their recent runs. Polled every few seconds while the page is visible.
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { fetchAgents, setAgentsEnabled } from "../api/client";
+import type { AgentDecision, AgentReason, AgentRunInfo, AgentTrigger, Agents } from "../api/generated";
+import { formatAbsolute } from "../logic/format";
+import { formatUsd } from "../logic/spendFormat";
+import type { Counts } from "../store/selectors";
+import { FilterBar } from "./FilterBar";
+import "./agents.css";
+
+/** How often the page asks again while it is visible. */
+export const REFRESH_MS = 10_000;
+
+type Load = { state: "ready"; data: Agents } | { state: "error"; message: string };
+
+export const TRIGGER_LABEL: Record<AgentTrigger, string> = {
+  resolve_conflicts: "Resolve conflicts",
+  resolve_comments: "Resolve comments",
+  fix_ci: "Fix / re-run CI",
+};
+
+const RUN_TONE: Record<AgentRunInfo["state"], string> = {
+  running: "purple",
+  succeeded: "green",
+  failed: "red",
+  timed_out: "amber",
+  cap_reached: "amber",
+  stopped: "gray",
+  abandoned: "gray",
+};
+
+const RUN_TEXT: Record<AgentRunInfo["state"], string> = {
+  running: "running",
+  succeeded: "finished",
+  failed: "failed",
+  timed_out: "timed out",
+  cap_reached: "hit its cap",
+  stopped: "stopped",
+  abandoned: "abandoned",
+};
+
+export function useAgents(fetchImpl: typeof fetch = fetch): { load: Load | null; reload: () => void } {
+  const [load, setLoad] = useState<Load | null>(null);
+  const latest = useRef(0);
+  const reload = useCallback(() => {
+    const id = ++latest.current;
+    fetchAgents(fetchImpl)
+      .then((data) => {
+        if (id === latest.current) setLoad({ state: "ready", data });
+      })
+      .catch((error: unknown) => {
+        if (id === latest.current) setLoad({ state: "error", message: error instanceof Error ? error.message : String(error) });
+      });
+  }, [fetchImpl]);
+  useEffect(() => {
+    reload();
+    const timer = window.setInterval(() => {
+      if (!document.hidden) reload();
+    }, REFRESH_MS);
+    return () => window.clearInterval(timer);
+  }, [reload]);
+  return { load, reload };
+}
+
+export function AgentsPage({ counts }: { counts: Counts }) {
+  const { load, reload } = useAgents();
+  return (
+    <>
+      <FilterBar counts={counts} />
+      {load === null ? (
+        <div className="empty">Loading the agents…</div>
+      ) : load.state === "error" ? (
+        <div className="empty error">{`Could not load the agents: ${load.message}`}</div>
+      ) : (
+        <AgentsBody data={load.data} reload={reload} />
+      )}
+    </>
+  );
+}
+
+const when = (iso: string): string => formatAbsolute(Date.parse(iso));
+
+/** A run costs cents or less: keep four digits under a dollar. */
+const runCost = (usd: number): string => (usd < 1 ? `$${usd.toFixed(4)}` : formatUsd(usd));
+
+function reasonText(reason: AgentReason): string {
+  return reason.until ? `${reason.text} Clears ${when(reason.until)}.` : reason.text;
+}
+
+function Field({ id, label, children }: { id: string; label: string; children: ReactNode }) {
+  return (
+    <div className={`slot s-${id} v-ok`} data-slot={id}>
+      <span className="slot-label">{label}</span>
+      <span className="slot-value agent-reason">{children}</span>
+    </div>
+  );
+}
+
+function Group({ id, title, children }: { id: string; title: string; children: ReactNode }) {
+  return (
+    <div className={`group g-${id}`} role="group" aria-label={title}>
+      <div className="group-title">{title}</div>
+      <div className="group-slots">{children}</div>
+    </div>
+  );
+}
+
+function AgentCard({ decision, runs }: { decision: AgentDecision; runs: AgentRunInfo[] }) {
+  return (
+    <div className="card agent-card" data-branch={decision.branch}>
+      <Group id="git" title="Git">
+        <Field id="repo" label="Repo">
+          <span className="repo-chip">{decision.repo}</span>
+        </Field>
+        <Field id="branch" label="Branch">
+          <span className="branch">{decision.branch}</span>
+        </Field>
+      </Group>
+      <Group id="pr" title="Agent">
+        <Field id="next" label="Would do">
+          {TRIGGER_LABEL[decision.trigger]}
+        </Field>
+        <Field id="task" label="Status">
+          {decision.reason === null ? (
+            <span className="agent-ready">An agent may take this now</span>
+          ) : (
+            <span className="agent-blocked">{reasonText(decision.reason)}</span>
+          )}
+        </Field>
+      </Group>
+      <Group id="task" title="Runs on this task">
+        {runs.length === 0 ? (
+          <Field id="task" label="Runs">
+            none yet
+          </Field>
+        ) : (
+          <ul className="agent-runs s-task">
+            {runs.slice(0, 3).map((run) => (
+              <li key={run.run_id}>
+                <span className={`pill tone-${RUN_TONE[run.state]}`}>{RUN_TEXT[run.state]}</span>
+                <span>{`${when(run.started_at)} · ${runCost(run.cost_usd)}`}</span>
+                {run.summary && <span className="agent-run-summary">{run.summary}</span>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </Group>
+    </div>
+  );
+}
+
+function Tile({ label, value, detail }: { label: string; value: string; detail?: string }) {
+  return (
+    <div className="agents-tile">
+      <span className="agents-tile-label">{label}</span>
+      <strong className="agents-tile-value">{value}</strong>
+      {detail && <span className="agents-tile-detail">{detail}</span>}
+    </div>
+  );
+}
+
+function AgentsBody({ data, reload }: { data: Agents; reload: () => void }) {
+  const [toggling, setToggling] = useState(false);
+  const [toggleError, setToggleError] = useState<string | null>(null);
+  const toggle = (): void => {
+    setToggling(true);
+    setToggleError(null);
+    setAgentsEnabled(!data.enabled)
+      .then(reload)
+      .catch((error: unknown) => setToggleError(error instanceof Error ? error.message : String(error)))
+      .finally(() => setToggling(false));
+  };
+  const { limits, spend } = data;
+  const ready = data.decisions.filter((d) => d.reason === null);
+  const held = data.decisions.filter((d) => d.reason !== null);
+  const runsFor = (id: string): AgentRunInfo[] => data.runs.filter((run) => run.id === id);
+  const screen = data.screen === null ? "unknown" : !data.screen.awake ? "asleep" : data.screen.locked ? "locked" : "awake, unlocked";
+  const signedIn = data.signed_in === null ? "not checked" : data.signed_in ? "signed in" : "not signed in";
+
+  return (
+    <section className="agents" aria-label="Agents">
+      <div className="agents-status">
+        <div className="agents-status-head">
+          <h2>
+            {"Autonomous agents are "}
+            <span className={data.enabled ? "agents-state-on" : "agents-state-off"}>{data.enabled ? "on" : "off"}</span>
+          </h2>
+          <button type="button" className="agents-toggle" onClick={toggle} disabled={toggling} aria-pressed={data.enabled}>
+            {data.enabled ? "Turn off" : "Turn on"}
+          </button>
+        </div>
+        {toggleError && <div className="notice error">{`Could not switch them: ${toggleError}`}</div>}
+        {data.error && <div className="notice error" role="alert">{`The agents' last pass failed (it tries again): ${data.error}`}</div>}
+        {!data.enabled && (
+          <p className="agents-description">
+            When on, an agent picks up a task as soon as its PR has merge conflicts, unresolved review comments or failing CI,
+            but only while the screen is on and unlocked, and within the limits below.
+          </p>
+        )}
+        {data.enabled && data.dry_run && (
+          <p className="agents-description">
+            Dry run: tasks are decided every few seconds, but no agent is started yet. What follows is what would happen.
+          </p>
+        )}
+        {data.blockers.length > 0 && (
+          <ul className="agents-blockers" aria-label="Why agents are not running">
+            {data.blockers.map((blocker) => (
+              <li key={blocker.code}>{reasonText(blocker)}</li>
+            ))}
+          </ul>
+        )}
+        {data.enabled && data.blockers.length === 0 && <p className="agents-description">Ready: nothing is stopping the agents.</p>}
+      </div>
+      <div className="agents-tiles">
+        <Tile
+          label="Spent in the last 24 hours"
+          value={formatUsd(spend.last_24_hours_usd)}
+          detail={`of ${formatUsd(limits.global_usd_per_day)} for all agents`}
+        />
+        <Tile
+          label="Spent this month"
+          value={formatUsd(spend.this_month_usd)}
+          detail={`of ${formatUsd(limits.global_usd_per_month)} for all agents`}
+        />
+        <Tile
+          label="Each run"
+          value={`up to ${formatUsd(limits.run_usd)}`}
+          detail={`${limits.run_turns} turns · ${Math.round(limits.run_timeout_seconds / 60)} min · ${limits.model}`}
+        />
+        <Tile label="Screen" value={screen} />
+        <Tile label="Claude sign-in" value={signedIn} />
+        <Tile
+          label="Picks up a task"
+          value={`committed to in ${limits.active_working_days} working days`}
+          detail={`${limits.task_runs_per_head} runs per commit · ${limits.task_runs_per_day} per day · ${formatUsd(limits.task_usd_per_day)} per day`}
+        />
+      </div>
+      {data.enabled && (
+        <>
+          <section className="agents-section" aria-label="Agents may take these">
+            <h2>An agent may take these</h2>
+            {ready.length === 0 ? (
+              <p className="agents-empty">No task has something an agent does and is free for one.</p>
+            ) : (
+              <div className="agents-cards">
+                {ready.map((decision) => (
+                  <AgentCard key={decision.id} decision={decision} runs={runsFor(decision.id)} />
+                ))}
+              </div>
+            )}
+          </section>
+          <section className="agents-section" aria-label="Agents may not take these">
+            <h2>No agent is on these, and why</h2>
+            {held.length === 0 ? (
+              <p className="agents-empty">Nothing is being held back.</p>
+            ) : (
+              <div className="agents-cards">
+                {held.map((decision) => (
+                  <AgentCard key={decision.id} decision={decision} runs={runsFor(decision.id)} />
+                ))}
+              </div>
+            )}
+          </section>
+        </>
+      )}
+      <section className="agents-table" aria-label="Recent runs">
+        <h2>Recent runs</h2>
+        {data.runs.length === 0 ? (
+          <p className="agents-empty">No agent has run yet.</p>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>Task</th>
+                <th>For</th>
+                <th>Started</th>
+                <th>State</th>
+                <th className="num">Turns</th>
+                <th className="num">Cost</th>
+                <th>What it did</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.runs.map((run) => (
+                <tr key={run.run_id}>
+                  <td>{`${run.repo}: ${run.branch}`}</td>
+                  <td>{TRIGGER_LABEL[run.trigger]}</td>
+                  <td>{when(run.started_at)}</td>
+                  <td>
+                    <span className={`pill tone-${RUN_TONE[run.state]}`}>{RUN_TEXT[run.state]}</span>
+                  </td>
+                  <td className="num">{run.turns}</td>
+                  <td className="num">{runCost(run.cost_usd)}</td>
+                  <td>{run.error ?? run.summary ?? ""}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
+    </section>
+  );
+}

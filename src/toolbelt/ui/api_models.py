@@ -715,6 +715,136 @@ class Spend(Model):
     claims_since: str | None
 
 
+# ---- autonomous agents ------------------------------------------------------------
+
+
+type AgentReasonCode = Literal[
+    "disabled",
+    "pr_not_open",
+    "inactive",
+    "claimed",
+    "no_worktree",
+    "worktree_dirty",
+    "worktree_busy",
+    "thrash",
+    "runs_per_head",
+    "task_runs_per_day",
+    "task_usd_per_day",
+    "global_usd_per_day",
+    "global_usd_per_month",
+    "auth",
+    "screen_asleep",
+    "screen_locked",
+    "concurrency",
+    "backoff",
+]
+
+type AgentTrigger = Literal["resolve_conflicts", "resolve_comments", "fix_ci"]
+
+type AgentRunState = Literal[
+    "running",
+    "succeeded",
+    "failed",
+    "timed_out",
+    "cap_reached",
+    "stopped",
+    "abandoned",
+]
+
+
+class AgentReason(Model):
+    """Why an agent is not (or not yet) on a task, or on any task."""
+
+    code: AgentReasonCode
+    text: str
+    #: ISO time it stops being true by itself, when it does.
+    until: str | None
+
+
+class AgentDecision(Model):
+    """What the dispatcher concluded about one task whose next action is
+    something an agent does."""
+
+    #: The branch's row id (see ``Branch.id``).
+    id: str
+    repo: str
+    branch: str
+    trigger: AgentTrigger
+    #: ``None``: an agent may start on it now.
+    reason: AgentReason | None
+    decided_at: str
+
+
+class AgentRunInfo(Model):
+    run_id: str
+    #: The branch's row id; the branch may be gone since.
+    id: str
+    repo: str
+    branch: str
+    trigger: AgentTrigger
+    model: str
+    state: AgentRunState
+    started_at: str
+    ended_at: str | None
+    turns: int
+    cost_usd: float
+    #: The agent's own report of what it did.
+    summary: str | None
+    error: str | None
+
+
+class AgentLimitsInfo(Model):
+    model: str
+    run_usd: float
+    run_turns: int
+    run_timeout_seconds: int
+    task_runs_per_head: int
+    task_runs_per_day: int
+    task_usd_per_day: float
+    global_usd_per_day: float
+    global_usd_per_month: float
+    active_working_days: int
+
+
+class AgentSpend(Model):
+    """What agents have spent, against the global limits."""
+
+    last_24_hours_usd: float
+    this_month_usd: float
+
+
+class AgentScreen(Model):
+    awake: bool
+    locked: bool
+
+
+class Agents(Model):
+    enabled: bool
+    #: Nothing launches runs yet: tasks are decided but none is started.
+    dry_run: bool
+    #: When the dispatcher last decided (``None``: not yet).
+    ticked_at: str | None
+    #: Why its last pass failed (``None``: it did not).
+    error: str | None
+    #: What stops every agent right now.
+    blockers: list[AgentReason]
+    limits: AgentLimitsInfo
+    spend: AgentSpend
+    #: ``None`` when the screen could not be read.
+    screen: AgentScreen | None
+    #: ``None`` until checked (it is not while agents are off).
+    signed_in: bool | None
+    decisions: list[AgentDecision]
+    #: The most recent runs, newest first.
+    runs: list[AgentRunInfo]
+
+
+class AgentsEnabled(Model):
+    """The body of ``POST /api/agents/enabled``."""
+
+    enabled: bool
+
+
 # ---- server-sent events ---------------------------------------------------------
 
 
@@ -803,3 +933,5 @@ class Wire(Model):
     event: ServerEvent
     aggregate: Aggregate
     spend: Spend
+    agents: Agents
+    agents_enabled: AgentsEnabled

@@ -13,7 +13,7 @@ import type { Counts } from "../store/selectors";
 import { useApp, useAppStore } from "../store/StoreContext";
 
 // The default view first.
-const ORDER: View[] = ["priorities", "grouped", "stacked", "table", "aggregate", "spend"];
+const ORDER: View[] = ["priorities", "grouped", "stacked", "table", "aggregate", "spend", "agents"];
 
 const VIEW_LABELS: Record<View, { label: string; title: string }> = {
   priorities: { label: "Priorities", title: "Tasks that need me without a parent task that needs me" },
@@ -27,6 +27,10 @@ const VIEW_LABELS: Record<View, { label: string; title: string }> = {
   spend: {
     label: "Spend",
     title: "Tokens and cost of Claude Code on this machine, by window, model and task",
+  },
+  agents: {
+    label: "Agents",
+    title: "Autonomous agents: what they are on, what they may take next, and why they are not on the rest",
   },
 };
 
@@ -59,6 +63,7 @@ export function FilterBar({ counts, aggregate }: { counts: Counts; aggregate?: R
   const set = (patch: Partial<ViewState>): void => store.getState().setView({ ...view, ...patch });
   const isAggregate = view.view === "aggregate";
   const isSpend = view.view === "spend";
+  const isAgents = view.view === "agents";
 
   return (
     <form id="controls" onSubmit={(event) => event.preventDefault()}>
@@ -79,7 +84,7 @@ export function FilterBar({ counts, aggregate }: { counts: Counts; aggregate?: R
         </span>
       </div>
       <div className="controls-row controls-options">
-        {!isSpend && (
+        {!isSpend && !isAgents && (
           <label>
             Repo
             <select name="repo" value={view.repo} onChange={(event) => set({ repo: event.target.value })}>
@@ -92,7 +97,7 @@ export function FilterBar({ counts, aggregate }: { counts: Counts; aggregate?: R
             </select>
           </label>
         )}
-        {isSpend ? (
+        {isAgents ? null : isSpend ? (
           <span className="seg" role="group" aria-label="Breakdown window">
             {SPEND_DAYS.map((days) => (
               <button
