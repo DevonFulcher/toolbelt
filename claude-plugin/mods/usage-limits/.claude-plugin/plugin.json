@@ -1,6 +1,6 @@
 {
   "name": "toolbelt-usage",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Shows the account's usage limits as a bar per window above the prompt, with a pace line for where an even spread would be.",
   "author": { "name": "Devon Fulcher" },
   "types": "./types/index.d.ts",
