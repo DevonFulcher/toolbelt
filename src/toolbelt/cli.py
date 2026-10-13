@@ -21,11 +21,36 @@ app.add_typer(zsh_typer, name="zsh")
 app.add_typer(dotfiles_typer, name="dotfiles")
 app.add_typer(task_typer, name="task")
 
+ui_typer = typer.Typer(
+    help="Serve a read-only web view of every known repo's stacks on 127.0.0.1",
+    invoke_without_command=True,
+)
+app.add_typer(ui_typer, name="ui")
 
-@app.command(name="ui")
-def ui(
+DEFAULT_UI_PORT = 8765
+
+
+@ui_typer.command(name="open")
+def ui_open(
     port: int = typer.Option(
-        8765, "--port", "-p", help="Port to listen on (0 picks a free one)."
+        DEFAULT_UI_PORT, "--port", "-p", help="The port `tt ui` listens on."
+    ),
+    view: str = typer.Option(
+        "", "--view", help="Open this view (e.g. spend, aggregate, priorities)."
+    ),
+):
+    """Open the running `tt ui` in the browser"""
+    from toolbelt.ui.server import open_in_browser
+
+    url = open_in_browser(port=port, view=view)
+    typer.echo(url)
+
+
+@ui_typer.callback()
+def ui(
+    ctx: typer.Context,
+    port: int = typer.Option(
+        DEFAULT_UI_PORT, "--port", "-p", help="Port to listen on (0 picks a free one)."
     ),
     build: bool = typer.Option(
         True,
@@ -35,6 +60,8 @@ def ui(
     ),
 ):
     """Serve a read-only web view of every known repo's stacks on 127.0.0.1"""
+    if ctx.invoked_subcommand is not None:
+        return
     # Imported here so the web stack doesn't slow down every other command.
     from toolbelt.git.stack import lineage
     from toolbelt.git.stack.cli import _repo_root_or_none
