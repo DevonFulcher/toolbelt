@@ -207,16 +207,6 @@ export function prioritiesLayout(rows: Row[], state: ViewState): Section[] {
       entries: selected.sort(rowComparator(state)).map((row) => ({ id: row.id, depth: 0, context: false })),
     });
   }
-  const claimed = rows.filter((row) => row.cells.next?.value === "agent" && matches(row, state));
-  if (claimed.length) {
-    sections.push({
-      key: "priorities-agent",
-      label: "With an agent",
-      tone: "agent",
-      meaning: "Claimed by an agent session (or a person) and being worked on: not waiting on me.",
-      entries: claimed.sort(rowComparator(state)).map((row) => ({ id: row.id, depth: 0, context: false })),
-    });
-  }
   return sections;
 }
 

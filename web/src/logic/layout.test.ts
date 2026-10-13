@@ -383,17 +383,16 @@ describe("branches claimed by an agent", () => {
     expect(out.map((s) => s.key)).toEqual(["agent"]);
   });
 
-  test("priorities list them in their own section after the ones that need me", () => {
+  test("priorities leave them out: there is nothing for me to do on them", () => {
     const out = prioritiesLayout(rows, state({ view: "priorities" }));
 
-    expect(out.map((s) => s.key)).toEqual(["priorities", "priorities-agent"]);
+    expect(out.map((s) => s.key)).toEqual(["priorities"]);
     expect(ids(out[0].entries)).toEqual(["a"]);
-    expect(ids(out[1].entries)).toEqual(["b", "d"]);
   });
 
-  test("priorities with nothing for me still show what agents have", () => {
+  test("priorities with only agent-claimed tasks have no sections", () => {
     const out = prioritiesLayout([nextRow("b", null, 1, "agent")], state({ view: "priorities" }));
 
-    expect(out.map((s) => s.key)).toEqual(["priorities-agent"]);
+    expect(out).toEqual([]);
   });
 });
