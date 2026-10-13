@@ -248,6 +248,11 @@ _MIGRATIONS: list[tuple[str, ...]] = [
         "CREATE INDEX agent_runs_by_task ON agent_runs (task_id, started_at)",
         "CREATE INDEX agent_runs_by_start ON agent_runs (started_at)",
     ),
+    (
+        # Switches the UI can flip (see ``autonomous_agents.limits``):
+        # runtime state, as opposed to the configuration file.
+        "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+    ),
 ]
 
 
@@ -1143,6 +1148,20 @@ class StackStore:
             )
             for r in rows
         ]
+
+    def get_setting(self, key: str, default: str) -> str:
+        row = self._conn.execute(
+            "SELECT value FROM settings WHERE key = ?", (key,)
+        ).fetchone()
+        return row["value"] if row else default
+
+    def set_setting(self, key: str, value: str) -> None:
+        with self._write() as conn:
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?, ?) "
+                "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
 
     def archive_since(self) -> datetime:
         """When archiving began: earlier removals are not in the archive."""

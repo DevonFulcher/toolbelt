@@ -100,3 +100,15 @@ def test_runs_are_listed_newest_first_and_can_be_limited_by_start(tmp_path: Path
 
     assert [r.run_id for r in store.agent_runs()] == [new, old]
     assert [r.run_id for r in store.agent_runs(since=T0 + timedelta(hours=1))] == [new]
+
+
+def test_a_setting_reads_its_default_until_it_is_set(tmp_path: Path):
+    store = StackStore(tmp_path / "stacks.db")
+
+    assert store.get_setting("agents_enabled", "false") == "false"
+    store.set_setting("agents_enabled", "true")
+    store.set_setting("agents_enabled", "false")
+    store.set_setting("other", "x")
+
+    assert store.get_setting("agents_enabled", "default") == "false"
+    assert store.get_setting("other", "default") == "x"
