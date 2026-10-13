@@ -212,6 +212,42 @@ _MIGRATIONS: list[tuple[str, ...]] = [
         )
         """,
     ),
+    (
+        # Runs of toolbelt's autonomous agents (see ``agents``): one row per
+        # run, written when it starts and finished when it ends. ``task_id``
+        # is the tracked task it worked on, ``branch`` and ``repo_id`` are
+        # kept so a run still reads after its branch is gone, ``trigger`` is
+        # the condition it was started for and ``head_sha`` the branch's head
+        # then (attempts are counted per head). ``session_id`` is the Claude
+        # session the run used: its transcript is the agent's, not
+        # interactive spend. Cost and tokens are the SDK's own figures.
+        """
+        CREATE TABLE agent_runs (
+            run_id TEXT PRIMARY KEY,
+            task_id TEXT NOT NULL,
+            repo_id INTEGER NOT NULL,
+            branch TEXT NOT NULL,
+            trigger TEXT NOT NULL,
+            head_sha TEXT NOT NULL,
+            model TEXT NOT NULL,
+            state TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            ended_at TEXT,
+            session_id TEXT,
+            turns INTEGER NOT NULL DEFAULT 0,
+            cost_usd REAL NOT NULL DEFAULT 0,
+            input_tokens INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_write_5m_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_write_1h_tokens INTEGER NOT NULL DEFAULT 0,
+            summary TEXT,
+            error TEXT
+        )
+        """,
+        "CREATE INDEX agent_runs_by_task ON agent_runs (task_id, started_at)",
+        "CREATE INDEX agent_runs_by_start ON agent_runs (started_at)",
+    ),
 ]
 
 
@@ -355,6 +391,42 @@ class TaskUsage:
     tokens: float
     cost_usd: float
     unpriced_calls: float
+
+
+#: How a run ended: ``running`` until it does. ``succeeded``: the agent
+#: finished its loop; ``failed``: it errored; ``timed_out``: it ran past the
+#: time limit; ``cap_reached``: it hit its dollar or turn limit; ``stopped``:
+#: someone stopped it; ``abandoned``: toolbelt stopped while it ran.
+RUN_STATES = (
+    "running",
+    "succeeded",
+    "failed",
+    "timed_out",
+    "cap_reached",
+    "stopped",
+    "abandoned",
+)
+
+
+@dataclass(frozen=True)
+class AgentRun:
+    run_id: str
+    task_id: str
+    repo_id: int
+    branch: str
+    trigger: str
+    head_sha: str
+    model: str
+    state: str
+    started_at: datetime
+    ended_at: datetime | None
+    session_id: str | None
+    turns: int
+    cost_usd: float
+    tokens: TokenCounts
+    #: The agent's own report of what it did.
+    summary: str | None
+    error: str | None
 
 
 @dataclass(frozen=True)
@@ -959,6 +1031,115 @@ class StackStore:
                 tokens=r["tokens"],
                 cost_usd=r["cost"],
                 unpriced_calls=r["unpriced"],
+            )
+            for r in rows
+        ]
+
+    def start_agent_run(
+        self,
+        *,
+        task_id: str,
+        repo_id: int,
+        branch: str,
+        trigger: str,
+        head_sha: str,
+        model: str,
+        at: datetime,
+    ) -> str:
+        """Record that a run has started; returns its id."""
+        run_id = uuid.uuid4().hex
+        with self._write() as conn:
+            conn.execute(
+                "INSERT INTO agent_runs (run_id, task_id, repo_id, branch, "
+                "trigger, head_sha, model, state, started_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 'running', ?)",
+                (run_id, task_id, repo_id, branch, trigger, head_sha, model, _iso(at)),
+            )
+        return run_id
+
+    def finish_agent_run(
+        self,
+        run_id: str,
+        *,
+        state: str,
+        ended_at: datetime,
+        session_id: str | None = None,
+        turns: int = 0,
+        cost_usd: float = 0.0,
+        tokens: TokenCounts | None = None,
+        summary: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        """End a run that is ``running``. A run that already ended is left as
+        it is."""
+        if state not in RUN_STATES or state == "running":
+            raise ValueError(f"a finished run cannot be {state!r}")
+        tokens = tokens or TokenCounts()
+        with self._write() as conn:
+            conn.execute(
+                "UPDATE agent_runs SET state = ?, ended_at = ?, session_id = ?, "
+                "turns = ?, cost_usd = ?, input_tokens = ?, output_tokens = ?, "
+                "cache_read_tokens = ?, cache_write_5m_tokens = ?, "
+                "cache_write_1h_tokens = ?, summary = ?, error = ? "
+                "WHERE run_id = ? AND state = 'running'",
+                (
+                    state,
+                    _iso(ended_at),
+                    session_id,
+                    turns,
+                    cost_usd,
+                    tokens.input,
+                    tokens.output,
+                    tokens.cache_read,
+                    tokens.cache_write_5m,
+                    tokens.cache_write_1h,
+                    summary,
+                    error,
+                    run_id,
+                ),
+            )
+
+    def abandon_running_agent_runs(self, at: datetime) -> int:
+        """End every run still ``running`` as ``abandoned`` (toolbelt stopped
+        while it ran). Returns how many."""
+        with self._write() as conn:
+            return conn.execute(
+                "UPDATE agent_runs SET state = 'abandoned', ended_at = ? "
+                "WHERE state = 'running'",
+                (_iso(at),),
+            ).rowcount
+
+    def agent_runs(self, *, since: datetime | None = None) -> list[AgentRun]:
+        """Runs started at or after ``since`` (all by default), newest first."""
+        rows = self._conn.execute(
+            "SELECT * FROM agent_runs WHERE started_at >= ? "
+            "ORDER BY started_at DESC, run_id",
+            (_iso(since or datetime.min.replace(tzinfo=UTC)),),
+        )
+        return [
+            AgentRun(
+                run_id=r["run_id"],
+                task_id=r["task_id"],
+                repo_id=r["repo_id"],
+                branch=r["branch"],
+                trigger=r["trigger"],
+                head_sha=r["head_sha"],
+                model=r["model"],
+                state=r["state"],
+                started_at=datetime.fromisoformat(r["started_at"]),
+                ended_at=_optional_time(r["ended_at"]),
+                session_id=r["session_id"],
+                turns=r["turns"],
+                cost_usd=r["cost_usd"],
+                tokens=TokenCounts(
+                    input=r["input_tokens"],
+                    output=r["output_tokens"],
+                    cache_read=r["cache_read_tokens"],
+                    cache_write_5m=r["cache_write_5m_tokens"],
+                    cache_write_1h=r["cache_write_1h_tokens"],
+                ),
+                summary=r["summary"],
+                error=r["error"],
             )
             for r in rows
         ]
