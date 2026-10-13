@@ -29,6 +29,13 @@ def _isolate_git_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "GIT_PREFIX",
         "GIT_COMMON_DIR",
         "GIT_OBJECT_DIRECTORY",
+        # The hook's own commit identity would override the throwaway repos'.
+        "GIT_AUTHOR_NAME",
+        "GIT_AUTHOR_EMAIL",
+        "GIT_AUTHOR_DATE",
+        "GIT_COMMITTER_NAME",
+        "GIT_COMMITTER_EMAIL",
+        "GIT_COMMITTER_DATE",
     ):
         monkeypatch.delenv(var, raising=False)
 
