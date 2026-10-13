@@ -37,7 +37,8 @@ def test_agents_are_off_until_switched_on():
 
     body = api.Agents.model_validate(client.get("/api/agents").json())
 
-    assert (body.enabled, body.dry_run, body.error) == (False, False, None)
+    assert (body.enabled, body.launching, body.error) == (False, False, None)
+    assert body.dry_run is True
     assert [b.code for b in body.blockers] == ["disabled"]
     assert body.decisions == []
     assert body.limits.run_usd == 0.25
@@ -140,3 +141,36 @@ def test_a_bad_switch_body_is_rejected():
         client.post("/api/agents/enabled", json={"enabled": "maybe"}).status_code == 422
     )
     assert client.post("/api/agents/enabled", json={}).status_code == 422
+
+
+def test_starting_runs_is_a_second_switch_that_is_off_until_turned_on():
+    client = client_for(rig(a=PrSnapshot(status(), None)))
+
+    assert client.get("/api/agents").json()["launching"] is False
+    assert client.post("/api/agents/launching", json={"launching": True}).json() == {
+        "launching": True
+    }
+    assert client.get("/api/agents").json()["launching"] is True
+    assert client.post("/api/agents/launching", json={}).status_code == 422
+
+
+def test_a_working_run_can_be_stopped_and_an_unknown_one_is_a_404():
+    app = create_app(
+        tracker=lambda: None,
+        wall_clock=lambda: NOW,
+        dispatcher=rig(a=PrSnapshot(status(), None)).dispatcher,
+    )
+    client = TestClient(app)
+
+    class Task:
+        cancelled = False
+
+        def cancel(self) -> None:
+            self.cancelled = True
+
+    task = Task()
+    app.state.agent_runner.running["r1"] = task
+
+    assert client.post("/api/agents/runs/r1/stop").json() == {"stopping": True}
+    assert task.cancelled is True
+    assert client.post("/api/agents/runs/nope/stop").status_code == 404

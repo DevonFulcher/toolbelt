@@ -7,8 +7,9 @@ Override any of them in ``agents:`` of ``$XDG_CONFIG_HOME/toolbelt/config.yaml``
       run_usd: 0.50
       global_usd_per_day: 5
 
-Whether agents run at all is not configuration: it is a switch in the UI,
-off until turned on (see ``AGENTS_ENABLED_SETTING``).
+Whether agents run at all, and whether they start runs or only decide, are not
+configuration: they are switches in the UI, off until turned on (see
+``AGENTS_ENABLED_SETTING`` and ``AGENTS_LAUNCH_SETTING``).
 """
 
 from pathlib import Path
@@ -17,6 +18,9 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
 AGENTS_ENABLED_SETTING = "agents_enabled"
+#: Whether decided tasks actually get a run. Off, agents are in a dry run:
+#: tasks are decided and nothing is started.
+AGENTS_LAUNCH_SETTING = "agents_launch"
 
 #: The next actions an agent is started for: what a run is for.
 TRIGGERS = ("resolve_conflicts", "resolve_comments", "fix_ci")

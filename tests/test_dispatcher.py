@@ -100,6 +100,7 @@ class Rig:
             busy=False,
         )
         self.launched: list[str] = []
+        self.launching = True
         self.monotonic = 0.0
 
         async def fetch(branch: str, _path: Path) -> PrSnapshot:
@@ -123,6 +124,7 @@ class Rig:
             clock=lambda: self.monotonic,
             poll_interval=300,
             launch=launch,
+            launching=lambda: self.launching,
         )
 
     def tick(self) -> None:
@@ -466,3 +468,34 @@ def test_a_failing_pass_is_reported_and_the_loop_carries_on():
         task.cancel()
 
     asyncio.run(scenario())
+
+
+def test_with_the_start_switch_off_tasks_are_decided_but_nothing_is_launched():
+    r = rig(a=PrSnapshot(status(), None))
+    r.launching = False
+
+    r.tick()
+
+    assert r.decision("a").may_start
+    assert r.launched == []
+    assert r.dispatcher.dry_run is True
+
+
+def test_with_the_start_switch_on_it_is_not_a_dry_run():
+    r = rig(a=PrSnapshot(status(), None))
+
+    r.tick()
+
+    assert r.dispatcher.dry_run is False
+
+
+def test_only_one_run_is_started_per_pass():
+    r = rig(
+        a=PrSnapshot(status(), None),
+        b=PrSnapshot(status(), None),
+        c=PrSnapshot(status(), None),
+    )
+
+    r.tick()
+
+    assert r.launched == ["a"]

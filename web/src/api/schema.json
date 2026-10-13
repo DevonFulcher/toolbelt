@@ -351,6 +351,9 @@
             }
           ]
         },
+        "launching": {
+          "type": "boolean"
+        },
         "limits": {
           "$ref": "#/$defs/AgentLimitsInfo"
         },
@@ -396,6 +399,7 @@
       },
       "required": [
         "enabled",
+        "launching",
         "dry_run",
         "ticked_at",
         "error",
@@ -422,6 +426,20 @@
         "enabled"
       ],
       "title": "AgentsEnabled",
+      "type": "object"
+    },
+    "AgentsLaunching": {
+      "additionalProperties": false,
+      "description": "The body of ``POST /api/agents/launching``.",
+      "properties": {
+        "launching": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "launching"
+      ],
+      "title": "AgentsLaunching",
       "type": "object"
     },
     "Aggregate": {
@@ -526,6 +544,123 @@
         "why"
       ],
       "title": "AggregateNote",
+      "type": "object"
+    },
+    "AutonomousSpend": {
+      "additionalProperties": false,
+      "description": "What autonomous agent runs cost: exactly, from each run's own record\n(not estimated from transcripts like the interactive figures).",
+      "properties": {
+        "by_task": {
+          "items": {
+            "$ref": "#/$defs/AutonomousTask"
+          },
+          "type": "array"
+        },
+        "by_trigger": {
+          "items": {
+            "$ref": "#/$defs/AutonomousTrigger"
+          },
+          "type": "array"
+        },
+        "windows": {
+          "items": {
+            "$ref": "#/$defs/AutonomousWindow"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "windows",
+        "by_trigger",
+        "by_task"
+      ],
+      "title": "AutonomousSpend",
+      "type": "object"
+    },
+    "AutonomousTask": {
+      "additionalProperties": false,
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "cost_usd": {
+          "type": "number"
+        },
+        "repo": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "runs": {
+          "type": "integer"
+        },
+        "task_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_id",
+        "repo",
+        "branch",
+        "runs",
+        "cost_usd"
+      ],
+      "title": "AutonomousTask",
+      "type": "object"
+    },
+    "AutonomousTrigger": {
+      "additionalProperties": false,
+      "properties": {
+        "cost_usd": {
+          "type": "number"
+        },
+        "runs": {
+          "type": "integer"
+        },
+        "trigger": {
+          "$ref": "#/$defs/AgentTrigger"
+        }
+      },
+      "required": [
+        "trigger",
+        "runs",
+        "cost_usd"
+      ],
+      "title": "AutonomousTrigger",
+      "type": "object"
+    },
+    "AutonomousWindow": {
+      "additionalProperties": false,
+      "properties": {
+        "cost_usd": {
+          "type": "number"
+        },
+        "label": {
+          "type": "string"
+        },
+        "runs": {
+          "type": "integer"
+        },
+        "start": {
+          "type": "string"
+        },
+        "tokens": {
+          "$ref": "#/$defs/SpendTokens"
+        }
+      },
+      "required": [
+        "label",
+        "start",
+        "runs",
+        "cost_usd",
+        "tokens"
+      ],
+      "title": "AutonomousWindow",
       "type": "object"
     },
     "BlockedCatalogState": {
@@ -2748,6 +2883,9 @@
         "as_of": {
           "type": "string"
         },
+        "autonomous": {
+          "$ref": "#/$defs/AutonomousSpend"
+        },
         "breakdown_days": {
           "type": "integer"
         },
@@ -2804,7 +2942,8 @@
         "by_model",
         "by_task",
         "unpriced_models",
-        "claims_since"
+        "claims_since",
+        "autonomous"
       ],
       "title": "Spend",
       "type": "object"
@@ -3452,6 +3591,9 @@
     "agents_enabled": {
       "$ref": "#/$defs/AgentsEnabled"
     },
+    "agents_launching": {
+      "$ref": "#/$defs/AgentsLaunching"
+    },
     "aggregate": {
       "$ref": "#/$defs/Aggregate"
     },
@@ -3471,7 +3613,8 @@
     "aggregate",
     "spend",
     "agents",
-    "agents_enabled"
+    "agents_enabled",
+    "agents_launching"
   ],
   "title": "Wire",
   "type": "object"

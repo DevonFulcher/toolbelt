@@ -15,9 +15,12 @@ function serve(initial: Agents | Error) {
   const posts: unknown[] = [];
   const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
     if (init?.method === "POST") {
-      const body = JSON.parse(String(init.body)) as { enabled: boolean };
-      posts.push(body);
-      if (!(current instanceof Error)) current = { ...current, enabled: body.enabled };
+      const body = init.body ? (JSON.parse(String(init.body)) as { enabled?: boolean; launching?: boolean }) : {};
+      posts.push({ url: _url, ...body });
+      if (!(current instanceof Error)) {
+        if (body.enabled !== undefined) current = { ...current, enabled: body.enabled };
+        if (body.launching !== undefined) current = { ...current, launching: body.launching, dry_run: !body.launching };
+      }
       return { ok: true, status: 200, json: async () => body };
     }
     if (current instanceof Error) return { ok: false, status: 502, json: async () => ({}) };
@@ -46,7 +49,7 @@ describe("the agents view", () => {
     show();
     await screen.findByRole("heading", { name: /Autonomous agents are on/ });
 
-    expect(screen.getByText(/Dry run: tasks are decided/)).toBeInTheDocument();
+    expect(screen.getByText(/this is a dry run/)).toBeInTheDocument();
     const mayTake = screen.getByRole("region", { name: "Agents may take these" });
     expect(within(mayTake).getByText("devon/a")).toBeInTheDocument();
     expect(within(mayTake).getByText("Fix / re-run CI")).toBeInTheDocument();
@@ -110,8 +113,31 @@ describe("the agents view", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Turn on" }));
 
-    await waitFor(() => expect(posts).toEqual([{ enabled: true }]));
+    await waitFor(() => expect(posts).toEqual([{ url: "/api/agents/enabled", enabled: true }]));
     expect(await screen.findByRole("heading", { name: /Autonomous agents are on/ })).toBeInTheDocument();
+  });
+
+  test("a dry run says so, and the second switch lets the agents start runs", async () => {
+    const { posts } = serve(agents());
+    show();
+
+    expect(await screen.findByText(/Starting runs: off, so this is a dry run/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Start runs" }));
+
+    await waitFor(() => expect(posts).toEqual([{ url: "/api/agents/launching", launching: true }]));
+    expect(await screen.findByText(/Starting runs: on/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Stop starting runs" })).toBeInTheDocument();
+  });
+
+  test("a working run can be stopped from the table", async () => {
+    const running = agents().runs[0];
+    const { posts } = serve(agents({ runs: [{ ...running, state: "running", ended_at: null, summary: null }] }));
+    show();
+
+    const table = await screen.findByRole("region", { name: "Recent runs" });
+    fireEvent.click(within(table).getByRole("button", { name: "Stop" }));
+
+    await waitFor(() => expect(posts).toEqual([{ url: "/api/agents/runs/r1/stop" }]));
   });
 
   test("says when the dispatcher's last pass failed", async () => {

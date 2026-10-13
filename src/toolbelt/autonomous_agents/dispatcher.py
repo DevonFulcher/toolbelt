@@ -29,7 +29,7 @@ from toolbelt.autonomous_agents.eligibility import (
 )
 from toolbelt.autonomous_agents.limits import AgentLimits
 from toolbelt.autonomous_agents.screen import ScreenState
-from toolbelt.git.stack.status import BranchStatus, PrState
+from toolbelt.git.stack.status import BranchStatus, PrState, ReviewState
 from toolbelt.git.stack.store import AgentRun
 from toolbelt.logger import logger
 from toolbelt.task_claims.resolution import TrackedTask
@@ -70,6 +70,14 @@ class Decision:
     #: The branch's head when decided (what a run would be launched on).
     head_sha: str
     decided_at: datetime
+    #: The PR, as of the last fetch: what an agent is told about it.
+    pr_number: int | None = None
+    pr_url: str | None = None
+    base_ref: str | None = None
+    is_draft: bool = False
+    approved: bool = False
+    #: Where the branch is checked out (None: nowhere).
+    worktree: Path | None = None
 
     @property
     def may_start(self) -> bool:
@@ -125,6 +133,7 @@ class Dispatcher:
         tick: float = DEFAULT_TICK_SECONDS,
         concurrency: int = DEFAULT_CONCURRENCY,
         launch: Callable[[Decision], Awaitable[None]] | None = None,
+        launching: Callable[[], bool] = lambda: True,
     ) -> None:
         self._tasks = tasks
         self._fetch = fetch
@@ -142,6 +151,8 @@ class Dispatcher:
         self._tick = tick
         self._concurrency = concurrency
         self._launch = launch
+        self._launching = launching
+        self._launching_now = False
         #: Latest PR snapshot per branch and when (``clock``) it was fetched.
         self._snapshots: dict[tuple[int, str], tuple[float, PrSnapshot]] = {}
         self._auth: tuple[float, bool] | None = None
@@ -159,8 +170,9 @@ class Dispatcher:
 
     @property
     def dry_run(self) -> bool:
-        """Nothing starts runs: tasks are decided and no more."""
-        return self._launch is None
+        """Nothing starts runs: tasks are decided and no more (there is no
+        launcher, or the switch for starting runs is off)."""
+        return self._launch is None or not self._launching_now
 
     def _auth_ok(self) -> bool:
         now = self._clock()
@@ -208,6 +220,7 @@ class Dispatcher:
         world = await asyncio.to_thread(self._world, now)
         self.screen = world.screen
         self.signed_in = world.auth_ok
+        self._launching_now = world.enabled and self._launching()
         if not world.enabled:
             self.decisions = {}
             self.blockers = global_blockers(world)
@@ -218,10 +231,13 @@ class Dispatcher:
         self.decisions = await asyncio.to_thread(self._decide_all, tasks, world)
         self.blockers = global_blockers(world)
         self.ticked_at = now
-        if self._launch is not None:
+        if self._launch is not None and self._launching_now:
+            # One at a time: every decision was made against the same runs, so
+            # a second start in this pass would ignore the first.
             for decision in self.decisions.values():
                 if decision.may_start:
                     await self._launch(decision)
+                    break
 
     def _decide_all(
         self, tasks: list[DispatchTask], world: World
@@ -282,6 +298,12 @@ class Dispatcher:
             reason=decide(facts, world),
             head_sha=state.head_sha,
             decided_at=world.now,
+            pr_number=snapshot.facts.number if snapshot.facts else None,
+            pr_url=snapshot.status.url,
+            base_ref=snapshot.facts.base_ref if snapshot.facts else None,
+            is_draft=snapshot.status.pr is PrState.DRAFT,
+            approved=snapshot.status.review is ReviewState.APPROVED,
+            worktree=task.worktree,
         )
 
     async def run(self) -> None:

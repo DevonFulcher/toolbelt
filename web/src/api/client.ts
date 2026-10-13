@@ -59,3 +59,22 @@ export async function setAgentsEnabled(enabled: boolean, fetchImpl: typeof fetch
   });
   if (!response.ok) throw new Error(`${AGENTS_URL}/enabled: HTTP ${response.status}`);
 }
+
+/** Let the agents start runs (or only decide, as in a dry run). */
+export async function setAgentsLaunching(launching: boolean, fetchImpl: typeof fetch = fetch): Promise<void> {
+  const response = await fetchImpl(`${AGENTS_URL}/launching`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ launching }),
+  });
+  if (!response.ok) throw new Error(`${AGENTS_URL}/launching: HTTP ${response.status}`);
+}
+
+/** Stop a run that is working. */
+export async function stopAgentRun(runId: string, fetchImpl: typeof fetch = fetch): Promise<void> {
+  const response = await fetchImpl(`${AGENTS_URL}/runs/${encodeURIComponent(runId)}/stop`, {
+    method: "POST",
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) throw new Error(`${AGENTS_URL}/runs/${runId}/stop: HTTP ${response.status}`);
+}

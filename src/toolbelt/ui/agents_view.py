@@ -53,6 +53,7 @@ def build_agents(
     store: StackStore,
     *,
     enabled: bool,
+    launching: bool,
     now: datetime,
 ) -> api.Agents:
     limits = dispatcher.limits
@@ -65,6 +66,7 @@ def build_agents(
     )
     return api.Agents(
         enabled=enabled,
+        launching=launching,
         dry_run=dispatcher.dry_run,
         ticked_at=dispatcher.ticked_at.isoformat() if dispatcher.ticked_at else None,
         error=dispatcher.last_error,

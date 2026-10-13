@@ -962,7 +962,9 @@ class StackStore:
         return datetime.fromisoformat(value) if value else None
 
     def usage_by_model(self, start: datetime, end: datetime) -> list[ModelUsage]:
-        """Calls made in ``[start, end)``, per model, biggest spend first."""
+        """Interactive calls made in ``[start, end)``, per model, biggest
+        spend first. The sessions of autonomous agent runs are not here: an
+        agent's cost is its run's (see ``agent_runs``)."""
         rows = self._conn.execute(
             "SELECT model, COUNT(*) AS calls, SUM(input_tokens) AS input, "
             "SUM(output_tokens) AS output, SUM(cache_read_tokens) AS cache_read, "
@@ -970,7 +972,10 @@ class StackStore:
             "SUM(cache_write_1h_tokens) AS cache_write_1h, "
             "SUM(COALESCE(cost_usd, 0)) AS cost, "
             "SUM(cost_usd IS NULL) AS unpriced FROM usage_calls "
-            "WHERE at >= ? AND at < ? GROUP BY model ORDER BY cost DESC, model",
+            "WHERE at >= ? AND at < ? "
+            "AND session_id NOT IN (SELECT session_id FROM agent_runs "
+            "WHERE session_id IS NOT NULL) "
+            "GROUP BY model ORDER BY cost DESC, model",
             (_iso(start), _iso(end)),
         )
         return [
@@ -1002,6 +1007,9 @@ class StackStore:
                        input_tokens + output_tokens + cache_read_tokens
                        + cache_write_5m_tokens + cache_write_1h_tokens AS tokens
                 FROM usage_calls WHERE at >= ? AND at < ?
+                AND session_id NOT IN (
+                    SELECT session_id FROM agent_runs WHERE session_id IS NOT NULL
+                )
             ),
             claimed AS (
                 SELECT DISTINCT c.message_id, s.task_id
@@ -1050,15 +1058,28 @@ class StackStore:
         head_sha: str,
         model: str,
         at: datetime,
+        session_id: str | None = None,
     ) -> str:
-        """Record that a run has started; returns its id."""
+        """Record that a run has started; returns its id. ``session_id`` is
+        the Claude session it will use, when known up front (so the session's
+        transcript is the run's from the start)."""
         run_id = uuid.uuid4().hex
         with self._write() as conn:
             conn.execute(
                 "INSERT INTO agent_runs (run_id, task_id, repo_id, branch, "
-                "trigger, head_sha, model, state, started_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, 'running', ?)",
-                (run_id, task_id, repo_id, branch, trigger, head_sha, model, _iso(at)),
+                "trigger, head_sha, model, state, started_at, session_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)",
+                (
+                    run_id,
+                    task_id,
+                    repo_id,
+                    branch,
+                    trigger,
+                    head_sha,
+                    model,
+                    _iso(at),
+                    session_id,
+                ),
             )
         return run_id
 

@@ -4,6 +4,7 @@ import type { Agents } from "../api/generated";
 export function agents(parts: Partial<Agents> = {}): Agents {
   return {
     enabled: true,
+    launching: false,
     dry_run: true,
     ticked_at: "2026-10-13T17:00:00+00:00",
     error: null,

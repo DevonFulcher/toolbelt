@@ -32,6 +32,19 @@ export function spend(parts: Partial<Spend> = {}): Spend {
     ],
     unpriced_models: [],
     claims_since: "2026-10-13T11:00:00+00:00",
+    autonomous: {
+      windows: [
+        { label: "Last 24 hours", start: "2026-10-12T12:00:00+00:00", runs: 2, cost_usd: 0.1831, tokens: tokens({ cache_read: 90_000 }) },
+        { label: "Last 7 days", start: "2026-10-06T12:00:00+00:00", runs: 5, cost_usd: 0.4, tokens: tokens({ cache_read: 200_000 }) },
+        { label: "Last 30 days", start: "2026-09-13T12:00:00+00:00", runs: 5, cost_usd: 0.4, tokens: tokens({ cache_read: 200_000 }) },
+        { label: "This month (UTC)", start: "2026-10-01T00:00:00+00:00", runs: 5, cost_usd: 0.4, tokens: tokens({ cache_read: 200_000 }) },
+      ],
+      by_trigger: [
+        { trigger: "fix_ci", runs: 3, cost_usd: 0.25 },
+        { trigger: "resolve_conflicts", runs: 2, cost_usd: 0.15 },
+      ],
+      by_task: [{ task_id: "t1", repo: "api", branch: "devon/a", runs: 5, cost_usd: 0.4 }],
+    },
     ...parts,
   };
 }

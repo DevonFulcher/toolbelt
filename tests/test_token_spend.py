@@ -384,3 +384,88 @@ def test_the_summary_has_windows_and_names_an_unpriced_model(tmp_path: Path):
     text = format_summary(summary)
     assert "No price for: claude-new-1 (1 calls)" in text
     assert "(no claim covered it)" in text
+
+
+# ---- autonomous agent runs --------------------------------------------------------------------
+
+
+def test_the_session_of_an_agent_run_is_not_also_counted_as_interactive_spend(
+    tmp_path: Path,
+):
+    store = StackStore(tmp_path / "stacks.db")
+    store.add_usage_calls(
+        [
+            call("mine", T0 + timedelta(minutes=1), session="interactive", cost=2.0),
+            call("agent", T0 + timedelta(minutes=1), session="agent-session", cost=9.0),
+        ],
+        transcript="t",
+        offset=1,
+    )
+    run_id = store.start_agent_run(
+        task_id="t1",
+        repo_id=1,
+        branch="devon/a",
+        trigger="fix_ci",
+        head_sha="abc",
+        model="m",
+        at=T0,
+        session_id="agent-session",
+    )
+    window = (T0 - timedelta(hours=1), T0 + timedelta(hours=1))
+
+    by_model = store.usage_by_model(*window)
+    by_task = store.usage_by_task(*window)
+
+    assert [(m.calls, m.cost_usd) for m in by_model] == [(1, 2.0)]
+    assert [(t.task_id, t.cost_usd) for t in by_task] == [(None, 2.0)]
+    assert run_id
+
+
+def test_autonomous_spend_is_the_runs_own_cost_by_window_trigger_and_task(
+    tmp_path: Path,
+):
+    from toolbelt.token_spend.summary import summarize
+
+    store = StackStore(tmp_path / "stacks.db")
+    now = datetime(2026, 10, 13, 12, 0, tzinfo=UTC)
+
+    def finished(task_id: str, trigger: str, at: datetime, cost: float) -> None:
+        run_id = store.start_agent_run(
+            task_id=task_id,
+            repo_id=1,
+            branch=f"devon/{task_id}",
+            trigger=trigger,
+            head_sha="abc",
+            model="m",
+            at=at,
+        )
+        store.finish_agent_run(
+            run_id,
+            state="succeeded",
+            ended_at=at + timedelta(minutes=3),
+            cost_usd=cost,
+            tokens=TokenCounts(output=100),
+        )
+
+    finished("a", "fix_ci", now - timedelta(hours=2), 0.10)
+    finished("a", "resolve_conflicts", now - timedelta(days=2), 0.30)
+    finished("b", "fix_ci", now - timedelta(days=20), 1.00)
+
+    autonomous = summarize(store, now, breakdown_days=7).autonomous
+
+    assert [(w.label, w.runs, round(w.cost_usd, 2)) for w in autonomous.windows] == [
+        ("Last 24 hours", 1, 0.10),
+        ("Last 7 days", 2, 0.40),
+        ("Last 30 days", 3, 1.40),
+        ("This month (UTC)", 2, 0.40),
+    ]
+    assert autonomous.windows[1].tokens.output == 200
+    assert [
+        (t.trigger, t.runs, round(t.cost_usd, 2)) for t in autonomous.by_trigger
+    ] == [
+        ("resolve_conflicts", 1, 0.30),
+        ("fix_ci", 1, 0.10),
+    ]
+    assert [(t.branch, t.runs, round(t.cost_usd, 2)) for t in autonomous.by_task] == [
+        ("devon/a", 2, 0.40)
+    ]

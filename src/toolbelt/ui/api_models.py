@@ -700,6 +700,37 @@ class UnpricedModel(Model):
     calls: int
 
 
+class AutonomousWindow(Model):
+    label: str
+    start: str
+    runs: int
+    cost_usd: float
+    tokens: SpendTokens
+
+
+class AutonomousTrigger(Model):
+    trigger: AgentTrigger
+    runs: int
+    cost_usd: float
+
+
+class AutonomousTask(Model):
+    task_id: str
+    repo: str | None
+    branch: str
+    runs: int
+    cost_usd: float
+
+
+class AutonomousSpend(Model):
+    """What autonomous agent runs cost: exactly, from each run's own record
+    (not estimated from transcripts like the interactive figures)."""
+
+    windows: list[AutonomousWindow]
+    by_trigger: list[AutonomousTrigger]
+    by_task: list[AutonomousTask]
+
+
 class Spend(Model):
     as_of: str
     #: When the transcripts were last read; ``None`` until the first read ends.
@@ -713,6 +744,7 @@ class Spend(Model):
     unpriced_models: list[UnpricedModel]
     #: When claims began to be recorded (``None``: none yet).
     claims_since: str | None
+    autonomous: AutonomousSpend
 
 
 # ---- autonomous agents ------------------------------------------------------------
@@ -820,6 +852,8 @@ class AgentScreen(Model):
 
 class Agents(Model):
     enabled: bool
+    #: The switch for starting runs (off: a dry run).
+    launching: bool
     #: Nothing launches runs yet: tasks are decided but none is started.
     dry_run: bool
     #: When the dispatcher last decided (``None``: not yet).
@@ -843,6 +877,12 @@ class AgentsEnabled(Model):
     """The body of ``POST /api/agents/enabled``."""
 
     enabled: bool
+
+
+class AgentsLaunching(Model):
+    """The body of ``POST /api/agents/launching``."""
+
+    launching: bool
 
 
 # ---- server-sent events ---------------------------------------------------------
@@ -935,3 +975,4 @@ class Wire(Model):
     spend: Spend
     agents: Agents
     agents_enabled: AgentsEnabled
+    agents_launching: AgentsLaunching

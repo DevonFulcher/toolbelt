@@ -39,7 +39,8 @@ describe("the spend view", () => {
       ["Last 30 days", "$1,368.70"],
       ["This month (UTC)", "$574.42"],
     ]) {
-      const tile = screen.getByText(label).closest(".spend-tile") as HTMLElement;
+      // The interactive tiles come first; the autonomous section repeats the labels.
+      const tile = screen.getAllByText(label)[0].closest(".spend-tile") as HTMLElement;
       expect(within(tile).getByText(cost)).toBeInTheDocument();
     }
     expect(screen.getByText("1,166 calls · 280.8M tokens")).toBeInTheDocument();
@@ -70,6 +71,28 @@ describe("the spend view", () => {
 
     await screen.findByRole("heading", { name: "By model, last 30 days" });
     expect(fetchMock).toHaveBeenCalledWith("/api/spend?days=30", expect.anything());
+  });
+
+  test("autonomous agents' spend is its own section, from the runs' recorded costs", async () => {
+    serve(spend());
+    show();
+    await screen.findByText("$61.67");
+
+    const section = screen.getByRole("region", { name: "Autonomous agents" });
+    expect(within(section).getByText("$0.1831")).toBeInTheDocument();
+    expect(within(section).getByText("2 runs · 90.0k tokens")).toBeInTheDocument();
+    const byTrigger = within(section).getByRole("table", { name: "Autonomous spend by what the run was for" });
+    expect(within(byTrigger).getByText("Fix / re-run CI")).toBeInTheDocument();
+    expect(within(byTrigger).getByText("$0.2500")).toBeInTheDocument();
+    expect(within(section).getByText("api: devon/a")).toBeInTheDocument();
+  });
+
+  test("says when no agent has run", async () => {
+    const empty = spend();
+    serve(spend({ autonomous: { ...empty.autonomous, by_trigger: [], by_task: [] } }));
+    show();
+
+    expect(await screen.findByText(/No autonomous run in the last 7 days/)).toBeInTheDocument();
   });
 
   test("a model with no price is called out and its cost is not shown as zero", async () => {

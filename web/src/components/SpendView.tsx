@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchSpend } from "../api/client";
 import type { Spend, SpendTokens } from "../api/generated";
+import { TRIGGER_LABEL } from "./AgentsView";
 import { formatAbsolute } from "../logic/format";
 import { formatTokens, formatUsd } from "../logic/spendFormat";
 import type { Counts } from "../store/selectors";
@@ -48,6 +49,9 @@ export function useSpend(days: number, fetchImpl: typeof fetch = fetch): Load | 
   }, [days, fetchImpl]);
   return load;
 }
+
+/** Runs cost cents or less: four digits under a dollar. */
+const formatRunCost = (usd: number): string => (usd > 0 && usd < 1 ? `$${usd.toFixed(4)}` : formatUsd(usd));
 
 const totalTokens = (tokens: SpendTokens): number =>
   tokens.input + tokens.output + tokens.cache_read + tokens.cache_write_5m + tokens.cache_write_1h;
@@ -169,6 +173,64 @@ function SpendBody({ data }: { data: Spend }) {
               ))}
             </tbody>
           </table>
+        )}
+      </section>
+      <section className="spend-table" aria-label="Autonomous agents">
+        <h2>Autonomous agents</h2>
+        <p className="spend-description">
+          What toolbelt's autonomous agents spent, exactly: each run records the cost the SDK reported. Their sessions are
+          not in the figures above.
+        </p>
+        <div className="spend-tiles">
+          {data.autonomous.windows.map((window) => (
+            <div className="spend-tile" key={window.label}>
+              <span className="spend-tile-label">{window.label}</span>
+              <strong className="spend-tile-cost">{formatRunCost(window.cost_usd)}</strong>
+              <span className="spend-tile-detail">{`${window.runs} run${window.runs === 1 ? "" : "s"} · ${formatTokens(totalTokens(window.tokens))} tokens`}</span>
+            </div>
+          ))}
+        </div>
+        {data.autonomous.by_trigger.length === 0 ? (
+          <p className="spend-empty">{`No autonomous run in the last ${windowLabel}.`}</p>
+        ) : (
+          <>
+            <table aria-label="Autonomous spend by what the run was for">
+              <thead>
+                <tr>
+                  <th>{`What it was for, last ${windowLabel}`}</th>
+                  <th className="num">Runs</th>
+                  <th className="num">Cost</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.autonomous.by_trigger.map((row) => (
+                  <tr key={row.trigger}>
+                    <td>{TRIGGER_LABEL[row.trigger]}</td>
+                    <td className="num">{row.runs}</td>
+                    <td className="num">{formatRunCost(row.cost_usd)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <table aria-label="Autonomous spend by task">
+              <thead>
+                <tr>
+                  <th>{`Task, last ${windowLabel}`}</th>
+                  <th className="num">Runs</th>
+                  <th className="num">Cost</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.autonomous.by_task.map((row) => (
+                  <tr key={row.task_id}>
+                    <td>{row.repo === null ? row.branch : `${row.repo}: ${row.branch}`}</td>
+                    <td className="num">{row.runs}</td>
+                    <td className="num">{formatRunCost(row.cost_usd)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
         )}
       </section>
       <details className="spend-notes">

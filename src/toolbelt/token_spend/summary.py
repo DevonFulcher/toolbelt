@@ -36,6 +36,43 @@ class NamedTaskUsage:
 
 
 @dataclass(frozen=True)
+class AutonomousWindow:
+    label: str
+    start: datetime
+    runs: int
+    #: The SDK's own cost of each run, summed.
+    cost_usd: float
+    tokens: TokenCounts
+
+
+@dataclass(frozen=True)
+class AutonomousTrigger:
+    trigger: str
+    runs: int
+    cost_usd: float
+
+
+@dataclass(frozen=True)
+class AutonomousTask:
+    task_id: str
+    repo: str | None
+    branch: str
+    runs: int
+    cost_usd: float
+
+
+@dataclass(frozen=True)
+class AutonomousUsage:
+    """What autonomous agent runs cost, exactly: each run records the cost the
+    SDK reported. Kept apart from the interactive figures, which are estimated
+    from transcripts."""
+
+    windows: list[AutonomousWindow]
+    by_trigger: list[AutonomousTrigger]
+    by_task: list[AutonomousTask]
+
+
+@dataclass(frozen=True)
 class SpendSummary:
     as_of: datetime
     windows: list[WindowUsage]
@@ -48,6 +85,7 @@ class SpendSummary:
     #: When claims began to be recorded: spend before it can only be
     #: unclaimed. None when none has been recorded.
     claims_since: datetime | None
+    autonomous: AutonomousUsage
 
 
 def _window(
@@ -101,18 +139,72 @@ def _named(store: StackStore, tasks: list[TaskUsage]) -> list[NamedTaskUsage]:
     ]
 
 
+def _autonomous(
+    store: StackStore, windows: list[tuple[str, datetime]], breakdown_start: datetime
+) -> AutonomousUsage:
+    runs = store.agent_runs(since=min(start for _, start in windows))
+    names = _task_names(store)
+
+    def window(label: str, start: datetime) -> AutonomousWindow:
+        inside = [run for run in runs if run.started_at >= start]
+        return AutonomousWindow(
+            label=label,
+            start=start,
+            runs=len(inside),
+            cost_usd=sum(run.cost_usd for run in inside),
+            tokens=TokenCounts(
+                input=sum(run.tokens.input for run in inside),
+                output=sum(run.tokens.output for run in inside),
+                cache_read=sum(run.tokens.cache_read for run in inside),
+                cache_write_5m=sum(run.tokens.cache_write_5m for run in inside),
+                cache_write_1h=sum(run.tokens.cache_write_1h for run in inside),
+            ),
+        )
+
+    chosen = [run for run in runs if run.started_at >= breakdown_start]
+    triggers: dict[str, list[float]] = {}
+    tasks: dict[str, tuple[str, list[float]]] = {}
+    for run in chosen:
+        triggers.setdefault(run.trigger, []).append(run.cost_usd)
+        tasks.setdefault(run.task_id, (run.branch, []))[1].append(run.cost_usd)
+    return AutonomousUsage(
+        windows=[window(label, start) for label, start in windows],
+        by_trigger=sorted(
+            (
+                AutonomousTrigger(trigger, len(costs), sum(costs))
+                for trigger, costs in triggers.items()
+            ),
+            key=lambda t: -t.cost_usd,
+        ),
+        by_task=sorted(
+            (
+                AutonomousTask(
+                    task_id=task_id,
+                    repo=names[task_id][0] if task_id in names else None,
+                    branch=branch,
+                    runs=len(costs),
+                    cost_usd=sum(costs),
+                )
+                for task_id, (branch, costs) in tasks.items()
+            ),
+            key=lambda t: -t.cost_usd,
+        ),
+    )
+
+
 def summarize(
     store: StackStore, now: datetime | None = None, *, breakdown_days: int = 7
 ) -> SpendSummary:
     now = now or datetime.now(UTC)
     end = now + timedelta(seconds=1)
     month_start = datetime(now.year, now.month, 1, tzinfo=UTC)
-    windows = [
-        _window(store, "Last 24 hours", now - timedelta(hours=24), end),
-        _window(store, "Last 7 days", now - timedelta(days=7), end),
-        _window(store, "Last 30 days", now - timedelta(days=30), end),
-        _window(store, "This month (UTC)", month_start, end),
+    starts = [
+        ("Last 24 hours", now - timedelta(hours=24)),
+        ("Last 7 days", now - timedelta(days=7)),
+        ("Last 30 days", now - timedelta(days=30)),
+        ("This month (UTC)", month_start),
     ]
+    windows = [_window(store, label, start, end) for label, start in starts]
     start = now - timedelta(days=breakdown_days)
     return SpendSummary(
         as_of=now,
@@ -122,4 +214,5 @@ def summarize(
         by_task=_named(store, store.usage_by_task(start, end)),
         unpriced_models=store.unpriced_models(),
         claims_since=store.first_claim_seen(),
+        autonomous=_autonomous(store, starts, start),
     )

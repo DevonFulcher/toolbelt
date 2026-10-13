@@ -2,7 +2,7 @@
 // may take next, which it may not and why, the limits they run under, and
 // their recent runs. Polled every few seconds while the page is visible.
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { fetchAgents, setAgentsEnabled } from "../api/client";
+import { fetchAgents, setAgentsEnabled, setAgentsLaunching, stopAgentRun } from "../api/client";
 import type { AgentDecision, AgentReason, AgentRunInfo, AgentTrigger, Agents } from "../api/generated";
 import { formatAbsolute } from "../logic/format";
 import { formatUsd } from "../logic/spendFormat";
@@ -107,7 +107,7 @@ function Group({ id, title, children }: { id: string; title: string; children: R
   );
 }
 
-function AgentCard({ decision, runs }: { decision: AgentDecision; runs: AgentRunInfo[] }) {
+function AgentCard({ decision, runs, onStop }: { decision: AgentDecision; runs: AgentRunInfo[]; onStop: (runId: string) => void }) {
   return (
     <div className="card agent-card" data-branch={decision.branch}>
       <Group id="git" title="Git">
@@ -142,6 +142,11 @@ function AgentCard({ decision, runs }: { decision: AgentDecision; runs: AgentRun
                 <span className={`pill tone-${RUN_TONE[run.state]}`}>{RUN_TEXT[run.state]}</span>
                 <span>{`${when(run.started_at)} · ${runCost(run.cost_usd)}`}</span>
                 {run.summary && <span className="agent-run-summary">{run.summary}</span>}
+                {run.state === "running" && (
+                  <button type="button" className="agents-toggle" onClick={() => onStop(run.run_id)}>
+                    Stop
+                  </button>
+                )}
               </li>
             ))}
           </ul>
@@ -164,14 +169,17 @@ function Tile({ label, value, detail }: { label: string; value: string; detail?:
 function AgentsBody({ data, reload }: { data: Agents; reload: () => void }) {
   const [toggling, setToggling] = useState(false);
   const [toggleError, setToggleError] = useState<string | null>(null);
-  const toggle = (): void => {
+  const act = (action: () => Promise<void>): void => {
     setToggling(true);
     setToggleError(null);
-    setAgentsEnabled(!data.enabled)
+    action()
       .then(reload)
       .catch((error: unknown) => setToggleError(error instanceof Error ? error.message : String(error)))
       .finally(() => setToggling(false));
   };
+  const toggle = (): void => act(() => setAgentsEnabled(!data.enabled));
+  const toggleLaunching = (): void => act(() => setAgentsLaunching(!data.launching));
+  const stop = (runId: string): void => act(() => stopAgentRun(runId));
   const { limits, spend } = data;
   const ready = data.decisions.filter((d) => d.reason === null);
   const held = data.decisions.filter((d) => d.reason !== null);
@@ -199,10 +207,17 @@ function AgentsBody({ data, reload }: { data: Agents; reload: () => void }) {
             but only while the screen is on and unlocked, and within the limits below.
           </p>
         )}
-        {data.enabled && data.dry_run && (
-          <p className="agents-description">
-            Dry run: tasks are decided every few seconds, but no agent is started yet. What follows is what would happen.
-          </p>
+        {data.enabled && (
+          <div className="agents-status-head">
+            <p className="agents-description">
+              {data.launching
+                ? "Starting runs: on. An agent starts on the first task below that may be taken, one at a time."
+                : "Starting runs: off, so this is a dry run. Tasks are decided every few seconds, but no agent is started: what follows is what would happen."}
+            </p>
+            <button type="button" className="agents-toggle" onClick={toggleLaunching} disabled={toggling} aria-pressed={data.launching}>
+              {data.launching ? "Stop starting runs" : "Start runs"}
+            </button>
+          </div>
         )}
         {data.blockers.length > 0 && (
           <ul className="agents-blockers" aria-label="Why agents are not running">
@@ -246,7 +261,7 @@ function AgentsBody({ data, reload }: { data: Agents; reload: () => void }) {
             ) : (
               <div className="agents-cards">
                 {ready.map((decision) => (
-                  <AgentCard key={decision.id} decision={decision} runs={runsFor(decision.id)} />
+                  <AgentCard key={decision.id} decision={decision} runs={runsFor(decision.id)} onStop={stop} />
                 ))}
               </div>
             )}
@@ -258,7 +273,7 @@ function AgentsBody({ data, reload }: { data: Agents; reload: () => void }) {
             ) : (
               <div className="agents-cards">
                 {held.map((decision) => (
-                  <AgentCard key={decision.id} decision={decision} runs={runsFor(decision.id)} />
+                  <AgentCard key={decision.id} decision={decision} runs={runsFor(decision.id)} onStop={stop} />
                 ))}
               </div>
             )}
@@ -293,7 +308,14 @@ function AgentsBody({ data, reload }: { data: Agents; reload: () => void }) {
                   </td>
                   <td className="num">{run.turns}</td>
                   <td className="num">{runCost(run.cost_usd)}</td>
-                  <td>{run.error ?? run.summary ?? ""}</td>
+                  <td>
+                    {run.error ?? run.summary ?? ""}
+                    {run.state === "running" && (
+                      <button type="button" className="agents-toggle" onClick={() => stop(run.run_id)}>
+                        Stop
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

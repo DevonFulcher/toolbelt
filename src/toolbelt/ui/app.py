@@ -56,7 +56,12 @@ from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from toolbelt.autonomous_agents.auth import claude_signed_in
 from toolbelt.autonomous_agents.branch_state import inspect_branch
 from toolbelt.autonomous_agents.dispatcher import Dispatcher, DispatchTask
-from toolbelt.autonomous_agents.limits import AGENTS_ENABLED_SETTING, load_limits
+from toolbelt.autonomous_agents.limits import (
+    AGENTS_ENABLED_SETTING,
+    AGENTS_LAUNCH_SETTING,
+    load_limits,
+)
+from toolbelt.autonomous_agents.runner import AgentRunner
 from toolbelt.autonomous_agents.screen import read_screen_state
 from toolbelt.git.repo_pull import default_config_path
 from toolbelt.git.stack.status import PrState
@@ -252,6 +257,10 @@ def _agent_runs(now: datetime) -> list[AgentRun]:
         store.close()
 
 
+async def _start_run(runner: AgentRunner, decision) -> None:
+    await runner.start(decision)
+
+
 def _abandon_agent_runs(now: datetime) -> None:
     """Runs still marked running belong to a toolbelt that stopped."""
     store = StackStore(default_db_path())
@@ -261,12 +270,28 @@ def _abandon_agent_runs(now: datetime) -> None:
         store.close()
 
 
-def _agents_enabled() -> bool:
+def _setting_on(key: str) -> bool:
     store = StackStore(default_db_path())
     try:
-        return store.get_setting(AGENTS_ENABLED_SETTING, "false") == "true"
+        return store.get_setting(key, "false") == "true"
     finally:
         store.close()
+
+
+def _write_setting(key: str, value: str) -> None:
+    store = StackStore(default_db_path())
+    try:
+        store.set_setting(key, value)
+    finally:
+        store.close()
+
+
+def _agents_enabled() -> bool:
+    return _setting_on(AGENTS_ENABLED_SETTING)
+
+
+def _agents_launching() -> bool:
+    return _setting_on(AGENTS_LAUNCH_SETTING)
 
 
 def _claim_tasks() -> list[TrackedTask]:
@@ -409,6 +434,13 @@ def create_app(
         interval=spend_interval,
     )
 
+    limits = load_limits(default_config_path())
+    runner = AgentRunner(
+        db_path=default_db_path,
+        claims_dir=claims_dir,
+        limits=limits,
+        wall_clock=wall_clock,
+    )
     if dispatcher is None:
         dispatcher = Dispatcher(
             tasks=_dispatch_tasks,
@@ -419,10 +451,12 @@ def create_app(
             ),
             runs=lambda: _agent_runs(wall_clock()),
             enabled=_agents_enabled,
-            limits=load_limits(default_config_path()),
+            limits=limits,
             screen=read_screen_state,
             signed_in=claude_signed_in,
             wall_clock=wall_clock,
+            launch=lambda decision: _start_run(runner, decision),
+            launching=_agents_launching,
         )
 
     refresher = StatusRefresher(
@@ -523,6 +557,7 @@ def create_app(
     app.state.aggregates = aggregates
     app.state.spend_feed = spend
     app.state.dispatcher = dispatcher
+    app.state.agent_runner = runner
 
     @app.get("/assets/{path:path}", include_in_schema=False, response_model=None)
     def asset(path: str) -> FileResponse:
@@ -617,8 +652,13 @@ def create_app(
             store = StackStore(default_db_path())
             try:
                 enabled = store.get_setting(AGENTS_ENABLED_SETTING, "false") == "true"
+                launching = store.get_setting(AGENTS_LAUNCH_SETTING, "false") == "true"
                 return build_agents(
-                    dispatcher, store, enabled=enabled, now=wall_clock()
+                    dispatcher,
+                    store,
+                    enabled=enabled,
+                    launching=launching,
+                    now=wall_clock(),
                 )
             finally:
                 store.close()
@@ -627,17 +667,27 @@ def create_app(
 
     @app.post("/api/agents/enabled", response_model=api.AgentsEnabled)
     async def set_agents_enabled(body: api.AgentsEnabled) -> api.AgentsEnabled:
-        def write() -> None:
-            store = StackStore(default_db_path())
-            try:
-                store.set_setting(
-                    AGENTS_ENABLED_SETTING, "true" if body.enabled else "false"
-                )
-            finally:
-                store.close()
-
-        await asyncio.to_thread(write)
+        await asyncio.to_thread(
+            _write_setting, AGENTS_ENABLED_SETTING, "true" if body.enabled else "false"
+        )
         return body
+
+    @app.post("/api/agents/launching", response_model=api.AgentsLaunching)
+    async def set_agents_launching(
+        body: api.AgentsLaunching,
+    ) -> api.AgentsLaunching:
+        await asyncio.to_thread(
+            _write_setting,
+            AGENTS_LAUNCH_SETTING,
+            "true" if body.launching else "false",
+        )
+        return body
+
+    @app.post("/api/agents/runs/{run_id}/stop")
+    async def stop_agent_run(run_id: str) -> dict[str, bool]:
+        if not runner.stop(run_id):
+            raise HTTPException(status_code=404, detail="no such run is working")
+        return {"stopping": True}
 
     @app.get("/api/events")
     async def events() -> StreamingResponse:

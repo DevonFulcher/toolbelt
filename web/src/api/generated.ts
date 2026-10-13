@@ -111,6 +111,7 @@ export type FilterKey = "next" | "pr" | "ci" | "review" | "comments" | "merge";
 export interface Wire {
   agents: Agents;
   agents_enabled: AgentsEnabled;
+  agents_launching: AgentsLaunching;
   aggregate: Aggregate;
   event: ServerEvent;
   snapshot: Snapshot;
@@ -122,6 +123,7 @@ export interface Agents {
   dry_run: boolean;
   enabled: boolean;
   error: string | null;
+  launching: boolean;
   limits: AgentLimitsInfo;
   runs: AgentRunInfo[];
   screen: AgentScreen | null;
@@ -192,6 +194,12 @@ export interface AgentSpend {
  */
 export interface AgentsEnabled {
   enabled: boolean;
+}
+/**
+ * The body of ``POST /api/agents/launching``.
+ */
+export interface AgentsLaunching {
+  launching: boolean;
 }
 export interface Aggregate {
   coverage: AggregateCoverage;
@@ -713,6 +721,7 @@ export interface Repo {
 }
 export interface Spend {
   as_of: string;
+  autonomous: AutonomousSpend;
   breakdown_days: number;
   by_model: SpendModel[];
   by_task: SpendTask[];
@@ -721,12 +730,33 @@ export interface Spend {
   unpriced_models: UnpricedModel[];
   windows: SpendWindow[];
 }
-export interface SpendModel {
-  calls: number;
+/**
+ * What autonomous agent runs cost: exactly, from each run's own record
+ * (not estimated from transcripts like the interactive figures).
+ */
+export interface AutonomousSpend {
+  by_task: AutonomousTask[];
+  by_trigger: AutonomousTrigger[];
+  windows: AutonomousWindow[];
+}
+export interface AutonomousTask {
+  branch: string;
   cost_usd: number;
-  model: string;
+  repo: string | null;
+  runs: number;
+  task_id: string;
+}
+export interface AutonomousTrigger {
+  cost_usd: number;
+  runs: number;
+  trigger: AgentTrigger;
+}
+export interface AutonomousWindow {
+  cost_usd: number;
+  label: string;
+  runs: number;
+  start: string;
   tokens: SpendTokens;
-  unpriced_calls: number;
 }
 /**
  * Tokens by kind; ``input`` is the uncached input.
@@ -737,6 +767,13 @@ export interface SpendTokens {
   cache_write_5m: number;
   input: number;
   output: number;
+}
+export interface SpendModel {
+  calls: number;
+  cost_usd: number;
+  model: string;
+  tokens: SpendTokens;
+  unpriced_calls: number;
 }
 /**
  * Spend attributed to one task through claims. ``task_id`` is ``None``

@@ -77,6 +77,36 @@ def to_api(summary: SpendSummary, ingested_at: datetime | None) -> api.Spend:
             for model, calls in summary.unpriced_models.items()
         ],
         claims_since=summary.claims_since.isoformat() if summary.claims_since else None,
+        autonomous=api.AutonomousSpend(
+            windows=[
+                api.AutonomousWindow(
+                    label=w.label,
+                    start=w.start.isoformat(),
+                    runs=w.runs,
+                    cost_usd=w.cost_usd,
+                    tokens=_tokens(w.tokens),
+                )
+                for w in summary.autonomous.windows
+            ],
+            by_trigger=[
+                api.AutonomousTrigger(
+                    trigger=t.trigger,  # type: ignore[arg-type]
+                    runs=t.runs,
+                    cost_usd=t.cost_usd,
+                )
+                for t in summary.autonomous.by_trigger
+            ],
+            by_task=[
+                api.AutonomousTask(
+                    task_id=t.task_id,
+                    repo=t.repo,
+                    branch=t.branch,
+                    runs=t.runs,
+                    cost_usd=t.cost_usd,
+                )
+                for t in summary.autonomous.by_task
+            ],
+        ),
     )
 
 
