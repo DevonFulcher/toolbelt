@@ -3,7 +3,8 @@ import type { Catalog, LiveStatus, LoadedStatus, SlotDimensions } from "../api/g
 import type { RailSegment } from "../logic/layout";
 import { stackViewRoot } from "../logic/focus";
 import { serializeState } from "../logic/viewState";
-import { LOADING } from "../store/selectors";
+import { rollup, youText } from "../logic/rollup";
+import { LOADING, subtreeIds } from "../store/selectors";
 import { useApp, useAppStore } from "../store/StoreContext";
 import { Timeline } from "./Timeline";
 import { Age, CI_TONE, ExternalLink, PR_TONE, Pill, REVIEW_TONE, TaskValue, WHO_TEXT, WHO_TONE } from "./presentation";
@@ -118,20 +119,16 @@ export const Card = memo(
       s.view.view === "stacked" && s.view.root !== id ? serializeState({ ...s.view, root: id }) : null,
     );
     const branch = useApp((s) => s.branchesById[id]);
-    // Stacked view only: whether this card's descendants are collapsed.
+    // Stacked view only: this card and what is stacked below it can be rolled
+    // up into one line. `rolled` is the roll-up (as JSON, so the selector
+    // returns a primitive) while it is.
     const stackedView = useApp((s) => s.view.view === "stacked");
-    const isFolded = useApp((s) => s.folded.includes(id));
-    const descendants = useApp((s) => {
-      const seen = new Set<string>([id]);
-      const pending = [...(s.branchesById[id]?.children ?? [])];
-      while (pending.length) {
-        const child = pending.pop();
-        if (!child || seen.has(child.id)) continue;
-        seen.add(child.id);
-        pending.push(...(s.branchesById[child.id]?.children ?? []));
-      }
-      return seen.size - 1;
-    });
+    const descendants = useApp((s) => subtreeIds(s, id).length - 1);
+    const rolled = useApp((s) =>
+      s.view.view === "stacked" && s.folded.includes(id)
+        ? JSON.stringify(rollup(subtreeIds(s, id), (key) => s.statuses[key]))
+        : "",
+    );
     const repo = useApp((s) => (branch ? s.reposById[branch.repo_id] : undefined));
     const status = useApp((s) => s.statuses[id]) ?? LOADING;
     const task = useApp((s) => s.tasks[id]) ?? null;
@@ -149,6 +146,58 @@ export const Card = memo(
     // Why every live slot is empty while there is no status to show.
     const note = status.load === "loaded" ? null : unloadedNote(status, repo.path_missing);
 
+    const isFolded = rolled !== "" && hasChildren;
+    // Next to the card (outside it, in the stacked list's gutter): rolls this
+    // card and everything below it up into one line, and back out.
+    const tab =
+      stackedView && hasChildren ? (
+        <button
+          type="button"
+          className="fold-tab"
+          aria-expanded={!isFolded}
+          aria-label={`${isFolded ? "Expand" : "Collapse"} ${branch.name} and ${descendants} descendant${descendants === 1 ? "" : "s"}`}
+          title={isFolded ? "Show this branch and what is stacked below it" : "Roll this branch and what is stacked below it up into one line"}
+          onClick={() => store.getState().toggleFold(id)}
+        >
+          <span aria-hidden="true">{isFolded ? "▸" : "▾"}</span>
+        </button>
+      ) : null;
+
+    if (isFolded) {
+      const summary = JSON.parse(rolled) as ReturnType<typeof rollup>;
+      return (
+        <article
+          className={[...classes, "card-folded"].join(" ")}
+          data-id={id}
+          data-folded="true"
+          style={{ "--depth": depth } as CSSProperties}
+        >
+          <Rails rails={rails} />
+          {tab}
+          <Slot id="repo" label="Repo">
+            <span className="repo-chip" title={repo.path}>
+              {repo.name}
+            </span>
+          </Slot>
+          <Slot id="branch" label="Branch">
+            <span className={`branch${branch.current ? " current" : ""}`}>{branch.name}</span>
+          </Slot>
+          <div className="rollup" role="group" aria-label="This branch and everything stacked below it">
+            <span className="rollup-count">{`${summary.total} branches`}</span>
+            {summary.you.length > 0 && (
+              <Pill tone={WHO_TONE.you} title="What needs you in this branch and below">
+                {`${WHO_TEXT.you}: ${youText(summary.you)}`}
+              </Pill>
+            )}
+            {summary.ci > 0 && <Pill tone={WHO_TONE.ci}>{`${WHO_TEXT.ci}: ${summary.ci}`}</Pill>}
+            {summary.others > 0 && <Pill tone={WHO_TONE.others}>{`${WHO_TEXT.others}: ${summary.others}`}</Pill>}
+            {summary.done > 0 && <Pill tone={WHO_TONE.none}>{`${WHO_TEXT.none}: ${summary.done}`}</Pill>}
+            {summary.loading > 0 && <Pill tone="gray">{`loading: ${summary.loading}`}</Pill>}
+          </div>
+        </article>
+      );
+    }
+
     return (
       <article
         className={classes.join(" ")}
@@ -156,6 +205,7 @@ export const Card = memo(
         style={{ "--depth": depth } as CSSProperties}
       >
         <Rails rails={rails} />
+        {tab}
         <Group id="git" title="Git">
           <Slot id="repo" label="Repo">
             <span className="repo-chip" title={repo.path}>
@@ -195,18 +245,6 @@ export const Card = memo(
               >
                 focus on this subtree →
               </a>
-            )}
-            {stackedView && hasChildren && (
-              <button
-                type="button"
-                className="fold-toggle"
-                aria-expanded={!isFolded}
-                aria-label={`${isFolded ? "Expand" : "Collapse"} ${descendants} descendant${descendants === 1 ? "" : "s"} of ${branch.name}`}
-                title={isFolded ? `Show the ${descendants} hidden below` : `Hide the ${descendants} stacked below`}
-                onClick={() => store.getState().toggleFold(id)}
-              >
-                <span aria-hidden="true">{isFolded ? "▸" : "▾"}</span> {descendants}
-              </button>
             )}
           </Slot>
           <Slot id="ancestors" label="Ancestors">{String(branch.depth)}</Slot>

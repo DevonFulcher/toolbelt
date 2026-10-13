@@ -371,29 +371,59 @@ describe("with filters", () => {
   });
 });
 
-describe("collapsing the descendants of a stacked card", () => {
-  const toggle = (name: string): HTMLElement =>
-    within(document.querySelector(`.card[data-id="1:${name}"]`) as HTMLElement).getByRole("button", {
-      name: new RegExp(`(Collapse|Expand) \\d+ descendants? of ${name}$`),
-    });
+describe("rolling up a stacked card and what is stacked below it", () => {
+  /** The toggle beside a card (outside it): Collapse/Expand "<name> and N descendants". */
+  const toggle = (name: string): HTMLElement => {
+    const card = document.querySelector(`.card[data-id="1:${name}"]`) as HTMLElement;
+    return within(card).getByRole("button", { name: new RegExp(`^(Collapse|Expand) ${name} and \\d+ descendants?$`) });
+  };
 
-  test("a card with descendants has a toggle that hides and shows them", () => {
+  test("a card with descendants has a toggle that rolls it and them up, and back", () => {
     const { preferences } = show(linear(4), "?view=stacked");
     expect(cardNames()).toEqual(["l0", "l1", "l2", "l3"]);
     expect(toggle("l1")).toHaveAttribute("aria-expanded", "true");
-    expect(toggle("l1")).toHaveAccessibleName("Collapse 2 descendants of l1");
+    expect(toggle("l1")).toHaveAccessibleName("Collapse l1 and 2 descendants");
 
     fireEvent.click(toggle("l1"));
 
+    // The card itself stays, as one line; what is below it is gone.
     expect(cardNames()).toEqual(["l0", "l1"]);
+    const folded = document.querySelector('.card[data-id="1:l1"]') as HTMLElement;
+    expect(folded).toHaveAttribute("data-folded", "true");
     expect(toggle("l1")).toHaveAttribute("aria-expanded", "false");
-    expect(toggle("l1")).toHaveAccessibleName("Expand 2 descendants of l1");
+    expect(toggle("l1")).toHaveAccessibleName("Expand l1 and 2 descendants");
     expect(preferences.saved.folded).toEqual(["1:l1"]);
 
     fireEvent.click(toggle("l1"));
 
     expect(cardNames()).toEqual(["l0", "l1", "l2", "l3"]);
+    expect(document.querySelector('.card[data-id="1:l1"]')).not.toHaveAttribute("data-folded");
     expect(preferences.saved.folded).toEqual([]);
+  });
+
+  test("the rolled-up line counts the card itself and says what needs the user", () => {
+    show(linear(4), "?view=stacked");
+
+    fireEvent.click(toggle("l1"));
+
+    const line = within(document.querySelector('.card[data-id="1:l1"]') as HTMLElement).getByRole("group", {
+      name: "This branch and everything stacked below it",
+    });
+    // l1 plus l2 and l3: three branches, the card included.
+    expect(line).toHaveTextContent("3 branches");
+    // Every branch's own next action is counted, the card's too.
+    expect(line.textContent).toMatch(/needs you|waiting on|done|loading/);
+  });
+
+  test("the toggle sits outside the card's boxes, not inside them", () => {
+    show(linear(3), "?view=stacked");
+
+    const card = document.querySelector('.card[data-id="1:l0"]') as HTMLElement;
+    const button = toggle("l0");
+
+    expect(button.closest(".group")).toBeNull();
+    expect(button.parentElement).toBe(card);
+    expect(button.className).toBe("fold-tab");
   });
 
   test("a leaf has no toggle, and neither do the other views", () => {
@@ -411,7 +441,7 @@ describe("collapsing the descendants of a stacked card", () => {
     expect(screen.queryByRole("button", { name: /descendant/ })).toBeNull();
   });
 
-  test("folded cards are remembered, and the rest of the stack keeps its rails", () => {
+  test("rolled-up cards are remembered", () => {
     renderWith(<App clock={() => NOW} />, snapshot(linear(4)), { search: "?view=stacked", folded: ["1:l1"] });
 
     expect(cardNames()).toEqual(["l0", "l1"]);

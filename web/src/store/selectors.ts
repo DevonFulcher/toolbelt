@@ -3,6 +3,7 @@ import type { LiveStatus } from "../api/generated";
 import { hiddenAsDone, inScope, matches, prioritiesLayout } from "../logic/layout";
 import { rowOf, type Row } from "../logic/rows";
 import { useApp } from "./StoreContext";
+import type { AppState } from "./appStore";
 
 export const LOADING: LiveStatus = { load: "loading" };
 
@@ -42,4 +43,17 @@ export function useCounts(rows: Row[]): Counts {
       doneHidden: inRepo.filter((row) => hiddenAsDone(row, view)).length,
     };
   }, [rows, view]);
+}
+
+/** `id` and every branch stacked below it, in no particular order. */
+export function subtreeIds(state: Pick<AppState, "branchesById">, id: string): string[] {
+  const seen = new Set<string>([id]);
+  const pending = [...(state.branchesById[id]?.children ?? [])];
+  while (pending.length) {
+    const child = pending.pop();
+    if (!child || seen.has(child.id)) continue;
+    seen.add(child.id);
+    pending.push(...(state.branchesById[child.id]?.children ?? []));
+  }
+  return [...seen];
 }

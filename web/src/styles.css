@@ -348,7 +348,16 @@ main:has(.focus-bar) { --focus-h: 2.6rem; }
 .cap-count { color: var(--muted); font-size: 12px; }
 .stacks .cap-row td { padding-top: 2px; padding-bottom: 6px; }
 .stack-open { font-size: 12px; color: var(--accent); }
-/* Stacked cards: collapse / expand the descendants below a card. */
-.fold-toggle { font: inherit; font-size: 12px; padding: 0 7px; border-radius: 10px; cursor: pointer;
-               border: 1px solid var(--line); background: none; color: var(--fg); margin-left: 4px; }
-.fold-toggle:hover, .fold-toggle:focus-visible { border-color: var(--accent); outline: none; }
+/* Stacked cards: roll a card and everything below it up into one line. The control
+   lives in a gutter to the right of the list, beside its card. */
+.cards-stacked .cards-section-body { padding-right: 32px; }
+.fold-tab { position: absolute; right: -30px; top: 8px; width: 24px; height: 24px; padding: 0;
+            display: grid; place-items: center; font: inherit; font-size: 13px; line-height: 1;
+            border: 1px solid var(--line); border-radius: 6px; background: var(--card);
+            color: var(--fg); cursor: pointer; }
+.fold-tab:hover, .fold-tab:focus-visible { border-color: var(--accent); outline: none; }
+.card-folded { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 6px 12px; }
+.card-folded .slot { display: flex; align-items: center; gap: 6px; }
+.card-folded .slot-label { font-size: 10px; }
+.rollup { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; min-width: 0; }
+.rollup-count { color: var(--muted); font-size: 12px; }
