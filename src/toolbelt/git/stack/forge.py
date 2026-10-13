@@ -2,8 +2,8 @@
 
 Only the forge (GitHub, etc.) can authoritatively answer "did this branch's PR
 land?" — a squash-merge rewrites the SHA, so local ancestry can't tell — and
-"does this branch have an open PR at all (draft or not)?", which gates whether
-`sync` pushes automatically. Both are defined as a protocol and injected into
+"does this branch have an open PR at all (draft or not), and does it conflict
+with its base?", which gate whether `sync` pushes automatically. All are defined as a protocol and injected into
 `sync` so tests pass a fake instead of shelling out to `gh`.
 """
 
@@ -26,6 +26,11 @@ class Forge(Protocol):
     async def pr_is_merged(self, branch: str) -> bool: ...
 
     async def pr_is_open(self, branch: str) -> bool: ...
+
+    async def pr_is_conflicting(self, branch: str) -> bool:
+        """Whether the branch's open PR currently has merge conflicts with
+        its base, per the forge."""
+        ...
 
     async def pr_candidates(self, branch: str) -> list[PrCandidate]:
         """Every PR (any state) whose head is ``branch``, best first: the
@@ -113,6 +118,32 @@ class GhForge:
             # treat a `gh` failure as "no PR, don't bother pushing".
             logger.error(
                 f"`gh` failed checking open status of '{branch}': "
+                f"{stderr.decode().strip()}"
+            )
+            raise typer.Exit(1)
+        return stdout.decode().strip() not in ("", "0")
+
+    async def pr_is_conflicting(self, branch: str) -> bool:
+        process = await logged_process.create_subprocess_exec(
+            "gh",
+            "pr",
+            "list",
+            "--head",
+            branch,
+            "--state",
+            "open",
+            "--json",
+            "mergeable",
+            "--jq",
+            '[.[] | select(.mergeable == "CONFLICTING")] | length',
+            cwd=self._root,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await process.communicate()
+        if process.returncode != 0:
+            logger.error(
+                f"`gh` failed checking conflicts of '{branch}': "
                 f"{stderr.decode().strip()}"
             )
             raise typer.Exit(1)

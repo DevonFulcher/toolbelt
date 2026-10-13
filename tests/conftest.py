@@ -64,9 +64,11 @@ class FakeForge:
         merged: Iterable[str] = (),
         no_pr: Iterable[str] = (),
         candidates: dict[str, list[PrCandidate]] | None = None,
+        conflicting: Iterable[str] = (),
     ) -> None:
         self.merged = set(merged)
         self.no_pr = set(no_pr)
+        self.conflicting = set(conflicting)
         #: The PRs `pr_candidates` reports per branch (none by default).
         self.candidates = candidates or {}
         self.candidate_lookups: list[str] = []
@@ -76,6 +78,9 @@ class FakeForge:
 
     async def pr_is_open(self, branch: str) -> bool:
         return branch not in self.no_pr
+
+    async def pr_is_conflicting(self, branch: str) -> bool:
+        return branch in self.conflicting
 
     async def pr_candidates(self, branch: str) -> list[PrCandidate]:
         self.candidate_lookups.append(branch)

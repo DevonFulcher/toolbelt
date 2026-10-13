@@ -172,6 +172,32 @@ def test_sync_does_not_repush_when_nothing_new_since_last_push(
     assert git("rev-parse", "HEAD", cwd=tests_wt) == pushed
 
 
+def test_sync_pushes_a_leaf_whose_pr_conflicts_so_the_resolution_reaches_github(
+    repo: Path, tmp_path: Path
+):
+    """Absorbing the parent is not new work, but when the PR conflicts the
+    merge is what fixes it, and only a push clears it on GitHub."""
+    api_wt, tests_wt = _build_stack(repo, tmp_path)
+    (tests_wt / "own.txt").write_text("own work\n")
+    git("add", "-A", cwd=tests_wt)
+    git("commit", "-m", "own work", cwd=tests_wt)
+    sync_stack(root=tests_wt, forge=FakeForge())  # pushes the leaf once
+    before = git("rev-parse", "origin/devon/api_tests", cwd=tests_wt)
+
+    (api_wt / "api.txt").write_text("api change\n")
+    git("add", "-A", cwd=api_wt)
+    git("commit", "-m", "api work", cwd=api_wt)
+
+    sync_stack(root=tests_wt, forge=FakeForge())  # no conflict: stays local
+    assert git("rev-parse", "origin/devon/api_tests", cwd=tests_wt) == before
+
+    sync_stack(root=tests_wt, forge=FakeForge(conflicting=["devon/api_tests"]))
+    assert git("rev-parse", "origin/devon/api_tests", cwd=tests_wt) == git(
+        "rev-parse", "HEAD", cwd=tests_wt
+    )
+    assert git("rev-parse", "HEAD", cwd=tests_wt) != before
+
+
 def test_sync_pushes_once_new_work_and_a_pr_both_show_up(repo: Path, tmp_path: Path):
     """Quiet syncs (no PR yet) accumulate merges locally with no push; once
     there's both a PR to watch it *and* new work of your own, the next sync

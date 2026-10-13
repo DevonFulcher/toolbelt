@@ -105,19 +105,22 @@ def _remote_branch_exists(branch: str, *, root: Path) -> bool:
 
 async def _resolve_stack_status(
     stack: list[str], unlinked: list[str], forge: Forge
-) -> tuple[set[str], set[str], dict[str, list[PrCandidate]]]:
-    """Ask `forge` which of `stack`'s branches have landed, and which have an
-    open PR (draft or not) — and, for the ``unlinked`` ones (no PR recorded
-    for their task yet), which PRs they have — all concurrently, across the
-    whole stack in one round trip."""
-    merged, is_open, found = await asyncio.gather(
+) -> tuple[set[str], set[str], set[str], dict[str, list[PrCandidate]]]:
+    """Ask `forge` which of `stack`'s branches have landed, which have an
+    open PR (draft or not), and which of those PRs conflict with their base
+    — and, for the ``unlinked`` ones (no PR recorded for their task yet),
+    which PRs they have — all concurrently, across the whole stack in one
+    round trip."""
+    merged, is_open, conflicting, found = await asyncio.gather(
         asyncio.gather(*(forge.pr_is_merged(b) for b in stack)),
         asyncio.gather(*(forge.pr_is_open(b) for b in stack)),
+        asyncio.gather(*(forge.pr_is_conflicting(b) for b in stack)),
         asyncio.gather(*(forge.pr_candidates(b) for b in unlinked)),
     )
     landed = {branch for branch, m in zip(stack, merged) if m}
     has_open_pr = {branch for branch, o in zip(stack, is_open) if o}
-    return landed, has_open_pr, dict(zip(unlinked, found))
+    conflicts = {branch for branch, c in zip(stack, conflicting) if c}
+    return landed, has_open_pr, conflicts, dict(zip(unlinked, found))
 
 
 def _restack(child: str, *, worktree: Path, onto: str, upstream: str) -> bool:
@@ -176,7 +179,7 @@ def sync_stack(
     # Authoritative, queried once per branch (concurrently — each is an
     # independent `gh` network round-trip).
     unlinked = [b for b in stack if get_pr_link(b, root=root) is None]
-    landed, has_open_pr, candidates = asyncio.run(
+    landed, has_open_pr, has_conflicts, candidates = asyncio.run(
         _resolve_stack_status(stack, unlinked, forge)
     )
     # Record each task's PR now, while every branch (landed ones included) is
@@ -274,10 +277,12 @@ def sync_stack(
                     raise typer.Exit(1)
 
             # A branch with children is always pushed: they track it. A leaf
-            # is pushed only when there's an open PR to show it to *and* new
-            # work of its own — otherwise this sync merely absorbed upstream
-            # movement, and pushing it would re-trigger CI and review for
-            # nothing new.
+            # is pushed only when there's an open PR to show it to *and* a
+            # reason to: new work of its own, or the PR conflicts with its
+            # base, which this sync's merge may just have resolved (the push
+            # is what clears it on GitHub). Otherwise this sync merely
+            # absorbed upstream movement, and pushing it would re-trigger CI
+            # and review for nothing new.
             has_children = any(
                 parent == child and other not in landed
                 for other, parent in parents.items()
@@ -285,7 +290,10 @@ def sync_stack(
             if (
                 has_children
                 or child in has_open_pr
-                and has_unpushed_real_work(child, root=worktree)
+                and (
+                    child in has_conflicts
+                    or has_unpushed_real_work(child, root=worktree)
+                )
             ):
                 run(
                     ["git", "push", "-u", "origin", child],
