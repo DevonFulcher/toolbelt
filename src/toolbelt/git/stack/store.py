@@ -19,6 +19,7 @@ repo's identity (see ``lineage``) and pass it in.
 """
 
 import contextlib
+import json
 import os
 import sqlite3
 import uuid
@@ -177,6 +178,40 @@ _MIGRATIONS: list[tuple[str, ...]] = [
         "CREATE INDEX claim_spans_by_holder ON claim_spans (holder, last_seen)",
         "CREATE INDEX claim_spans_by_session ON claim_spans (session_id, first_seen)",
     ),
+    (
+        # Model API calls read from Claude Code's session transcripts (see
+        # ``token_spend``): one row per API response, keyed by its message id
+        # (a transcript repeats one response's usage on every row it
+        # writes). ``usage_json`` is the raw usage object the cost was
+        # priced from, and ``cost_usd`` is NULL while no price is known for
+        # ``model``. ``transcript_files.offset`` is how far each append-only
+        # transcript has been read.
+        """
+        CREATE TABLE usage_calls (
+            message_id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            agent_id TEXT,
+            model TEXT NOT NULL,
+            at TEXT NOT NULL,
+            cwd TEXT,
+            input_tokens INTEGER NOT NULL,
+            output_tokens INTEGER NOT NULL,
+            cache_read_tokens INTEGER NOT NULL,
+            cache_write_5m_tokens INTEGER NOT NULL,
+            cache_write_1h_tokens INTEGER NOT NULL,
+            usage_json TEXT NOT NULL,
+            cost_usd REAL
+        )
+        """,
+        "CREATE INDEX usage_calls_by_time ON usage_calls (at)",
+        "CREATE INDEX usage_calls_by_session ON usage_calls (session_id, at)",
+        """
+        CREATE TABLE transcript_files (
+            path TEXT PRIMARY KEY,
+            offset INTEGER NOT NULL
+        )
+        """,
+    ),
 ]
 
 
@@ -259,6 +294,70 @@ class ClaimSpan:
 
 
 @dataclass(frozen=True)
+class TokenCounts:
+    """Tokens of one kind of work, as the API reports them: ``input`` is the
+    uncached input, so the four input kinds do not overlap."""
+
+    input: int = 0
+    output: int = 0
+    cache_read: int = 0
+    cache_write_5m: int = 0
+    cache_write_1h: int = 0
+
+    @property
+    def total(self) -> int:
+        return (
+            self.input
+            + self.output
+            + self.cache_read
+            + self.cache_write_5m
+            + self.cache_write_1h
+        )
+
+
+@dataclass(frozen=True)
+class UsageCall:
+    """One API response read from a session transcript."""
+
+    message_id: str
+    session_id: str
+    #: The subagent that made it; None for the session's own calls.
+    agent_id: str | None
+    model: str
+    at: datetime
+    cwd: str | None
+    tokens: TokenCounts
+    #: The raw usage object, kept so a call can be priced again later.
+    usage: dict
+    #: None when no price was known for ``model`` yet.
+    cost_usd: float | None
+
+
+@dataclass(frozen=True)
+class ModelUsage:
+    model: str
+    calls: int
+    tokens: TokenCounts
+    #: Cost of the priced calls only.
+    cost_usd: float
+    unpriced_calls: int
+
+
+@dataclass(frozen=True)
+class TaskUsage:
+    """Spend attributed to one task through claims (see
+    ``StackStore.usage_by_task``); ``task_id`` None is the spend no claim
+    covers. A call that two tasks' claims cover at once is split evenly, so
+    the figures are fractional."""
+
+    task_id: str | None
+    calls: float
+    tokens: float
+    cost_usd: float
+    unpriced_calls: float
+
+
+@dataclass(frozen=True)
 class PublishedChain:
     chain_hash: str
     branches: list[str]
@@ -286,6 +385,11 @@ def default_db_path() -> Path:
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _iso(moment: datetime) -> str:
+    """``moment`` as UTC text that sorts as time does (fixed width)."""
+    return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%f+00:00")
 
 
 def _new_task_id() -> str:
@@ -641,7 +745,7 @@ class StackStore:
                 conn.execute(
                     "UPDATE claim_spans SET last_seen = ? WHERE id = ?",
                     (
-                        max(datetime.fromisoformat(row["last_seen"]), seen).isoformat(),
+                        _iso(max(datetime.fromisoformat(row["last_seen"]), seen)),
                         row["id"],
                     ),
                 )
@@ -658,8 +762,8 @@ class StackStore:
                     claim_kind,
                     target,
                     task_id,
-                    min(touched_at.astimezone(UTC), seen).isoformat(),
-                    seen.isoformat(),
+                    _iso(min(touched_at, seen)),
+                    _iso(seen),
                 ),
             )
 
@@ -668,7 +772,7 @@ class StackStore:
         oldest first."""
         rows = self._conn.execute(
             "SELECT * FROM claim_spans WHERE last_seen >= ? ORDER BY first_seen, id",
-            ((since or datetime.min.replace(tzinfo=UTC)).astimezone(UTC).isoformat(),),
+            (_iso(since or datetime.min.replace(tzinfo=UTC)),),
         )
         return [
             ClaimSpan(
@@ -681,6 +785,173 @@ class StackStore:
                 task_id=r["task_id"],
                 first_seen=datetime.fromisoformat(r["first_seen"]),
                 last_seen=datetime.fromisoformat(r["last_seen"]),
+            )
+            for r in rows
+        ]
+
+    def transcript_offset(self, path: str) -> int:
+        """How many bytes of the transcript at ``path`` have been read."""
+        row = self._conn.execute(
+            "SELECT offset FROM transcript_files WHERE path = ?", (path,)
+        ).fetchone()
+        return row["offset"] if row else 0
+
+    def add_usage_calls(
+        self, calls: Sequence[UsageCall], *, transcript: str, offset: int
+    ) -> int:
+        """Store ``calls`` read from ``transcript`` and note that it has been
+        read up to ``offset``, in one transaction. A transcript writes one
+        response on several rows, the first often with only part of the
+        usage, so a call already stored is replaced when the new one has more
+        tokens. Returns how many calls were not stored before."""
+        with self._write() as conn:
+            before = conn.execute("SELECT COUNT(*) FROM usage_calls").fetchone()[0]
+            for call in calls:
+                conn.execute(
+                    "INSERT INTO usage_calls (message_id, session_id, agent_id, "
+                    "model, at, cwd, input_tokens, output_tokens, "
+                    "cache_read_tokens, cache_write_5m_tokens, "
+                    "cache_write_1h_tokens, usage_json, cost_usd) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT (message_id) DO UPDATE SET "
+                    "input_tokens = excluded.input_tokens, "
+                    "output_tokens = excluded.output_tokens, "
+                    "cache_read_tokens = excluded.cache_read_tokens, "
+                    "cache_write_5m_tokens = excluded.cache_write_5m_tokens, "
+                    "cache_write_1h_tokens = excluded.cache_write_1h_tokens, "
+                    "usage_json = excluded.usage_json, "
+                    "cost_usd = excluded.cost_usd "
+                    "WHERE excluded.input_tokens + excluded.output_tokens "
+                    "+ excluded.cache_read_tokens + excluded.cache_write_5m_tokens "
+                    "+ excluded.cache_write_1h_tokens > usage_calls.input_tokens "
+                    "+ usage_calls.output_tokens + usage_calls.cache_read_tokens "
+                    "+ usage_calls.cache_write_5m_tokens "
+                    "+ usage_calls.cache_write_1h_tokens",
+                    (
+                        call.message_id,
+                        call.session_id,
+                        call.agent_id,
+                        call.model,
+                        _iso(call.at),
+                        call.cwd,
+                        call.tokens.input,
+                        call.tokens.output,
+                        call.tokens.cache_read,
+                        call.tokens.cache_write_5m,
+                        call.tokens.cache_write_1h,
+                        json.dumps(call.usage, sort_keys=True),
+                        call.cost_usd,
+                    ),
+                )
+            conn.execute(
+                "INSERT INTO transcript_files (path, offset) VALUES (?, ?) "
+                "ON CONFLICT (path) DO UPDATE SET offset = excluded.offset",
+                (transcript, offset),
+            )
+            return (
+                conn.execute("SELECT COUNT(*) FROM usage_calls").fetchone()[0] - before
+            )
+
+    def unpriced_models(self) -> dict[str, int]:
+        """Each model with calls that have no cost yet, and how many."""
+        rows = self._conn.execute(
+            "SELECT model, COUNT(*) AS calls FROM usage_calls "
+            "WHERE cost_usd IS NULL GROUP BY model ORDER BY model"
+        )
+        return {r["model"]: r["calls"] for r in rows}
+
+    def unpriced_usage(self, model: str) -> list[tuple[str, dict]]:
+        """``(message_id, usage)`` of ``model``'s calls that have no cost."""
+        rows = self._conn.execute(
+            "SELECT message_id, usage_json FROM usage_calls "
+            "WHERE model = ? AND cost_usd IS NULL",
+            (model,),
+        )
+        return [(r["message_id"], json.loads(r["usage_json"])) for r in rows]
+
+    def set_usage_costs(self, costs: dict[str, float]) -> None:
+        """Set the cost of the calls with these message ids."""
+        with self._write() as conn:
+            conn.executemany(
+                "UPDATE usage_calls SET cost_usd = ? WHERE message_id = ?",
+                [(cost, message_id) for message_id, cost in costs.items()],
+            )
+
+    def usage_by_model(self, start: datetime, end: datetime) -> list[ModelUsage]:
+        """Calls made in ``[start, end)``, per model, biggest spend first."""
+        rows = self._conn.execute(
+            "SELECT model, COUNT(*) AS calls, SUM(input_tokens) AS input, "
+            "SUM(output_tokens) AS output, SUM(cache_read_tokens) AS cache_read, "
+            "SUM(cache_write_5m_tokens) AS cache_write_5m, "
+            "SUM(cache_write_1h_tokens) AS cache_write_1h, "
+            "SUM(COALESCE(cost_usd, 0)) AS cost, "
+            "SUM(cost_usd IS NULL) AS unpriced FROM usage_calls "
+            "WHERE at >= ? AND at < ? GROUP BY model ORDER BY cost DESC, model",
+            (_iso(start), _iso(end)),
+        )
+        return [
+            ModelUsage(
+                model=r["model"],
+                calls=r["calls"],
+                tokens=TokenCounts(
+                    input=r["input"],
+                    output=r["output"],
+                    cache_read=r["cache_read"],
+                    cache_write_5m=r["cache_write_5m"],
+                    cache_write_1h=r["cache_write_1h"],
+                ),
+                cost_usd=r["cost"],
+                unpriced_calls=r["unpriced"],
+            )
+            for r in rows
+        ]
+
+    def usage_by_task(self, start: datetime, end: datetime) -> list[TaskUsage]:
+        """Calls made in ``[start, end)`` attributed to tasks: a call belongs
+        to each task that a claim span of the call's session covers at the
+        call's time (split evenly when several do). Calls with no such claim
+        are one row with ``task_id`` None. Biggest spend first."""
+        rows = self._conn.execute(
+            """
+            WITH calls AS (
+                SELECT message_id, session_id, at, cost_usd,
+                       input_tokens + output_tokens + cache_read_tokens
+                       + cache_write_5m_tokens + cache_write_1h_tokens AS tokens
+                FROM usage_calls WHERE at >= ? AND at < ?
+            ),
+            claimed AS (
+                SELECT DISTINCT c.message_id, s.task_id
+                FROM calls c JOIN claim_spans s
+                  ON s.session_id = c.session_id AND s.task_id IS NOT NULL
+                 AND c.at BETWEEN s.first_seen AND s.last_seen
+            ),
+            weights AS (
+                SELECT message_id, task_id,
+                       1.0 / COUNT(*) OVER (PARTITION BY message_id) AS weight
+                FROM claimed
+            )
+            SELECT w.task_id AS task_id, SUM(w.weight) AS calls,
+                   SUM(w.weight * c.tokens) AS tokens,
+                   SUM(w.weight * COALESCE(c.cost_usd, 0)) AS cost,
+                   SUM(w.weight * (c.cost_usd IS NULL)) AS unpriced
+            FROM weights w JOIN calls c USING (message_id) GROUP BY w.task_id
+            UNION ALL
+            SELECT NULL, COUNT(*), COALESCE(SUM(tokens), 0),
+                   COALESCE(SUM(COALESCE(cost_usd, 0)), 0),
+                   COALESCE(SUM(cost_usd IS NULL), 0)
+            FROM calls WHERE message_id NOT IN (SELECT message_id FROM claimed)
+            HAVING COUNT(*) > 0
+            ORDER BY cost DESC
+            """,
+            (_iso(start), _iso(end)),
+        )
+        return [
+            TaskUsage(
+                task_id=r["task_id"],
+                calls=r["calls"],
+                tokens=r["tokens"],
+                cost_usd=r["cost"],
+                unpriced_calls=r["unpriced"],
             )
             for r in rows
         ]

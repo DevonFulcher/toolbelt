@@ -55,6 +55,18 @@ def ui(
 
 
 @app.command()
+def spend(
+    days: int = typer.Option(
+        7, "--days", help="Days covered by the by-model and by-task breakdowns."
+    ),
+):
+    """Show token spend from Claude Code's session transcripts (this machine)."""
+    from toolbelt.token_spend.report import run_spend_report
+
+    run_spend_report(days=days)
+
+
+@app.command()
 def upgrade():
     """Upgrade toolbelt"""
     logged_process.run(
