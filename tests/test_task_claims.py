@@ -526,6 +526,7 @@ def task_cli(tmp_path: Path):
         db_path=lambda: tmp_path / "stacks.db",
         list_worktrees=lister,
         user=lambda: "devon",
+        pause=lambda: None,
     )
     app = build_task_typer(lambda: environment)
     runner = CliRunner()
@@ -665,3 +666,138 @@ def test_task_group_is_registered_without_importing_the_claims_machinery():
     )
 
     assert result.stdout.strip() == "False"
+
+
+# ---- amendments from the writer (docs/task-claims.md "Writer behaviour") ----------------
+
+
+def test_a_tombstone_with_ttl_zero_is_dead_and_collected_by_gc(tmp_path: Path):
+    claims = tmp_path / "claims"
+    write_holder(claims, "s1", state="idle", ttl=0, updated_ago=0, claims=[])
+
+    reading = read_claims(claims, NOW)
+
+    assert [h.status for h in reading.holders] == ["expired"]
+    assert reading.live == ()
+    outcome = operations.collect_garbage(claims, reading, NOW)
+    assert outcome.claim_files == ["s1.json"]
+
+
+def test_an_empty_or_half_written_file_is_skipped_not_an_error(tmp_path: Path):
+    claims = tmp_path / "claims"
+    claims.mkdir()
+    (claims / "empty.json").write_text("")
+    write_holder(claims, "ok")
+
+    reading = read_claims(claims, NOW)
+
+    assert [h.holder for h in reading.holders] == ["ok"]
+    assert [s.name for s in reading.skipped] == ["empty.json"]
+
+
+def test_settled_reading_lists_only_files_unreadable_twice(tmp_path: Path):
+    from toolbelt.task_claims.reading import read_claims_settled
+
+    claims = tmp_path / "claims"
+    claims.mkdir()
+    (claims / "mid-write.json").write_text("{")
+    (claims / "broken.json").write_text("{")
+
+    def finish_the_write():
+        write_holder(claims, "mid-write", claims=[ref_claim("PLAT-1")])
+
+    reading = read_claims_settled(claims, NOW, finish_the_write)
+
+    assert [h.holder for h in reading.holders] == ["mid-write"]
+    assert [s.name for s in reading.skipped] == ["broken.json"]
+
+
+SCHEMA = json.loads(
+    (Path(__file__).parent / "claim_schema" / "claim.schema.json").read_text()
+)
+
+
+def _validate(value, schema: dict, path: str = "$") -> list[str]:
+    """The subset of JSON Schema the writer's schema uses (no jsonschema
+    dependency): type, const, enum, pattern, minimum, minLength, required,
+    additionalProperties, oneOf, $ref into $defs."""
+    import re
+
+    if "$ref" in schema:
+        return _validate(value, SCHEMA["$defs"][schema["$ref"].split("/")[-1]], path)
+    errors: list[str] = []
+    if "oneOf" in schema:
+        matching = [s for s in schema["oneOf"] if not _validate(value, s, path)]
+        return (
+            [] if len(matching) == 1 else [f"{path}: matches {len(matching)} of oneOf"]
+        )
+    if "const" in schema and value != schema["const"]:
+        errors.append(f"{path}: not {schema['const']!r}")
+    if "enum" in schema and value not in schema["enum"]:
+        errors.append(f"{path}: not one of {schema['enum']}")
+    types = {
+        "string": str,
+        "integer": int,
+        "object": dict,
+        "array": list,
+        "null": type(None),
+    }
+    if "type" in schema:
+        allowed = (
+            schema["type"] if isinstance(schema["type"], list) else [schema["type"]]
+        )
+        if not any(isinstance(value, types[t]) for t in allowed):
+            return [*errors, f"{path}: wrong type"]
+    if isinstance(value, str):
+        if "pattern" in schema and not re.search(schema["pattern"], value):
+            errors.append(f"{path}: {value!r} does not match {schema['pattern']}")
+        if len(value) < schema.get("minLength", 0):
+            errors.append(f"{path}: too short")
+    if isinstance(value, int) and value < schema.get("minimum", value):
+        errors.append(f"{path}: below minimum")
+    if isinstance(value, dict):
+        errors += [
+            f"{path}.{k}: missing" for k in schema.get("required", []) if k not in value
+        ]
+        for key, item in value.items():
+            if key in schema.get("properties", {}):
+                errors += _validate(item, schema["properties"][key], f"{path}.{key}")
+            elif schema.get("additionalProperties") is False:
+                errors.append(f"{path}.{key}: not allowed")
+    if isinstance(value, list) and "items" in schema:
+        for index, item in enumerate(value):
+            errors += _validate(item, schema["items"], f"{path}[{index}]")
+    return errors
+
+
+def test_the_test_helpers_write_files_that_satisfy_the_writers_schema(tmp_path: Path):
+    path = write_holder(
+        tmp_path,
+        "sess.sub1",
+        link="claude://claude.ai/epitaxy/abc",
+        claims=[ref_claim("PLAT-1"), worktree_claim("/Users/devon/git/wt/app/x")],
+    )
+
+    assert _validate(json.loads(path.read_text()), SCHEMA) == []
+    assert _validate({"version": 1}, SCHEMA) != []  # the validator does reject
+
+
+def test_human_files_written_by_tt_satisfy_the_schema_apart_from_their_kind(
+    tmp_path: Path,
+):
+    claims = tmp_path / "claims"
+    operations.write_human_claims(
+        claims,
+        name="devon",
+        claims=[
+            operations.make_claim("PLAT-1", now=NOW),
+            operations.make_claim(Path("/wt/app/x"), now=NOW),
+        ],
+        ttl=timedelta(hours=8),
+        now=NOW,
+    )
+
+    document = json.loads((claims / "human.devon.json").read_text())
+
+    assert document["kind"] == "human"
+    assert _validate({**document, "kind": "agent"}, SCHEMA) == []

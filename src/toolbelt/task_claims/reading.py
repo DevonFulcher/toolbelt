@@ -1,6 +1,7 @@
 """Reads the claims directory: every holder file, classified at a given
 instant (the clock and the directory are arguments, so this is pure)."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -80,6 +81,24 @@ def classify(file: ClaimFile, now: datetime) -> HolderStatus:
     if now >= file.expires_at:
         return "expired"
     return file.state
+
+
+def read_claims_settled(
+    claims_dir: Path, now: datetime, pause: Callable[[], None]
+) -> Reading:
+    """``read_claims``, listing a file as skipped only if it is unreadable on
+    two reads ``pause`` apart: the writer overwrites in place (not atomically),
+    so a single bad read is usually a write in progress."""
+    first = read_claims(claims_dir, now)
+    if not first.skipped:
+        return first
+    pause()
+    second = read_claims(claims_dir, now)
+    persistent = {s.name for s in first.skipped}
+    return Reading(
+        second.holders,
+        tuple(s for s in second.skipped if s.name in persistent),
+    )
 
 
 def read_claims(claims_dir: Path, now: datetime) -> Reading:

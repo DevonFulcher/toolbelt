@@ -6,6 +6,7 @@ The clock, the directories and the worktree lister are fields of
 ``TaskEnvironment``, so tests build the group with fakes."""
 
 import json
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -22,6 +23,8 @@ class TaskEnvironment:
     db_path: Callable[[], Path]
     list_worktrees: Callable[[Path], dict[Path, str]]
     user: Callable[[], str]
+    #: Waits briefly between the two reads of ``status`` (see read_claims_settled).
+    pause: Callable[[], None]
 
 
 def _real_environment() -> TaskEnvironment:
@@ -37,6 +40,7 @@ def _real_environment() -> TaskEnvironment:
         db_path=default_db_path,
         list_worktrees=git_worktrees,
         user=getpass.getuser,
+        pause=lambda: time.sleep(0.2),
     )
 
 
@@ -186,12 +190,13 @@ def build_task_typer(environment: Callable[[], TaskEnvironment]) -> typer.Typer:
             bool, typer.Option("--json", help="Machine-readable.")
         ] = False,
     ):
-        from toolbelt.task_claims.reading import read_claims
+        from toolbelt.task_claims.reading import read_claims_settled
         from toolbelt.task_claims.status_report import status_document, status_text
 
         env = environment()
         now = env.now()
-        document = status_document(read_claims(env.claims_dir(), now), tracked(), now)
+        reading = read_claims_settled(env.claims_dir(), now, env.pause)
+        document = status_document(reading, tracked(), now)
         if as_json:
             typer.echo(json.dumps(document, indent=2))
         else:

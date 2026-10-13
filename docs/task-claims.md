@@ -56,9 +56,11 @@ file name without `.json` (a file that disagrees is ignored).
   task's status; the UI shows a chip ("agent idle" / "agent blocked on you")
   with the session link. Claims are TURN-SCOPED: at a new turn the writer
   starts with an empty claims list.
-- **Writes are atomic**: a temp file in the same directory, then rename.
-  Readers tolerate unreadable/partial/unknown-version files: they are ignored,
-  and listed under `tt task status --verbose`.
+- **Writes** were specified as atomic (a temp file in the same directory,
+  then rename), but the plugin's mod API only has a plain overwrite: see
+  "Amendments" below. Readers tolerate empty/unreadable/partial/unknown-version
+  files either way: they are ignored for that read, and listed under
+  `tt task status --verbose`.
 - **Revocation.** `$TOOLBELT_HOME/claims/revoked/<holder>.json` =
   `{"version":1,"holder":"<holder>","revoked":[{"kind":"worktree","path":"...","at":"<ISO>","by":"tt task release"},{"kind":"ref","ref":"...","at":"<ISO>","by":"..."}]}`,
   written ONLY by `tt`. The writer reads its own revocation file before each
@@ -73,13 +75,44 @@ file name without `.json` (a file that disagrees is ignored).
   task ref (the stored ticket) or task id. Unresolvable claims are ignored
   (and shown in verbose status).
 
+### Amendments from the writer (binding)
+
+The plugin's mod API has no delete, rename or atomic write, so:
+
+1. **No delete on session end.** At session end (and when a subagent stops)
+   the writer *rewrites its file already dead*: `state: "idle"`,
+   `ttl_seconds: 0`, `claims: []`. `ttl_seconds` is therefore `>= 0`; a file
+   with `ttl_seconds == 0`, like any expired file, is dead/released: never
+   shown, deleted by `tt task gc`.
+2. **Writes are a plain overwrite, not atomic.** A reader may see an empty or
+   partial file. It skips that file for that read (the next poll sees the
+   whole file) and must never error or flap the UI on one bad read. `tt ui`
+   keeps a holder's last good state across one unreadable read, and
+   `tt task status` lists a file as ignored only when it is unreadable on two
+   reads 0.2 s apart. (`tt` itself still writes `human.*` files and
+   revocations atomically.)
+3. `link` is `null` when `CLAUDE_CODE_HOST_SESSION_ID` is unset, otherwise
+   `claude://claude.ai/epitaxy/<that id>`.
+4. **Machine-readable schema**: `claude-plugin/schema/claim.schema.json`
+   (`additionalProperties: false` at the top level and on claims,
+   `ttl_seconds >= 0`). `tests/test_task_claims.py` validates files produced
+   by the test helpers, and `tt`'s own `human.*` files (apart from `kind`),
+   against a copy of it (`tests/claim_schema/`).
+5. Agent worktrees made by the Claude harness under
+   `<repo>/.claude/worktrees/<name>` are not tracked toolbelt worktrees and
+   are not claimed by the plugin; only `<GIT_PROJECTS_WORKDIR>/wt/<repo>/<name>`
+   is. A worktree claim that resolves to nothing stays ignored (listed by
+   `--verbose`).
+6. Subagent holders are named `<session>.<agent_id>`, and are released (a
+   ttl-0 rewrite) when the subagent stops or the main turn ends.
+
 ### Details this implementation fixes (clarifications of v1)
 
 These are not new fields; they pin down what the contract left open.
 
 - **Temp files** are named so they cannot be mistaken for a claim file: start
-  with `.` and end with `.tmp` (e.g. `.<holder>.json.<pid>.tmp`). Readers only
-  consider `<holder>.json` and skip dotfiles.
+  with `.` and end with `.tmp` (e.g. `.<holder>.json.<pid>.tmp`) if a writer
+  ever uses one. Readers only consider `<holder>.json` and skip dotfiles.
 - **Worktree claims match exactly**: the `path` must be the worktree's root
   (what `git worktree list` prints; symlinks are resolved on both sides), not
   a subdirectory of it.
@@ -122,7 +155,7 @@ not. `release` exits 1 when it released nothing or refused something.
 
 ## Failure modes
 
-- **The agent died without cleaning up**: its file expires within `ttl`
+- **The agent died without cleaning up** (no ttl-0 rewrite): its file expires within `ttl`
   (180s for working); the task goes back to "Needs me" by itself.
 - **The agent is hung but its file is still live**: `tt task status` shows it
   `STALE`; `tt task release <ref>` revokes its claims at once; `tt task gc`

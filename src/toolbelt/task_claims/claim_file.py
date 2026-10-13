@@ -52,7 +52,8 @@ class ClaimFile(BaseModel):
     state: HolderState
     started_at: AwareDatetime
     updated_at: AwareDatetime
-    ttl_seconds: int = Field(gt=0)
+    #: 0 is how a writer ends a holder it cannot delete: dead at once.
+    ttl_seconds: int = Field(ge=0)
     claims: list[Annotated[WorktreeClaim | RefClaim, Field(discriminator="kind")]]
 
     @property
