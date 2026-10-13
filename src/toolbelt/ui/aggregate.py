@@ -34,7 +34,8 @@ truncated at its newest end.
 import bisect
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+from itertools import pairwise
 
 from toolbelt.ui import api_models as api
 from toolbelt.ui import pr_activity as act
@@ -77,71 +78,89 @@ _STATE_BY_KEY = {state.key: state for state in STATES}
 NOTES: tuple[tuple[str, str], ...] = (
     (
         "Merge conflicts and unresolved threads",
-        "GitHub keeps no history of either (the card shows them as now-only "
-        "states), so 'Resolve conflicts' and 'Resolve comments' are not "
-        "separated here: that time is counted as whatever else applies.",
+        (
+            "GitHub keeps no history of either (the card shows them as now-only "
+            "states), so 'Resolve conflicts' and 'Resolve comments' are not "
+            "separated here: that time is counted as whatever else applies."
+        ),
     ),
     (
         "Waiting on CI",
-        "From a push until that commit's check suites completed, whatever "
-        "the outcome (CI takes time to run even when it fails), or until now "
-        "while they are pending. 'CI failing' then runs from the completion "
-        "until the next push. A failed commit with no known completion time "
-        "counts as failing from its push, so its running time is not "
-        "separated.",
+        (
+            "From a push until that commit's check suites completed, whatever "
+            "the outcome (CI takes time to run even when it fails), or until now "
+            "while they are pending. 'CI failing' then runs from the completion "
+            "until the next push. A failed commit with no known completion time "
+            "counts as failing from its push, so its running time is not "
+            "separated."
+        ),
     ),
     (
         "Tasks before their PR",
-        "Only tasks whose start was recorded (a branch created with toolbelt) "
-        "have a working span; others begin when their PR opened. A start is "
-        "tied to its PR by the recorded PR id; only a task that never "
-        "recorded its PR falls back to the branch name.",
+        (
+            "Only tasks whose start was recorded (a branch created with toolbelt) "
+            "have a working span; others begin when their PR opened. A start is "
+            "tied to its PR by the recorded PR id; only a task that never "
+            "recorded its PR falls back to the branch name."
+        ),
     ),
     (
         "Blocked on a parent",
-        "Rebuilt from each PR's base branch over time and the parent PR's "
-        "state, with the same rule as Next: it waits on you when the parent "
-        "does.",
+        (
+            "Rebuilt from each PR's base branch over time and the parent PR's "
+            "state, with the same rule as Next: it waits on you when the parent "
+            "does."
+        ),
     ),
     (
         "Agent claims",
-        "'With an agent' (a task claimed by an agent session or a person) is "
-        "the present state only: claims are files with no history, so the "
-        "chart counts a claimed task in the state its PR was in.",
+        (
+            "'With an agent' (a task claimed by an agent session or a person) is "
+            "the present state only: claims are files with no history, so the "
+            "chart counts a claimed task in the state its PR was in."
+        ),
     ),
     (
         "Days, weeks and weekends",
-        "The server sends UTC instants and the status-mix samples; the page "
-        "decides what a day, a week (Monday first) and a weekend are from "
-        "your browser's time zone, so throughput buckets, lead-time dates, the "
-        "weekend bands and the day labels all follow it (a Friday 7pm merge "
-        "in US/Central is a Friday, not a Saturday).",
+        (
+            "The server sends UTC instants and the status-mix samples; the page "
+            "decides what a day, a week (Monday first) and a weekend are from "
+            "your browser's time zone, so throughput buckets, lead-time dates, the "
+            "weekend bands and the day labels all follow it (a Friday 7pm merge "
+            "in US/Central is a Friday, not a Saturday)."
+        ),
     ),
     (
         "Lead time",
-        "Each PR is placed at the time it merged. The 4- and 12-week views "
-        "show each PR's value; longer windows show the median over the PRs "
-        "merged in each week (linear interpolation between ranks; p75 and "
-        "p90 likewise). A step is unknown for a PR "
-        "when its start was not recorded or the request or review it is "
-        "measured from does not exist: unknown is counted, never guessed. "
-        "'Excluding weekends' drops the time that falls on a Saturday or "
-        "Sunday in your zone (no holiday calendar); it changes lead times "
-        "only, not throughput, the status mix or the cards.",
+        (
+            "Each PR is placed at the time it merged. The 4- and 12-week views "
+            "show each PR's value; longer windows show the median over the PRs "
+            "merged in each week (linear interpolation between ranks; p75 and "
+            "p90 likewise). A step is unknown for a PR "
+            "when its start was not recorded or the request or review it is "
+            "measured from does not exist: unknown is counted, never guessed. "
+            "'Excluding weekends' drops the time that falls on a Saturday or "
+            "Sunday in your zone (no holiday calendar); it changes lead times "
+            "only, not throughput, the status mix or the cards."
+        ),
     ),
     (
         "Status mix is a snapshot",
-        "At the start of the window, at every task state change, and now, "
-        "every task in flight is in exactly one state, and the "
-        "chart shows each state's share of those tasks. It is not averaged "
-        "over time. An instant with no task in flight is a gap, and with only "
-        "a few tasks the percentages are coarse: the number of tasks in "
-        "flight is shown beside them.",
+        (
+            "At the start of the window, at every task state change, and now, "
+            "every task in flight is in exactly one state, and the "
+            "chart shows each state's share of those tasks. It is not averaged "
+            "over time. An instant with no task in flight is a gap, and with only "
+            "a few tasks the percentages are coarse: the number of tasks in "
+            "flight is shown beside them."
+        ),
     ),
     (
         "Long PRs",
-        "Only a PR's first 100 timeline entries are fetched; a PR with more "
-        "is truncated at its newest end.",
+        (
+            "Only a PR's first 100 timeline entries are fetched; a PR with more "
+            "is truncated at its newest end."
+        ),
     ),
 )
 
@@ -413,7 +432,7 @@ def open_segments(record: PrRecord, now: datetime) -> list[Segment]:
     segments: list[Segment] = []
     for a, b in life:
         cuts = sorted({a, b, *(t for t in times if a < t < b)})
-        for lo, hi in zip(cuts, cuts[1:], strict=False):
+        for lo, hi in pairwise(cuts):
             index = bisect.bisect_right(times, lo) - 1
             state = _state_of(points[index][1])
             previous = segments[-1] if segments else None
@@ -519,7 +538,7 @@ def with_blocked(
                     if segment.start < t < segment.end
                 )
             ordered = sorted(cuts)
-            for lo, hi in zip(ordered, ordered[1:], strict=False):
+            for lo, hi in pairwise(ordered):
                 base = _base_at(record, lo)
                 blocking = _unmerged_parent(records, candidates, base, lo)
                 if blocking is None:
@@ -624,13 +643,11 @@ def match_tasks(
 
 
 def _iso(when: datetime) -> str:
-    return when.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    return when.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _monday(when: datetime) -> datetime:
-    day = when.astimezone(timezone.utc).replace(
-        hour=0, minute=0, second=0, microsecond=0
-    )
+    day = when.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
     return day - timedelta(days=day.weekday())
 
 

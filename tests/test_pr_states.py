@@ -6,9 +6,8 @@ from typing import get_args
 import pytest
 
 from toolbelt.git.stack.status import BranchStatus, CiState, PrState, ReviewState
-from toolbelt.ui import api_models, pr_activity
+from toolbelt.ui import api_models, pr_activity, pr_states
 from toolbelt.ui import next_action as na
-from toolbelt.ui import pr_states
 from toolbelt.ui.pr_states import CHIPS, EVENTS, NOW_STATE, PHASES, SLOT_STATES, STATES
 
 

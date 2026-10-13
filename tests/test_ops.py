@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 import typer
-
 from conftest import git
 
 from toolbelt.git.stack import lineage

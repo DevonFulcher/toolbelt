@@ -1,8 +1,8 @@
 import json
 from pathlib import Path
 
-import boto3
-import yaml
+lazy import boto3
+lazy import yaml
 
 from toolbelt import logged_process
 

@@ -111,7 +111,7 @@ def repo_for_path(file_path: Path) -> Repo | None:
 
     try:
         relative = file_path.resolve().relative_to(Path(git_projects_workdir).resolve())
-    except Exception:
+    except ValueError, OSError:
         return None
 
     if not relative.parts:

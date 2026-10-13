@@ -143,9 +143,9 @@ def build_task_typer(environment: Callable[[], TaskEnvironment]) -> typer.Typer:
             if not any(h.holder == holder for h in reading.live):
                 typer.echo(f"tt task: no live holder {holder!r}.", err=True)
                 raise typer.Exit(1)
-            select: operations.Selector = lambda h, _claim: h.holder == holder  # noqa: E731
+            select: operations.Selector = lambda h, _claim: h.holder == holder
         elif all_:
-            select = lambda _h, _claim: True  # noqa: E731
+            select = lambda _h, _claim: True
         else:
             targets: set[tuple[int, str]] = set()
             literals: set[str] = set()

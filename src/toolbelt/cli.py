@@ -6,12 +6,12 @@ import typer
 from toolbelt import invocation_log, logged_process
 from toolbelt.dotfiles.cli import dotfiles_typer
 from toolbelt.git.cli import git_typer
-from toolbelt.github.status import display_status
 from toolbelt.logger import logger
-from toolbelt.repos import current_repo
-from toolbelt.standup import parse_standup_weekdays, standup_notes
 from toolbelt.task_claims.cli import task_typer
 from toolbelt.zsh import zsh_typer
+lazy from toolbelt.github.status import display_status
+lazy from toolbelt.repos import current_repo
+lazy from toolbelt.standup import parse_standup_weekdays, standup_notes
 
 # Create Typer app instances
 app = typer.Typer(help="A collection of tools that I use.")

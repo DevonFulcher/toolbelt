@@ -17,7 +17,6 @@ from pathlib import Path
 
 import pytest
 from syrupy.assertion import SnapshotAssertion
-
 from test_cli import _invoke
 
 from toolbelt.git.stack.append import create_stacked_branch

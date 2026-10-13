@@ -28,15 +28,16 @@ import random
 import sqlite3
 import sys
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from history import RECORDED_WEEKS, history, node_id  # noqa: E402
-from toolbelt import logged_process  # noqa: E402
-from toolbelt.git.stack import lineage  # noqa: E402
-from toolbelt.git.stack.store import PrCandidate, PrLink  # noqa: E402
+from history import RECORDED_WEEKS, history, node_id
+
+from toolbelt import logged_process
+from toolbelt.git.stack import lineage
+from toolbelt.git.stack.store import PrCandidate, PrLink
 
 # Tracked demo branches whose PR the CLI has already recorded (the others have
 # a PR but no recorded link yet, as a branch that was never synced since).
@@ -222,7 +223,7 @@ def seed(dest: Path, deep: int) -> None:
                     [
                         PrCandidate(
                             PrLink(number, node_id(number)),
-                            datetime.now(timezone.utc) - timedelta(days=30),
+                            datetime.now(UTC) - timedelta(days=30),
                         )
                     ],
                     root=repos / name,
@@ -235,7 +236,7 @@ def seed(dest: Path, deep: int) -> None:
 
     # `started_at` is stamped "now" on insert; backdate the demo branches.
     db = sqlite3.connect(Path(os.environ["TOOLBELT_HOME"]) / "stacks.db")
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     for (_, branch), days in started.items():
         when = (now - timedelta(days=days)).isoformat()
         db.execute("UPDATE branches SET started_at = ? WHERE name = ?", (when, branch))

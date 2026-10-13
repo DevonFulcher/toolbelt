@@ -19,7 +19,7 @@ def test_branching_tree():
         "devon/api_tests": "devon/api",
     }
     assert render(parents) == (
-        "main\n" "└─ devon/api\n" "   ├─ devon/api_docs\n" "   └─ devon/api_tests"
+        "main\n└─ devon/api\n   ├─ devon/api_docs\n   └─ devon/api_tests"
     )
 
 

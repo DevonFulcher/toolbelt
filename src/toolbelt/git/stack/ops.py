@@ -14,7 +14,6 @@ from toolbelt.git.stack.lineage import all_parents, get_parent, set_parent
 from toolbelt.git.worktrees import current_branch
 from toolbelt.logger import logger
 
-
 _ATTRIBUTION_TRAILER = "Co-Authored-By"
 
 
@@ -22,8 +21,7 @@ def _parent_or_exit(branch: str, *, root: Path) -> str:
     parent = get_parent(branch, root=root)
     if parent is None:
         logger.error(
-            f"'{branch}' is not tracked in a stack. Start one with "
-            "`git append <name>`."
+            f"'{branch}' is not tracked in a stack. Start one with `git append <name>`."
         )
         raise typer.Exit(1)
     return parent

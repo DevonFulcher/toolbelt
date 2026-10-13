@@ -238,8 +238,10 @@ _NEXT_TONES = {
     na.REQUEST_REVIEW: (ACCENT, "Ready, but nobody was asked to review."),
     na.CLAIMED: (
         PURPLE,
-        "An agent session has claimed this task and is working on it (a "
-        "claim file; the action it replaced is in the tooltip).",
+        (
+            "An agent session has claimed this task and is working on it (a "
+            "claim file; the action it replaced is in the tooltip)."
+        ),
     ),
 }
 
@@ -537,8 +539,11 @@ NOT_REPRESENTED: tuple[tuple[str, str], ...] = (
     ),
     (
         "History of an agent claiming a task",
-        "Claims are files with no history: With an agent shows only now, and the "
-        "aggregate view does not count it (the task is in the state its PR was in).",
+        (
+            "Claims are files with no history: With an agent shows only now, and "
+            "the aggregate view does not count it (the task is in the state its "
+            "PR was in)."
+        ),
     ),
     (
         "Conversation comments, edits, labels, assignees",
@@ -567,9 +572,9 @@ def _index() -> dict[tuple[str, str], StateValue]:
                 PHASE: PHASES,
                 NOW_STATE: CHIPS,
             }
-            assert (
-                rep.kind in known[rep.how]
-            ), f"{key}: unknown {rep.how} kind {rep.kind}"
+            assert rep.kind in known[rep.how], (
+                f"{key}: unknown {rep.how} kind {rep.kind}"
+            )
     return index
 
 

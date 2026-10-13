@@ -22,7 +22,6 @@ from toolbelt.dotfiles.status import (
     target_state,
 )
 
-
 # A public repo that ships this hook (a secret scan, see `tt dotfiles check`)
 # gets it activated by `link`.
 HOOKS_DIR = ".githooks"

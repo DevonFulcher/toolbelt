@@ -79,10 +79,20 @@ import sys
 from pathlib import Path
 from toolbelt.git.stack import lineage
 
-parents = {"a": "main", "b": "a", "c": "develop", "d": "c",
-           "val/draft": "main", "val/ci-fail": "main", "val/ci-pass": "main",
-           "val/ci-pend": "main", "val/threads": "main",
-           "val/merged": "val/base", "val/conflict": "val/base", "val/nopr": "main"}
+parents = {
+    "a": "main",
+    "b": "a",
+    "c": "develop",
+    "d": "c",
+    "val/draft": "main",
+    "val/ci-fail": "main",
+    "val/ci-pass": "main",
+    "val/ci-pend": "main",
+    "val/threads": "main",
+    "val/merged": "val/base",
+    "val/conflict": "val/base",
+    "val/nopr": "main",
+}
 for branch, parent in parents.items():
     lineage.set_parent(branch, parent, root=Path(sys.argv[1]))
 ```

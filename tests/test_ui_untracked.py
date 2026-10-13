@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import TypeAdapter
+from test_ui import FakeStatuses, seed_repo
 
 from toolbelt.ui import api_models
 from toolbelt.ui.app import create_app
@@ -23,8 +24,6 @@ from toolbelt.ui.untracked_prs import (
     tracked_pairs,
     untracked,
 )
-
-from test_ui import FakeStatuses, seed_repo
 
 
 def node(
@@ -253,7 +252,7 @@ class TestFeed:
         )
 
     def test_a_failed_search_is_reported_not_raised(self):
-        feed, hub, _ = make_feed(RuntimeError("gh api graphql failed: no auth"))
+        feed, _hub, _ = make_feed(RuntimeError("gh api graphql failed: no auth"))
 
         asyncio.run(feed.run_once())
 

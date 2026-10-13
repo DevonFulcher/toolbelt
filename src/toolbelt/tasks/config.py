@@ -20,7 +20,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-import yaml
+lazy import yaml
 
 from toolbelt.tasks.jira import JiraTracker
 from toolbelt.tasks.tracker import TaskTracker

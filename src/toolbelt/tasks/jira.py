@@ -20,7 +20,7 @@ from collections.abc import Mapping
 from typing import Any
 from urllib.parse import quote, urlsplit
 
-import httpx
+lazy import httpx
 
 from toolbelt.tasks.tracker import TaskInfo
 
@@ -61,7 +61,7 @@ class JiraTracker:
         self._token: str | None = None
 
     @classmethod
-    def from_config(cls, section: Mapping[str, Any], **kwargs: Any) -> "JiraTracker":
+    def from_config(cls, section: Mapping[str, Any], **kwargs: Any) -> JiraTracker:
         """``section`` is the ``tasks.jira`` mapping from the config file."""
         return cls(
             base_url=_optional_str(section.get("base_url")),
@@ -105,7 +105,7 @@ class JiraTracker:
                 status=fields["status"]["name"],
                 url=self.url_for(ref),
             )
-        except (httpx.HTTPError, ValueError, KeyError, TypeError):
+        except httpx.HTTPError, ValueError, KeyError, TypeError:
             return None
 
     def unavailable_reason(self) -> str | None:

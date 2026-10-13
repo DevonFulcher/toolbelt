@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from toolbelt.dotfiles.manifest import LinkMode, RepoManifest, expand_dest
+lazy from toolbelt.dotfiles.manifest import LinkMode, RepoManifest, expand_dest
 
 # Entries starting with "." are skipped when a merge_dir is expanded: that
 # matches the shell glob the old skills script used and avoids .DS_Store.

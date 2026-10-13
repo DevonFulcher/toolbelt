@@ -1,6 +1,6 @@
 """Integration tests for `append` (create_stacked_branch), real git in tmp."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from conftest import git
@@ -101,9 +101,9 @@ def test_append_stacks_on_current_branch(repo: Path, tmp_path: Path):
 def test_append_records_when_the_task_started_and_reparenting_keeps_it(
     repo: Path, tmp_path: Path
 ):
-    before = datetime.now(timezone.utc)
+    before = datetime.now(UTC)
     create_stacked_branch("api", root=repo, wt_path=tmp_path / "wt-api")
-    after = datetime.now(timezone.utc)
+    after = datetime.now(UTC)
 
     with lineage._repo_store(repo) as (s, repo_id):
         started = s.get_started_at(repo_id, "devon/api")

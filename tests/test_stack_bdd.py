@@ -10,9 +10,8 @@ the one seam the whole suite stubs; everything else is real git.
 from pathlib import Path
 
 import pytest
-from pytest_bdd import given, parsers, scenarios, then, when
-
 from conftest import FakeForge, git
+from pytest_bdd import given, parsers, scenarios, then, when
 
 from toolbelt.git.stack.append import create_stacked_branch
 from toolbelt.git.stack.lineage import get_parent

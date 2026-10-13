@@ -70,9 +70,8 @@ def test_gives_up_with_a_clear_error_if_the_lock_never_frees(repo: Path):
     try:
         assert holder_ready.wait(timeout=5), "holder never acquired the lock"
 
-        with pytest.raises(typer.Exit):
-            with repo_lock(repo, timeout=0.2):
-                pass  # pragma: no cover - must time out before entering
+        with pytest.raises(typer.Exit), repo_lock(repo, timeout=0.2):
+            pass  # pragma: no cover - must time out before entering
     finally:
         release_holder.set()
         holder.join(timeout=5)

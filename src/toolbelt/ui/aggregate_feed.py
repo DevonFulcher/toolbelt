@@ -24,7 +24,6 @@ injected, so tests drive it with canned payloads.
 """
 
 import asyncio
-import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -36,6 +35,7 @@ from toolbelt.git.stack.store import (
     TrackedBranchFacts,
     default_db_path,
 )
+from toolbelt.logger import logger
 from toolbelt.ui import aggregate
 from toolbelt.ui import api_models as api
 from toolbelt.ui.pr_activity import PrFacts
@@ -120,7 +120,7 @@ async def gh_page(search: str, after: str | None) -> dict:
 
 
 def _time(value: str) -> datetime:
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return datetime.fromisoformat(value)
 
 
 def _review_now(node: dict) -> str:
@@ -375,8 +375,8 @@ class AggregateService:
                         aggregate.DEFAULT_WEEKS, self._cache.weeks if self._cache else 0
                     )
                 )
-            except Exception:
-                logging.exception("Could not refresh aggregate history")
+            except Exception:  # noqa: BLE001
+                logger.exception("Could not refresh aggregate history")
             await asyncio.sleep(interval)
 
     async def get(

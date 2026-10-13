@@ -4,9 +4,9 @@
 afterwards.
 """
 
+import asyncio
 import json
 import logging
-import asyncio
 import subprocess
 import sys
 import threading

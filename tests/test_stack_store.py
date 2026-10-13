@@ -4,13 +4,13 @@ multi-repo `tree`."""
 import shutil
 import sqlite3
 import subprocess
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-
 from conftest import git
 from test_cli import _invoke
+
 from toolbelt.git.stack import lineage, store
 from toolbelt.git.stack.store import BranchLinks, RepoIdentity, StackStore
 
@@ -155,6 +155,7 @@ def _legacy_keys(repo: Path) -> str:
         ["git", "config", "--get-regexp", "^toolbelt-stack"],
         cwd=repo,
         capture_output=True,
+        check=False,
         text=True,
     ).stdout.strip()
 
@@ -256,14 +257,14 @@ def test_tree_marks_cwd_branch_and_skips_repos_whose_path_is_gone(
 def test_started_at_is_now_on_first_insert_and_reparenting_keeps_it(tmp_path: Path):
     s = StackStore(tmp_path / "stacks.db")
     repo_id = s.ensure_repo(_identity(tmp_path))
-    first = datetime(2026, 10, 1, 9, 0, tzinfo=timezone.utc)
-    later = datetime(2026, 10, 5, 9, 0, tzinfo=timezone.utc)
+    first = datetime(2026, 10, 1, 9, 0, tzinfo=UTC)
+    later = datetime(2026, 10, 5, 9, 0, tzinfo=UTC)
 
     assert s.get_started_at(repo_id, "feat") is None  # untracked
-    before = datetime.now(timezone.utc)
+    before = datetime.now(UTC)
     s.set_parent(repo_id, "now", "main")
     s.import_parents(repo_id, {"imported": "main"})
-    after = datetime.now(timezone.utc)
+    after = datetime.now(UTC)
     s.set_parent(repo_id, "feat", "main", started_at=first)
     s.set_parent(repo_id, "feat", "develop", started_at=later)  # reparent
 
@@ -297,21 +298,21 @@ def test_started_at_migration_backfills_existing_rows_from_created_at(tmp_path: 
     s = StackStore(db)
 
     assert s.schema_version() == len(store._MIGRATIONS)
-    assert s.get_started_at(1, "old") == datetime(2026, 10, 2, tzinfo=timezone.utc)
+    assert s.get_started_at(1, "old") == datetime(2026, 10, 2, tzinfo=UTC)
     s.set_parent(1, "old", "develop")  # reparenting keeps it
-    assert s.get_started_at(1, "old") == datetime(2026, 10, 2, tzinfo=timezone.utc)
+    assert s.get_started_at(1, "old") == datetime(2026, 10, 2, tzinfo=UTC)
 
 
 def test_removing_a_branch_archives_its_task_facts(tmp_path: Path):
     s = StackStore(tmp_path / "stacks.db")
     repo_id = s.ensure_repo(_identity(tmp_path))
-    started = datetime(2026, 10, 1, 9, 0, tzinfo=timezone.utc)
+    started = datetime(2026, 10, 1, 9, 0, tzinfo=UTC)
     s.set_parent(
         repo_id, "feat", "main", task="PLAT-1", task_tracker="jira", started_at=started
     )
     s.set_parent(repo_id, "other", "main")
 
-    before = datetime.now(timezone.utc)
+    before = datetime.now(UTC)
     s.remove_branch(repo_id, "feat", landed=True)
     s.remove_branch(repo_id, "other")
     s.remove_branch(repo_id, "never-tracked")
@@ -344,9 +345,9 @@ def test_the_archive_outlives_the_branch_and_is_scoped_by_repo_id(tmp_path: Path
 
 
 def test_archiving_began_when_the_table_was_created(tmp_path: Path):
-    before = datetime.now(timezone.utc)
+    before = datetime.now(UTC)
     s = StackStore(tmp_path / "stacks.db")
-    after = datetime.now(timezone.utc)
+    after = datetime.now(UTC)
 
     assert before.replace(microsecond=0) <= s.archive_since() <= after
     # Reopening does not reset it.

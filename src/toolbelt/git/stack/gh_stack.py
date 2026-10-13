@@ -27,7 +27,7 @@ import asyncio
 import hashlib
 import itertools
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Protocol
 
@@ -141,7 +141,7 @@ def mirror_stack(
     *,
     root: Path,
     stacked_prs: StackedPrs,
-    now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> None:
     """Publish the chain of each tree among ``stack`` to GitHub, if needed.
 
@@ -165,7 +165,7 @@ def mirror_stack(
         ready = asyncio.run(_ready(members, root, stacked_prs))
         # max() keeps the first of equal runs, i.e. the first leaf by name.
         publish = max(
-            (list(itertools.takewhile(lambda b: ready[b], c)) for c in chains),
+            (list(itertools.takewhile(ready.__getitem__, c)) for c in chains),
             key=len,
         )
         if len(publish) < 2:

@@ -14,8 +14,8 @@ from toolbelt.git.stack.status import (
     ReviewState,
     _ci_state,
     _count_unresolved,
-    parse_status,
     format_status,
+    parse_status,
 )
 
 

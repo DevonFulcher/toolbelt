@@ -24,10 +24,10 @@ from pathlib import Path
 
 from toolbelt import logged_process
 from toolbelt.git.stack.status import (
-    NO_PR,
-    BranchStatus,
     MERGEABLE_RETRIES,
     MERGEABLE_RETRY_DELAY_SECONDS,
+    NO_PR,
+    BranchStatus,
     count_unresolved_nodes,
     parse_status,
 )
@@ -139,7 +139,7 @@ async def gh_graphql(branch: str, root: Path) -> dict:
 
 
 def _parse_time(value: str) -> datetime:
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return datetime.fromisoformat(value)
 
 
 def _parse_optional_time(value: str | None) -> datetime | None:

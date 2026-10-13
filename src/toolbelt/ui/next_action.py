@@ -120,7 +120,7 @@ class NextAction:
     #: A stable identifier for the rule that fired (for styling and tests).
     kind: str
     #: For "With an agent": the action that would show without the claim.
-    would_be: "NextAction | None" = None
+    would_be: NextAction | None = None
 
 
 @dataclass(frozen=True)

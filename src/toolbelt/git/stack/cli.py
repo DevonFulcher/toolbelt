@@ -13,6 +13,7 @@ import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
+from typing import Annotated
 
 import typer
 from rich.live import Live
@@ -35,7 +36,6 @@ from toolbelt.git.stack.sync import sync_stack
 from toolbelt.git.stack.viz import RepoTree, render, render_repos
 from toolbelt.git.stack.worktree import worktree_paths
 from toolbelt.git.workflow import update_repo
-from toolbelt.tasks.config import configured_tracker
 from toolbelt.git.worktrees import (
     _worktree_path_for_name,
     copy_dotfiles,
@@ -45,6 +45,7 @@ from toolbelt.git.worktrees import (
 from toolbelt.git.worktrees_ops import delete_branch_and_worktree, main_worktree
 from toolbelt.logger import logger
 from toolbelt.personal_machine import is_personal
+from toolbelt.tasks.config import configured_tracker
 
 stack_typer = typer.Typer(help="Stack + worktree management")
 
@@ -128,9 +129,10 @@ def compress(
 
 @stack_typer.command(name="diff-parent")
 def diff_parent(
-    args: list[str] | None = typer.Argument(
-        None, help="Extra arguments passed through to `git diff`"
-    ),
+    args: Annotated[
+        list[str] | None,
+        typer.Argument(help="Extra arguments passed through to `git diff`"),
+    ] = None,
     line: bool = typer.Option(
         False,
         "--line",

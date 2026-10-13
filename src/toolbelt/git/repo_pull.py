@@ -25,10 +25,10 @@ import subprocess
 import sys
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
-import yaml
+lazy import yaml
 
 from toolbelt import logged_process
 from toolbelt.dotfiles.config import config_path
@@ -140,7 +140,7 @@ def run_pulls(repos: list[Path], *, state_dir: Path) -> list[PullResult]:
             return []
         results = [pull_repo(repo) for repo in repos]
         status = {
-            "finished_at": datetime.now(timezone.utc).isoformat(),
+            "finished_at": datetime.now(UTC).isoformat(),
             "reported": False,
             "results": [asdict(r) for r in results],
         }

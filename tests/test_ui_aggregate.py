@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from test_ui import FakeStatuses
 
 from toolbelt.git.stack.store import (
     PrCandidate,
@@ -30,8 +31,6 @@ from toolbelt.ui.aggregate_feed import (
 )
 from toolbelt.ui.app import create_app
 from toolbelt.ui.pr_activity import PrFacts, TimelineItem
-
-from test_ui import FakeStatuses
 
 # A Monday, so the window's weeks line up with the test's hours.
 MONDAY = datetime(2026, 10, 5, tzinfo=UTC)
@@ -566,7 +565,11 @@ def test_facts_without_a_pr_are_tasks_unless_landed_or_known_finished():
 # ---- the aggregate ----------------------------------------------------------------------------
 
 
-def compute(prs, facts=(), *, now=at(24 * 4), weeks=4, since=at(-1000)):
+DEFAULT_NOW = at(24 * 4)
+DEFAULT_SINCE = at(-1000)
+
+
+def compute(prs, facts=(), *, now=DEFAULT_NOW, weeks=4, since=DEFAULT_SINCE):
     return agg.compute(
         prs,
         list(facts),
@@ -746,10 +749,7 @@ def test_milestones_carry_the_instants_lead_times_are_measured_between():
         return (
             None
             if value is None
-            else (
-                datetime.fromisoformat(value.replace("Z", "+00:00")) - MONDAY
-            ).total_seconds()
-            / 3600
+            else (datetime.fromisoformat(value) - MONDAY).total_seconds() / 3600
         )
 
     assert hours(m[1].task_started) == 4 and hours(m[1].opened) == 10
@@ -1071,7 +1071,7 @@ def test_a_later_request_re_fetches_only_open_and_recently_updated_prs():
     result = asyncio.run(svc.get(12))
 
     # The open PRs (2, 3) and what changed since the newest one held (4).
-    assert sorted(sum(github.returned, [])) == [2, 3, 4]
+    assert sorted(n for returned in github.returned for n in returned) == [2, 3, 4]
     assert result.refreshed == 3
     assert len(result.prs) == 4
     updated_query = next(c for c in github.calls if "is:open" not in c)
@@ -1368,7 +1368,7 @@ def _two_repos():
 
 
 def test_the_repo_filter_narrows_prs_and_tasks_to_one_repo():
-    api_id, web_id = _two_repos()
+    _api_id, web_id = _two_repos()
     from toolbelt.ui.aggregate_feed import read_history
 
     github = FakeGitHub(
@@ -1433,7 +1433,7 @@ def client_and_pages(tmp_path: Path):
 
 
 def test_the_aggregate_endpoint_serves_the_computed_view(client_and_pages):
-    client, pages = client_and_pages
+    client, _pages = client_and_pages
 
     body = client.get("/api/aggregate?weeks=4").json()
 

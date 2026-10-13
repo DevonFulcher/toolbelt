@@ -19,21 +19,21 @@ def item(hours: float, kind: str, **kwargs) -> TimelineItem:
 
 
 def facts(**overrides) -> PrFacts:
-    base = dict(
-        number=5,
-        title="Add the thing",
-        author="devon",
-        base_ref="main",
-        head_oid="abc",
-        state="OPEN",
-        is_draft=False,
-        created_at=at(0),
-        merged_at=None,
-        closed_at=None,
-        requested_reviewers=(),
-        commit_rollups=(),
-        items=(),
-    )
+    base = {
+        "number": 5,
+        "title": "Add the thing",
+        "author": "devon",
+        "base_ref": "main",
+        "head_oid": "abc",
+        "state": "OPEN",
+        "is_draft": False,
+        "created_at": at(0),
+        "merged_at": None,
+        "closed_at": None,
+        "requested_reviewers": (),
+        "commit_rollups": (),
+        "items": (),
+    }
     base.update(overrides)
     return PrFacts(**base)  # type: ignore[arg-type]
 

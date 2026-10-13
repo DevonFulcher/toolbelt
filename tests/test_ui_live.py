@@ -10,6 +10,7 @@ TestClient buffers a whole response and an event stream never ends.
 import asyncio
 import json
 from pathlib import Path
+from typing import Self
 
 from pydantic import TypeAdapter
 
@@ -23,7 +24,6 @@ from toolbelt.git.stack.status import (
 from toolbelt.git.stack.store import RepoIdentity, StackStore, default_db_path
 from toolbelt.ui import api_models
 from toolbelt.ui.app import create_app
-from toolbelt.ui.pr_fetch import PrSnapshot
 from toolbelt.ui.live_status import (
     EventHub,
     Fetched,
@@ -31,6 +31,7 @@ from toolbelt.ui.live_status import (
     StructureWatcher,
     TrackedBranch,
 )
+from toolbelt.ui.pr_fetch import PrSnapshot
 
 OPEN = BranchStatus(
     pr=PrState.OPEN,
@@ -434,7 +435,7 @@ class Stream:
         self._received: asyncio.Queue[dict] = asyncio.Queue()
         self._task: asyncio.Task | None = None
 
-    async def __aenter__(self) -> "Stream":
+    async def __aenter__(self) -> Self:
         scope = {
             "type": "http",
             "asgi": {"version": "3.0"},

@@ -29,8 +29,8 @@ same process would just block on itself forever.
 import contextlib
 import fcntl
 import time
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 import typer
 

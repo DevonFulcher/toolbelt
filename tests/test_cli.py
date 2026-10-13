@@ -16,9 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from typer.testing import CliRunner
-
 from conftest import git
+from typer.testing import CliRunner
 
 from toolbelt.git.cli import git_typer
 from toolbelt.git.stack import lineage

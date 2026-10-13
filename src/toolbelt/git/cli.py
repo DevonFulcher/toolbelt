@@ -1,7 +1,7 @@
 import os
 import re
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 
@@ -73,7 +73,7 @@ def branch_clean():
 def get(
     repo_url: Annotated[str, typer.Argument(help="URL of the repository to get")],
     service_name: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             help="The name of the service for retrieving helm values. If not provided, "
             + "the repo name will be used"
@@ -160,13 +160,13 @@ def send(
 @git_typer.command(help="Change git branch and safe pull changes")
 def change(
     branch: Annotated[
-        Optional[str],
+        str | None,
         typer.Argument(
             help="Branch name to change to. If omitted, will use fzf to select"
         ),
     ] = None,
     new_branch: Annotated[
-        Optional[str], typer.Option("-b", help="Create a new branch and switch to it")
+        str | None, typer.Option("-b", help="Create a new branch and switch to it")
     ] = None,
 ):
     if new_branch:
@@ -257,7 +257,7 @@ def combine(
 def setup(
     repo_path: Annotated[str, typer.Argument(help="Path to the repository to setup")],
     service_name: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             help="The name of the service for retrieving helm values. If not provided, "
             + "the repo name will be used."

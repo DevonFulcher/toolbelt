@@ -5,20 +5,25 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Annotated
 
 import typer
 
-from toolbelt.dotfiles.actions import (
+lazy from toolbelt.dotfiles.actions import (
     Action,
     BackupDir,
     link_actions,
     run_actions,
 )
-from toolbelt.dotfiles.config import config_path, dotfiles_repos
-from toolbelt.dotfiles.manifest import MANIFEST_FILENAME, RepoManifest, load_manifest
-from toolbelt.dotfiles.plan import Plan, build_plan
-from toolbelt.dotfiles.secret_scan import scan_repo
-from toolbelt.dotfiles.status import State, collect_status
+lazy from toolbelt.dotfiles.config import config_path, dotfiles_repos
+lazy from toolbelt.dotfiles.manifest import (
+    MANIFEST_FILENAME,
+    RepoManifest,
+    load_manifest,
+)
+lazy from toolbelt.dotfiles.plan import Plan, build_plan
+lazy from toolbelt.dotfiles.secret_scan import scan_repo
+lazy from toolbelt.dotfiles.status import State, collect_status
 
 dotfiles_typer = typer.Typer(
     help="Link dotfiles from the configured repos into the home directory"
@@ -43,12 +48,14 @@ class Context:
 @dotfiles_typer.callback()
 def _callback(
     ctx: typer.Context,
-    home: Path | None = typer.Option(
-        None, "--home", hidden=True, help="Home directory to manage."
-    ),
-    config: Path | None = typer.Option(
-        None, "--config", hidden=True, help="Path to toolbelt's config.yaml."
-    ),
+    home: Annotated[
+        Path | None,
+        typer.Option("--home", hidden=True, help="Home directory to manage."),
+    ] = None,
+    config: Annotated[
+        Path | None,
+        typer.Option("--config", hidden=True, help="Path to toolbelt's config.yaml."),
+    ] = None,
 ) -> None:
     resolved_home = home or Path.home()
     ctx.obj = Context(
@@ -120,9 +127,10 @@ def _choose_repo(manifests: list[RepoManifest], repo: str) -> RepoManifest:
 @dotfiles_typer.command()
 def check(
     ctx: typer.Context,
-    repo: list[str] | None = typer.Argument(
-        None, help="Repo names or paths. Default: every public repo."
-    ),
+    repo: Annotated[
+        list[str] | None,
+        typer.Argument(help="Repo names or paths. Default: every public repo."),
+    ] = None,
 ) -> None:
     """Scan public repos for secret-looking content; exit 1 if any is found"""
     manifests = _context(ctx).manifests()

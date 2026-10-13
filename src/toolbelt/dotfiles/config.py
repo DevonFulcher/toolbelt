@@ -14,7 +14,7 @@ standalone reader so it can be folded into toolbelt's shared config loader.
 from collections.abc import Mapping
 from pathlib import Path
 
-import yaml
+lazy import yaml
 
 DEFAULT_REPOS = ("~/git/dotfiles", "~/git/dotfiles-private")
 

@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 import typer
-
 from conftest import FakeForge, git
 
 from toolbelt.git.stack.append import create_stacked_branch
@@ -81,7 +80,7 @@ def test_sync_pushes_branches_to_origin(repo: Path, tmp_path: Path):
 def test_sync_reconciles_branch_with_its_own_remote(
     repo: Path, tmp_path: Path, git_remote: Path
 ):
-    api_wt, tests_wt = _build_stack(repo, tmp_path)
+    _api_wt, tests_wt = _build_stack(repo, tmp_path)
     sync_stack(root=tests_wt, forge=FakeForge())  # establish branches on origin
 
     # Someone else advances origin/devon/api_tests via a separate clone.

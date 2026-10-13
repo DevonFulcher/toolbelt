@@ -146,7 +146,7 @@ def parse_search(payload: dict) -> Search:
             number=node["number"],
             title=node["title"],
             url=node["url"],
-            created_at=datetime.fromisoformat(node["createdAt"].replace("Z", "+00:00")),
+            created_at=datetime.fromisoformat(node["createdAt"]),
             is_draft=node["isDraft"],
             head_branch=node["headRefName"],
             archived=node["repository"]["isArchived"],
@@ -233,7 +233,7 @@ class UntrackedPrFeed:
         try:
             found = parse_search(await self._search())
             pairs = await tracked_pairs(self._repos(), self._remote_of)
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001
             # A background refresh with nobody to propagate to: say what went
             # wrong in the callout, retry after the interval.
             return api.UntrackedFailed(state="failed", error=str(error))

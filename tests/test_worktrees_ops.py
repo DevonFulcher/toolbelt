@@ -11,7 +11,6 @@ import time
 from pathlib import Path
 
 import pytest
-
 from conftest import git
 
 from toolbelt.git.stack.append import create_stacked_branch
@@ -49,9 +48,9 @@ def test_background_delete_eventually_removes_the_trashed_copy(
     # A tiny test worktree's background `rm -rf` may well finish before we
     # even get to check, so this only asserts it doesn't linger — not that
     # we catch it mid-flight.
-    assert _wait_until(
-        lambda: not list(tmp_path.glob(".toolbelt-trash-wt-api-*"))
-    ), "background rm -rf never finished"
+    assert _wait_until(lambda: not list(tmp_path.glob(".toolbelt-trash-wt-api-*"))), (
+        "background rm -rf never finished"
+    )
 
 
 def test_refuses_to_delete_a_dirty_worktree_without_force(repo: Path, tmp_path: Path):

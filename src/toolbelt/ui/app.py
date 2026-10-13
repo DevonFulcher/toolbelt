@@ -52,10 +52,12 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 
 from toolbelt.git.repo_pull import default_config_path
-from toolbelt.git.stack.store import Parents, StackStore, default_db_path
+from toolbelt.git.stack.status import PrState
+from toolbelt.git.stack.store import Parents, StackStore, default_db_path, state_dir
+from toolbelt.task_claims.claim_file import CLAIMS_DIRNAME
+from toolbelt.task_claims.resolution import TrackedTask, git_worktrees, tracked_tasks
 from toolbelt.tasks.config import configured_tracker
 from toolbelt.tasks.tracker import TaskTracker
-from toolbelt.git.stack.status import PrState
 from toolbelt.ui import aggregate as aggregate_view
 from toolbelt.ui import api_models as api
 from toolbelt.ui import branch_links
@@ -66,9 +68,6 @@ from toolbelt.ui.aggregate_feed import (
     gh_page,
     read_history,
 )
-from toolbelt.git.stack.store import state_dir
-from toolbelt.task_claims.claim_file import CLAIMS_DIRNAME
-from toolbelt.task_claims.resolution import TrackedTask, git_worktrees, tracked_tasks
 from toolbelt.ui.claims_feed import CLAIMS_TICK_SECONDS, BranchKey, ClaimsFeed
 from toolbelt.ui.client_build import CLIENT_DIST
 from toolbelt.ui.live_status import (
@@ -106,7 +105,6 @@ from toolbelt.ui.untracked_prs import (
     gh_search,
     origin_remote,
 )
-
 
 # Sent when no event has gone out for this long, so intermediaries keep the
 # stream open and a dead client is noticed.

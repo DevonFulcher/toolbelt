@@ -12,9 +12,9 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 from pydantic import TypeAdapter
-
 from test_task_claims import NOW, ref_claim, worktree_claim, write_holder
 from test_ui import FakeStatuses, branches, open_status, refresh, seed_repo, snap
+
 from toolbelt.git.stack.status import ReviewState
 from toolbelt.task_claims.resolution import TrackedTask
 from toolbelt.ui import api_models
@@ -207,7 +207,7 @@ def test_worktree_claims_resolve_and_two_holders_on_one_branch_both_show(tmp_pat
 
 def test_the_loop_waits_for_a_browser_and_polls_while_one_is_connected(tmp_path):
     f = Feed(tmp_path)
-    hub = f.feed._hub  # noqa: SLF001
+    hub = f.feed._hub
     polls: list[int] = []
     real = f.feed.poll
     f.feed.poll = lambda: polls.append(1) or real()  # type: ignore[method-assign]
@@ -219,7 +219,7 @@ def test_the_loop_waits_for_a_browser_and_polls_while_one_is_connected(tmp_path)
             await ticks.wait()
             ticks.clear()
 
-        f.feed._sleep = sleep  # noqa: SLF001
+        f.feed._sleep = sleep
         task = asyncio.create_task(f.feed.run())
         for _ in range(10):
             await asyncio.sleep(0)
@@ -290,7 +290,7 @@ def test_a_claimed_branch_reads_with_an_agent_and_keeps_what_it_would_be(tmp_pat
     (holder,) = a["claim"]["holders"]
     assert holder["state"] == "working" and holder["stale"] is False
     assert holder["link"] == {"label": "Open session", "href": "claude://x/1"}
-    chip = [c for c in a["status"]["now"] if c["dimension"] == "next"][0]
+    chip = next(c for c in a["status"]["now"] if c["dimension"] == "next")
     assert (chip["value"], chip["who"], chip["would_be"]) == (
         "claimed",
         "agent",
@@ -409,7 +409,7 @@ def test_the_snapshot_without_a_claims_directory_has_empty_claims(tmp_path):
     stacked_repo(tmp_path)
 
     assert all(b["claim"] == {"holders": []} for b in snap(client)["branches"])
-    next_filter = [f for f in snap(client)["filters"] if f["key"] == "next"][0]
+    next_filter = next(f for f in snap(client)["filters"] if f["key"] == "next")
     assert ("agent", "With an agent") in [
         (o["value"], o["label"]) for o in next_filter["options"]
     ]

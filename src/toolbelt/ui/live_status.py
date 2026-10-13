@@ -208,7 +208,7 @@ class StatusRefresher:
                 snapshot: PrSnapshot | None = await self._fetch(
                     branch.branch, branch.path
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 # This is a background poll with nobody to propagate to: one
                 # branch's failure (gh missing, bad output) is shown on its
                 # row and retried, and must not stop the others.

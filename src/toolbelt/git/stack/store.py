@@ -24,7 +24,7 @@ import sqlite3
 import uuid
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 STATE_DIR_ENV_VAR = "TOOLBELT_HOME"
@@ -129,8 +129,10 @@ _MIGRATIONS: list[tuple[str, ...]] = [
         """,
         "CREATE INDEX removed_branches_by_repo ON removed_branches (repo_id)",
         "CREATE TABLE archive_info (since TEXT NOT NULL)",
-        "INSERT INTO archive_info (since) "
-        "VALUES (strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now'))",
+        (
+            "INSERT INTO archive_info (since) "
+            "VALUES (strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now'))"
+        ),
     ),
     (
         # Identity, so the aggregate view can join tasks to PRs by id rather
@@ -243,7 +245,7 @@ def default_db_path() -> Path:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _new_task_id() -> str:
@@ -467,8 +469,7 @@ class StackStore:
     def get_pr_link(self, repo_id: int, branch: str) -> PrLink | None:
         """The PR recorded for ``branch``'s task, if any."""
         row = self._conn.execute(
-            "SELECT pr_number, pr_node_id FROM branches "
-            "WHERE repo_id = ? AND name = ?",
+            "SELECT pr_number, pr_node_id FROM branches WHERE repo_id = ? AND name = ?",
             (repo_id, branch),
         ).fetchone()
         return _pr_link(row) if row else None

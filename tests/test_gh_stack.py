@@ -1,12 +1,11 @@
 """Tests for mirroring lineage to GitHub stacked PRs (fake `StackedPrs`)."""
 
 from collections.abc import Iterable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 import typer
-
 from conftest import FakeForge, git
 
 from toolbelt.git.stack import lineage
@@ -14,7 +13,7 @@ from toolbelt.git.stack.append import create_stacked_branch
 from toolbelt.git.stack.gh_stack import UNSUPPORTED_TTL, mirror_stack
 from toolbelt.git.stack.sync import sync_stack
 
-T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+T0 = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 class FakeStackedPrs:

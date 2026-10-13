@@ -3,7 +3,6 @@
 from pathlib import Path
 
 import pytest
-
 from conftest import git
 
 from toolbelt.git.stack import lineage

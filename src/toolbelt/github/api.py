@@ -1,7 +1,6 @@
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from enum import Enum
-from typing import Optional
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
@@ -71,7 +70,7 @@ class TimeOpen:
     minutes: int
 
     @classmethod
-    def from_timedelta(cls, delta: timedelta) -> "TimeOpen":
+    def from_timedelta(cls, delta: timedelta) -> TimeOpen:
         total_minutes = int(delta.total_seconds() / 60)
         days = total_minutes // (24 * 60)
         remaining_minutes = total_minutes % (24 * 60)
@@ -97,9 +96,9 @@ class PullRequest:
     number: int
     state: PullRequestState
     draft: bool
-    mergeable_state: Optional[PullRequestMergeableState] = None
-    review_decision: Optional[ReviewDecision] = None
-    ci_status: Optional[CIStatus] = None
+    mergeable_state: PullRequestMergeableState | None = None
+    review_decision: ReviewDecision | None = None
+    ci_status: CIStatus | None = None
 
 
 class GithubUser(BaseModel):
@@ -188,8 +187,8 @@ class PullRequestBase(BaseModel):
 class PullRequestDetails(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    mergeable_state: Optional[PullRequestMergeableState] = None
-    review_decision: Optional[ReviewDecision] = None
+    mergeable_state: PullRequestMergeableState | None = None
+    review_decision: ReviewDecision | None = None
     head: PullRequestHead
     base: PullRequestBase
 
@@ -231,8 +230,8 @@ class ReviewComment(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     id: int
-    pull_request_review_id: Optional[int] = None
-    in_reply_to_id: Optional[int] = None
+    pull_request_review_id: int | None = None
+    in_reply_to_id: int | None = None
     user: GithubUser
     html_url: str
     url: str
@@ -242,7 +241,7 @@ class CheckRun(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     id: int
-    conclusion: Optional[CheckRunConclusion] = None
+    conclusion: CheckRunConclusion | None = None
     status: CheckRunStatus
 
 
@@ -291,10 +290,8 @@ async def get_open_pull_requests(username: str, token: str) -> list[PullRequest]
                 detailed = item
                 repo_path = extract_repo_from_pr_url(detailed.html_url)
 
-                created_at = datetime.fromisoformat(
-                    detailed.created_at.replace("Z", "+00:00")
-                )
-                time_delta = datetime.now(timezone.utc) - created_at
+                created_at = datetime.fromisoformat(detailed.created_at)
+                time_delta = datetime.now(UTC) - created_at
                 time_open = TimeOpen.from_timedelta(time_delta)
 
                 pr = PullRequest(
@@ -335,10 +332,8 @@ async def get_pr_status(username: str, token: str) -> list[PullRequest]:
                 repo_path = extract_repo_from_pr_url(detailed.html_url)
                 repo_api_prefix = f"https://api.github.com/repos/{repo_path}"
 
-                created_at = datetime.fromisoformat(
-                    detailed.created_at.replace("Z", "+00:00")
-                )
-                time_delta = datetime.now(timezone.utc) - created_at
+                created_at = datetime.fromisoformat(detailed.created_at)
+                time_delta = datetime.now(UTC) - created_at
                 time_open = TimeOpen.from_timedelta(time_delta)
 
                 pr_details = await client.get_model(
@@ -399,10 +394,8 @@ async def get_review_requests(username: str, token: str) -> list[PullRequest]:
                 repo_path = extract_repo_from_pr_url(detailed.html_url)
                 repo_api_prefix = f"https://api.github.com/repos/{repo_path}"
 
-                created_at = datetime.fromisoformat(
-                    detailed.created_at.replace("Z", "+00:00")
-                )
-                time_delta = datetime.now(timezone.utc) - created_at
+                created_at = datetime.fromisoformat(detailed.created_at)
+                time_delta = datetime.now(UTC) - created_at
                 time_open = TimeOpen.from_timedelta(time_delta)
 
                 pr_details = await client.get_model(
@@ -442,7 +435,7 @@ async def get_review_requests(username: str, token: str) -> list[PullRequest]:
     return sorted(prs, key=lambda pr: pr.repo)
 
 
-def summarize_ci_status(check_runs: list[CheckRun]) -> Optional[CIStatus]:
+def summarize_ci_status(check_runs: list[CheckRun]) -> CIStatus | None:
     if not check_runs:
         return None
     if all(

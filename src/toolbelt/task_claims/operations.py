@@ -307,6 +307,6 @@ def _still_expired(holder: Holder, now: datetime) -> bool:
         current = parse_claim_file(
             holder.path.read_text(), expected_holder=holder.holder
         )
-    except (UnreadableFile, OSError):
+    except UnreadableFile, OSError:
         return False
     return classify(current, now) == "expired"

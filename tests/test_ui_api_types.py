@@ -20,9 +20,9 @@ def test_the_committed_json_schema_is_current():
 
 
 def test_the_committed_state_catalog_is_current():
-    assert (
-        API_DIR / "catalog.json"
-    ).read_text() == api_schema.catalog_json(), REGENERATE
+    assert (API_DIR / "catalog.json").read_text() == api_schema.catalog_json(), (
+        REGENERATE
+    )
 
 
 @pytest.mark.skipif(
@@ -33,6 +33,7 @@ def test_the_committed_typescript_types_are_current():
     result = subprocess.run(
         ["pnpm", "--dir", str(WEB), "check:types"],
         capture_output=True,
+        check=False,
         text=True,
     )
 

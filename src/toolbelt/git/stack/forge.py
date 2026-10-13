@@ -37,7 +37,7 @@ def candidate_from_json(node: dict) -> PrCandidate:
     """A ``gh ... --json number,id,createdAt`` PR object."""
     return PrCandidate(
         link=PrLink(number=node["number"], node_id=node["id"]),
-        created_at=datetime.fromisoformat(node["createdAt"].replace("Z", "+00:00")),
+        created_at=datetime.fromisoformat(node["createdAt"]),
     )
 
 
@@ -138,8 +138,7 @@ class GhForge:
         stdout, stderr = await process.communicate()
         if process.returncode != 0:
             logger.error(
-                f"`gh` failed listing the PRs of '{branch}': "
-                f"{stderr.decode().strip()}"
+                f"`gh` failed listing the PRs of '{branch}': {stderr.decode().strip()}"
             )
             raise typer.Exit(1)
         return ranked_candidates(json.loads(stdout))

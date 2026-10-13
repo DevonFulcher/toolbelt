@@ -15,9 +15,8 @@ from pathlib import Path
 
 import httpx
 import pytest
-from fastapi.testclient import TestClient
-
 from conftest import git
+from fastapi.testclient import TestClient
 
 from toolbelt.git.stack import lineage
 from toolbelt.git.stack.status import (
@@ -164,12 +163,12 @@ def status_of(client: TestClient, name: str) -> dict:
 
 
 def open_status(**overrides) -> BranchStatus:
-    base: dict = dict(
-        pr=PrState.OPEN,
-        ci=CiState.SUCCESS,
-        review=ReviewState.NONE,
-        url="https://github.com/o/r/pull/5",
-    )
+    base: dict = {
+        "pr": PrState.OPEN,
+        "ci": CiState.SUCCESS,
+        "review": ReviewState.NONE,
+        "url": "https://github.com/o/r/pull/5",
+    }
     base.update(overrides)
     return BranchStatus(**base)
 
@@ -560,20 +559,20 @@ def test_a_status_carries_the_catalog_references_of_its_now_chips(
 
 
 def make_facts(**overrides) -> PrFacts:
-    base: dict = dict(
-        number=5,
-        title="Add <b>it</b>",
-        author="devon",
-        base_ref="main",
-        head_oid="abc",
-        state="OPEN",
-        is_draft=True,
-        created_at=datetime(2026, 10, 1, 9, 0, tzinfo=UTC),
-        merged_at=None,
-        closed_at=None,
-        requested_reviewers=("sam",),
-        commit_rollups=(("a", "FAILURE"), ("b", "SUCCESS"), ("c", "ERROR")),
-        items=(
+    base: dict = {
+        "number": 5,
+        "title": "Add <b>it</b>",
+        "author": "devon",
+        "base_ref": "main",
+        "head_oid": "abc",
+        "state": "OPEN",
+        "is_draft": True,
+        "created_at": datetime(2026, 10, 1, 9, 0, tzinfo=UTC),
+        "merged_at": None,
+        "closed_at": None,
+        "requested_reviewers": ("sam",),
+        "commit_rollups": (("a", "FAILURE"), ("b", "SUCCESS"), ("c", "ERROR")),
+        "items": (
             TimelineItem(
                 datetime(2026, 10, 6, 6, 0, tzinfo=UTC),
                 "review_requested",
@@ -582,7 +581,7 @@ def make_facts(**overrides) -> PrFacts:
                 subject="sam",
             ),
         ),
-    )
+    }
     base.update(overrides)
     return PrFacts(**base)
 

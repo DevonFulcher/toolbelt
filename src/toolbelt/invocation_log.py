@@ -37,7 +37,7 @@ import secrets
 import time
 import traceback
 from collections.abc import Callable, Mapping, Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -54,7 +54,7 @@ _MAX_ARG_CHARS = 500
 
 # The log child-process helpers report to; set by ``install``. ``None`` (library
 # use, tests) means child processes run unlogged.
-active: "InvocationLog | None" = None
+active: InvocationLog | None = None
 
 
 def log_dir(env: Mapping[str, str] = os.environ) -> Path:
@@ -144,7 +144,7 @@ class InvocationLog:
         self.started = time.monotonic()
 
     @classmethod
-    def from_env(cls, env: Mapping[str, str] = os.environ) -> "InvocationLog":
+    def from_env(cls, env: Mapping[str, str] = os.environ) -> InvocationLog:
         writer = JsonlWriter(
             log_path(env),
             max_bytes=int(env.get(LOG_MAX_BYTES_ENV, DEFAULT_MAX_BYTES)),
@@ -159,7 +159,7 @@ class InvocationLog:
     def event(self, event: str, **fields: Any) -> None:
         self.writer.write(
             {
-                "ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+                "ts": datetime.now(UTC).isoformat(timespec="milliseconds"),
                 "event": event,
                 "pid": os.getpid(),
                 "ppid": os.getppid(),

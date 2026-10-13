@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 import typer
-
 from conftest import FakeForge, git
 
 from toolbelt.git.stack import lineage
@@ -42,7 +41,7 @@ def _squash_merge_to_main(repo: Path, filename: str, content: str) -> None:
 
 
 def test_restack_on_clean_squash_land(repo: Path, tmp_path: Path):
-    api_wt, tests_wt = _build_stack(repo, tmp_path)
+    _api_wt, tests_wt = _build_stack(repo, tmp_path)
     _squash_merge_to_main(repo, "api.txt", "api\n")
 
     sync_stack(root=tests_wt, forge=FakeForge(merged={"devon/api"}))
@@ -61,7 +60,7 @@ def test_restack_on_clean_squash_land(repo: Path, tmp_path: Path):
 
 
 def test_abandoned_parent_is_not_restacked(repo: Path, tmp_path: Path):
-    api_wt, tests_wt = _build_stack(repo, tmp_path)
+    _api_wt, tests_wt = _build_stack(repo, tmp_path)
 
     # Nothing reported merged -> normal merge sync, no restack, no deletion.
     sync_stack(root=tests_wt, forge=FakeForge())
@@ -117,7 +116,7 @@ def test_sync_on_untracked_branch_errors(repo: Path, tmp_path: Path):
 def test_sync_refuses_to_delete_the_landed_worktree_it_runs_in(
     repo: Path, tmp_path: Path
 ):
-    api_wt, tests_wt = _build_stack(repo, tmp_path)
+    api_wt, _tests_wt = _build_stack(repo, tmp_path)
     _squash_merge_to_main(repo, "api.txt", "api\n")
 
     # Run sync from the landed branch's own worktree.

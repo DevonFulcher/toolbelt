@@ -406,6 +406,7 @@ def hooks_path(repo: Path) -> str:
         cwd=repo,
         capture_output=True,
         text=True,
+        check=False,
     ).stdout.strip()
 
 
