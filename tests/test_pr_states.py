@@ -66,7 +66,8 @@ def test_next_action_kinds_are_exactly_the_catalogued_ones():
             na.ParentContext("p", PrState.OPEN, na.WHO_CI),
             na.ParentContext("p", PrState.MERGED),
         ):
-            produced.add(na.next_action(status, parent).kind)
+            for claimed in (False, True):
+                produced.add(na.next_action(status, parent, claimed).kind)
 
     assert produced == set(na.KINDS)
     assert dimension_values("next") == set(na.KINDS)
@@ -74,7 +75,7 @@ def test_next_action_kinds_are_exactly_the_catalogued_ones():
 
 def test_current_states_look_every_value_up_in_the_catalog():
     for status in all_statuses():
-        action = na.next_action(status, None)
+        action = na.next_action(status, None, claimed=True)
         merge = "none"
         if status.pr in (PrState.OPEN, PrState.DRAFT):
             merge = "conflicts" if status.has_conflicts else "clean"

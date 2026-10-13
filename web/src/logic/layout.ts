@@ -197,14 +197,27 @@ export function prioritiesLayout(rows: Row[], state: ViewState): Section[] {
     }
     return true;
   });
-  if (!selected.length) return [];
-  return [{
-    key: "priorities",
-    label: "Priorities",
-    tone: "you",
-    meaning: "Tasks that need me, with no task below them in the stack that needs me.",
-    entries: selected.sort(rowComparator(state)).map((row) => ({ id: row.id, depth: 0, context: false })),
-  }];
+  const sections: Section[] = [];
+  if (selected.length) {
+    sections.push({
+      key: "priorities",
+      label: "Priorities",
+      tone: "you",
+      meaning: "Tasks that need me, with no task below them in the stack that needs me.",
+      entries: selected.sort(rowComparator(state)).map((row) => ({ id: row.id, depth: 0, context: false })),
+    });
+  }
+  const claimed = rows.filter((row) => row.cells.next?.value === "agent" && matches(row, state));
+  if (claimed.length) {
+    sections.push({
+      key: "priorities-agent",
+      label: "With an agent",
+      tone: "agent",
+      meaning: "Claimed by an agent session (or a person) and being worked on: not waiting on me.",
+      entries: claimed.sort(rowComparator(state)).map((row) => ({ id: row.id, depth: 0, context: false })),
+    });
+  }
+  return sections;
 }
 
 // ---- card views --------------------------------------------------------------------
@@ -219,6 +232,12 @@ export const NEXT_SECTIONS = [
     label: "Needs me",
     tone: "you",
     meaning: "Your move: fix, resolve, publish, request review or merge.",
+  },
+  {
+    key: "agent",
+    label: "With an agent",
+    tone: "agent",
+    meaning: "An agent session (or a person) has claimed it and is working on it.",
   },
   {
     key: "ci",

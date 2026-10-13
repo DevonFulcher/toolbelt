@@ -205,6 +205,9 @@
           },
           "type": "array"
         },
+        "claim": {
+          "$ref": "#/$defs/BranchClaim"
+        },
         "current": {
           "type": "boolean"
         },
@@ -302,10 +305,27 @@
         "task_fetchable",
         "task_live",
         "agent",
+        "claim",
         "started_at",
         "status"
       ],
       "title": "Branch",
+      "type": "object"
+    },
+    "BranchClaim": {
+      "additionalProperties": false,
+      "properties": {
+        "holders": {
+          "items": {
+            "$ref": "#/$defs/ClaimHolder"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "holders"
+      ],
+      "title": "BranchClaim",
       "type": "object"
     },
     "Catalog": {
@@ -579,6 +599,94 @@
       ],
       "title": "CiState",
       "type": "string"
+    },
+    "ClaimHolder": {
+      "additionalProperties": false,
+      "description": "A live holder of a claim on a branch (see ``task_claims``). Only live\nholders are sent: an expired one is gone.",
+      "properties": {
+        "age": {
+          "$ref": "#/$defs/Age"
+        },
+        "holder": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/HolderKind"
+        },
+        "link": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Link"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stale": {
+          "type": "boolean"
+        },
+        "state": {
+          "$ref": "#/$defs/HolderState"
+        }
+      },
+      "required": [
+        "holder",
+        "kind",
+        "state",
+        "link",
+        "age",
+        "stale"
+      ],
+      "title": "ClaimHolder",
+      "type": "object"
+    },
+    "ClaimPatch": {
+      "additionalProperties": false,
+      "properties": {
+        "branch_id": {
+          "type": "string"
+        },
+        "claim": {
+          "$ref": "#/$defs/BranchClaim"
+        },
+        "status": {
+          "$ref": "#/$defs/LiveStatus"
+        }
+      },
+      "required": [
+        "branch_id",
+        "claim",
+        "status"
+      ],
+      "title": "ClaimPatch",
+      "type": "object"
+    },
+    "ClaimsEvent": {
+      "additionalProperties": false,
+      "description": "Claims changed on some branches. Lists those and the branches stacked\non them (their next action follows the parent's).",
+      "properties": {
+        "branches": {
+          "items": {
+            "$ref": "#/$defs/ClaimPatch"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "claims",
+          "type": "string"
+        },
+        "v": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "v",
+        "branches"
+      ],
+      "title": "ClaimsEvent",
+      "type": "object"
     },
     "CommentsCatalogState": {
       "additionalProperties": false,
@@ -899,6 +1007,21 @@
       ],
       "title": "HelloEvent",
       "type": "object"
+    },
+    "HolderKind": {
+      "enum": [
+        "agent",
+        "human"
+      ],
+      "type": "string"
+    },
+    "HolderState": {
+      "enum": [
+        "working",
+        "idle",
+        "blocked"
+      ],
+      "type": "string"
     },
     "Link": {
       "additionalProperties": false,
@@ -1254,6 +1377,17 @@
         },
         "who": {
           "$ref": "#/$defs/Who"
+        },
+        "would_be": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WouldBeAction"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -1316,6 +1450,17 @@
         },
         "who": {
           "$ref": "#/$defs/Who"
+        },
+        "would_be": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -1340,7 +1485,8 @@
         "blocked",
         "merge",
         "wait_review",
-        "request_review"
+        "request_review",
+        "claimed"
       ],
       "type": "string"
     },
@@ -1874,6 +2020,7 @@
     "ServerEvent": {
       "discriminator": {
         "mapping": {
+          "claims": "#/$defs/ClaimsEvent",
           "hello": "#/$defs/HelloEvent",
           "refreshed": "#/$defs/RefreshedEvent",
           "status": "#/$defs/StatusEvent",
@@ -1892,6 +2039,9 @@
         },
         {
           "$ref": "#/$defs/TaskEvent"
+        },
+        {
+          "$ref": "#/$defs/ClaimsEvent"
         },
         {
           "$ref": "#/$defs/StructureEvent"
@@ -2642,11 +2792,34 @@
     "Who": {
       "enum": [
         "you",
+        "agent",
         "others",
         "ci",
         "none"
       ],
       "type": "string"
+    },
+    "WouldBeAction": {
+      "additionalProperties": false,
+      "description": "What a claimed branch's next action would be without the claim.",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/NextKind"
+        },
+        "label": {
+          "type": "string"
+        },
+        "who": {
+          "$ref": "#/$defs/Who"
+        }
+      },
+      "required": [
+        "label",
+        "who",
+        "kind"
+      ],
+      "title": "WouldBeAction",
+      "type": "object"
     }
   },
   "additionalProperties": false,

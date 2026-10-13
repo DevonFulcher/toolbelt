@@ -302,7 +302,14 @@ describe("the controls and the address bar", () => {
 
     const options = within(screen.getByLabelText("Next")).getAllByRole("option");
 
-    expect(options.map((o) => o.textContent)).toEqual(["Any", "Needs me", "Waiting on CI", "Waiting on others", "Done"]);
+    expect(options.map((o) => o.textContent)).toEqual([
+      "Any",
+      "Needs me",
+      "With an agent",
+      "Waiting on CI",
+      "Waiting on others",
+      "Done",
+    ]);
   });
 
   test("counts say how many branches match and how many done ones are hidden", () => {

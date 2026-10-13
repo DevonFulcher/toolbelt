@@ -46,6 +46,7 @@ function chipsFor(status: Omit<LoadedStatus, "now">): Chip[] {
     value: status.next.kind,
     text: status.next.label,
     who: status.next.who,
+    would_be: status.next.would_be?.label ?? null,
   });
   return chips;
 }
@@ -60,7 +61,7 @@ export function pr(overrides: Partial<Omit<LoadedStatus, "now">> = {}): LoadedSt
     review: "none",
     merge: "clean",
     open_comments: 0,
-    next: { label: "Request review", who: "you", kind: "request_review" },
+    next: { label: "Request review", who: "you", kind: "request_review", would_be: null },
     detail: null,
     ...overrides,
   };
@@ -75,7 +76,7 @@ export function noPr(): LoadedStatus {
     ci: "none",
     review: "none",
     merge: "none",
-    next: { label: "Open PR", who: "you", kind: "open_pr" },
+    next: { label: "Open PR", who: "you", kind: "open_pr", would_be: null },
   });
 }
 
@@ -126,6 +127,7 @@ export function branch(
     task_fetchable: false,
     task_live: null,
     agent: null,
+    claim: { holders: [] },
     started_at: null,
     status: { load: "loading" },
     ...rest,
@@ -144,6 +146,7 @@ export function snapshot(branches: Branch[], repos: Repo[] = [repo(1, "api")], e
     filters: [
       { key: "next", label: "Next", options: [
         { value: "you", label: "Needs me" },
+        { value: "agent", label: "With an agent" },
         { value: "ci", label: "Waiting on CI" },
         { value: "others", label: "Waiting on others" },
         { value: "none", label: "Done" },

@@ -20,6 +20,10 @@ The server is a JSON API plus the built web client (``web/``, served from
   - ``task``: a branch's task title/status was (re)fetched;
   - ``structure``: the stack DB was written (new branch, re-parenting, new
     links), so the page re-fetches the snapshot;
+  - ``claims``: some branches' claim holders changed (an agent started or
+    stopped working on them, or a claim expired); carries each affected
+    branch's claim and re-derived status, including the branches stacked on
+    it (see ``claims_feed.py``, ``task_claims``);
   - ``refreshed``: a polling pass finished (drives "updated Ns ago");
   - ``untracked``: the list of the user's open PRs that are not tracked
     branches changed (see ``untracked_prs.py``).
@@ -62,6 +66,10 @@ from toolbelt.ui.aggregate_feed import (
     gh_page,
     read_history,
 )
+from toolbelt.git.stack.store import state_dir
+from toolbelt.task_claims.claim_file import CLAIMS_DIRNAME
+from toolbelt.task_claims.resolution import TrackedTask, git_worktrees, tracked_tasks
+from toolbelt.ui.claims_feed import CLAIMS_TICK_SECONDS, BranchKey, ClaimsFeed
 from toolbelt.ui.client_build import CLIENT_DIST
 from toolbelt.ui.live_status import (
     DEFAULT_CONCURRENCY,
@@ -78,6 +86,7 @@ from toolbelt.ui.live_status import (
 )
 from toolbelt.ui.pr_fetch import PrSnapshot, fetch_snapshot
 from toolbelt.ui.snapshot import (
+    branch_claim,
     build_snapshot,
     descendants,
     live_status,
@@ -179,6 +188,18 @@ def _linked_tasks(tracker: TaskTracker | None) -> list[LinkedTask]:
         store.close()
 
 
+def _claims_dir() -> Path:
+    return state_dir() / CLAIMS_DIRNAME
+
+
+def _claim_tasks() -> list[TrackedTask]:
+    store = StackStore(default_db_path())
+    try:
+        return tracked_tasks(store, git_worktrees)
+    finally:
+        store.close()
+
+
 def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps({'type': event, **data})}\n\n"
 
@@ -204,6 +225,9 @@ def create_app(
     untracked_interval: float = DEFAULT_UNTRACKED_INTERVAL_SECONDS,
     search_history: PageRunner = gh_page,
     stored_history: Callable[[], StoredHistory] = read_history,
+    claims_dir: Callable[[], Path] = _claims_dir,
+    claim_tasks: Callable[[], list[TrackedTask]] = _claim_tasks,
+    claims_tick: float | None = None,
 ) -> FastAPI:
     """``cwd_root``: the repo `tt ui` was launched from; its checked-out
     branch is marked current, as `tt g tree` does. ``fetch`` looks up a
@@ -222,20 +246,58 @@ def create_app(
     ``search_history`` pages through the user's PRs for the aggregate view
     (kept fresh incrementally, see ``AggregateService``) and
     ``stored_history`` reads the
-    stack DB's tracked and archived branches: see ``aggregate_feed.py``."""
+    stack DB's tracked and archived branches: see ``aggregate_feed.py``.
+    ``claims_dir`` is where agents' claim files are (re-read every
+    ``claims_tick`` seconds while watched; default: ``tick``) and
+    ``claim_tasks`` lists the tracked branches a claim can resolve to: see
+    ``claims_feed.py``."""
     task_cache = TaskInfoCache(ttl_seconds=task_ttl_seconds, clock=clock)
     hub = EventHub(clock=clock, grace=grace_seconds)
+
+    def branch_status(repo_id: int, parents: Parents, name: str, now: datetime):
+        return live_status(
+            refresher.get(repo_id, name),
+            parent_context(repo_id, parents, name, refresher, claims),
+            now,
+            claims.working(repo_id, name),
+        )
+
+    def publish_claims(changed: set[BranchKey]) -> None:
+        """One event for every changed branch and the branches stacked on
+        them: whether a branch is claimed decides its next action, and a
+        child's follows its parent's."""
+        now = wall_clock()
+        affected: dict[BranchKey, Parents] = {}
+        for repo_id, branch in sorted(changed):
+            parents = _all_parents(repo_id)
+            for name in descendants(parents, branch):
+                affected[(repo_id, name)] = parents
+        if not affected:
+            return
+        hub.publish(
+            "claims",
+            {
+                "branches": [
+                    {
+                        "branch_id": row_id(repo_id, name),
+                        "claim": branch_claim(
+                            claims.holders(repo_id, name), now
+                        ).model_dump(mode="json"),
+                        "status": branch_status(repo_id, parents, name, now).model_dump(
+                            mode="json"
+                        ),
+                    }
+                    for (repo_id, name), parents in affected.items()
+                ]
+            },
+        )
 
     def publish_status(branch: TrackedBranch, fetched: Fetched) -> None:
         # The cache already holds ``fetched``, so parent contexts see it.
         parents = _all_parents(branch.repo_id)
         now = wall_clock()
         for name in descendants(parents, branch.branch):
-            status = live_status(
-                refresher.get(branch.repo_id, name),
-                parent_context(branch.repo_id, parents, name, refresher),
-                now,
-            )
+            status = branch_status(branch.repo_id, parents, name, now)
             hub.publish(
                 "status",
                 {
@@ -243,6 +305,15 @@ def create_app(
                     "status": status.model_dump(mode="json"),
                 },
             )
+
+    claims = ClaimsFeed(
+        directory=claims_dir,
+        tasks=claim_tasks,
+        hub=hub,
+        on_change=publish_claims,
+        wall_clock=wall_clock,
+        tick=min(tick, CLAIMS_TICK_SECONDS) if claims_tick is None else claims_tick,
+    )
 
     refresher = StatusRefresher(
         branches=_tracked_branches,
@@ -308,6 +379,7 @@ def create_app(
         tasks = [
             asyncio.create_task(refresher.run()),
             asyncio.create_task(task_feed.run()),
+            asyncio.create_task(claims.run()),
             asyncio.create_task(untracked_feed.run()),
             asyncio.create_task(watcher.run()),
             asyncio.create_task(aggregates.run()),
@@ -332,6 +404,7 @@ def create_app(
     app.state.hub = hub
     app.state.refresher = refresher
     app.state.task_feed = task_feed
+    app.state.claims_feed = claims
     app.state.untracked_feed = untracked_feed
     app.state.structure_watcher = watcher
     app.state.aggregates = aggregates
@@ -386,6 +459,7 @@ def create_app(
             untracked=untracked_feed.get(),
             now=wall_clock(),
             version=version,
+            claims=claims,
         )
 
     @app.get("/api/aggregate", response_model=api.Aggregate)

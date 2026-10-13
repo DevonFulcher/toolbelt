@@ -25,6 +25,13 @@ review requested          Waiting for review         others
 otherwise                 Request review             you
 ========================  =========================  ======
 
+A branch an agent has claimed (``claimed=True``: a live ``working`` holder in
+the claims directory, see ``task_claims``) reads **With an agent** instead,
+whatever the table says, except when its PR is merged/closed (Done: the claim
+is ignored). The action it replaced travels with it as ``would_be``. A child
+whose parent reads "With an agent" is "Blocked on <parent>" waiting on
+``others``: the agent has it, not you.
+
 "Blocked on <parent>" replaces "Merge" only: a child's review can proceed
 while its parent is open, but it must not be merged before the parent. Who it
 waits on follows the parent's own next action: when that is yours (the parent
@@ -42,13 +49,15 @@ WHO_YOU = "you"
 WHO_OTHERS = "others"
 WHO_CI = "ci"
 WHO_NONE = "none"
+#: An agent session has claimed the task and is working on it.
+WHO_AGENT = "agent"
 
 #: Who-values in the order "needs me first" sorts them.
-WHO_ORDER = [WHO_YOU, WHO_CI, WHO_OTHERS, WHO_NONE]
+WHO_ORDER = [WHO_YOU, WHO_AGENT, WHO_CI, WHO_OTHERS, WHO_NONE]
 
 #: The values above as a type, for the API's wire models (a test keeps the
 #: two in step).
-type Who = Literal["you", "others", "ci", "none"]
+type Who = Literal["you", "agent", "others", "ci", "none"]
 
 
 # The rule identifiers a ``NextAction.kind`` can take (see the table above).
@@ -66,6 +75,7 @@ BLOCKED = "blocked"
 MERGE = "merge"
 WAIT_REVIEW = "wait_review"
 REQUEST_REVIEW = "request_review"
+CLAIMED = "claimed"
 KINDS = (
     OPEN_PR,
     DONE,
@@ -79,6 +89,7 @@ KINDS = (
     MERGE,
     WAIT_REVIEW,
     REQUEST_REVIEW,
+    CLAIMED,
 )
 
 #: ``KINDS`` as a type, for the API's wire models (a test keeps the two in
@@ -96,16 +107,20 @@ type NextKind = Literal[
     "merge",
     "wait_review",
     "request_review",
+    "claimed",
 ]
 
 
 @dataclass(frozen=True)
 class NextAction:
     label: str
-    #: Who is blocking progress: ``you``, ``others``, ``ci`` or ``none``.
+    #: Who is blocking progress: ``you``, ``agent``, ``others``, ``ci`` or
+    #: ``none``.
     who: str
     #: A stable identifier for the rule that fired (for styling and tests).
     kind: str
+    #: For "With an agent": the action that would show without the claim.
+    would_be: "NextAction | None" = None
 
 
 @dataclass(frozen=True)
@@ -118,9 +133,21 @@ class ParentContext:
     next_who: str = WHO_OTHERS
 
 
-def next_action(status: BranchStatus, parent: ParentContext | None) -> NextAction:
+def next_action(
+    status: BranchStatus, parent: ParentContext | None, claimed: bool = False
+) -> NextAction:
     """``parent`` is ``None`` for a branch on the base branch (or whose
-    parent's status is not known yet)."""
+    parent's status is not known yet). ``claimed``: a live working holder has
+    claimed the branch."""
+    underlying = _underlying_action(status, parent)
+    if claimed and underlying.kind != DONE:
+        return NextAction("With an agent", WHO_AGENT, CLAIMED, would_be=underlying)
+    return underlying
+
+
+def _underlying_action(
+    status: BranchStatus, parent: ParentContext | None
+) -> NextAction:
     if status.pr is PrState.NONE:
         return NextAction("Open PR", WHO_YOU, OPEN_PR)
     if status.pr in (PrState.MERGED, PrState.CLOSED):

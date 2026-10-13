@@ -174,3 +174,64 @@ describe("syncUrl", () => {
     expect(url.location.search).toBe("?view=stacked&q=auth");
   });
 });
+
+describe("claims", () => {
+  const claim = {
+    holders: [
+      {
+        holder: "s1",
+        kind: "agent" as const,
+        state: "working" as const,
+        link: null,
+        age: { text: "2m", since: "2026-10-20T11:58:00Z" },
+        stale: false,
+      },
+    ],
+  };
+  const claimed = pr({
+    next: {
+      label: "With an agent",
+      who: "agent",
+      kind: "claimed",
+      would_be: { label: "Merge", who: "you", kind: "merge" },
+    },
+  });
+
+  test("the snapshot's claims are kept apart from the static branch", () => {
+    const store = createAppStore();
+
+    store.getState().applySnapshot(snapshot([branch(1, "a", { status: pr(), claim })]));
+
+    expect(store.getState().claims["1:a"]).toEqual(claim);
+    expect("claim" in store.getState().branches[0]).toBe(false);
+  });
+
+  test("a claims patch replaces the claim and the re-derived status of each branch it lists", () => {
+    const store = createAppStore({ clock: () => 5000 });
+    store.getState().applySnapshot(
+      snapshot([branch(1, "a", { status: pr() }), branch(1, "b", { parent: "a", status: pr() })], undefined, {
+        version: 4,
+      }),
+    );
+    const untouched = store.getState().statuses["1:b"];
+
+    store.getState().claimsChanged([{ branch_id: "1:a", claim, status: claimed }], 5);
+
+    const state = store.getState();
+    expect(state.claims["1:a"]).toEqual(claim);
+    expect(state.statuses["1:a"]).toEqual(claimed);
+    expect(state.statuses["1:b"]).toBe(untouched);
+    expect(state.version).toBe(5);
+  });
+
+  test("a patch the snapshot already reflects, or for an unknown branch, is ignored", () => {
+    const store = createAppStore();
+    store.getState().applySnapshot(snapshot([branch(1, "a", { status: pr() })], undefined, { version: 7 }));
+
+    store.getState().claimsChanged([{ branch_id: "1:a", claim, status: claimed }], 7);
+    expect(store.getState().claims["1:a"].holders).toEqual([]);
+
+    store.getState().claimsChanged([{ branch_id: "9:zzz", claim, status: claimed }], 8);
+    expect(store.getState().claims["9:zzz"]).toBeUndefined();
+  });
+});

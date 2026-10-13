@@ -781,6 +781,20 @@
       ],
       "dimension": "next",
       "value": "request_review"
+    },
+    {
+      "label": "With an agent",
+      "tone": "purple",
+      "legend": "An agent session has claimed this task and is working on it (a claim file; the action it replaced is in the tooltip).",
+      "reps": [
+        {
+          "how": "now_state",
+          "kind": "next",
+          "absent": false
+        }
+      ],
+      "dimension": "next",
+      "value": "claimed"
     }
   ],
   "not_represented": [
@@ -803,6 +817,10 @@
     {
       "label": "History of being blocked on a parent",
       "why": "Derived from the parent's state now (Next, in the Now tooltip), not recorded."
+    },
+    {
+      "label": "History of an agent claiming a task",
+      "why": "Claims are files with no history: With an agent shows only now, and the aggregate view does not count it (the task is in the state its PR was in)."
     },
     {
       "label": "Conversation comments, edits, labels, assignees",

@@ -665,7 +665,13 @@ export interface NowChip {
 }
 
 // The Next chip is toned by who it waits on.
-const WHO_TONES: Record<Who, Tone> = { you: "accent", ci: "amber", others: "gray", none: "gray" };
+const WHO_TONES: Record<Who, Tone> = {
+  you: "accent",
+  agent: "purple",
+  ci: "amber",
+  others: "gray",
+  none: "gray",
+};
 
 /**
  * The current state of a track (what the end cap's tooltip lists), each looked up in the catalog (an unknown

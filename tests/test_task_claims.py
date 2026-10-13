@@ -54,7 +54,7 @@ def write_holder(
         "agent_id": None,
         "link": link,
         "state": state,
-        "started_at": _z(updated - timedelta(minutes=10)),
+        "started_at": _z(NOW - timedelta(minutes=10)),
         "updated_at": _z(updated),
         "ttl_seconds": ttl,
         "claims": claims or [],
@@ -801,3 +801,17 @@ def test_human_files_written_by_tt_satisfy_the_schema_apart_from_their_kind(
 
     assert document["kind"] == "human"
     assert _validate({**document, "kind": "agent"}, SCHEMA) == []
+
+
+def test_gc_grace_keeps_a_file_that_expired_a_moment_ago(tmp_path: Path):
+    claims = tmp_path / "claims"
+    write_holder(claims, "recent", updated_ago=185)  # expired 5 s ago
+    write_holder(claims, "old", updated_ago=200)  # expired 20 s ago
+    write_holder(claims, "tomb", ttl=0, updated_ago=15, state="idle")
+
+    outcome = operations.collect_garbage(
+        claims, read_claims(claims, NOW), NOW, grace=timedelta(seconds=10)
+    )
+
+    assert sorted(outcome.claim_files) == ["old.json", "tomb.json"]
+    assert (claims / "recent.json").exists()

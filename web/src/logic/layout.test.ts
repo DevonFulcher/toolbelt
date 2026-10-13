@@ -357,3 +357,43 @@ describe("the card views", () => {
     expect(guides[4]).toEqual([{ col: 1, kind: "corner" }]);
   });
 });
+
+describe("branches claimed by an agent", () => {
+  const nextRow = (id: string, parent: string | null, order: number, who: string) =>
+    row(id, parent, order, { next: { value: who, sort: "" } });
+  const rows = [
+    nextRow("a", null, 1, "you"),
+    nextRow("b", null, 2, "agent"),
+    nextRow("c", null, 3, "ci"),
+    nextRow("d", "b", 4, "agent"),
+    nextRow("e", null, 5, "others"),
+  ];
+
+  test("grouped view has a With an agent section right after Needs me", () => {
+    const out = groupedLayout(rows, state({ view: "grouped" }));
+
+    expect(out.map((s) => s.key)).toEqual(["you", "agent", "ci", "others"]);
+    expect(out[1].label).toBe("With an agent");
+    expect(ids(out[1].entries.filter((e) => !e.context))).toEqual(["b", "d"]);
+  });
+
+  test("the Next filter can pick them", () => {
+    const out = groupedLayout(rows, state({ view: "grouped", next: "agent" }));
+
+    expect(out.map((s) => s.key)).toEqual(["agent"]);
+  });
+
+  test("priorities list them in their own section after the ones that need me", () => {
+    const out = prioritiesLayout(rows, state({ view: "priorities" }));
+
+    expect(out.map((s) => s.key)).toEqual(["priorities", "priorities-agent"]);
+    expect(ids(out[0].entries)).toEqual(["a"]);
+    expect(ids(out[1].entries)).toEqual(["b", "d"]);
+  });
+
+  test("priorities with nothing for me still show what agents have", () => {
+    const out = prioritiesLayout([nextRow("b", null, 1, "agent")], state({ view: "priorities" }));
+
+    expect(out.map((s) => s.key)).toEqual(["priorities-agent"]);
+  });
+});

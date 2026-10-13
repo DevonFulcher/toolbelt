@@ -1,5 +1,13 @@
 import { memo, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import type { Catalog, LiveStatus, LoadedStatus, SlotDimensions } from "../api/generated";
+import type {
+  BranchClaim,
+  Catalog,
+  HolderState,
+  LiveStatus,
+  LoadedStatus,
+  SlotDimensions,
+  Tone,
+} from "../api/generated";
 import type { RailSegment } from "../logic/layout";
 import { stackViewRoot } from "../logic/focus";
 import { serializeState } from "../logic/viewState";
@@ -132,6 +140,7 @@ export const Card = memo(
     const repo = useApp((s) => (branch ? s.reposById[branch.repo_id] : undefined));
     const status = useApp((s) => s.statuses[id]) ?? LOADING;
     const task = useApp((s) => s.tasks[id]) ?? null;
+    const claim = useApp((s) => s.claims[id]) ?? NO_CLAIM;
     const catalog = useApp((s) => s.catalog);
     const flashed = useFlashOnChange(status);
     const now = useNow();
@@ -189,6 +198,7 @@ export const Card = memo(
                 {`${WHO_TEXT.you}: ${youText(summary.you)}`}
               </Pill>
             )}
+            {summary.agent > 0 && <Pill tone={WHO_TONE.agent}>{`${WHO_TEXT.agent}: ${summary.agent}`}</Pill>}
             {summary.ci > 0 && <Pill tone={WHO_TONE.ci}>{`${WHO_TEXT.ci}: ${summary.ci}`}</Pill>}
             {summary.others > 0 && <Pill tone={WHO_TONE.others}>{`${WHO_TEXT.others}: ${summary.others}`}</Pill>}
             {summary.done > 0 && <Pill tone={WHO_TONE.none}>{`${WHO_TEXT.none}: ${summary.done}`}</Pill>}
@@ -254,7 +264,7 @@ export const Card = memo(
           <PrSlots status={status} note={note} />
         </Group>
         <Group id="task" title="Task">
-          <NextSlot status={status} note={note} />
+          <NextSlot status={status} note={note} claim={claim} />
           <Slot
             id="task_age"
             label="Task age"
@@ -324,21 +334,77 @@ function unloadedNote(status: Exclude<LiveStatus, LoadedStatus>, pathMissing: bo
 }
 
 /** The Next slot (the Task group's first). */
-function NextSlot({ status, note }: { status: LiveStatus; note: ReactNode }) {
+function NextSlot({
+  status,
+  note,
+  claim,
+}: {
+  status: LiveStatus;
+  note: ReactNode;
+  claim: BranchClaim;
+}) {
   if (status.load !== "loaded") {
     return (
       <Slot id="next" label="Next" state="na">
         {note}
+        <ClaimChips claim={claim} />
       </Slot>
     );
   }
+  const { would_be: wouldBe } = status.next;
   return (
     <Slot id="next" label="Next">
       <Pill tone={WHO_TONE[status.next.who]} title={status.next.kind}>
         {status.next.label}
       </Pill>{" "}
-      <span className="card-next-who muted">{WHO_TEXT[status.next.who]}</span>
+      <span className="card-next-who muted">
+        {wouldBe ? `would be: ${wouldBe.label}` : WHO_TEXT[status.next.who]}
+      </span>
+      <ClaimChips claim={claim} />
     </Slot>
+  );
+}
+
+const NO_CLAIM: BranchClaim = { holders: [] };
+
+const HOLDER_TEXT: Record<HolderState, string> = {
+  working: "working",
+  idle: "idle",
+  blocked: "blocked on you",
+};
+const HOLDER_TONE: Record<HolderState, Tone> = { working: "purple", idle: "gray", blocked: "amber" };
+
+/** Who holds a claim on the branch: a chip per holder (state, age, and the
+ * session's link). Working holders are also the reason for "With an agent". */
+function ClaimChips({ claim }: { claim: BranchClaim }) {
+  if (claim.holders.length === 0) return null;
+  return (
+    <span className="claim-chips">
+      {claim.holders.map((holder) => {
+        const who = holder.kind === "human" ? "claimed by you" : "agent";
+        const text = holder.kind === "human" ? who : `${who} ${HOLDER_TEXT[holder.state]}`;
+        const title = holder.stale
+          ? "Not heard from for a while: it may be hung (tt task release to take it back)"
+          : `${holder.holder}, since ${holder.age.text} ago`;
+        const label = holder.stale ? `${text} (stale)` : text;
+        return (
+          <span
+            key={holder.holder}
+            className={`pill claim-chip tone-${holder.stale ? "red" : HOLDER_TONE[holder.state]}`}
+            data-state={holder.state}
+            title={title}
+          >
+            {holder.link?.href ? (
+              <a href={holder.link.href} title={title}>
+                {label}
+              </a>
+            ) : (
+              label
+            )}
+          </span>
+        );
+      })}
+    </span>
   );
 }
 

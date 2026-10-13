@@ -261,3 +261,39 @@ describe("live updates", () => {
     expect(store.getState().error).toContain("HTTP 500");
   });
 });
+
+test("a claims event applies each listed branch's claim and status", async () => {
+  const { store, current } = setup();
+  await settle();
+  current().emit({ type: "hello", v: 0, age: null });
+  const claimed = pr({
+    next: { label: "With an agent", who: "agent", kind: "claimed", would_be: null },
+  });
+
+  current().emit({
+    type: "claims",
+    v: 1,
+    branches: [
+      {
+        branch_id: "1:a",
+        claim: {
+          holders: [
+            {
+              holder: "s1",
+              kind: "agent",
+              state: "idle",
+              link: { label: "Open session", href: "claude://x" },
+              age: { text: "<1m", since: null },
+              stale: false,
+            },
+          ],
+        },
+        status: claimed,
+      },
+    ],
+  });
+  await settle();
+
+  expect(store.getState().statuses["1:a"]).toEqual(claimed);
+  expect(store.getState().claims["1:a"].holders[0].state).toBe("idle");
+});

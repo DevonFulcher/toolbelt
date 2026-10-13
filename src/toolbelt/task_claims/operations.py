@@ -265,13 +265,20 @@ class GcOutcome:
     temp_files: list[str] = field(default_factory=list)
 
 
-def collect_garbage(claims_dir: Path, reading: Reading, now: datetime) -> GcOutcome:
-    """Deletes expired holder files, revocation files with no live holder, and
-    temp files a dead writer left behind. Unreadable files are left alone (a
-    writer may be mid-way, or newer than this ``tt``)."""
+def collect_garbage(
+    claims_dir: Path,
+    reading: Reading,
+    now: datetime,
+    grace: timedelta = timedelta(0),
+) -> GcOutcome:
+    """Deletes holder files that expired at least ``grace`` ago (a heartbeat
+    racing the deletion cannot lose a claim), revocation files with no holder
+    file, and temp files a dead writer left behind. A ``ttl_seconds`` 0
+    tombstone is expired at its ``updated_at``. Unreadable files are left
+    alone (a writer may be mid-way, or newer than this ``tt``)."""
     outcome = GcOutcome()
     for holder in reading.expired:
-        if _still_expired(holder, now):
+        if _still_expired(holder, now - grace):
             holder.path.unlink(missing_ok=True)
             outcome.claim_files.append(holder.path.name)
     revoked_dir = claims_dir / REVOKED_DIRNAME

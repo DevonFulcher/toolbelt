@@ -14,6 +14,7 @@ tools/ui-demo/run.sh --port 8800 --dir /tmp/my-demo
 | Piece | What it is |
 |---|---|
 | `seed.py` | Two git repos (`demo-app`, `demo-search`, each with an `origin` URL) registered in a temp `TOOLBELT_HOME` with stacks, task refs, session deeplinks and backdated task start times, plus the aggregate view's history (below). |
+| `seed.py` (claims) | Task claim files in `home/claims/` (see below). |
 | `history.py` | Generates the aggregate history: about 12 weeks of PRs and the archived task facts of their branches. |
 | `gh` | A fake `gh` that answers the UI's single-PR GraphQL lookup, the untracked-PR search and the aggregate view's history search from canned scenarios. Timestamps in `SCENARIOS` are relative to now; the history's are absolute (written at seed time). |
 | `run.sh` | Seeds, puts the fake `gh` first on `PATH`, and runs this checkout's `toolbelt ui`. |
@@ -22,6 +23,25 @@ Scenarios covered by the fake `gh` (branch -> state): approved and waiting to
 merge, requested review with unresolved threads and a failed-then-fixed CI,
 draft with CI running, changes requested with failing CI, merged, merge
 conflicts, ready for review with CI running, and branches with no PR.
+
+## Task claims
+
+`seed.py` writes claim files (`docs/task-claims.md`) as a Claude Code session
+would, so the UI's "With an agent" status can be looked at without one:
+
+| Holder | State | On | What it shows |
+|---|---|---|---|
+| `sess-working` | working | `devon/auth-docs` (failing CI) | "With an agent", "would be: Fix / re-run CI", a session link, and the card in the *With an agent* section |
+| `sess-idle` | idle | `devon/cache-layer` | an "agent idle" chip; the status is unchanged |
+| `sess-blocked` | blocked | `devon/auth-ui` | an "agent blocked on you" chip |
+| `sess-expired` | working, expired 2h ago | `devon/search-index` | nothing: ignored, then deleted by `tt ui` after a grace |
+| `sess-revoked` | working, claim revoked | `devon/cache-metrics` | nothing: the revocation is newer than the claim |
+
+The live holders have an 8-hour ttl so they outlast a look at the demo (a
+plugin's is 3 minutes with a heartbeat). Try the commands against the demo with
+`TOOLBELT_HOME=<dir>/home tt task status --verbose`, `tt task release
+devon/auth-docs --force` (the card moves back to "Needs me" within a second)
+and `tt task claim devon/search-ranking`.
 
 ## The aggregate view's history
 

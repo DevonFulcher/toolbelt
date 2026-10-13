@@ -6,7 +6,8 @@ export type MixState =
   "working" | "draft" | "ready" | "waiting" | "changes" | "ci_running" | "ci_failing" | "approved" | "blocked";
 export type Tone = "green" | "red" | "amber" | "gray" | "purple" | "accent";
 export type MixWho = "you" | "ci" | "others";
-export type ServerEvent = HelloEvent | StatusEvent | TaskEvent | StructureEvent | RefreshedEvent | UntrackedEvent;
+export type ServerEvent =
+  HelloEvent | StatusEvent | TaskEvent | ClaimsEvent | StructureEvent | RefreshedEvent | UntrackedEvent;
 export type LiveStatus = LoadingStatus | FailedStatus | LoadedStatus;
 export type CiState = "none" | "running" | "failed" | "success";
 export type CiResult = "" | "failed" | "success" | "pending";
@@ -35,13 +36,16 @@ export type NextKind =
   | "blocked"
   | "merge"
   | "wait_review"
-  | "request_review";
-export type Who = "you" | "others" | "ci" | "none";
+  | "request_review"
+  | "claimed";
+export type Who = "you" | "agent" | "others" | "ci" | "none";
 export type Chip = PrChip | CiChip | ReviewChip | CommentsChip | MergeChip | NextChip;
 export type PrState = "none" | "draft" | "open" | "merged" | "closed";
 export type ReviewState = "none" | "requested" | "approved" | "reviewed";
 export type CommentsValue = "none" | "open";
 export type TaskLive = TaskLoading | TaskDetails | TaskUnavailable;
+export type HolderKind = "agent" | "human";
+export type HolderState = "working" | "idle" | "blocked";
 export type UntrackedPrs = UntrackedLoading | UntrackedLoaded | UntrackedFailed;
 export type CatalogDimension =
   "pr" | "ci" | "review" | "comments" | "merge" | "task" | "draft" | "reviewers" | "blocked" | "next";
@@ -241,6 +245,15 @@ export interface NextActionInfo {
   kind: NextKind;
   label: string;
   who: Who;
+  would_be?: WouldBeAction | null;
+}
+/**
+ * What a claimed branch's next action would be without the claim.
+ */
+export interface WouldBeAction {
+  kind: NextKind;
+  label: string;
+  who: Who;
 }
 export interface PrChip {
   dimension: "pr";
@@ -268,6 +281,7 @@ export interface NextChip {
   text: string;
   value: NextKind;
   who: Who;
+  would_be?: string | null;
 }
 export interface TaskEvent {
   branch_id: string;
@@ -286,6 +300,42 @@ export interface TaskDetails {
 export interface TaskUnavailable {
   reason: string;
   state: "unavailable";
+}
+/**
+ * Claims changed on some branches. Lists those and the branches stacked
+ * on them (their next action follows the parent's).
+ */
+export interface ClaimsEvent {
+  branches: ClaimPatch[];
+  type: "claims";
+  v: number;
+}
+export interface ClaimPatch {
+  branch_id: string;
+  claim: BranchClaim;
+  status: LiveStatus;
+}
+export interface BranchClaim {
+  holders: ClaimHolder[];
+}
+/**
+ * A live holder of a claim on a branch (see ``task_claims``). Only live
+ * holders are sent: an expired one is gone.
+ */
+export interface ClaimHolder {
+  age: Age;
+  holder: string;
+  kind: HolderKind;
+  link: Link | null;
+  stale: boolean;
+  state: HolderState;
+}
+/**
+ * ``href`` is ``None`` when the value cannot (or should not) be linked.
+ */
+export interface Link {
+  href: string | null;
+  label: string;
 }
 /**
  * The stack DB was written: the client re-fetches the snapshot.
@@ -346,6 +396,7 @@ export interface Snapshot {
 export interface Branch {
   agent: Link | null;
   children: ChildRef[];
+  claim: BranchClaim;
   current: boolean;
   depth: number;
   id: string;
@@ -361,13 +412,6 @@ export interface Branch {
   task: Link | null;
   task_fetchable: boolean;
   task_live: TaskLive | null;
-}
-/**
- * ``href`` is ``None`` when the value cannot (or should not) be linked.
- */
-export interface Link {
-  href: string | null;
-  label: string;
 }
 export interface ChildRef {
   id: string;

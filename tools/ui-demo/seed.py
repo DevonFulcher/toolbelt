@@ -13,6 +13,11 @@ It also writes the aggregate view's history (see history.py):
 DEST/history.json, which the fake `gh` serves to the aggregate search, and the
 archived task facts of cleaned-up branches in stacks.db (`removed_branches`).
 
+It writes task claims (what a Claude Code session claims; docs/task-claims.md)
+into DEST/home/claims: a working holder on a branch with a failing CI, an idle
+one, a blocked one, an expired one and a revoked one. The live holders have
+an 8-hour ttl so they outlast a look at the demo (a real writer's is 3 min).
+
 Run it with TOOLBELT_HOME pointing at DEST/home (run.sh does this).
 """
 
@@ -89,6 +94,92 @@ def write_history(dest: Path, db: sqlite3.Connection, now: datetime) -> None:
     db.execute("UPDATE archive_info SET since = ?", (since,))
 
 
+def write_claims(home: Path, now: datetime) -> None:
+    """Claim files in the contract's shape (docs/task-claims.md)."""
+
+    def z(time: datetime) -> str:
+        return time.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    claims = home / "claims"
+    (claims / "revoked").mkdir(parents=True, exist_ok=True)
+
+    def holder(
+        name: str,
+        state: str,
+        refs: list[str],
+        *,
+        updated: datetime,
+        ttl: int,
+        touched: datetime | None = None,
+        session: int | None = None,
+    ) -> None:
+        touched = touched or updated
+        document = {
+            "version": 1,
+            "holder": name,
+            "kind": "agent",
+            "session_id": name.split(".")[0],
+            "agent_id": name.split(".")[1] if "." in name else None,
+            "link": SESSION.format(n=session) if session else None,
+            "state": state,
+            "started_at": z(updated - timedelta(minutes=20)),
+            "updated_at": z(updated),
+            "ttl_seconds": ttl,
+            "claims": [
+                {"kind": "ref", "ref": ref, "touched_at": z(touched)} for ref in refs
+            ],
+        }
+        (claims / f"{name}.json").write_text(json.dumps(document, indent=2))
+
+    day = 8 * 3600
+    # Working on a branch whose CI is failing: reads "With an agent", and
+    # would be "Fix / re-run CI".
+    holder(
+        "sess-working", "working", ["devon/auth-docs"], updated=now, ttl=day, session=11
+    )
+    # Waiting for you / on a prompt: the status is unchanged, a chip is added.
+    holder("sess-idle", "idle", ["devon/cache-layer"], updated=now, ttl=day, session=12)
+    holder(
+        "sess-blocked", "blocked", ["devon/auth-ui"], updated=now, ttl=day, session=13
+    )
+    # Expired: ignored (and deleted once past the grace).
+    holder(
+        "sess-expired",
+        "working",
+        ["devon/search-index"],
+        updated=now - timedelta(hours=2),
+        ttl=180,
+        session=14,
+    )
+    # Alive, but its claim was released with `tt task release`.
+    holder(
+        "sess-revoked",
+        "working",
+        ["devon/cache-metrics"],
+        updated=now,
+        ttl=day,
+        touched=now - timedelta(minutes=5),
+        session=15,
+    )
+    (claims / "revoked" / "sess-revoked.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "holder": "sess-revoked",
+                "revoked": [
+                    {
+                        "kind": "ref",
+                        "ref": "devon/cache-metrics",
+                        "at": z(now - timedelta(minutes=1)),
+                        "by": "tt task release",
+                    }
+                ],
+            },
+            indent=2,
+        )
+    )
+
+
 def seed(dest: Path, deep: int) -> None:
     repos = dest / "repos"
     for name in STACKS:
@@ -150,6 +241,7 @@ def seed(dest: Path, deep: int) -> None:
         db.execute("UPDATE branches SET started_at = ? WHERE name = ?", (when, branch))
     write_history(dest, db, now)
     db.commit()
+    write_claims(Path(os.environ["TOOLBELT_HOME"]), now)
 
 
 def main() -> None:

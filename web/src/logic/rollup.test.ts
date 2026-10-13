@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import type { LiveStatus } from "../api/generated";
 import { rollup, youText } from "./rollup";
 
-const loaded = (who: "you" | "ci" | "others" | "none", label: string): LiveStatus =>
+const loaded = (who: "you" | "agent" | "ci" | "others" | "none", label: string): LiveStatus =>
   ({ load: "loaded", next: { who, label, kind: "merge" } }) as unknown as LiveStatus;
 
 describe("rollup", () => {
@@ -26,12 +26,26 @@ describe("rollup", () => {
     expect([result.ci, result.others, result.done, result.loading]).toEqual([1, 1, 1, 0]);
   });
 
+  test("branches claimed by an agent are their own bucket", () => {
+    const statuses: Record<string, LiveStatus> = {
+      a: loaded("agent", "With an agent"),
+      b: loaded("agent", "With an agent"),
+      c: loaded("you", "Merge"),
+    };
+
+    const result = rollup(["a", "b", "c"], (id) => statuses[id]);
+
+    expect(result.agent).toBe(2);
+    expect(result.you).toEqual([{ label: "Merge", n: 1 }]);
+    expect(result.total).toBe(3);
+  });
+
   test("every branch lands in exactly one bucket, unknown statuses as loading", () => {
     const statuses: Record<string, LiveStatus> = { a: loaded("you", "Open PR"), b: { load: "failed" } };
 
     const result = rollup(["a", "b", "missing"], (id) => statuses[id]);
 
-    const buckets = result.you.reduce((n, entry) => n + entry.n, 0) + result.ci + result.others + result.done + result.loading;
+    const buckets = result.you.reduce((n, entry) => n + entry.n, 0) + result.agent + result.ci + result.others + result.done + result.loading;
     expect(buckets).toBe(result.total);
     expect(result.loading).toBe(2);
   });

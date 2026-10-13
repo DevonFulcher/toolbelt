@@ -6,6 +6,8 @@
 //              events were missed, so the snapshot is re-fetched
 //   status     a branch's new live status
 //   task       a branch's task title / status
+//   claims     who holds a claim on some branches changed (with their
+//              re-derived status: "With an agent" decides the next action)
 //   structure  the stack DB changed: re-fetch the snapshot
 //   refreshed  a polling pass finished ("updated Ns ago")
 //   untracked  the open PRs toolbelt does not track changed
@@ -31,7 +33,7 @@ export interface EventSourceLike {
   close(): void;
 }
 
-const EVENT_TYPES = ["hello", "status", "task", "structure", "refreshed", "untracked"] as const;
+const EVENT_TYPES = ["hello", "status", "task", "claims", "structure", "refreshed", "untracked"] as const;
 const CLOSED = 2; // EventSource.CLOSED
 
 export interface LiveDeps {
@@ -81,6 +83,9 @@ export function startLiveUpdates(deps: LiveDeps): LiveUpdates {
         return undefined;
       case "task":
         state.taskChanged(event.branch_id, event.task, event.v);
+        return undefined;
+      case "claims":
+        state.claimsChanged(event.branches, event.v);
         return undefined;
       case "refreshed":
         state.refreshed(event.v);

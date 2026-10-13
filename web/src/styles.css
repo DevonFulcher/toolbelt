@@ -82,6 +82,7 @@ a.pill:hover { text-decoration: none; background: color-mix(in srgb, currentColo
 .next-you { color: var(--accent); font-weight: 600; }
 .next-others { color: var(--muted); }
 .next-ci { color: var(--amber); }
+.next-agent { color: var(--purple); font-weight: 600; }
 .next-none { color: var(--gray); }
 .ci-failed, .error { color: var(--red); }
 .task-status { color: var(--gray); }
@@ -128,6 +129,7 @@ a.pill:hover { text-decoration: none; background: color-mix(in srgb, currentColo
 .cards-section.collapsed .cards-section-body { display: none; }
 .cards-section[data-tone=you] .cg-label { color: var(--accent); }
 .cards-section[data-tone=ci] .cg-label { color: var(--amber); }
+.cards-section[data-tone=agent] .cg-label { color: var(--purple); }
 /* Stacked view: indentation by stack depth, a rail from each card up to its parent. */
 .cards { --step: 1.5rem; --rail: color-mix(in srgb, var(--muted) 65%, transparent); }
 .cards-stacked .card, .cards-stacked .card-stub { margin-left: calc(var(--depth, 0) * var(--step)); }
@@ -361,3 +363,6 @@ main:has(.focus-bar) { --focus-h: 2.6rem; }
 .card-folded .slot-label { font-size: 10px; }
 .rollup { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; min-width: 0; }
 .rollup-count { color: var(--muted); font-size: 12px; }
+.claim-chips { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-left: 4px; }
+.claim-chip { font-size: 11px; }
+.claim-chip a { color: inherit; }

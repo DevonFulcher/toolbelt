@@ -53,6 +53,20 @@ own private repo.
   scratch and from every historical `user_version` with rows in place.
   `tests/test_pr_link.py` covers recording a task's PR identity (`tt git pr`,
   sync, merge, branch-clean) and that a recorded link is never replaced.
+- **Task claims** (`tests/test_task_claims.py`, `tests/test_ui_claims.py`,
+  `web/src/**` claim tests): the claim files' reading (live/expired/idle/
+  blocked and stale at an injected clock, ttl-0 tombstones, partial files,
+  revocations by `touched_at`), resolving claims to tracked branches (worktree
+  list injected, once per read), the `tt task` commands (clock, directories and
+  worktree lister injected through `TaskEnvironment`), `gc`'s grace, the
+  writer's JSON Schema (`tests/claim_schema/`, validated with a small
+  in-test validator), the UI's claims feed (polling gated on a connected
+  browser, heartbeats not reported, expiry noticed without a file change,
+  git asked only when the claims change), the `claims` SSE event re-deriving a
+  branch and its stacked children, `next_action` with a claim (merged/closed
+  stays Done; a child of a claimed parent waits on others), and the client's
+  store, section and card chips. Nothing sleeps; the claims directory is a
+  temp dir.
 - **The state catalog** (`src/toolbelt/ui/pr_states.py`) is the single
   declaration of every state a card can show and how the timeline represents
   it. Its exhaustiveness tests fail when a state is added without a timeline
@@ -112,6 +126,12 @@ Catch them by measuring the real page.
 tools/ui-demo/run.sh                  # two repos, 8 branches, every scenario
 tools/ui-demo/run.sh --deep 14        # plus a 14-deep stack: depth cap, re-rooting
 ```
+
+The demo also seeds task claims (a working, an idle, a blocked, an expired
+and a revoked holder: see its README); `tt task release <branch> --force`
+against `TOOLBELT_HOME=<dir>/home` should move a "With an agent" card within
+about a second. Claims have no history, so the aggregate view does not show
+them (its notes say so).
 
 `?view=aggregate` shows about 12 weeks of seeded history (about 35 PRs, task
 starts recorded for the last 9 weeks only, about two thirds of them with a

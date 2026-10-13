@@ -26,6 +26,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from toolbelt.git.stack.status import CiState, PrState, ReviewState
+from toolbelt.task_claims.claim_file import HolderKind, HolderState
 from toolbelt.ui import pr_states
 from toolbelt.ui.next_action import NextKind, Who
 from toolbelt.ui.pr_activity import ActivityKind
@@ -265,12 +266,22 @@ class PrDetail(Model):
     events: list[TimelineEvent]
 
 
+class WouldBeAction(Model):
+    """What a claimed branch's next action would be without the claim."""
+
+    label: str
+    who: Who
+    kind: NextKind
+
+
 class NextActionInfo(Model):
     label: str
     #: Who is blocking progress.
     who: Who
     #: Which rule fired (see ``next_action.py``).
     kind: NextKind
+    #: For "With an agent" (``kind == "claimed"``): the action it replaced.
+    would_be: WouldBeAction | None = None
 
 
 class PrChip(Model):
@@ -306,6 +317,8 @@ class NextChip(Model):
     #: The action's own label (it names the parent when blocked).
     text: str
     who: Who
+    #: For "With an agent": the label of the action it replaced.
+    would_be: str | None = None
 
 
 type Chip = Annotated[
@@ -382,6 +395,27 @@ class Link(Model):
     href: str | None
 
 
+class ClaimHolder(Model):
+    """A live holder of a claim on a branch (see ``task_claims``). Only live
+    holders are sent: an expired one is gone."""
+
+    holder: str
+    kind: HolderKind
+    #: ``working`` makes the branch "With an agent"; ``idle`` (waiting for
+    #: you) and ``blocked`` (waiting on a prompt) only add a chip.
+    state: HolderState
+    #: A deeplink to the holder's session, when it has one.
+    link: Link | None
+    #: How long it has held the task, counting from ``since``.
+    age: Age
+    #: Working, but not heard from for a while: probably hung.
+    stale: bool
+
+
+class BranchClaim(Model):
+    holders: list[ClaimHolder]
+
+
 class Repo(Model):
     id: int
     name: str
@@ -419,6 +453,8 @@ class Branch(Model):
     task_fetchable: bool
     task_live: TaskLive | None
     agent: Link | None
+    #: Who holds a claim on it right now (empty: nobody).
+    claim: BranchClaim
     #: ISO time the task started (the branch was registered); ``None`` only
     #: if the database has none for it.
     started_at: str | None
@@ -663,10 +699,28 @@ class UntrackedEvent(Model):
     untracked: UntrackedPrs
 
 
+class ClaimPatch(Model):
+    branch_id: str
+    claim: BranchClaim
+    #: Re-derived with the claim: whether it is "With an agent" changes the
+    #: next action.
+    status: LiveStatus
+
+
+class ClaimsEvent(Model):
+    """Claims changed on some branches. Lists those and the branches stacked
+    on them (their next action follows the parent's)."""
+
+    type: Literal["claims"]
+    v: int
+    branches: list[ClaimPatch]
+
+
 type ServerEvent = Annotated[
     HelloEvent
     | StatusEvent
     | TaskEvent
+    | ClaimsEvent
     | StructureEvent
     | RefreshedEvent
     | UntrackedEvent,

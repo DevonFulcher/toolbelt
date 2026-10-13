@@ -9,7 +9,9 @@
 import { createStore, type StoreApi } from "zustand/vanilla";
 import type {
   Branch,
+  BranchClaim,
   Catalog,
+  ClaimPatch,
   FilterSpec,
   LiveStatus,
   Repo,
@@ -21,7 +23,7 @@ import type { ConnectionState } from "../live/connection";
 import { DEFAULT_STATE, type View, type ViewState } from "../logic/viewState";
 
 /** A branch without its live parts (those are patched separately). */
-export type StaticBranch = Omit<Branch, "status" | "task_live">;
+export type StaticBranch = Omit<Branch, "status" | "task_live" | "claim">;
 
 /** Per-card timeline UI state, kept across live updates. */
 export interface CardUi {
@@ -54,6 +56,8 @@ export interface AppState {
   branches: StaticBranch[];
   branchesById: Record<string, StaticBranch>;
   statuses: Record<string, LiveStatus>;
+  /** Who holds a claim on each branch (live holders only). */
+  claims: Record<string, BranchClaim>;
   /** Only for branches whose task the configured tracker owns. */
   tasks: Record<string, TaskLive>;
   catalog: Catalog | null;
@@ -80,6 +84,8 @@ export interface AppState {
   setSnapshotError(message: string): void;
   statusChanged(branchId: string, status: LiveStatus, v: number): void;
   taskChanged(branchId: string, task: TaskLive, v: number): void;
+  /** Claims changed on some branches: their claim and re-derived status. */
+  claimsChanged(patches: ClaimPatch[], v: number): void;
   refreshed(v: number): void;
   untrackedChanged(untracked: UntrackedPrs, v: number): void;
   hello(v: number, ageSeconds: number | null): void;
@@ -139,6 +145,7 @@ export function createAppStore(init: StoreInit = {}): AppStore {
     branches: [],
     branchesById: {},
     statuses: {},
+    claims: {},
     tasks: {},
     catalog: null,
     filters: [],
@@ -156,9 +163,11 @@ export function createAppStore(init: StoreInit = {}): AppStore {
       const prev = get();
       const statuses: Record<string, LiveStatus> = {};
       const tasks: Record<string, TaskLive> = {};
+      const claims: Record<string, BranchClaim> = {};
       const statics: StaticBranch[] = [];
-      for (const { status, task_live, ...rest } of snapshot.branches) {
+      for (const { status, task_live, claim, ...rest } of snapshot.branches) {
         statuses[rest.id] = status;
+        claims[rest.id] = claim;
         if (task_live) tasks[rest.id] = task_live;
         const before = prev.branchesById[rest.id];
         statics.push(before && same(before, rest) ? before : rest);
@@ -177,6 +186,7 @@ export function createAppStore(init: StoreInit = {}): AppStore {
         branchesById,
         statuses: share(prev.statuses, statuses),
         tasks: share(prev.tasks, tasks),
+        claims: share(prev.claims, claims),
         catalog: prev.catalog && same(prev.catalog, snapshot.catalog) ? prev.catalog : snapshot.catalog,
         filters: same(prev.filters, snapshot.filters) ? prev.filters : snapshot.filters,
         untracked: same(prev.untracked, snapshot.untracked) ? prev.untracked : snapshot.untracked,
@@ -211,6 +221,19 @@ export function createAppStore(init: StoreInit = {}): AppStore {
         version: v,
         tasks: before && same(before, task) ? state.tasks : { ...state.tasks, [branchId]: task },
       });
+    },
+
+    claimsChanged(patches, v) {
+      const state = get();
+      if (state.version !== null && v <= state.version) return;
+      const statuses = { ...state.statuses };
+      const claims = { ...state.claims };
+      for (const patch of patches) {
+        if (!(patch.branch_id in state.branchesById)) continue;
+        if (!same(statuses[patch.branch_id], patch.status)) statuses[patch.branch_id] = patch.status;
+        if (!same(claims[patch.branch_id], patch.claim)) claims[patch.branch_id] = patch.claim;
+      }
+      set({ version: v, statuses, claims });
     },
 
     refreshed(v) {

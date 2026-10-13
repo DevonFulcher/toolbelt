@@ -31,11 +31,18 @@ export const REVIEW_TONE: Record<ReviewState, Tone> = {
 /** Who a branch's next action is waiting on, in words. */
 export const WHO_TEXT: Record<Who, string> = {
   you: "needs you",
+  agent: "with an agent",
   others: "waiting on others",
   ci: "waiting on CI",
   none: "done",
 };
-export const WHO_TONE: Record<Who, Tone> = { you: "accent", ci: "amber", others: "gray", none: "gray" };
+export const WHO_TONE: Record<Who, Tone> = {
+  you: "accent",
+  agent: "purple",
+  ci: "amber",
+  others: "gray",
+  none: "gray",
+};
 
 export function Pill({ tone, title, children }: { tone: Tone; title?: string; children: string }) {
   return (

@@ -279,3 +279,61 @@ def test_next_action(name, branch, parent, label, who, kind):
     action = next_action(branch, parent)
 
     assert (action.label, action.who, action.kind) == (label, who, kind), name
+
+
+CLAIMED = ("With an agent", "agent", "claimed")
+
+
+@pytest.mark.parametrize(
+    ("name", "branch", "underlying"),
+    [
+        ("no PR yet", status(pr=PrState.NONE, ci=CiState.NONE), "Open PR"),
+        ("conflicts", status(conflicts=True), "Resolve conflicts"),
+        ("open comments", status(comments=2), "Resolve comments"),
+        ("failing CI", status(ci=CiState.FAILED), "Fix / re-run CI"),
+        ("CI running", status(ci=CiState.RUNNING), "Waiting on CI"),
+        ("approved", status(review=ReviewState.APPROVED), "Merge"),
+        (
+            "waiting for review",
+            status(review=ReviewState.REQUESTED),
+            "Waiting for review",
+        ),
+    ],
+)
+def test_a_claim_replaces_the_action_and_keeps_it_as_would_be(name, branch, underlying):
+    action = next_action(branch, None, claimed=True)
+
+    assert (action.label, action.who, action.kind) == CLAIMED, name
+    assert action.would_be == next_action(branch, None)
+    assert action.would_be.label == underlying
+
+
+@pytest.mark.parametrize("pr", [PrState.MERGED, PrState.CLOSED])
+def test_a_claim_on_a_finished_pr_is_ignored(pr):
+    action = next_action(status(pr=pr), None, claimed=True)
+
+    assert (action.label, action.who, action.kind) == ("Done", "none", "done")
+    assert action.would_be is None
+
+
+def test_no_claim_means_no_would_be():
+    assert next_action(status(), None).would_be is None
+
+
+def test_a_child_of_an_agents_branch_waits_on_others_not_on_you():
+    agent_parent = ParentContext("devon/base", PrState.OPEN, next_who="agent")
+
+    action = next_action(status(review=ReviewState.APPROVED), agent_parent)
+
+    assert (action.label, action.who, action.kind) == (
+        "Blocked on devon/base",
+        "others",
+        "blocked",
+    )
+
+
+def test_a_claimed_child_still_reads_with_an_agent_not_blocked():
+    action = next_action(status(review=ReviewState.APPROVED), OPEN_PARENT, claimed=True)
+
+    assert action.kind == "claimed"
+    assert action.would_be.kind == "blocked"

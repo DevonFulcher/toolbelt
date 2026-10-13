@@ -104,6 +104,12 @@ NOTES: tuple[tuple[str, str], ...] = (
         "does.",
     ),
     (
+        "Agent claims",
+        "'With an agent' (a task claimed by an agent session or a person) is "
+        "the present state only: claims are files with no history, so the "
+        "chart counts a claimed task in the state its PR was in.",
+    ),
+    (
         "Days, weeks and weekends",
         "The server sends UTC instants and the status-mix samples; the page "
         "decides what a day, a week (Monday first) and a weekend are from "

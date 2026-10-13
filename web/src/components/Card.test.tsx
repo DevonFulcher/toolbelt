@@ -1,6 +1,6 @@
 import { act, screen, within } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
-import type { Branch, LoadedStatus } from "../api/generated";
+import type { Branch, BranchClaim, LoadedStatus } from "../api/generated";
 import { branch, catalog, detail, event, noPr, pr, repo, snapshot, DAY, NOW } from "../testing/fixtures";
 import { renderWith } from "../testing/render";
 import { App } from "./App";
@@ -331,5 +331,78 @@ describe("live patches", () => {
     expect(pillRenders.get("failed")).toBeGreaterThan(0);
     // devon/b's card (its CI pill says "running") was not rendered again.
     expect(pillRenders.get("running")).toBeUndefined();
+  });
+});
+
+describe("claims", () => {
+  const holder = (over: Partial<BranchClaim["holders"][number]> = {}): BranchClaim["holders"][number] => ({
+    holder: "s1",
+    kind: "agent",
+    state: "working",
+    link: { label: "Open session", href: "claude://claude.ai/epitaxy/abc" },
+    age: { text: "5m", since: null },
+    stale: false,
+    ...over,
+  });
+  const claimedStatus = pr({
+    next: {
+      label: "With an agent",
+      who: "agent",
+      kind: "claimed",
+      would_be: { label: "Resolve comments", who: "you", kind: "resolve_comments" },
+    },
+  });
+
+  test("a claimed branch says With an agent, what it would be, and links the session", () => {
+    showCards([branch(1, "devon/a", { status: claimedStatus, claim: { holders: [holder()] } })]);
+
+    const next = slotsOf("devon/a").next[2];
+
+    expect(next).toContain("With an agent");
+    expect(next).toContain("would be: Resolve comments");
+    expect(next).toContain("agent working");
+    expect(screen.getByRole("link", { name: "agent working" })).toHaveAttribute(
+      "href",
+      "claude://claude.ai/epitaxy/abc",
+    );
+  });
+
+  test("an idle or blocked holder is a chip and leaves the next action alone", () => {
+    showCards([
+      branch(1, "devon/a", { status: pr(), claim: { holders: [holder({ state: "idle" })] } }),
+      branch(1, "devon/b", { status: pr(), claim: { holders: [holder({ state: "blocked", holder: "s2" })] } }),
+    ]);
+
+    expect(slotsOf("devon/a").next[2]).toContain("Request review");
+    expect(slotsOf("devon/a").next[2]).toContain("agent idle");
+    expect(slotsOf("devon/b").next[2]).toContain("agent blocked on you");
+  });
+
+  test("a stale holder is flagged and a human claim says whose it is", () => {
+    showCards([
+      branch(1, "devon/a", { status: claimedStatus, claim: { holders: [holder({ stale: true })] } }),
+      branch(1, "devon/b", {
+        status: claimedStatus,
+        claim: { holders: [holder({ kind: "human", holder: "human.devon", link: null })] },
+      }),
+    ]);
+
+    expect(slotsOf("devon/a").next[2]).toContain("agent working (stale)");
+    expect(slotsOf("devon/b").next[2]).toContain("claimed by you");
+  });
+
+  test("a claims patch moves the card to With an agent while it is shown", () => {
+    const { store } = showCards([branch(1, "devon/a", { status: pr() })]);
+    expect(slotsOf("devon/a").next[2]).toContain("Request review");
+
+    act(() => {
+      store.getState().claimsChanged(
+        [{ branch_id: "1:devon/a", claim: { holders: [holder()] }, status: claimedStatus }],
+        1,
+      );
+    });
+
+    expect(slotsOf("devon/a").next[2]).toContain("With an agent");
+    expect(screen.getByText("With an agent", { selector: ".cg-label" })).toBeInTheDocument();
   });
 });

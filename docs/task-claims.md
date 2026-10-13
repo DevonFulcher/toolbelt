@@ -86,11 +86,17 @@ The plugin's mod API has no delete, rename or atomic write, so:
    shown, deleted by `tt task gc`.
 2. **Writes are a plain overwrite, not atomic.** A reader may see an empty or
    partial file. It skips that file for that read (the next poll sees the
-   whole file) and must never error or flap the UI on one bad read. `tt ui`
-   keeps a holder's last good state across one unreadable read, and
-   `tt task status` lists a file as ignored only when it is unreadable on two
-   reads 0.2 s apart. (`tt` itself still writes `human.*` files and
-   revocations atomically.)
+   whole file) and must never error or flap the UI on one bad read. A file is
+   *reported* (verbose status, `ClaimsFeed.unreadable`) only when it is
+   invalid on two consecutive reads: `tt ui` keeps a holder's last good state
+   across one unreadable poll, and `tt task status` re-reads 0.2 s later.
+   (`tt` itself still writes `human.*` files and revocations atomically.)
+7. **`tt` deletes what is dead.** The mod never deletes or renames. `tt ui`
+   deletes a holder file once it has been expired (or a `ttl_seconds: 0`
+   tombstone) for 10 seconds (the grace keeps a heartbeat that races the
+   deletion from losing a claim; the file is re-read right before it is
+   removed), and a revocation file whose holder file is gone.
+   `tt task gc` does the same on demand, without the grace.
 3. `link` is `null` when `CLAUDE_CODE_HOST_SESSION_ID` is unset, otherwise
    `claude://claude.ai/epitaxy/<that id>`.
 4. **Machine-readable schema**: `claude-plugin/schema/claim.schema.json`
@@ -152,6 +158,30 @@ tt task gc                              # delete expired files, orphaned revocat
 revocation the writer honours (see above). An agent that is `working` and
 heartbeating is refused without `--force`; a stale, idle or blocked one is
 not. `release` exits 1 when it released nothing or refused something.
+
+## In `tt ui`
+
+- **Next** gains a value: `With an agent` (`who: "agent"`, `kind: "claimed"`),
+  shown when a live `working` holder claims the branch. It carries the action
+  it replaced (`would_be`, "would be: Resolve comments"). A merged/closed PR
+  stays *Done* (the claim is ignored there, but still shown as a chip).
+- A child that is approved but waits on a parent that reads "With an agent"
+  is "Blocked on <parent>", waiting on *others* (the agent has the parent).
+- `idle` / `blocked` holders do not change the status: the card gets a chip
+  ("agent idle", "agent blocked on you") linking the session; a stale working
+  holder is flagged.
+- Grouped and Priorities have a **With an agent** section after **Needs me**;
+  the Next filter has the value; a rolled-up stacked card counts them.
+- **Live**: while a browser is connected the server re-reads the directory
+  about once a second (the same gating and grace as the GitHub polling),
+  re-evaluates TTL expiry on each tick, and pushes a `claims` event listing
+  the branches whose holders changed *and* the branches stacked on them with
+  their re-derived status. `git worktree list` is asked only when the set of
+  claims changed (or every 15 s), never on a heartbeat.
+- The **aggregate view** is unchanged: claims have no history. Its notes say
+  so.
+- The snapshot's `Branch.claim.holders[]` has `holder`, `kind`, `state`,
+  `link`, `age` and `stale`; only live holders are sent.
 
 ## Failure modes
 

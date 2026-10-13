@@ -261,7 +261,7 @@ def test_filters_list_every_value_with_friendly_next_labels(tmp_path, make_clien
     filters = {f["key"]: f for f in snap(make_client())["filters"]}
 
     assert {key: [o["value"] for o in f["options"]] for key, f in filters.items()} == {
-        "next": ["you", "ci", "others", "none"],
+        "next": ["you", "agent", "ci", "others", "none"],
         "pr": ["none", "draft", "open", "merged", "closed"],
         "ci": ["none", "running", "failed", "success"],
         "review": ["none", "requested", "approved", "reviewed"],
@@ -270,6 +270,7 @@ def test_filters_list_every_value_with_friendly_next_labels(tmp_path, make_clien
     }
     assert [(o["value"], o["label"]) for o in filters["next"]["options"]] == [
         ("you", "Needs me"),
+        ("agent", "With an agent"),
         ("ci", "Waiting on CI"),
         ("others", "Waiting on others"),
         ("none", "Done"),
@@ -412,13 +413,24 @@ def test_next_says_what_to_do_and_who_it_waits_on(tmp_path, make_client, fetcher
 
     got = {name: status_of(client, name)["next"] for name in branches(client)}
 
-    assert got["devon/none"] == {"label": "Open PR", "who": "you", "kind": "open_pr"}
+    assert got["devon/none"] == {
+        "label": "Open PR",
+        "who": "you",
+        "kind": "open_pr",
+        "would_be": None,
+    }
     assert got["devon/ci"] == {
         "label": "Waiting on CI",
         "who": "ci",
         "kind": "wait_ci",
+        "would_be": None,
     }
-    assert got["devon/ready"] == {"label": "Merge", "who": "you", "kind": "merge"}
+    assert got["devon/ready"] == {
+        "label": "Merge",
+        "who": "you",
+        "kind": "merge",
+        "would_be": None,
+    }
 
 
 def test_a_stacked_branch_is_blocked_until_its_parent_merges(
@@ -540,6 +552,7 @@ def test_a_status_carries_the_catalog_references_of_its_now_chips(
         "value": "resolve_comments",
         "text": "Resolve comments",
         "who": "you",
+        "would_be": None,
     }
 
 

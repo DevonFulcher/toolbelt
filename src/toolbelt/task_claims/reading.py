@@ -2,7 +2,7 @@
 instant (the clock and the directory are arguments, so this is pure)."""
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal
@@ -81,6 +81,16 @@ def classify(file: ClaimFile, now: datetime) -> HolderStatus:
     if now >= file.expires_at:
         return "expired"
     return file.state
+
+
+def reclassify(holder: Holder, now: datetime) -> Holder:
+    """``holder`` as it stands at ``now`` (a later instant than it was read)."""
+    status = classify(holder.file, now)
+    return replace(
+        holder,
+        status=status,
+        stale=status == "working" and now - holder.file.updated_at >= STALE_AFTER,
+    )
 
 
 def read_claims_settled(

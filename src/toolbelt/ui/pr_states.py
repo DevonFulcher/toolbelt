@@ -236,6 +236,11 @@ _NEXT_TONES = {
     na.MERGE: (GREEN, "Approved and ready to merge."),
     na.WAIT_REVIEW: (GRAY, "Waiting for a reviewer."),
     na.REQUEST_REVIEW: (ACCENT, "Ready, but nobody was asked to review."),
+    na.CLAIMED: (
+        PURPLE,
+        "An agent session has claimed this task and is working on it (a "
+        "claim file; the action it replaced is in the tooltip).",
+    ),
 }
 
 _NEXT_LABELS = {
@@ -251,6 +256,7 @@ _NEXT_LABELS = {
     na.MERGE: "Merge",
     na.WAIT_REVIEW: "Waiting for review",
     na.REQUEST_REVIEW: "Request review",
+    na.CLAIMED: "With an agent",
 }
 
 STATES: tuple[StateValue, ...] = (
@@ -530,6 +536,11 @@ NOT_REPRESENTED: tuple[tuple[str, str], ...] = (
         "Derived from the parent's state now (Next, in the Now tooltip), not recorded.",
     ),
     (
+        "History of an agent claiming a task",
+        "Claims are files with no history: With an agent shows only now, and the "
+        "aggregate view does not count it (the task is in the state its PR was in).",
+    ),
+    (
         "Conversation comments, edits, labels, assignees",
         "Not review activity; not fetched.",
     ),
@@ -579,6 +590,7 @@ def current_states(
     next_kind: str,
     next_who: str,
     next_label: str,
+    next_would_be: str | None = None,
 ) -> list[dict]:
     """The card's current state (listed in the end cap's tooltip): references into the catalog (each
     looked up here, so an unknown value raises), with the actual label of the
@@ -592,7 +604,13 @@ def current_states(
             ("comments", "open" if open_comments else "none", {"n": open_comments}),
             ("merge", merge, {}),
         ]
-    refs.append(("next", next_kind, {"text": next_label, "who": next_who}))
+    refs.append(
+        (
+            "next",
+            next_kind,
+            {"text": next_label, "who": next_who, "would_be": next_would_be},
+        )
+    )
     states = []
     for dimension, value, args in refs:
         lookup(dimension, value)

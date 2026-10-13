@@ -10,6 +10,7 @@ same ``live_status`` produces a branch's status for the snapshot and for the
 import re
 from datetime import datetime
 from pathlib import Path
+from typing import Protocol
 
 import typer
 
@@ -20,6 +21,7 @@ from toolbelt.git.worktrees import current_branch
 from toolbelt.tasks.tracker import TaskTracker
 from toolbelt.ui import api_models as api
 from toolbelt.ui import branch_links, pr_states
+from toolbelt.ui.claims_feed import BranchHolder
 from toolbelt.ui.live_status import Fetched, StatusRefresher
 from toolbelt.ui.next_action import WHO_ORDER, ParentContext, next_action
 from toolbelt.ui.pr_activity import PrFacts, derive_activity, format_age
@@ -35,6 +37,7 @@ COMMENTS_NONE = "none"
 #: who (what the URL and the sort use).
 _NEXT_OPTION_LABELS = {
     "you": "Needs me",
+    "agent": "With an agent",
     "ci": "Waiting on CI",
     "others": "Waiting on others",
     "none": "Done",
@@ -70,6 +73,25 @@ def filters() -> list[api.FilterSpec]:
         )
         for key, label, values in _FILTERS
     ]
+
+
+class ClaimLookup(Protocol):
+    """Who holds claims on a branch (``ClaimsFeed`` is one)."""
+
+    def holders(self, repo_id: int, branch: str) -> tuple[BranchHolder, ...]: ...
+
+    def working(self, repo_id: int, branch: str) -> bool: ...
+
+
+class _NoClaims:
+    def holders(self, repo_id: int, branch: str) -> tuple[BranchHolder, ...]:
+        return ()
+
+    def working(self, repo_id: int, branch: str) -> bool:
+        return False
+
+
+NO_CLAIMS: ClaimLookup = _NoClaims()
 
 
 def row_id(repo_id: int, branch: str) -> str:
@@ -122,7 +144,11 @@ def _checked_out_branch(root: Path) -> str | None:
 
 
 def parent_context(
-    repo_id: int, parents: Parents, branch: str, refresher: StatusRefresher
+    repo_id: int,
+    parents: Parents,
+    branch: str,
+    refresher: StatusRefresher,
+    claims: ClaimLookup = NO_CLAIMS,
 ) -> ParentContext | None:
     """The tracked branch ``branch`` is stacked on, with its PR state and who
     its own next action waits on (which depends on *its* parent in turn); ``None``
@@ -134,7 +160,9 @@ def parent_context(
     if fetched is None or fetched.status is None:
         return None
     parent_action = next_action(
-        fetched.status, parent_context(repo_id, parents, parent, refresher)
+        fetched.status,
+        parent_context(repo_id, parents, parent, refresher, claims),
+        claims.working(repo_id, parent),
     )
     return ParentContext(name=parent, pr=fetched.status.pr, next_who=parent_action.who)
 
@@ -209,16 +237,18 @@ def loaded_status(
     parent: ParentContext | None,
     facts: PrFacts | None,
     now: datetime,
+    claimed: bool = False,
 ) -> api.LoadedStatus:
     """``parent`` is the stack context for the next action; ``facts`` (with
-    ``now``) adds the PR's history as ``detail``."""
+    ``now``) adds the PR's history as ``detail``; ``claimed``: a live working
+    holder has claimed the branch."""
     has_pr = status.pr is not PrState.NONE
     match = _PR_NUMBER_RE.search(status.url) if status.url else None
     merge = "none"
     if status.pr in (PrState.OPEN, PrState.DRAFT):
         merge = "conflicts" if status.has_conflicts else "clean"
     open_comments = status.open_comments if has_pr else 0
-    action = next_action(status, parent)
+    action = next_action(status, parent, claimed)
     chips = pr_states.current_states(
         pr=status.pr.value,
         ci=status.ci.value,
@@ -228,6 +258,7 @@ def loaded_status(
         next_kind=action.kind,
         next_who=action.who,
         next_label=action.label,
+        next_would_be=action.would_be.label if action.would_be else None,
     )
     return api.LoadedStatus.model_validate(
         {
@@ -239,7 +270,18 @@ def loaded_status(
             "review": status.review,
             "merge": merge,
             "open_comments": open_comments,
-            "next": {"label": action.label, "who": action.who, "kind": action.kind},
+            "next": {
+                "label": action.label,
+                "who": action.who,
+                "kind": action.kind,
+                "would_be": {
+                    "label": action.would_be.label,
+                    "who": action.would_be.who,
+                    "kind": action.would_be.kind,
+                }
+                if action.would_be
+                else None,
+            },
             "detail": pr_detail(facts, now) if facts is not None else None,
             "now": [
                 {"dimension": c["dimension"], "value": c["value"], **c["args"]}
@@ -250,13 +292,18 @@ def loaded_status(
 
 
 def live_status(
-    fetched: Fetched | None, parent: ParentContext | None, now: datetime
+    fetched: Fetched | None,
+    parent: ParentContext | None,
+    now: datetime,
+    claimed: bool = False,
 ) -> api.LoadingStatus | api.FailedStatus | api.LoadedStatus:
     if fetched is None:
         return api.LoadingStatus(load="loading")
     if fetched.status is None:
         return api.FailedStatus(load="failed")
-    return loaded_status(fetched.status, parent=parent, facts=fetched.facts, now=now)
+    return loaded_status(
+        fetched.status, parent=parent, facts=fetched.facts, now=now, claimed=claimed
+    )
 
 
 # ---- the snapshot --------------------------------------------------------------------
@@ -271,6 +318,7 @@ def build_snapshot(
     untracked: api.UntrackedPrs,
     now: datetime,
     version: int,
+    claims: ClaimLookup = NO_CLAIMS,
 ) -> api.Snapshot:
     """Every repo with tracked branches, and all their branches: repos in
     name order, each repo's branches depth-first."""
@@ -335,11 +383,13 @@ def build_snapshot(
                         task_fetchable=fetchable,
                         task_live=task_feed.get(repo.id, name) if fetchable else None,
                         agent=_link(agent),
+                        claim=branch_claim(claims.holders(repo.id, name), now),
                         started_at=_iso(started_at) if started_at else None,
                         status=live_status(
                             refresher.get(repo.id, name),
-                            parent_context(repo.id, parents, name, refresher),
+                            parent_context(repo.id, parents, name, refresher, claims),
                             now,
+                            claims.working(repo.id, name),
                         ),
                     )
                 )
@@ -354,6 +404,27 @@ def build_snapshot(
         )
     finally:
         store.close()
+
+
+def branch_claim(holders: tuple[BranchHolder, ...], now: datetime) -> api.BranchClaim:
+    return api.BranchClaim(
+        holders=[
+            api.ClaimHolder.model_validate(
+                {
+                    "holder": h.holder,
+                    "kind": h.kind,
+                    "state": h.state,
+                    "link": _link(branch_links.agent_link(h.link)),
+                    "age": {
+                        "text": format_age(now - h.started_at),
+                        "since": _iso(h.started_at),
+                    },
+                    "stale": h.stale,
+                }
+            )
+            for h in holders
+        ]
+    )
 
 
 def _link(link: branch_links.Link | None) -> api.Link | None:
