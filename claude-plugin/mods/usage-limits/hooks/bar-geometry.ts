@@ -2,13 +2,13 @@ import type { LimitRow, LimitStatus } from './window-pace'
 
 // Turns LimitRows into an SVG document (desktop) or runs of block characters (terminal). Pure.
 
-export const SVG_WIDTH = 500
-const ROW_HEIGHT = 20
+export const SVG_WIDTH = 440
+const ROW_HEIGHT = 15
 const LABEL_X = 0
-const BAR_X = 64
-const BAR_WIDTH = 150
-const BAR_HEIGHT = 8
-const TEXT_X = 226
+const BAR_X = 58
+const BAR_WIDTH = 120
+const BAR_HEIGHT = 6
+const TEXT_X = 188
 
 // Mid-tone fills read on a light and a dark theme. Text takes its colour from the stylesheet
 // (dark text on a light theme, light text on a dark one); the attribute is the mid-grey fallback
@@ -49,15 +49,15 @@ export const buildSvg = (rows: readonly LimitRow[]): string => {
       `<g>`,
       `<title>${escapeXml(row.detail)}</title>`,
       `<rect x="0" y="${top}" width="${SVG_WIDTH}" height="${ROW_HEIGHT}" fill="transparent"/>`,
-      `<text class="t" fill="#888" x="${LABEL_X}" y="${mid + 4}" font-size="12" font-family="system-ui,sans-serif">${escapeXml(row.label)}</text>`,
-      `<rect x="${BAR_X}" y="${barTop}" width="${BAR_WIDTH}" height="${BAR_HEIGHT}" rx="2" fill="#808080" fill-opacity="0.28"/>`,
+      `<text class="t" fill="#888" x="${LABEL_X}" y="${mid + 4}" font-size="11" font-family="system-ui,sans-serif">${escapeXml(row.label)}</text>`,
+      `<rect x="${BAR_X}" y="${barTop}" width="${BAR_WIDTH}" height="${BAR_HEIGHT}" rx="1.5" fill="#808080" fill-opacity="0.28"/>`,
       fillWidth > 0
-        ? `<rect x="${BAR_X}" y="${barTop}" width="${trimNumber(fillWidth)}" height="${BAR_HEIGHT}" rx="2" fill="${FILL[row.status]}"/>`
+        ? `<rect x="${BAR_X}" y="${barTop}" width="${trimNumber(fillWidth)}" height="${BAR_HEIGHT}" rx="1.5" fill="${FILL[row.status]}"/>`
         : '',
       paceX === null
         ? ''
-        : `<line class="p" stroke="#888" x1="${trimNumber(paceX)}" x2="${trimNumber(paceX)}" y1="${barTop - 3}" y2="${barTop + BAR_HEIGHT + 3}" stroke-width="2"/>`,
-      `<text class="t" fill="#888" x="${TEXT_X}" y="${mid + 4}" font-size="12" font-family="system-ui,sans-serif">${escapeXml(rightText(row))}</text>`,
+        : `<line class="p" stroke="#888" x1="${trimNumber(paceX)}" x2="${trimNumber(paceX)}" y1="${barTop - 2}" y2="${barTop + BAR_HEIGHT + 2}" stroke-width="2"/>`,
+      `<text class="t" fill="#888" x="${TEXT_X}" y="${mid + 4}" font-size="11" font-family="system-ui,sans-serif">${escapeXml(rightText(row))}</text>`,
       `</g>`,
     ].join('')
   })
