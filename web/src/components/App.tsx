@@ -6,6 +6,7 @@ import { CardList } from "./CardList";
 import { FilterBar } from "./FilterBar";
 import { FocusBar } from "./FocusBar";
 import { LiveIndicator } from "./LiveIndicator";
+import { SpendPage } from "./SpendView";
 import { TableView } from "./TableView";
 import { TooltipProvider } from "./Tooltip";
 import { UntrackedCallout } from "./UntrackedCallout";
@@ -56,6 +57,10 @@ function Content() {
     return (
       <AggregatePage counts={counts} />
     );
+  }
+  if (view === "spend") {
+    // Spend is about this machine's sessions, not the tracked stacks.
+    return <SpendPage counts={counts} />;
   }
   if (rows.length === 0) {
     return (

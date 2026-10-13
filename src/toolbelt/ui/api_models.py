@@ -648,6 +648,73 @@ class Aggregate(Model):
     notes: list[AggregateNote]
 
 
+# ---- spend ------------------------------------------------------------------------
+
+
+class SpendTokens(Model):
+    """Tokens by kind; ``input`` is the uncached input."""
+
+    input: int
+    output: int
+    cache_read: int
+    cache_write_5m: int
+    cache_write_1h: int
+
+
+class SpendWindow(Model):
+    label: str
+    #: ISO time the window began.
+    start: str
+    calls: int
+    tokens: SpendTokens
+    #: Cost of the priced calls only.
+    cost_usd: float
+    unpriced_calls: int
+
+
+class SpendModel(Model):
+    model: str
+    calls: int
+    tokens: SpendTokens
+    cost_usd: float
+    unpriced_calls: int
+
+
+class SpendTask(Model):
+    """Spend attributed to one task through claims. ``task_id`` is ``None``
+    for the spend no claim covers; ``repo`` and ``branch`` are ``None`` there
+    and for a task that is no longer known. A call two tasks' claims cover at
+    once is split evenly, so the figures are fractional."""
+
+    task_id: str | None
+    repo: str | None
+    branch: str | None
+    calls: float
+    tokens: float
+    cost_usd: float
+    unpriced_calls: float
+
+
+class UnpricedModel(Model):
+    model: str
+    calls: int
+
+
+class Spend(Model):
+    as_of: str
+    #: When the transcripts were last read; ``None`` until the first read ends.
+    ingested_at: str | None
+    #: The window the by-model and by-task tables cover.
+    breakdown_days: int
+    windows: list[SpendWindow]
+    by_model: list[SpendModel]
+    by_task: list[SpendTask]
+    #: Models with calls that have no price, so their cost is missing.
+    unpriced_models: list[UnpricedModel]
+    #: When claims began to be recorded (``None``: none yet).
+    claims_since: str | None
+
+
 # ---- server-sent events ---------------------------------------------------------
 
 
@@ -735,3 +802,4 @@ class Wire(Model):
     snapshot: Snapshot
     event: ServerEvent
     aggregate: Aggregate
+    spend: Spend

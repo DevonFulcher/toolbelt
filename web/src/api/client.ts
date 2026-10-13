@@ -1,4 +1,4 @@
-import type { Aggregate, Snapshot } from "./generated";
+import type { Aggregate, Snapshot, Spend } from "./generated";
 
 export const SNAPSHOT_URL = "/api/snapshot";
 export const EVENTS_URL = "/api/events";
@@ -27,4 +27,16 @@ export async function fetchAggregate(
   });
   if (!response.ok) throw new Error(`${AGGREGATE_URL}: HTTP ${response.status}`);
   return (await response.json()) as Aggregate;
+}
+
+export const SPEND_URL = "/api/spend";
+
+/** The spend view's data: windows of spend, and by-model and by-task tables
+ * over the last `days` days. */
+export async function fetchSpend(days: number, fetchImpl: typeof fetch = fetch): Promise<Spend> {
+  const response = await fetchImpl(`${SPEND_URL}?days=${days}`, {
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) throw new Error(`${SPEND_URL}: HTTP ${response.status}`);
+  return (await response.json()) as Spend;
 }

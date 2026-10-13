@@ -3,6 +3,7 @@ import type { FilterKey } from "../api/generated";
 import {
   COLUMNS,
   DEFAULT_STATE,
+  SPEND_DAYS,
   WINDOWS,
   type Column,
   type View,
@@ -12,7 +13,7 @@ import type { Counts } from "../store/selectors";
 import { useApp, useAppStore } from "../store/StoreContext";
 
 // The default view first.
-const ORDER: View[] = ["priorities", "grouped", "stacked", "table", "aggregate"];
+const ORDER: View[] = ["priorities", "grouped", "stacked", "table", "aggregate", "spend"];
 
 const VIEW_LABELS: Record<View, { label: string; title: string }> = {
   priorities: { label: "Priorities", title: "Tasks that need me without a parent task that needs me" },
@@ -22,6 +23,10 @@ const VIEW_LABELS: Record<View, { label: string; title: string }> = {
   aggregate: {
     label: "Aggregate",
     title: "How work is flowing: throughput, lead time and where tasks wait, over time",
+  },
+  spend: {
+    label: "Spend",
+    title: "Tokens and cost of Claude Code on this machine, by window, model and task",
   },
 };
 
@@ -53,6 +58,7 @@ export function FilterBar({ counts, aggregate }: { counts: Counts; aggregate?: R
   const filters = useApp((s) => s.filters);
   const set = (patch: Partial<ViewState>): void => store.getState().setView({ ...view, ...patch });
   const isAggregate = view.view === "aggregate";
+  const isSpend = view.view === "spend";
 
   return (
     <form id="controls" onSubmit={(event) => event.preventDefault()}>
@@ -73,18 +79,35 @@ export function FilterBar({ counts, aggregate }: { counts: Counts; aggregate?: R
         </span>
       </div>
       <div className="controls-row controls-options">
-        <label>
-          Repo
-          <select name="repo" value={view.repo} onChange={(event) => set({ repo: event.target.value })}>
-            <option value="">All</option>
-            {repos.map((repo) => (
-              <option key={repo.id} value={String(repo.id)}>
-                {repo.name}
-              </option>
+        {!isSpend && (
+          <label>
+            Repo
+            <select name="repo" value={view.repo} onChange={(event) => set({ repo: event.target.value })}>
+              <option value="">All</option>
+              {repos.map((repo) => (
+                <option key={repo.id} value={String(repo.id)}>
+                  {repo.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {isSpend ? (
+          <span className="seg" role="group" aria-label="Breakdown window">
+            {SPEND_DAYS.map((days) => (
+              <button
+                key={days}
+                type="button"
+                data-days={days}
+                aria-pressed={view.days === days}
+                title={`By model and by task over the last ${days === 1 ? "day" : `${days} days`}`}
+                onClick={() => set({ days })}
+              >
+                {days === 1 ? "1 day" : `${days} days`}
+              </button>
             ))}
-          </select>
-        </label>
-        {isAggregate ? (
+          </span>
+        ) : isAggregate ? (
           <>
             <span className="seg" role="group" aria-label="Window">
               {WINDOWS.map((weeks) => (

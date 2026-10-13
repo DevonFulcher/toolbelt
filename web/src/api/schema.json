@@ -2357,6 +2357,224 @@
       "title": "Span",
       "type": "object"
     },
+    "Spend": {
+      "additionalProperties": false,
+      "properties": {
+        "as_of": {
+          "type": "string"
+        },
+        "breakdown_days": {
+          "type": "integer"
+        },
+        "by_model": {
+          "items": {
+            "$ref": "#/$defs/SpendModel"
+          },
+          "type": "array"
+        },
+        "by_task": {
+          "items": {
+            "$ref": "#/$defs/SpendTask"
+          },
+          "type": "array"
+        },
+        "claims_since": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ingested_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "unpriced_models": {
+          "items": {
+            "$ref": "#/$defs/UnpricedModel"
+          },
+          "type": "array"
+        },
+        "windows": {
+          "items": {
+            "$ref": "#/$defs/SpendWindow"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "as_of",
+        "ingested_at",
+        "breakdown_days",
+        "windows",
+        "by_model",
+        "by_task",
+        "unpriced_models",
+        "claims_since"
+      ],
+      "title": "Spend",
+      "type": "object"
+    },
+    "SpendModel": {
+      "additionalProperties": false,
+      "properties": {
+        "calls": {
+          "type": "integer"
+        },
+        "cost_usd": {
+          "type": "number"
+        },
+        "model": {
+          "type": "string"
+        },
+        "tokens": {
+          "$ref": "#/$defs/SpendTokens"
+        },
+        "unpriced_calls": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "model",
+        "calls",
+        "tokens",
+        "cost_usd",
+        "unpriced_calls"
+      ],
+      "title": "SpendModel",
+      "type": "object"
+    },
+    "SpendTask": {
+      "additionalProperties": false,
+      "description": "Spend attributed to one task through claims. ``task_id`` is ``None``\nfor the spend no claim covers; ``repo`` and ``branch`` are ``None`` there\nand for a task that is no longer known. A call two tasks' claims cover at\nonce is split evenly, so the figures are fractional.",
+      "properties": {
+        "branch": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "calls": {
+          "type": "number"
+        },
+        "cost_usd": {
+          "type": "number"
+        },
+        "repo": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tokens": {
+          "type": "number"
+        },
+        "unpriced_calls": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "task_id",
+        "repo",
+        "branch",
+        "calls",
+        "tokens",
+        "cost_usd",
+        "unpriced_calls"
+      ],
+      "title": "SpendTask",
+      "type": "object"
+    },
+    "SpendTokens": {
+      "additionalProperties": false,
+      "description": "Tokens by kind; ``input`` is the uncached input.",
+      "properties": {
+        "cache_read": {
+          "type": "integer"
+        },
+        "cache_write_1h": {
+          "type": "integer"
+        },
+        "cache_write_5m": {
+          "type": "integer"
+        },
+        "input": {
+          "type": "integer"
+        },
+        "output": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "input",
+        "output",
+        "cache_read",
+        "cache_write_5m",
+        "cache_write_1h"
+      ],
+      "title": "SpendTokens",
+      "type": "object"
+    },
+    "SpendWindow": {
+      "additionalProperties": false,
+      "properties": {
+        "calls": {
+          "type": "integer"
+        },
+        "cost_usd": {
+          "type": "number"
+        },
+        "label": {
+          "type": "string"
+        },
+        "start": {
+          "type": "string"
+        },
+        "tokens": {
+          "$ref": "#/$defs/SpendTokens"
+        },
+        "unpriced_calls": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "label",
+        "start",
+        "calls",
+        "tokens",
+        "cost_usd",
+        "unpriced_calls"
+      ],
+      "title": "SpendWindow",
+      "type": "object"
+    },
     "StatusEvent": {
       "additionalProperties": false,
       "description": "A branch's status changed (also sent for every branch stacked on it:\nits next action depends on this one's PR).",
@@ -2650,6 +2868,23 @@
       ],
       "type": "string"
     },
+    "UnpricedModel": {
+      "additionalProperties": false,
+      "properties": {
+        "calls": {
+          "type": "integer"
+        },
+        "model": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "model",
+        "calls"
+      ],
+      "title": "UnpricedModel",
+      "type": "object"
+    },
     "UntrackedEvent": {
       "additionalProperties": false,
       "description": "The list of open PRs that toolbelt does not track changed.",
@@ -2833,12 +3068,16 @@
     },
     "snapshot": {
       "$ref": "#/$defs/Snapshot"
+    },
+    "spend": {
+      "$ref": "#/$defs/Spend"
     }
   },
   "required": [
     "snapshot",
     "event",
-    "aggregate"
+    "aggregate",
+    "spend"
   ],
   "title": "Wire",
   "type": "object"

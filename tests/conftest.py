@@ -42,6 +42,17 @@ def _isolate_state_dir(
 
 
 @pytest.fixture(autouse=True)
+def _isolate_claude_config_dir(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Point Claude Code's config dir (where its session transcripts are) at a
+    per-test temp dir, so no test reads the developer's real transcripts."""
+    monkeypatch.setenv(
+        "CLAUDE_CONFIG_DIR", str(tmp_path_factory.mktemp("claude-config"))
+    )
+
+
+@pytest.fixture(autouse=True)
 def _isolate_config_dir(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> Path:

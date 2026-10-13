@@ -68,7 +68,7 @@ describe("the URL state", () => {
     const parsed = parseState("?view=timeline&kind=review&order=oldest&next=you");
     expect(parsed).toEqual({ ...DEFAULT_STATE, next: "you" });
     expect(serializeState(parsed)).toBe("?next=you");
-    expect(VIEWS).toEqual(["priorities", "table", "stacked", "grouped", "aggregate"]);
+    expect(VIEWS).toEqual(["priorities", "table", "stacked", "grouped", "aggregate", "spend"]);
   });
 
   test("old links map onto the current views", () => {
@@ -144,5 +144,21 @@ describe("the aggregate view's state", () => {
   test("ignores a window that is not offered", () => {
     expect(parseState("?view=aggregate&weeks=7").weeks).toBe(12);
     expect(parseState("?view=aggregate&weeks=abc").weeks).toBe(12);
+  });
+});
+
+describe("the spend view's window", () => {
+  test("defaults to 7 days and is written only for the spend view", () => {
+    expect(parseState("?view=spend")).toMatchObject({ view: "spend", days: 7 });
+    expect(serializeState(state({ view: "spend" }))).toBe("?view=spend");
+    expect(serializeState(state({ view: "spend", days: 30 }))).toBe("?view=spend&days=30");
+    expect(serializeState(state({ view: "table", days: 30 }))).toBe("?view=table");
+  });
+
+  test("reads 1 and 30, and ignores anything else", () => {
+    expect(parseState("?view=spend&days=1").days).toBe(1);
+    expect(parseState("?view=spend&days=30").days).toBe(30);
+    expect(parseState("?view=spend&days=3").days).toBe(7);
+    expect(parseState("?view=spend&days=abc").days).toBe(7);
   });
 });

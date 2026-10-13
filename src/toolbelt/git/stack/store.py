@@ -877,6 +877,13 @@ class StackStore:
                 [(cost, message_id) for message_id, cost in costs.items()],
             )
 
+    def first_claim_seen(self) -> datetime | None:
+        """When the earliest recorded claim was first held: the record of
+        who claimed what starts here."""
+        row = self._conn.execute("SELECT MIN(first_seen) AS first FROM claim_spans")
+        value = row.fetchone()["first"]
+        return datetime.fromisoformat(value) if value else None
+
     def usage_by_model(self, start: datetime, end: datetime) -> list[ModelUsage]:
         """Calls made in ``[start, end)``, per model, biggest spend first."""
         rows = self._conn.execute(

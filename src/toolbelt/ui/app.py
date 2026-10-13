@@ -7,6 +7,8 @@ The server is a JSON API plus the built web client (``web/``, served from
   links, live status, the state catalog), straight from the stack DB plus the
   in-memory caches (no network on the request path); see ``snapshot.py`` and
   ``api_models.py``;
+* ``GET /api/spend?days=N``: spend on this machine, from the transcripts
+  ``spend_feed.py`` keeps ingested, by window, model and task;
 * ``GET /api/aggregate?weeks=N[&repo=<id or name>]``: how work has flowed over the last N weeks
   (throughput, lead times, status mix), computed from cached history; see
   ``aggregate.py`` and ``aggregate_feed.py``;
@@ -58,9 +60,11 @@ from toolbelt.task_claims.claim_file import CLAIMS_DIRNAME
 from toolbelt.task_claims.resolution import TrackedTask, git_worktrees, tracked_tasks
 from toolbelt.tasks.config import configured_tracker
 from toolbelt.tasks.tracker import TaskTracker
+from toolbelt.token_spend.transcripts import projects_dir
 from toolbelt.ui import aggregate as aggregate_view
 from toolbelt.ui import api_models as api
 from toolbelt.ui import branch_links
+from toolbelt.ui import spend_feed as spend_module
 from toolbelt.ui.aggregate_feed import (
     AggregateService,
     PageRunner,
@@ -252,6 +256,8 @@ def create_app(
     claim_tasks: Callable[[], list[TrackedTask]] = _claim_tasks,
     record_claim: Callable[[ClaimObservation], None] = _record_claim,
     claims_tick: float | None = None,
+    transcripts_dir: Callable[[], Path] = projects_dir,
+    spend_interval: float = spend_module.DEFAULT_INTERVAL_SECONDS,
 ) -> FastAPI:
     """``cwd_root``: the repo `tt ui` was launched from; its checked-out
     branch is marked current, as `tt g tree` does. ``fetch`` looks up a
@@ -274,7 +280,10 @@ def create_app(
     ``claims_dir`` is where agents' claim files are (re-read every
     ``claims_tick`` seconds, browser or not; default: ``tick``),
     ``claim_tasks`` lists the tracked branches a claim can resolve to, and
-    ``record_claim`` stores each claim read: see ``claims_feed.py``."""
+    ``record_claim`` stores each claim read: see ``claims_feed.py``.
+    ``transcripts_dir`` is where Claude Code's session transcripts are, read
+    every ``spend_interval`` seconds for the spend view: see
+    ``spend_feed.py``."""
     task_cache = TaskInfoCache(ttl_seconds=task_ttl_seconds, clock=clock)
     hub = EventHub(clock=clock, grace=grace_seconds)
 
@@ -337,6 +346,13 @@ def create_app(
         record=record_claim,
         wall_clock=wall_clock,
         tick=min(tick, CLAIMS_TICK_SECONDS) if claims_tick is None else claims_tick,
+    )
+
+    spend = spend_module.SpendFeed(
+        db_path=default_db_path,
+        projects=transcripts_dir,
+        wall_clock=wall_clock,
+        interval=spend_interval,
     )
 
     refresher = StatusRefresher(
@@ -404,6 +420,7 @@ def create_app(
             asyncio.create_task(refresher.run()),
             asyncio.create_task(task_feed.run()),
             asyncio.create_task(claims.run()),
+            asyncio.create_task(spend.run()),
             asyncio.create_task(untracked_feed.run()),
             asyncio.create_task(watcher.run()),
             asyncio.create_task(aggregates.run()),
@@ -432,6 +449,7 @@ def create_app(
     app.state.untracked_feed = untracked_feed
     app.state.structure_watcher = watcher
     app.state.aggregates = aggregates
+    app.state.spend_feed = spend
 
     @app.get("/assets/{path:path}", include_in_schema=False, response_model=None)
     def asset(path: str) -> FileResponse:
@@ -508,6 +526,17 @@ def create_app(
             return await aggregates.get(weeks, repo or None, refresh=refresh)
         except LookupError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.get("/api/spend", response_model=api.Spend)
+    async def spend_view(
+        days: int = Query(spend_module.DEFAULT_BREAKDOWN_DAYS),
+    ) -> api.Spend:
+        if days not in spend_module.BREAKDOWN_DAYS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"days must be one of {list(spend_module.BREAKDOWN_DAYS)}",
+            )
+        return await asyncio.to_thread(spend.spend, days)
 
     @app.get("/api/events")
     async def events() -> StreamingResponse:

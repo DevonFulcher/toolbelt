@@ -90,6 +90,7 @@ export interface Wire {
   aggregate: Aggregate;
   event: ServerEvent;
   snapshot: Snapshot;
+  spend: Spend;
 }
 export interface Aggregate {
   coverage: AggregateCoverage;
@@ -608,4 +609,58 @@ export interface Repo {
   name: string;
   path: string;
   path_missing: boolean;
+}
+export interface Spend {
+  as_of: string;
+  breakdown_days: number;
+  by_model: SpendModel[];
+  by_task: SpendTask[];
+  claims_since: string | null;
+  ingested_at: string | null;
+  unpriced_models: UnpricedModel[];
+  windows: SpendWindow[];
+}
+export interface SpendModel {
+  calls: number;
+  cost_usd: number;
+  model: string;
+  tokens: SpendTokens;
+  unpriced_calls: number;
+}
+/**
+ * Tokens by kind; ``input`` is the uncached input.
+ */
+export interface SpendTokens {
+  cache_read: number;
+  cache_write_1h: number;
+  cache_write_5m: number;
+  input: number;
+  output: number;
+}
+/**
+ * Spend attributed to one task through claims. ``task_id`` is ``None``
+ * for the spend no claim covers; ``repo`` and ``branch`` are ``None`` there
+ * and for a task that is no longer known. A call two tasks' claims cover at
+ * once is split evenly, so the figures are fractional.
+ */
+export interface SpendTask {
+  branch: string | null;
+  calls: number;
+  cost_usd: number;
+  repo: string | null;
+  task_id: string | null;
+  tokens: number;
+  unpriced_calls: number;
+}
+export interface UnpricedModel {
+  calls: number;
+  model: string;
+}
+export interface SpendWindow {
+  calls: number;
+  cost_usd: number;
+  label: string;
+  start: string;
+  tokens: SpendTokens;
+  unpriced_calls: number;
 }

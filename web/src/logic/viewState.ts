@@ -1,19 +1,23 @@
 // The view state (view, filters, sort) and its URL query string. Same
-// parameters as the previous page: `view=table|stacked|grouped|aggregate`
+// parameters as the previous page: `view=table|stacked|grouped|aggregate|spend`
 // (`weeks=4|26|52` for the aggregate's window; 12 is the default, and
-// `weekends=exclude` for its lead times), `mode=flat`,
+// `weekends=exclude` for its lead times; `days=1|30` for the spend view's tables, 7 is the default), `mode=flat`,
 // `compact=1`, `done=1`, `sort`/`dir`, `q`, `repo`, `root` (the branch id the
 // stacked view and the table's tree are focused on) and the per-column
 // filters. Only non-default values are written, so the default view is a
 // bare URL.
 import type { FilterKey } from "../api/generated";
 
-export const VIEWS = ["priorities", "table", "stacked", "grouped", "aggregate"] as const;
+export const VIEWS = ["priorities", "table", "stacked", "grouped", "aggregate", "spend"] as const;
 export type View = (typeof VIEWS)[number];
 
 // The aggregate view's time windows, in weeks (the server's `WINDOWS`).
 export const WINDOWS = [4, 12, 26, 52] as const;
 export type Weeks = (typeof WINDOWS)[number];
+
+// The spend view's breakdown windows, in days (the server's `BREAKDOWN_DAYS`).
+export const SPEND_DAYS = [1, 7, 30] as const;
+export type SpendDays = (typeof SPEND_DAYS)[number];
 
 // How the table view lays its rows out.
 export const MODES = ["tree", "flat"] as const;
@@ -62,6 +66,8 @@ export interface ViewState {
   done: "" | "1";
   /** Aggregate view only: how many weeks back it looks. */
   weeks: Weeks;
+  /** Spend view only: how many days its by-model and by-task tables cover. */
+  days: SpendDays;
   /** Aggregate view only: "exclude" drops Saturdays and Sundays from lead times. */
   weekends: "" | "exclude";
   /** "1" collapses the PR/CI/Review/Comments/Merge columns into one. */
@@ -89,6 +95,7 @@ export const DEFAULT_STATE: ViewState = {
   merge: "",
   done: "",
   weeks: 12,
+  days: 7,
   weekends: "",
   compact: "",
   root: "",
@@ -129,6 +136,8 @@ export function parseState(search: string): ViewState {
   if (params.get("compact") === "1") state.compact = "1";
   const weeks = Number(params.get("weeks"));
   if ((WINDOWS as readonly number[]).includes(weeks)) state.weeks = weeks as Weeks;
+  const days = Number(params.get("days"));
+  if ((SPEND_DAYS as readonly number[]).includes(days)) state.days = days as SpendDays;
   if (params.get("weekends") === "exclude") state.weekends = "exclude";
   state.root = params.get("root") ?? "";
   return state;
@@ -167,6 +176,10 @@ export function serializeState(state: ViewState): string {
     params.set("weeks", String(state.weeks));
   }
   if (state.view === "aggregate" && state.weekends) params.set("weekends", state.weekends);
+  // The spend view's own window.
+  if (state.view === "spend" && state.days !== DEFAULT_STATE.days) {
+    params.set("days", String(state.days));
+  }
   // Table-only, like `mode`: a card view's URL does not carry it.
   if (state.view === "table" && state.compact) params.set("compact", "1");
   // The views that draw a tree; the grouped view and the flat table ignore it.

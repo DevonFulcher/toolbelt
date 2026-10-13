@@ -45,6 +45,9 @@ class SpendSummary:
     by_task: list[NamedTaskUsage]
     #: Models whose calls have no price yet, and how many calls.
     unpriced_models: dict[str, int]
+    #: When claims began to be recorded: spend before it can only be
+    #: unclaimed. None when none has been recorded.
+    claims_since: datetime | None
 
 
 def _window(
@@ -118,4 +121,5 @@ def summarize(
         by_model=store.usage_by_model(start, end),
         by_task=_named(store, store.usage_by_task(start, end)),
         unpriced_models=store.unpriced_models(),
+        claims_since=store.first_claim_seen(),
     )
