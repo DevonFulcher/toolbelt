@@ -10,6 +10,7 @@ from toolbelt.github.status import display_status
 from toolbelt.logger import logger
 from toolbelt.repos import current_repo
 from toolbelt.standup import parse_standup_weekdays, standup_notes
+from toolbelt.task_claims.cli import task_typer
 from toolbelt.zsh import zsh_typer
 
 # Create Typer app instances
@@ -18,6 +19,7 @@ app.add_typer(git_typer, name="git")
 app.add_typer(git_typer, name="g", help="Alias for 'git'")
 app.add_typer(zsh_typer, name="zsh")
 app.add_typer(dotfiles_typer, name="dotfiles")
+app.add_typer(task_typer, name="task")
 
 
 @app.command(name="ui")
