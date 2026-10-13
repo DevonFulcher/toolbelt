@@ -178,6 +178,8 @@ not. `release` exits 1 when it released nothing or refused something.
   the branches whose holders changed *and* the branches stacked on them with
   their re-derived status. `git worktree list` is asked only when the set of
   claims changed (or every 15 s), never on a heartbeat.
+- Each `/api/snapshot` first brings the claims up to date (they are only
+  polled while a stream is open, and a page asks for the snapshot first).
 - The **aggregate view** is unchanged: claims have no history. Its notes say
   so.
 - The snapshot's `Branch.claim.holders[]` has `holder`, `kind`, `state`,

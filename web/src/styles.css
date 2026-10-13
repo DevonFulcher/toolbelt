@@ -146,7 +146,7 @@ a.pill:hover { text-decoration: none; background: color-mix(in srgb, currentColo
 .card-stub { display: flex; gap: 8px; align-items: baseline; padding: 3px 12px; font-size: 12px;
              color: var(--muted); border: 1px dashed var(--line); border-radius: 6px; opacity: .75; }
 .card-stub .branch { font-size: 12px; }
-.s-branch .slot-value { white-space: normal; overflow: visible; }
+.s-branch .slot-value, .s-next .slot-value { white-space: normal; overflow: visible; }
 @keyframes highlight { 0%, 60% { box-shadow: 0 0 0 3px var(--accent); } }
 .highlight { animation: highlight 1.8s ease-out; }
 /* A card is a wrapping row of boxes: Git, PR and Task side by side when there

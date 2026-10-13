@@ -38,7 +38,8 @@ would, so the UI's "With an agent" status can be looked at without one:
 | `sess-revoked` | working, claim revoked | `devon/cache-metrics` | nothing: the revocation is newer than the claim |
 
 The live holders have an 8-hour ttl so they outlast a look at the demo (a
-plugin's is 3 minutes with a heartbeat). Try the commands against the demo with
+plugin's is 3 minutes with a heartbeat). Nothing heartbeats them, so the
+working holder shows as "stale" after 90 seconds: that is the stale flag. Try the commands against the demo with
 `TOOLBELT_HOME=<dir>/home tt task status --verbose`, `tt task release
 devon/auth-docs --force` (the card moves back to "Needs me" within a second)
 and `tt task claim devon/search-ranking`.

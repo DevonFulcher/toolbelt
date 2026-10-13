@@ -447,3 +447,16 @@ def test_a_file_is_reported_unreadable_only_when_bad_on_two_polls_in_a_row(tmp_p
     write_holder(f.dir, "bad", claims=[])
     f.feed.poll()
     assert f.feed.unreadable == frozenset()
+
+
+def test_the_snapshot_reads_the_claims_even_before_any_stream_is_open(tmp_path):
+    fetcher = FakeStatuses()
+    client, claims = make_app(tmp_path, fetcher, Clock())
+    stacked_repo(tmp_path)
+    refresh(client)
+    write_holder(claims, "s1", claims=[ref_claim("devon/c")])
+
+    c = branches(client)["devon/c"]
+
+    assert c["status"]["next"]["kind"] == "claimed"
+    assert [h["holder"] for h in c["claim"]["holders"]] == ["s1"]

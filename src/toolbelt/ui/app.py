@@ -447,7 +447,12 @@ def create_app(
         return FileResponse(page, headers={"Cache-Control": "no-cache"})
 
     @app.get("/api/snapshot", response_model=api.Snapshot)
-    def snapshot() -> api.Snapshot:
+    async def snapshot() -> api.Snapshot:
+        # Claims are only polled while a browser is connected, and a page
+        # asks for the snapshot before its stream opens: bring them up to
+        # date first (on the event loop, where the feed lives; a change is
+        # published before the version is read, so it is in this snapshot).
+        claims.poll()
         # Read before the branches: an event published meanwhile then makes
         # the snapshot look stale to /api/events, never the other way round.
         version = hub.version
