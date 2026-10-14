@@ -77,8 +77,8 @@ def _parent_ref(parent: str, *, root: Path) -> str:
     return parent
 
 
-def _past_tips(branch: str, *, root: Path) -> list[str]:
-    """Every commit ``branch`` has pointed at, per its reflog.
+def past_tips(branch: str, *, root: Path) -> list[str]:
+    """Every commit ``branch`` has pointed at, per its reflog, newest first.
 
     Branch reflogs live in the common git dir, so every worktree sees the same
     entries. Empty when ``branch`` has no reflog or isn't a local ref.
@@ -115,7 +115,7 @@ def _default_message(*, parent: str, base: str, root: Path) -> str:
             "--format=%H",
             f"{base}..HEAD",
             "--not",
-            *_past_tips(parent, root=root),
+            *past_tips(parent, root=root),
         ],
         cwd=root,
         capture_output=True,

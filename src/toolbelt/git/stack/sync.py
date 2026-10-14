@@ -3,7 +3,10 @@
 Day-to-day this merges (not rebases) root -> leaf: no force-push, and a conflict
 is resolved with a single ``git commit`` + re-run (idempotent). When a parent's
 PR has merged, its children are rebased onto the grandparent instead
-("restack-on-land") and the landed branch is cleaned up — the only place we
+("restack-on-land") and the landed branch is cleaned up. A child whose parent
+was rewritten (restacked, or squashed) still holds the old copies of the
+parent's commits, so merging the parent would conflict with itself: the child's
+own commits are replayed onto the parent instead. These are the only places we
 force-push / rewrite history. Whether a parent landed is decided by the injected
 `Forge`, so it is authoritative (a squash-merge can't be detected from local
 ancestry) and testable.
@@ -27,7 +30,7 @@ from toolbelt.git.stack.lineage import (
     resolve_stack,
     set_parent,
 )
-from toolbelt.git.stack.ops import has_unpushed_real_work
+from toolbelt.git.stack.ops import has_unpushed_real_work, past_tips
 from toolbelt.git.stack.store import PrCandidate
 from toolbelt.git.stack.worktree import worktree_paths
 from toolbelt.git.worktrees import current_branch
@@ -180,6 +183,38 @@ def _replay_base(child: str, parent: str, *, onto: str, worktree: Path) -> str:
     return parent
 
 
+def _is_ancestor(ancestor: str, descendant: str, *, worktree: Path) -> bool:
+    return (
+        run(
+            ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+            cwd=worktree,
+            check=False,
+            capture_output=True,
+        ).returncode
+        == 0
+    )
+
+
+def _rewritten_parent_tip(child: str, parent: str, *, worktree: Path) -> str | None:
+    """The old tip of ``parent`` that ``child`` still builds on, when ``parent``
+    has been rewritten since: the commit after which ``child``'s own commits begin.
+
+    The newest commit ``parent`` has pointed at (per its reflog) that ``child``
+    contains is the last point ``child`` took from it. If that commit is still
+    reachable from ``parent`` the parent only moved forward and merging brings
+    ``child`` up to date. If not, ``child`` holds old copies of commits ``parent``
+    has replaced, and merging the new ones in conflicts with them. None when
+    ``child`` is current, or contains nothing ``parent`` ever pointed at (the
+    reflog is gone), so merging is the only thing to do.
+    """
+    for tip in past_tips(parent, root=worktree):
+        if _is_ancestor(tip, child, worktree=worktree):
+            if _is_ancestor(tip, parent, worktree=worktree):
+                return None
+            return tip
+    return None
+
+
 def sync_stack(
     *, root: Path, forge: Forge, stacked_prs: StackedPrs | None = None
 ) -> None:
@@ -259,6 +294,16 @@ def sync_stack(
             raise typer.Exit(1)
 
         direct_parent = parents[child]
+        resuming = _rebase_in_progress(worktree)
+        # An unfinished merge is concluded (or reported) below, as before.
+        rewritten_from = (
+            _rewritten_parent_tip(child, direct_parent, worktree=worktree)
+            if direct_parent in tracked
+            and direct_parent not in landed
+            and not resuming
+            and not _merge_in_progress(worktree)
+            else None
+        )
 
         if direct_parent in landed:
             # Replay child's own commits (those after its direct parent) onto the
@@ -282,6 +327,27 @@ def sync_stack(
                 raise typer.Exit(1)
 
             set_parent(child, base, root=root)
+            run(
+                ["git", "push", "--force-with-lease", "origin", child],
+                cwd=worktree,
+                exit_on_error=True,
+            )
+        elif resuming or rewritten_from is not None:
+            # The parent was rewritten: replay the child's own commits onto it
+            # rather than merging its new commits into the old copies. Also
+            # resumes a replay that stopped on a conflict.
+            if not _restack(
+                child,
+                worktree=worktree,
+                onto=direct_parent,
+                upstream=rewritten_from or direct_parent,
+            ):
+                logger.error(
+                    f"Rebase conflict replaying '{child}' onto its rewritten "
+                    f"parent '{direct_parent}' in {worktree}. Resolve, "
+                    "`git add`, then re-run `git sync`."
+                )
+                raise typer.Exit(1)
             run(
                 ["git", "push", "--force-with-lease", "origin", child],
                 cwd=worktree,
