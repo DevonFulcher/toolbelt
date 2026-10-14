@@ -36,6 +36,16 @@ card (with when it clears, if it clears by itself):
 | screen asleep / locked | agents only run while you are at the laptop |
 | another run working / back-off | only one at a time, with a pause after a task's run |
 
+### Running one by hand
+
+A held-back task whose reason is one of draft, inactive, thrash, runs per
+commit / per day, spend per task per day, screen asleep / locked or back-off has
+a **Run an agent anyway** button. It starts a run on that task right away, even
+with "Start runs" off, and the run counts toward the limits like any other.
+Everything else stays: a closed PR, a task someone holds, a missing, dirty or
+mid-merge worktree, the global spend limits, signed out, and the one run at a
+time. If one of those is true the button says which.
+
 A branch an agent holds reads **Autonomous agent** instead of **Needs me** (the
 action it replaced is in the tooltip). An interactive claim on the same task
 wins. A run that is working when the screen locks is allowed to finish, within
@@ -81,3 +91,7 @@ with "🤖 AI-generated on behalf of Devon:". It ends with a one-line JSON repor
   `task-claims.md`); the **Spend** view lists autonomous spend separately, and
   an agent's session is left out of the interactive figures.
 * A **Stop** button on a working run ends it as *stopped*.
+* A **Conversation** button on a run shows what it was asked, what the agent
+  said, and each tool it ran with the output (long output is cut). It is read
+  from the run's own Claude session transcript, so it fills in live while the
+  run works.

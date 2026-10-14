@@ -99,6 +99,7 @@ def build_agents(
                 trigger=d.trigger,  # type: ignore[arg-type]
                 reason=reason_info(d.reason) if d.reason else None,
                 decided_at=d.decided_at.isoformat(),
+                can_override=d.can_override,
             )
             for d in decisions
         ],

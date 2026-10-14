@@ -110,6 +110,8 @@ export type FilterKey = "next" | "pr" | "ci" | "review" | "comments" | "merge";
  * instantiated).
  */
 export interface Wire {
+  agent_conversation: AgentConversation;
+  agent_start: AgentStart;
   agents: Agents;
   agents_enabled: AgentsEnabled;
   agents_launching: AgentsLaunching;
@@ -117,6 +119,30 @@ export interface Wire {
   event: ServerEvent;
   snapshot: Snapshot;
   spend: Spend;
+}
+/**
+ * What a run has said and done so far.
+ */
+export interface AgentConversation {
+  messages: AgentMessage[];
+  run_id: string;
+  running: boolean;
+}
+/**
+ * One step of a run's conversation.
+ */
+export interface AgentMessage {
+  at: string;
+  is_error: boolean;
+  kind: "prompt" | "text" | "tool_use" | "tool_result";
+  text: string;
+  tool: string | null;
+}
+/**
+ * The body of ``POST /api/agents/start``: start a run by hand.
+ */
+export interface AgentStart {
+  id: string;
 }
 export interface Agents {
   blockers: AgentReason[];
@@ -146,6 +172,7 @@ export interface AgentReason {
  */
 export interface AgentDecision {
   branch: string;
+  can_override: boolean;
   decided_at: string;
   id: string;
   reason: AgentReason | null;

@@ -25,7 +25,7 @@ export function agents(parts: Partial<Agents> = {}): Agents {
     screen: { awake: true, locked: false },
     signed_in: true,
     decisions: [
-      { id: "1:devon/a", repo: "api", branch: "devon/a", trigger: "fix_ci", reason: null, decided_at: "2026-10-13T17:00:00+00:00" },
+      { id: "1:devon/a", repo: "api", branch: "devon/a", trigger: "fix_ci", reason: null, decided_at: "2026-10-13T17:00:00+00:00", can_override: false },
       {
         id: "1:devon/b",
         repo: "api",
@@ -33,6 +33,7 @@ export function agents(parts: Partial<Agents> = {}): Agents {
         trigger: "resolve_conflicts",
         reason: { code: "claimed", text: "A person or an agent session holds this task.", until: null },
         decided_at: "2026-10-13T17:00:00+00:00",
+        can_override: false,
       },
       {
         id: "1:devon/c",
@@ -41,6 +42,7 @@ export function agents(parts: Partial<Agents> = {}): Agents {
         trigger: "resolve_comments",
         reason: { code: "backoff", text: "The last run on this task ended recently.", until: "2026-10-13T17:10:00+00:00" },
         decided_at: "2026-10-13T17:00:00+00:00",
+        can_override: false,
       },
     ],
     runs: [

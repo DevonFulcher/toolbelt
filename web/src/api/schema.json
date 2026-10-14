@@ -41,12 +41,40 @@
       "title": "Age",
       "type": "object"
     },
+    "AgentConversation": {
+      "additionalProperties": false,
+      "description": "What a run has said and done so far.",
+      "properties": {
+        "messages": {
+          "items": {
+            "$ref": "#/$defs/AgentMessage"
+          },
+          "type": "array"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "running": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "run_id",
+        "running",
+        "messages"
+      ],
+      "title": "AgentConversation",
+      "type": "object"
+    },
     "AgentDecision": {
       "additionalProperties": false,
       "description": "What the dispatcher concluded about one task whose next action is\nsomething an agent does.",
       "properties": {
         "branch": {
           "type": "string"
+        },
+        "can_override": {
+          "type": "boolean"
         },
         "decided_at": {
           "type": "string"
@@ -77,7 +105,8 @@
         "branch",
         "trigger",
         "reason",
-        "decided_at"
+        "decided_at",
+        "can_override"
       ],
       "title": "AgentDecision",
       "type": "object"
@@ -129,6 +158,49 @@
         "active_working_days"
       ],
       "title": "AgentLimitsInfo",
+      "type": "object"
+    },
+    "AgentMessage": {
+      "additionalProperties": false,
+      "description": "One step of a run's conversation.",
+      "properties": {
+        "at": {
+          "type": "string"
+        },
+        "is_error": {
+          "type": "boolean"
+        },
+        "kind": {
+          "enum": [
+            "prompt",
+            "text",
+            "tool_use",
+            "tool_result"
+          ],
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "tool": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "at",
+        "text",
+        "tool",
+        "is_error"
+      ],
+      "title": "AgentMessage",
       "type": "object"
     },
     "AgentReason": {
@@ -311,6 +383,20 @@
         "this_month_usd"
       ],
       "title": "AgentSpend",
+      "type": "object"
+    },
+    "AgentStart": {
+      "additionalProperties": false,
+      "description": "The body of ``POST /api/agents/start``: start a run by hand.",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "AgentStart",
       "type": "object"
     },
     "AgentTrigger": {
@@ -3586,6 +3672,12 @@
   "additionalProperties": false,
   "description": "The schema root: lists everything the client reads (never\ninstantiated).",
   "properties": {
+    "agent_conversation": {
+      "$ref": "#/$defs/AgentConversation"
+    },
+    "agent_start": {
+      "$ref": "#/$defs/AgentStart"
+    },
     "agents": {
       "$ref": "#/$defs/Agents"
     },
@@ -3615,7 +3707,9 @@
     "spend",
     "agents",
     "agents_enabled",
-    "agents_launching"
+    "agents_launching",
+    "agent_conversation",
+    "agent_start"
   ],
   "title": "Wire",
   "type": "object"

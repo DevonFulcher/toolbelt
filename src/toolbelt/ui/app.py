@@ -55,7 +55,12 @@ from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 
 from toolbelt.autonomous_agents.auth import claude_signed_in
 from toolbelt.autonomous_agents.branch_state import inspect_branch
-from toolbelt.autonomous_agents.dispatcher import Dispatcher, DispatchTask
+from toolbelt.autonomous_agents.conversation import find_transcript, read_conversation
+from toolbelt.autonomous_agents.dispatcher import (
+    Dispatcher,
+    DispatchTask,
+    OverrideRefused,
+)
 from toolbelt.autonomous_agents.limits import (
     AGENTS_ENABLED_SETTING,
     AGENTS_LAUNCH_SETTING,
@@ -688,6 +693,56 @@ def create_app(
         if not runner.stop(run_id):
             raise HTTPException(status_code=404, detail="no such run is working")
         return {"stopping": True}
+
+    @app.get(
+        "/api/agents/runs/{run_id}/conversation", response_model=api.AgentConversation
+    )
+    async def agent_conversation(run_id: str) -> api.AgentConversation:
+        def read() -> api.AgentConversation:
+            store = StackStore(default_db_path())
+            try:
+                run = next((r for r in store.agent_runs() if r.run_id == run_id), None)
+            finally:
+                store.close()
+            if run is None:
+                raise HTTPException(status_code=404, detail="no such run")
+            transcript = (
+                find_transcript(run.session_id, projects_dir())
+                if run.session_id
+                else None
+            )
+            entries = read_conversation(transcript) if transcript else []
+            return api.AgentConversation(
+                run_id=run_id,
+                running=run.state == "running",
+                messages=[
+                    api.AgentMessage(
+                        kind=e.kind,
+                        at=e.at,
+                        text=e.text,
+                        tool=e.tool,
+                        is_error=e.is_error,
+                    )
+                    for e in entries
+                ],
+            )
+
+        return await asyncio.to_thread(read)
+
+    @app.post("/api/agents/start")
+    async def start_agent_run(body: api.AgentStart) -> dict[str, bool]:
+        repo_id, _, branch = body.id.partition(":")
+        try:
+            await dispatcher.start_now((int(repo_id), branch))
+        except (KeyError, ValueError) as error:
+            raise HTTPException(
+                status_code=404, detail="no such task for an agent"
+            ) from error
+        except OverrideRefused as refused:
+            raise HTTPException(
+                status_code=409, detail=refused.reason.text
+            ) from refused
+        return {"starting": True}
 
     @app.get("/api/events")
     async def events() -> StreamingResponse:

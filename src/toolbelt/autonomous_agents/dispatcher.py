@@ -77,6 +77,8 @@ class Decision:
     approved: bool = False
     #: Where the branch is checked out (None: nowhere).
     worktree: Path | None = None
+    #: A person starting a run by hand would get past ``reason``.
+    can_override: bool = False
 
     @property
     def may_start(self) -> bool:
@@ -110,6 +112,14 @@ def failed_ci_commits(facts: PrFacts | None) -> int:
 
 def pr_is_open(status: BranchStatus) -> bool:
     return status.pr in (PrState.OPEN, PrState.DRAFT)
+
+
+class OverrideRefused(Exception):
+    """A run could not be started by hand: ``reason`` is still true."""
+
+    def __init__(self, reason: Reason) -> None:
+        super().__init__(reason.text)
+        self.reason = reason
 
 
 class Dispatcher:
@@ -251,8 +261,37 @@ class Dispatcher:
                 decisions[item.task.key] = decision
         return decisions
 
+    async def start_now(self, key: tuple[int, str]) -> None:
+        """Start a run on the task by hand, past the reasons a person may
+        override (``eligibility.OVERRIDABLE``), against the latest PR snapshot.
+        Raises ``KeyError`` for a task with nothing an
+        agent does, and ``OverrideRefused`` when a reason that stays is true."""
+        if self._launch is None:
+            raise OverrideRefused(Reason("disabled", "Nothing can start runs here."))
+        entry = self._snapshots.get(key)
+        if entry is None:
+            raise KeyError(key)
+        now = self._wall_clock()
+        world = await asyncio.to_thread(self._world, now)
+        tasks = await asyncio.to_thread(self._tasks)
+        item = next((t for t in tasks if t.task.key == key), None)
+        decision = (
+            await asyncio.to_thread(self._decide, item, entry[1], world, True)
+            if item
+            else None
+        )
+        if decision is None:
+            raise KeyError(key)
+        if decision.reason is not None:
+            raise OverrideRefused(decision.reason)
+        await self._launch(decision)
+
     def _decide(
-        self, item: DispatchTask, snapshot: PrSnapshot, world: World
+        self,
+        item: DispatchTask,
+        snapshot: PrSnapshot,
+        world: World,
+        override: bool = False,
     ) -> Decision | None:
         # The action the branch has on its own, whoever holds it.
         action = next_action(snapshot.status, None)
@@ -289,13 +328,16 @@ class Dispatcher:
             bot_reviews=bot_reviews(snapshot.facts),
             failed_ci_commits=failed_ci_commits(snapshot.facts),
         )
+        reason = decide(facts, world, override=override)
         return Decision(
             task_id=task.task_id,
             repo_id=task.repo_id,
             repo=task.repo_name,
             branch=task.branch,
             trigger=action.kind,
-            reason=decide(facts, world),
+            reason=reason,
+            can_override=reason is not None
+            and decide(facts, world, override=True) is None,
             head_sha=state.head_sha,
             decided_at=world.now,
             pr_number=snapshot.facts.number if snapshot.facts else None,

@@ -318,3 +318,65 @@ def test_an_unknown_or_nonpositive_limit_is_rejected(tmp_path: Path):
     config.write_text("agents:\n  rn_usd: 1\n")
     with pytest.raises(ValidationError):
         load_limits(config)
+
+
+# ---- starting a run by hand -----------------------------------------------------------------
+
+
+def override_code(task_facts: TaskFacts, w: World) -> str | None:
+    reason = decide(task_facts, w, override=True)
+    return reason.code if reason else None
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"pr_draft": True},
+        {"last_commit_at": None},
+        {"bot_reviews": 3},
+        {"failed_ci_commits": 3},
+    ],
+)
+def test_a_person_can_start_a_run_the_agents_rules_hold_back(changes):
+    assert override_code(task(**changes), world()) is None
+
+
+def test_a_person_can_start_past_the_run_limits_the_screen_and_the_back_off():
+    runs = [
+        run(started=NOW - timedelta(hours=3), ended=NOW - timedelta(minutes=1)),
+        run(started=NOW - timedelta(hours=2), ended=NOW - timedelta(minutes=1)),
+        run(started=NOW - timedelta(hours=1), ended=NOW - timedelta(minutes=1)),
+    ]
+    asleep = world(runs=runs, screen=ScreenState(awake=False, locked=True))
+
+    assert reason_code(task(), asleep) is not None
+    assert override_code(task(), asleep) is None
+
+
+@pytest.mark.parametrize(
+    ("changes", "code"),
+    [
+        ({"pr_open": False}, "pr_not_open"),
+        ({"claimed_by_other": True}, "claimed"),
+        ({"has_worktree": False}, "no_worktree"),
+        ({"worktree_busy": True}, "worktree_busy"),
+        ({"worktree_clean": False}, "worktree_dirty"),
+    ],
+)
+def test_what_is_unsafe_or_impossible_stays_even_for_a_person(changes, code):
+    assert override_code(task(**changes), world()) == code
+
+
+def test_the_spend_caps_sign_in_and_the_run_limit_stay_even_for_a_person():
+    assert override_code(task(), world(auth_ok=False)) == "auth"
+    over = [run(cost=LIMITS.global_usd_per_day + 1)]
+    assert override_code(task(), world(runs=over)) == "global_usd_per_day"
+    working = [run(state="running")]
+    assert override_code(task(), world(runs=working)) == "concurrency"
+    assert override_code(task(), world(enabled=False)) == "disabled"
+
+
+def test_an_overridden_reason_does_not_hide_one_that_stays():
+    assert override_code(task(pr_draft=True, claimed_by_other=True), world()) == (
+        "claimed"
+    )

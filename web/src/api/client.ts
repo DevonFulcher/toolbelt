@@ -1,4 +1,4 @@
-import type { Aggregate, Agents, Snapshot, Spend } from "./generated";
+import type { Aggregate, AgentConversation, Agents, Snapshot, Spend } from "./generated";
 
 export const SNAPSHOT_URL = "/api/snapshot";
 export const EVENTS_URL = "/api/events";
@@ -77,4 +77,24 @@ export async function stopAgentRun(runId: string, fetchImpl: typeof fetch = fetc
     headers: { Accept: "application/json" },
   });
   if (!response.ok) throw new Error(`${AGENTS_URL}/runs/${runId}/stop: HTTP ${response.status}`);
+}
+
+/** What a run has said and done so far, read from its Claude session. */
+export async function fetchAgentConversation(runId: string, fetchImpl: typeof fetch = fetch): Promise<AgentConversation> {
+  const url = `${AGENTS_URL}/runs/${encodeURIComponent(runId)}/conversation`;
+  const response = await fetchImpl(url, { headers: { Accept: "application/json" } });
+  if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
+  return (await response.json()) as AgentConversation;
+}
+
+/** Start a run on a task by hand; the error says which rule still stops it. */
+export async function startAgentRun(id: string, fetchImpl: typeof fetch = fetch): Promise<void> {
+  const response = await fetchImpl(`${AGENTS_URL}/start`, {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify({ id }),
+  });
+  if (response.ok) return;
+  const detail = ((await response.json().catch(() => ({}))) as { detail?: unknown }).detail;
+  throw new Error(typeof detail === "string" ? detail : `${AGENTS_URL}/start: HTTP ${response.status}`);
 }

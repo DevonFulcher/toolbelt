@@ -5,12 +5,14 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
 from conftest import git
 
 from toolbelt.autonomous_agents.branch_state import BranchState, inspect_branch
 from toolbelt.autonomous_agents.dispatcher import (
     Dispatcher,
     DispatchTask,
+    OverrideRefused,
     bot_reviews,
     failed_ci_commits,
 )
@@ -513,3 +515,63 @@ def test_a_draft_pr_is_held_back_with_that_reason_and_never_launched():
     assert r.decision("draft").reason.code == "draft"
     assert r.decision("ready").may_start
     assert r.launched == ["ready"]
+
+
+# ---- starting a run by hand ------------------------------------------------------------------
+
+
+def start_now(r: Rig, branch: str) -> None:
+    asyncio.run(r.dispatcher.start_now((1, branch)))
+
+
+def test_a_decision_says_whether_a_person_could_start_past_its_reason():
+    r = rig(
+        draft=PrSnapshot(status(pr=PrState.DRAFT), None),
+        claimed=PrSnapshot(status(), None),
+    )
+    r.holders["claimed"] = (holder("agent", "idle"),)
+
+    r.tick()
+
+    assert r.decision("draft").can_override is True
+    assert r.decision("claimed").can_override is False
+
+
+def test_a_person_can_start_a_run_on_a_draft_the_agents_leave_alone():
+    r = rig(draft=PrSnapshot(status(pr=PrState.DRAFT), None))
+    r.tick()
+    assert r.launched == []
+
+    start_now(r, "draft")
+
+    assert r.launched == ["draft"]
+
+
+def test_starting_by_hand_works_with_the_start_switch_off():
+    r = rig(draft=PrSnapshot(status(pr=PrState.DRAFT), None))
+    r.launching = False
+    r.tick()
+
+    start_now(r, "draft")
+
+    assert r.launched == ["draft"]
+
+
+def test_starting_by_hand_is_refused_while_a_reason_that_stays_is_true():
+    r = rig(a=PrSnapshot(status(), None))
+    r.holders["a"] = (holder("agent", "idle"),)
+    r.tick()
+
+    with pytest.raises(OverrideRefused) as refused:
+        start_now(r, "a")
+
+    assert refused.value.reason.code == "claimed"
+    assert r.launched == []
+
+
+def test_starting_by_hand_on_a_task_with_nothing_for_an_agent_is_unknown():
+    r = rig(a=PrSnapshot(status(ci=CiState.SUCCESS), None))
+    r.tick()
+
+    with pytest.raises(KeyError):
+        start_now(r, "a")

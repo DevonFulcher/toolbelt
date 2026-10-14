@@ -1,6 +1,6 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import type { Agents } from "../api/generated";
+import type { AgentConversation, Agents } from "../api/generated";
 import { agents } from "../testing/agentsFixtures";
 import { branch, noPr, NOW, snapshot } from "../testing/fixtures";
 import { renderWith } from "../testing/render";
@@ -10,10 +10,15 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function serve(initial: Agents | Error) {
+function serve(initial: Agents | Error, extra: { conversation?: AgentConversation; refuseStart?: string } = {}) {
   let current = initial;
   const posts: unknown[] = [];
   const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+    if (init?.method === "POST" && _url === "/api/agents/start" && extra.refuseStart) {
+      posts.push({ url: _url, ...JSON.parse(String(init.body)) });
+      return { ok: false, status: 409, json: async () => ({ detail: extra.refuseStart }) };
+    }
+    if (_url.endsWith("/conversation")) return { ok: true, status: 200, json: async () => extra.conversation };
     if (init?.method === "POST") {
       const body = init.body ? (JSON.parse(String(init.body)) as { enabled?: boolean; launching?: boolean }) : {};
       posts.push({ url: _url, ...body });
@@ -73,6 +78,7 @@ describe("the agents view", () => {
             trigger: "fix_ci",
             reason: { code: "draft", text: "The PR is a draft: agents leave drafts to you.", until: null },
             decided_at: base.decisions[0].decided_at,
+            can_override: true,
           },
         ],
       }),
@@ -187,5 +193,68 @@ describe("the agents view", () => {
     await screen.findByRole("heading", { name: /Autonomous agents are on/ });
 
     await waitFor(() => expect(url.location.search).toBe("?view=agents"));
+  });
+
+  test("a held-back task a person can override has a button that starts a run on it", async () => {
+    const base = agents();
+    const draft = { ...base.decisions[0], id: "1:devon/d", branch: "devon/d", reason: { code: "draft" as const, text: "The PR is a draft: agents leave drafts to you.", until: null }, can_override: true };
+    const claimed = { ...base.decisions[1], can_override: false };
+    const { posts } = serve(agents({ decisions: [draft, claimed] }));
+    show();
+
+    const held = await screen.findByRole("region", { name: "Agents may not take these" });
+    expect(within(held).getAllByRole("button", { name: "Run an agent anyway" })).toHaveLength(1);
+    fireEvent.click(within(held).getByRole("button", { name: "Run an agent anyway" }));
+
+    await waitFor(() => expect(posts).toEqual([{ url: "/api/agents/start", id: "1:devon/d" }]));
+  });
+
+  test("when a reason still stops a hand start, it says which", async () => {
+    const base = agents();
+    const draft = { ...base.decisions[0], reason: { code: "draft" as const, text: "The PR is a draft.", until: null }, can_override: true };
+    serve(agents({ decisions: [draft] }), { refuseStart: "A person or an agent session holds this task." });
+    show();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Run an agent anyway" }));
+
+    expect(await screen.findByText("That did not work: A person or an agent session holds this task.")).toBeInTheDocument();
+  });
+
+  test("a run's conversation opens under it and shows what the agent said and ran", async () => {
+    const conversation: AgentConversation = {
+      run_id: "r1",
+      running: false,
+      messages: [
+        { kind: "prompt", at: "t", text: "Please fix CI.", tool: null, is_error: false },
+        { kind: "text", at: "t", text: "Looking at the failing check.", tool: null, is_error: false },
+        { kind: "tool_use", at: "t", text: "gh pr checks 1", tool: "Bash", is_error: false },
+        { kind: "tool_result", at: "t", text: "lint failed", tool: null, is_error: true },
+      ],
+    };
+    const { fetchMock } = serve(agents(), { conversation });
+    show();
+
+    const table = await screen.findByRole("region", { name: "Recent runs" });
+    fireEvent.click(within(table).getByRole("button", { name: "Conversation" }));
+
+    const log = await within(table).findByRole("list", { name: "Conversation" });
+    expect(within(log).getByText("Looking at the failing check.")).toBeInTheDocument();
+    expect(within(log).getByText("gh pr checks 1")).toBeInTheDocument();
+    expect(within(log).getByText("Bash")).toBeInTheDocument();
+    expect(within(log).getByText("lint failed")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("/api/agents/runs/r1/conversation", expect.anything());
+
+    fireEvent.click(within(table).getByRole("button", { name: "Hide conversation" }));
+    expect(within(table).queryByRole("list", { name: "Conversation" })).not.toBeInTheDocument();
+  });
+
+  test("a conversation with nothing yet says so", async () => {
+    serve(agents(), { conversation: { run_id: "r1", running: false, messages: [] } });
+    show();
+
+    const table = await screen.findByRole("region", { name: "Recent runs" });
+    fireEvent.click(within(table).getByRole("button", { name: "Conversation" }));
+
+    expect(await within(table).findByText("Nothing has been said yet.")).toBeInTheDocument();
   });
 });

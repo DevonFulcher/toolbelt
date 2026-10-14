@@ -806,6 +806,8 @@ class AgentDecision(Model):
     #: ``None``: an agent may start on it now.
     reason: AgentReason | None
     decided_at: str
+    #: A person can start a run by hand past ``reason``.
+    can_override: bool
 
 
 class AgentRunInfo(Model):
@@ -878,6 +880,34 @@ class AgentsEnabled(Model):
     """The body of ``POST /api/agents/enabled``."""
 
     enabled: bool
+
+
+class AgentStart(Model):
+    """The body of ``POST /api/agents/start``: start a run by hand."""
+
+    #: The branch's row id (see ``AgentDecision.id``).
+    id: str
+
+
+class AgentMessage(Model):
+    """One step of a run's conversation."""
+
+    kind: Literal["prompt", "text", "tool_use", "tool_result"]
+    at: str
+    text: str
+    #: The tool called (``tool_use``).
+    tool: str | None
+    #: The tool reported an error (``tool_result``).
+    is_error: bool
+
+
+class AgentConversation(Model):
+    """What a run has said and done so far."""
+
+    run_id: str
+    #: The run is still working: more may come.
+    running: bool
+    messages: list[AgentMessage]
 
 
 class AgentsLaunching(Model):
@@ -977,3 +1007,5 @@ class Wire(Model):
     agents: Agents
     agents_enabled: AgentsEnabled
     agents_launching: AgentsLaunching
+    agent_conversation: AgentConversation
+    agent_start: AgentStart

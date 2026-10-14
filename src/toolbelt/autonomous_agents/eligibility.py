@@ -10,7 +10,7 @@ worktree, thrash, its run and spend limits), then what is true of all agents
 back-off).
 """
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Literal
@@ -162,43 +162,66 @@ def global_blockers(world: World) -> list[Reason]:
     return blockers
 
 
-def decide(task: TaskFacts, world: World) -> Reason | None:
-    """Why no agent is working on ``task`` now, or ``None`` when one may start.
+#: Reasons a person can override by starting a run by hand: what the limits,
+#: the schedule and the agents' own rules hold back. What is unsafe or
+#: impossible stays: a closed PR, someone else holding the task or its
+#: worktree, a dirty or mid-merge worktree, the spend caps, sign-in, and the
+#: run limit.
+OVERRIDABLE: frozenset[ReasonCode] = frozenset(
+    {
+        "draft",
+        "inactive",
+        "thrash",
+        "runs_per_head",
+        "task_runs_per_day",
+        "task_usd_per_day",
+        "screen_asleep",
+        "screen_locked",
+        "backoff",
+    }
+)
+
+
+def _reasons(task: TaskFacts, world: World) -> Iterator[Reason]:
+    """Every reason no agent is working on ``task`` now, most important first.
     Only meaningful for a task whose ``action_kind`` is a trigger."""
     limits = world.limits
     now = world.now
     if not world.enabled:
-        return Reason("disabled", "Autonomous agents are switched off.")
+        yield Reason("disabled", "Autonomous agents are switched off.")
+        return
     if not task.pr_open:
-        return Reason("pr_not_open", "The PR is not open.")
+        yield Reason("pr_not_open", "The PR is not open.")
+        return
     if task.pr_draft:
-        return Reason("draft", "The PR is a draft: agents leave drafts to you.")
+        yield Reason("draft", "The PR is a draft: agents leave drafts to you.")
     if task.last_commit_at is None:
-        return Reason("inactive", "No commit on this branch to go by.")
-    elapsed = working_days_between(
-        task.last_commit_at.astimezone().date(), now.astimezone().date()
-    )
-    if elapsed > limits.active_working_days:
-        return Reason(
-            "inactive",
-            f"Last committed to {elapsed} working days ago: agents only take "
-            f"tasks committed to within {limits.active_working_days}.",
+        yield Reason("inactive", "No commit on this branch to go by.")
+    else:
+        elapsed = working_days_between(
+            task.last_commit_at.astimezone().date(), now.astimezone().date()
         )
+        if elapsed > limits.active_working_days:
+            yield Reason(
+                "inactive",
+                f"Last committed to {elapsed} working days ago: agents only take "
+                f"tasks committed to within {limits.active_working_days}.",
+            )
     if task.claimed_by_other:
-        return Reason("claimed", "A person or an agent session holds this task.")
+        yield Reason("claimed", "A person or an agent session holds this task.")
     if not task.has_worktree:
-        return Reason("no_worktree", "The branch has no worktree to work in.")
-    if task.worktree_busy:
-        return Reason(
+        yield Reason("no_worktree", "The branch has no worktree to work in.")
+    elif task.worktree_busy:
+        yield Reason(
             "worktree_busy", "The worktree is in the middle of a merge or rebase."
         )
-    if not task.worktree_clean:
-        return Reason("worktree_dirty", "The worktree has uncommitted changes.")
+    elif not task.worktree_clean:
+        yield Reason("worktree_dirty", "The worktree has uncommitted changes.")
     if (
         task.bot_reviews >= limits.thrash_bot_reviews
         or task.failed_ci_commits >= limits.thrash_failed_commits
     ):
-        return Reason(
+        yield Reason(
             "thrash",
             f"This PR keeps getting re-blocked ({task.bot_reviews} bot reviews, "
             f"CI failed on {task.failed_ci_commits} commits): more patching may "
@@ -207,14 +230,14 @@ def decide(task: TaskFacts, world: World) -> Reason | None:
     mine = [run for run in world.runs if run.task_id == task.task_id]
     on_head = [run for run in mine if run.head_sha == task.head_sha]
     if len(on_head) >= limits.task_runs_per_head:
-        return Reason(
+        yield Reason(
             "runs_per_head",
             f"{len(on_head)} runs already tried this commit "
             f"(limit {limits.task_runs_per_head}); a new commit resets it.",
         )
     today = _since(mine, now - timedelta(hours=24))
     if len(today) >= limits.task_runs_per_day:
-        return Reason(
+        yield Reason(
             "task_runs_per_day",
             f"{len(today)} runs on this task in the last 24 hours "
             f"(limit {limits.task_runs_per_day}).",
@@ -222,18 +245,16 @@ def decide(task: TaskFacts, world: World) -> Reason | None:
         )
     task_spend = sum(run.cost_usd for run in today)
     if task_spend >= limits.task_usd_per_day:
-        return Reason(
+        yield Reason(
             "task_usd_per_day",
             f"${task_spend:.2f} spent on this task in the last 24 hours "
             f"(limit ${limits.task_usd_per_day:.2f}).",
             until=min(run.started_at for run in today) + timedelta(hours=24),
         )
-    for blocker in global_blockers(world):
-        if blocker.code != "disabled":
-            return blocker
+    yield from (b for b in global_blockers(world) if b.code != "disabled")
     running = [run for run in world.runs if run.state == "running"]
     if len(running) >= limits.max_concurrent_runs:
-        return Reason(
+        yield Reason(
             "concurrency",
             f"{len(running)} agent run is working already (limit "
             f"{limits.max_concurrent_runs}).",
@@ -242,10 +263,19 @@ def decide(task: TaskFacts, world: World) -> Reason | None:
     if ended:
         resume = max(ended) + timedelta(seconds=limits.backoff_seconds)
         if resume > now:
-            return Reason(
+            yield Reason(
                 "backoff",
                 "The last run on this task ended recently; waiting before "
                 "trying again.",
                 until=resume,
             )
-    return None
+
+
+def decide(task: TaskFacts, world: World, *, override: bool = False) -> Reason | None:
+    """Why no agent is working on ``task`` now, or ``None`` when one may start.
+    With ``override`` (a person starting a run by hand) the reasons in
+    ``OVERRIDABLE`` do not count."""
+    reasons = _reasons(task, world)
+    if override:
+        return next((r for r in reasons if r.code not in OVERRIDABLE), None)
+    return next(reasons, None)

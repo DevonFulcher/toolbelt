@@ -1,9 +1,9 @@
 // The agents view: what toolbelt's autonomous agents are on, which tasks one
 // may take next, which it may not and why, the limits they run under, and
 // their recent runs. Polled every few seconds while the page is visible.
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { fetchAgents, setAgentsEnabled, setAgentsLaunching, stopAgentRun } from "../api/client";
-import type { AgentDecision, AgentReason, AgentRunInfo, AgentTrigger, Agents } from "../api/generated";
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { fetchAgentConversation, fetchAgents, setAgentsEnabled, setAgentsLaunching, startAgentRun, stopAgentRun } from "../api/client";
+import type { AgentConversation, AgentDecision, AgentMessage, AgentReason, AgentRunInfo, AgentTrigger, Agents } from "../api/generated";
 import { formatAbsolute } from "../logic/format";
 import { formatUsd } from "../logic/spendFormat";
 import type { Counts } from "../store/selectors";
@@ -12,6 +12,8 @@ import "./agents.css";
 
 /** How often the page asks again while it is visible. */
 export const REFRESH_MS = 10_000;
+/** How often an open conversation of a working run asks again. */
+export const CONVERSATION_REFRESH_MS = 3_000;
 
 type Load = { state: "ready"; data: Agents } | { state: "error"; message: string };
 
@@ -107,7 +109,87 @@ function Group({ id, title, children }: { id: string; title: string; children: R
   );
 }
 
-function AgentCard({ decision, runs, onStop }: { decision: AgentDecision; runs: AgentRunInfo[]; onStop: (runId: string) => void }) {
+const MESSAGE_LABEL: Record<AgentMessage["kind"], string> = {
+  prompt: "Task",
+  text: "Agent",
+  tool_use: "Ran",
+  tool_result: "Result",
+};
+
+function Message({ message }: { message: AgentMessage }) {
+  const label = message.kind === "tool_use" && message.tool ? message.tool : MESSAGE_LABEL[message.kind];
+  const tone = message.is_error ? " agent-message-error" : "";
+  return (
+    <li className={`agent-message agent-message-${message.kind}${tone}`}>
+      <span className="agent-message-label">{message.is_error ? "Error" : label}</span>
+      {message.kind === "text" || message.kind === "prompt" ? (
+        <p className="agent-message-text">{message.text}</p>
+      ) : (
+        <pre className="agent-message-text">{message.text}</pre>
+      )}
+    </li>
+  );
+}
+
+/** A run's conversation: what it was asked, what it said, each tool it ran and
+ * the output. Asked again every few seconds while the run is working. */
+export function Conversation({ runId, fetchImpl = fetch }: { runId: string; fetchImpl?: typeof fetch }) {
+  const [load, setLoad] = useState<{ state: "ready"; data: AgentConversation } | { state: "error"; message: string } | null>(null);
+  useEffect(() => {
+    let stopped = false;
+    let timer: number | undefined;
+    const read = (): void => {
+      fetchAgentConversation(runId, fetchImpl)
+        .then((data) => {
+          if (stopped) return;
+          setLoad({ state: "ready", data });
+          if (data.running) timer = window.setTimeout(read, CONVERSATION_REFRESH_MS);
+        })
+        .catch((error: unknown) => {
+          if (!stopped) setLoad({ state: "error", message: error instanceof Error ? error.message : String(error) });
+        });
+    };
+    read();
+    return () => {
+      stopped = true;
+      window.clearTimeout(timer);
+    };
+  }, [runId, fetchImpl]);
+  if (load === null) return <p className="agents-empty">Loading the conversation…</p>;
+  if (load.state === "error") return <p className="agents-empty error">{`Could not load the conversation: ${load.message}`}</p>;
+  if (load.data.messages.length === 0) return <p className="agents-empty">Nothing has been said yet.</p>;
+  return (
+    <ol className="agent-conversation" aria-label="Conversation">
+      {load.data.messages.map((message, index) => (
+        <Message key={index} message={message} />
+      ))}
+    </ol>
+  );
+}
+
+function ConversationToggle({ runId, open, onToggle }: { runId: string; open: boolean; onToggle: (runId: string) => void }) {
+  return (
+    <button type="button" className="agents-toggle" aria-expanded={open} onClick={() => onToggle(runId)}>
+      {open ? "Hide conversation" : "Conversation"}
+    </button>
+  );
+}
+
+function AgentCard({
+  decision,
+  runs,
+  onStop,
+  onStart,
+  openRun,
+  onToggleConversation,
+}: {
+  decision: AgentDecision;
+  runs: AgentRunInfo[];
+  onStop: (runId: string) => void;
+  onStart: (id: string) => void;
+  openRun: string | null;
+  onToggleConversation: (runId: string) => void;
+}) {
   return (
     <div className="card agent-card" data-branch={decision.branch}>
       <Group id="git" title="Git">
@@ -126,7 +208,14 @@ function AgentCard({ decision, runs, onStop }: { decision: AgentDecision; runs: 
           {decision.reason === null ? (
             <span className="agent-ready">An agent may take this now</span>
           ) : (
-            <span className="agent-blocked">{reasonText(decision.reason)}</span>
+            <>
+              <span className="agent-blocked">{reasonText(decision.reason)}</span>
+              {decision.can_override && (
+                <button type="button" className="agents-toggle" onClick={() => onStart(decision.id)}>
+                  Run an agent anyway
+                </button>
+              )}
+            </>
           )}
         </Field>
       </Group>
@@ -147,6 +236,8 @@ function AgentCard({ decision, runs, onStop }: { decision: AgentDecision; runs: 
                     Stop
                   </button>
                 )}
+                <ConversationToggle runId={run.run_id} open={openRun === run.run_id} onToggle={onToggleConversation} />
+                {openRun === run.run_id && <Conversation runId={run.run_id} />}
               </li>
             ))}
           </ul>
@@ -180,6 +271,9 @@ function AgentsBody({ data, reload }: { data: Agents; reload: () => void }) {
   const toggle = (): void => act(() => setAgentsEnabled(!data.enabled));
   const toggleLaunching = (): void => act(() => setAgentsLaunching(!data.launching));
   const stop = (runId: string): void => act(() => stopAgentRun(runId));
+  const start = (id: string): void => act(() => startAgentRun(id));
+  const [openRun, setOpenRun] = useState<string | null>(null);
+  const toggleConversation = (runId: string): void => setOpenRun((open) => (open === runId ? null : runId));
   const { limits, spend } = data;
   const ready = data.decisions.filter((d) => d.reason === null);
   const held = data.decisions.filter((d) => d.reason !== null);
@@ -199,7 +293,7 @@ function AgentsBody({ data, reload }: { data: Agents; reload: () => void }) {
             {data.enabled ? "Turn off" : "Turn on"}
           </button>
         </div>
-        {toggleError && <div className="notice error">{`Could not switch them: ${toggleError}`}</div>}
+        {toggleError && <div className="notice error">{`That did not work: ${toggleError}`}</div>}
         {data.error && <div className="notice error" role="alert">{`The agents' last pass failed (it tries again): ${data.error}`}</div>}
         {!data.enabled && (
           <p className="agents-description">
@@ -261,7 +355,7 @@ function AgentsBody({ data, reload }: { data: Agents; reload: () => void }) {
             ) : (
               <div className="agents-cards">
                 {ready.map((decision) => (
-                  <AgentCard key={decision.id} decision={decision} runs={runsFor(decision.id)} onStop={stop} />
+                  <AgentCard key={decision.id} decision={decision} runs={runsFor(decision.id)} onStop={stop} onStart={start} openRun={openRun} onToggleConversation={toggleConversation} />
                 ))}
               </div>
             )}
@@ -273,7 +367,7 @@ function AgentsBody({ data, reload }: { data: Agents; reload: () => void }) {
             ) : (
               <div className="agents-cards">
                 {held.map((decision) => (
-                  <AgentCard key={decision.id} decision={decision} runs={runsFor(decision.id)} onStop={stop} />
+                  <AgentCard key={decision.id} decision={decision} runs={runsFor(decision.id)} onStop={stop} onStart={start} openRun={openRun} onToggleConversation={toggleConversation} />
                 ))}
               </div>
             )}
@@ -299,7 +393,8 @@ function AgentsBody({ data, reload }: { data: Agents; reload: () => void }) {
             </thead>
             <tbody>
               {data.runs.map((run) => (
-                <tr key={run.run_id}>
+                <Fragment key={run.run_id}>
+                <tr>
                   <td>{`${run.repo}: ${run.branch}`}</td>
                   <td>{TRIGGER_LABEL[run.trigger]}</td>
                   <td>{when(run.started_at)}</td>
@@ -315,8 +410,17 @@ function AgentsBody({ data, reload }: { data: Agents; reload: () => void }) {
                         Stop
                       </button>
                     )}
+                    <ConversationToggle runId={run.run_id} open={openRun === run.run_id} onToggle={toggleConversation} />
                   </td>
                 </tr>
+                {openRun === run.run_id && (
+                  <tr>
+                    <td colSpan={7}>
+                      <Conversation runId={run.run_id} />
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               ))}
             </tbody>
           </table>

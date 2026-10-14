@@ -31,3 +31,13 @@
 .agents-table th { color: var(--muted); font-weight: 500; font-size: 12px; }
 .agents-table .num { text-align: right; font-variant-numeric: tabular-nums; }
 .agents-toggle { font-size: 12px; padding: 2px 12px; }
+.agent-conversation { margin: 6px 0 0; padding: 8px 10px; list-style: none; display: grid; gap: 6px; width: 100%;
+                      max-height: 480px; overflow: auto; background: var(--bg); border: 1px solid var(--line);
+                      border-radius: 6px; font-size: 12px; }
+.agent-message { display: grid; gap: 2px; min-width: 0; }
+.agent-message-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+.agent-message-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.agent-message-tool_use .agent-message-text, .agent-message-tool_result .agent-message-text { font-family: ui-monospace, monospace; }
+.agent-message-tool_result .agent-message-text { color: var(--muted); max-height: 160px; overflow: auto; }
+.agent-message-prompt .agent-message-text { color: var(--muted); font-style: italic; }
+.agent-message-error .agent-message-label, .agent-message-error .agent-message-text { color: var(--red); }
