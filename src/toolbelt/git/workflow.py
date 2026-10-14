@@ -3,6 +3,7 @@ import json
 import os
 import re
 import subprocess
+import time
 from pathlib import Path
 
 import typer
@@ -82,6 +83,40 @@ def sync_repo(root: Path | None = None) -> None:
     start_background_pull(state_dir=state_dir, config_path=default_config_path())
 
 
+_STACKED_MERGE_ERROR = "asynchronous merge REST API"
+_ASYNC_MERGE_TIMEOUT_SECONDS = 300
+_ASYNC_MERGE_POLL_SECONDS = 2
+
+
+def _merge_stacked_pr(number: int) -> bool:
+    """Squash-merge a PR that is part of a GitHub stack, via the async merge API.
+
+    GitHub rejects the regular merge mutation for stacked PRs. The async endpoint
+    merges the PR together with every open PR below it in the stack. Returns True
+    once the PR is merged, False if it was queued in a merge queue instead.
+    """
+    endpoint = f"repos/{{owner}}/{{repo}}/pulls/{number}/merge-async"
+    logger.warning(
+        f"PR {number} is part of a GitHub stack: merging it also merges the open "
+        "PRs below it."
+    )
+    result = json.loads(
+        capture(["gh", "api", "-X", "PUT", endpoint, "-f", "merge_method=squash"])
+    )
+    deadline = time.monotonic() + _ASYNC_MERGE_TIMEOUT_SECONDS
+    while result["status"] == "pending":
+        if time.monotonic() > deadline:
+            logger.error(f"Timed out waiting for PR {number} to merge.")
+            raise typer.Exit(1)
+        time.sleep(_ASYNC_MERGE_POLL_SECONDS)
+        uuid = result["details"]["uuid"]
+        result = json.loads(capture(["gh", "api", f"{endpoint}/{uuid}"]))
+    if result["status"] == "failed":
+        logger.error(f"PR {number} did not merge: {result['details']['message']}")
+        raise typer.Exit(1)
+    return result["status"] == "merged"
+
+
 def git_merge(pr: str) -> None:
     """Squash-merge a PR, then sync the stack the merged branch belongs to.
 
@@ -118,7 +153,16 @@ def git_merge(pr: str) -> None:
 
     root = get_current_repo_root_path()
     lineage.link_pr(branch, [candidate_from_json(viewed)], root=root)
-    logged_process.run(["gh", "pr", "merge", "--squash", pr], check=True)
+    merged = logged_process.run(
+        ["gh", "pr", "merge", "--squash", pr], stderr=subprocess.PIPE, text=True
+    )
+    if merged.returncode and _STACKED_MERGE_ERROR in merged.stderr:
+        if not _merge_stacked_pr(viewed["number"]):
+            logger.info(f"PR {viewed['number']} was queued; not syncing the stack.")
+            return
+    elif merged.returncode:
+        typer.echo(merged.stderr, err=True)
+        raise typer.Exit(merged.returncode)
 
     worktree = worktree_paths(root=root).get(branch)
     if worktree is None:
