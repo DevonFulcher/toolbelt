@@ -111,6 +111,13 @@ class GhStackedPrs:
             or 'unknown command "stack"' in result.stderr
         ):
             return False
+        # Landed PRs stay in GitHub's stack and an update cannot drop them, so
+        # a chain without them is refused. The branches left are already in it.
+        if "would remove" in result.stderr:
+            logger.warning(
+                f"`gh stack link` left GitHub's stack as it is: {result.stderr.strip()}"
+            )
+            return True
         logger.error(f"`gh stack link` failed: {result.stderr.strip()}")
         raise typer.Exit(1)
 

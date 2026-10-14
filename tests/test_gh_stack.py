@@ -1,5 +1,6 @@
 """Tests for mirroring lineage to GitHub stacked PRs (fake `StackedPrs`)."""
 
+import subprocess
 from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -8,7 +9,7 @@ import pytest
 import typer
 from conftest import FakeForge, git
 
-from toolbelt.git.stack import lineage
+from toolbelt.git.stack import gh_stack, lineage
 from toolbelt.git.stack.append import create_stacked_branch
 from toolbelt.git.stack.gh_stack import UNSUPPORTED_TTL, mirror_stack
 from toolbelt.git.stack.sync import sync_stack
@@ -245,3 +246,27 @@ def test_sync_does_not_mirror_when_sync_fails(repo: Path, tmp_path: Path):
 
     assert prs.links == []
     assert prs.readiness_checks == 0
+
+
+def _link_with(monkeypatch: pytest.MonkeyPatch, returncode: int, stderr: str) -> bool:
+    def run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, returncode, "", stderr)
+
+    monkeypatch.setattr(gh_stack.logged_process, "run", run)
+    return gh_stack.GhStackedPrs().link(["a", "b"], base="main", cwd=Path.cwd())
+
+
+def test_a_stack_that_still_holds_landed_prs_is_left_as_it_is(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    refused = (
+        "Cannot update stack: this would remove #1698, #1703 from the stack\n"
+        "Include all existing PRs in the command to update the stack"
+    )
+
+    assert _link_with(monkeypatch, 1, refused) is True
+
+
+def test_any_other_link_failure_still_stops(monkeypatch: pytest.MonkeyPatch):
+    with pytest.raises(typer.Exit):
+        _link_with(monkeypatch, 1, "HTTP 500")
