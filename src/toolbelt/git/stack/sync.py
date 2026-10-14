@@ -140,6 +140,46 @@ def _restack(child: str, *, worktree: Path, onto: str, upstream: str) -> bool:
     return result.returncode == 0
 
 
+def _count(rev_range: list[str], *, worktree: Path) -> int:
+    return int(
+        run(
+            ["git", "rev-list", "--count", *rev_range],
+            cwd=worktree,
+            capture_output=True,
+        ).stdout.strip()
+    )
+
+
+def _replay_base(child: str, parent: str, *, onto: str, worktree: Path) -> str:
+    """Where the child's own commits begin, for rebasing it off its landed
+    parent onto ``onto``.
+
+    Normally that is the parent's tip: ``parent..child`` is the child's own
+    commits. But a child already rebased onto the base (say by hand after a
+    conflict) holds everything on the base since the parent too, and replaying
+    those onto the newer base conflicts with itself and with other people's
+    work. The commits reachable from ``onto`` are not the child's own either,
+    so the fork point with ``onto`` is the other base; whichever replays fewer
+    commits is the child's own (a tie keeps the parent). With no shared
+    history with ``onto`` the parent is kept and the rebase reports what is
+    wrong.
+    """
+    fork = run(
+        ["git", "merge-base", child, onto],
+        cwd=worktree,
+        check=False,
+        capture_output=True,
+    )
+    if fork.returncode != 0:
+        return parent
+    fork_point = fork.stdout.strip()
+    if _count([f"{fork_point}..{child}"], worktree=worktree) < _count(
+        [f"{parent}..{child}"], worktree=worktree
+    ):
+        return fork_point
+    return parent
+
+
 def sync_stack(
     *, root: Path, forge: Forge, stacked_prs: StackedPrs | None = None
 ) -> None:
@@ -228,7 +268,12 @@ def sync_stack(
             onto = base if base in tracked else f"origin/{base}"
 
             if not _restack(
-                child, worktree=worktree, onto=onto, upstream=direct_parent
+                child,
+                worktree=worktree,
+                onto=onto,
+                upstream=_replay_base(
+                    child, direct_parent, onto=onto, worktree=worktree
+                ),
             ):
                 logger.error(
                     f"Rebase conflict restacking '{child}' onto '{base}' in "
