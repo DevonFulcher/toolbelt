@@ -58,7 +58,7 @@ describe("the agents view", () => {
     const mayTake = screen.getByRole("region", { name: "Agents may take these" });
     expect(within(mayTake).getByText("devon/a")).toBeInTheDocument();
     expect(within(mayTake).getByText("Fix / re-run CI")).toBeInTheDocument();
-    expect(within(mayTake).getByText("An agent may take this now")).toBeInTheDocument();
+    expect(within(mayTake).getByText("An agent could take this, but Start runs is off")).toBeInTheDocument();
 
     const held = screen.getByRole("region", { name: "Agents may not take these" });
     expect(within(held).getByText("A person or an agent session holds this task.")).toBeInTheDocument();
@@ -256,5 +256,24 @@ describe("the agents view", () => {
     fireEvent.click(within(table).getByRole("button", { name: "Conversation" }));
 
     expect(await within(table).findByText("Nothing has been said yet.")).toBeInTheDocument();
+  });
+
+  test("with Start runs on, a task nothing holds back is taken by an agent without a button", async () => {
+    serve(agents({ launching: true, dry_run: false }));
+    show();
+
+    const mayTake = await screen.findByRole("region", { name: "Agents may take these" });
+    expect(within(mayTake).getByText("An agent may take this now")).toBeInTheDocument();
+    expect(within(mayTake).queryByRole("button", { name: "Run an agent now" })).not.toBeInTheDocument();
+  });
+
+  test("with Start runs off, a task an agent could take has a button to run one now", async () => {
+    const { posts } = serve(agents());
+    show();
+
+    const mayTake = await screen.findByRole("region", { name: "Agents may take these" });
+    fireEvent.click(within(mayTake).getByRole("button", { name: "Run an agent now" }));
+
+    await waitFor(() => expect(posts).toEqual([{ url: "/api/agents/start", id: "1:devon/a" }]));
   });
 });

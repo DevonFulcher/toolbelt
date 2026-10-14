@@ -180,6 +180,7 @@ function AgentCard({
   runs,
   onStop,
   onStart,
+  launching,
   openRun,
   onToggleConversation,
 }: {
@@ -187,6 +188,7 @@ function AgentCard({
   runs: AgentRunInfo[];
   onStop: (runId: string) => void;
   onStart: (id: string) => void;
+  launching: boolean;
   openRun: string | null;
   onToggleConversation: (runId: string) => void;
 }) {
@@ -206,7 +208,16 @@ function AgentCard({
         </Field>
         <Field id="task" label="Status">
           {decision.reason === null ? (
-            <span className="agent-ready">An agent may take this now</span>
+            launching ? (
+              <span className="agent-ready">An agent may take this now</span>
+            ) : (
+              <>
+                <span className="agent-ready">An agent could take this, but Start runs is off</span>
+                <button type="button" className="agents-toggle" onClick={() => onStart(decision.id)}>
+                  Run an agent now
+                </button>
+              </>
+            )
           ) : (
             <>
               <span className="agent-blocked">{reasonText(decision.reason)}</span>
@@ -355,7 +366,7 @@ function AgentsBody({ data, reload }: { data: Agents; reload: () => void }) {
             ) : (
               <div className="agents-cards">
                 {ready.map((decision) => (
-                  <AgentCard key={decision.id} decision={decision} runs={runsFor(decision.id)} onStop={stop} onStart={start} openRun={openRun} onToggleConversation={toggleConversation} />
+                  <AgentCard key={decision.id} decision={decision} runs={runsFor(decision.id)} onStop={stop} onStart={start} launching={data.launching} openRun={openRun} onToggleConversation={toggleConversation} />
                 ))}
               </div>
             )}
@@ -367,7 +378,7 @@ function AgentsBody({ data, reload }: { data: Agents; reload: () => void }) {
             ) : (
               <div className="agents-cards">
                 {held.map((decision) => (
-                  <AgentCard key={decision.id} decision={decision} runs={runsFor(decision.id)} onStop={stop} onStart={start} openRun={openRun} onToggleConversation={toggleConversation} />
+                  <AgentCard key={decision.id} decision={decision} runs={runsFor(decision.id)} onStop={stop} onStart={start} launching={data.launching} openRun={openRun} onToggleConversation={toggleConversation} />
                 ))}
               </div>
             )}

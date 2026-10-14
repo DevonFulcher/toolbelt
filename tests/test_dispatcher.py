@@ -575,3 +575,14 @@ def test_starting_by_hand_on_a_task_with_nothing_for_an_agent_is_unknown():
 
     with pytest.raises(KeyError):
         start_now(r, "a")
+
+
+def test_a_person_can_start_a_run_on_a_task_nothing_holds_back_while_starts_are_off():
+    r = rig(a=PrSnapshot(status(), None))
+    r.launching = False
+    r.tick()
+    assert r.decision("a").may_start and r.launched == []
+
+    start_now(r, "a")
+
+    assert r.launched == ["a"]

@@ -38,6 +38,8 @@ card (with when it clears, if it clears by itself):
 
 ### Running one by hand
 
+With "Start runs" off, a task nothing holds back reads "An agent could take this, but Start runs is off" and has a **Run an agent now** button.
+
 A held-back task whose reason is one of draft, inactive, thrash, runs per
 commit / per day, spend per task per day, screen asleep / locked or back-off has
 a **Run an agent anyway** button. It starts a run on that task right away, even
