@@ -33,7 +33,7 @@ from toolbelt.git.stack.ops import (
 )
 from toolbelt.git.stack.status import BranchStatus, stream_branch_statuses
 from toolbelt.git.stack.sync import sync_stack
-from toolbelt.git.stack.viz import RepoTree, render, render_repos
+from toolbelt.git.stack.viz import Columns, RepoTree, render, render_repos
 from toolbelt.git.stack.worktree import worktree_paths
 from toolbelt.git.workflow import update_repo
 from toolbelt.git.worktrees import (
@@ -194,7 +194,29 @@ def _known_repo_trees(cwd_root: Path | None) -> list[RepoTree]:
 
 
 @stack_typer.command()
-def tree() -> None:
+def tree(
+    next_action: Annotated[
+        bool,
+        typer.Option(
+            "--next",
+            help="Add what happens next on each branch (the `tt ui` Next column).",
+        ),
+    ] = False,
+    lines: Annotated[
+        bool,
+        typer.Option(
+            "--lines", help="Add the lines each PR adds and deletes (+added/-deleted)."
+        ),
+    ] = False,
+    assignee: Annotated[
+        bool,
+        typer.Option(
+            "--assignee",
+            help="Add who each PR is assigned to, or else who a review is "
+            "requested from.",
+        ),
+    ] = False,
+) -> None:
     """Print every known repo's stack tree, with each branch's PR/CI/review status.
 
     Each repo toolbelt tracks stacks for appears under its own `name (path)`
@@ -209,7 +231,8 @@ def tree() -> None:
         # Register (and import legacy config for) the current repo so it shows
         # up even if no other command has touched it yet.
         lineage.all_parents(root=cwd_root)
-    trees = _known_repo_trees(cwd_root)
+    columns = Columns(next=next_action, lines=lines, assignee=assignee)
+    trees = [replace(t, columns=columns) for t in _known_repo_trees(cwd_root)]
     if not trees:
         logger.info("No tracked stacks. Use `git append <name>` to start one.")
         return

@@ -84,6 +84,7 @@ def testparse_status_open_pr_with_pending_review_request():
         ci=CiState.SUCCESS,
         review=ReviewState.REQUESTED,
         url="https://github.com/acme/widgets/pull/2",
+        reviewers=("someone",),
     )
 
 
@@ -314,3 +315,45 @@ def test_fetch_gives_up_after_bounded_retries(monkeypatch: pytest.MonkeyPatch):
 
     assert not result.has_conflicts
     assert calls == 1 + status_module.MERGEABLE_RETRIES
+
+
+def test_parse_status_reads_lines_assignees_and_the_people_asked_to_review():
+    data = {
+        "state": "OPEN",
+        "isDraft": False,
+        "reviewDecision": "",
+        "reviewRequests": [
+            {"login": "danielbdias"},
+            {"name": "AI"},
+            {"login": "copilot-pull-request-reviewer"},
+            {"login": "Copilot"},
+        ],
+        "statusCheckRollup": [],
+        "url": "https://github.com/acme/widgets/pull/5",
+        "additions": 100,
+        "deletions": 26,
+        "assignees": [{"login": "me"}, {"login": "you"}],
+    }
+
+    status = parse_status(data)
+
+    assert (status.additions, status.deletions) == (100, 26)
+    assert status.assignees == ("me", "you")
+    assert status.reviewers == ("danielbdias",)
+    assert status.review == ReviewState.REQUESTED
+
+
+def test_parse_status_without_those_fields_leaves_them_empty():
+    data = {
+        "state": "OPEN",
+        "isDraft": False,
+        "reviewDecision": "",
+        "reviewRequests": ["danielbdias"],
+        "statusCheckRollup": [],
+        "url": "https://github.com/acme/widgets/pull/6",
+    }
+
+    status = parse_status(data)
+
+    assert (status.additions, status.deletions) == (0, 0)
+    assert status.assignees == () and status.reviewers == ()

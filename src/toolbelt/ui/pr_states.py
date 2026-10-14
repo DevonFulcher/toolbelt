@@ -260,7 +260,7 @@ _NEXT_LABELS = {
     na.RESOLVE_COMMENTS: "Resolve comments",
     na.FIX_CI: "Fix / re-run CI",
     na.WAIT_CI: "Waiting on CI",
-    na.PUBLISH: "Publish PR",
+    na.PUBLISH: "Publish PR in GitHub",
     na.BLOCKED: "Blocked on parent",
     na.MERGE: "Merge",
     na.WAIT_REVIEW: "Waiting for review",

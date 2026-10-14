@@ -16,7 +16,10 @@ from pathlib import Path
 
 from toolbelt import logged_process
 
-_FIELDS = "state,isDraft,reviewDecision,reviewRequests,statusCheckRollup,url,mergeable"
+_FIELDS = (
+    "state,isDraft,reviewDecision,reviewRequests,statusCheckRollup,url,mergeable,"
+    "additions,deletions,assignees"
+)
 
 # `gh pr view --json` has no field for review-thread resolution, so the
 # unresolved-comment count needs a raw GraphQL call instead; this pulls
@@ -73,6 +76,14 @@ class BranchStatus:
     url: str | None
     open_comments: int = 0
     has_conflicts: bool = False
+    #: Lines the PR adds and deletes against its base (its parent branch for a
+    #: stacked PR).
+    additions: int = 0
+    deletions: int = 0
+    #: GitHub logins of the PR's assignees and of the people (not teams or
+    #: bots) whose review is requested.
+    assignees: tuple[str, ...] = ()
+    reviewers: tuple[str, ...] = ()
 
 
 NO_PR = BranchStatus(
@@ -91,6 +102,21 @@ _REVIEW_WIDTH = max(len(s.value) for s in ReviewState if s is not ReviewState.NO
 _CONFLICTS_LABEL = "merge conflicts"
 # Room for the cap of 100 threads `_REVIEW_THREADS_QUERY` fetches.
 _COMMENTS_WIDTH = len("open comments: 100")
+
+
+#: Width of `format_status`'s fixed-width slots (two spaces between them), for
+#: lining up columns that follow it.
+STATUS_WIDTH = (
+    len("PR ")
+    + _PR_WIDTH
+    + len("CI ")
+    + _CI_WIDTH
+    + len("review ")
+    + _REVIEW_WIDTH
+    + len(_CONFLICTS_LABEL)
+    + _COMMENTS_WIDTH
+    + 2 * 4
+)
 
 
 def format_status(status: BranchStatus) -> str:
@@ -127,6 +153,22 @@ def _ci_state(rollup: list[dict]) -> CiState:
     return CiState.SUCCESS
 
 
+def _is_bot(login: str) -> bool:
+    folded = login.casefold()
+    return folded.endswith("[bot]") or "copilot" in folded
+
+
+def _requested_people(requests: list) -> tuple[str, ...]:
+    """Logins of the people a review is requested from: not a team, not a bot."""
+    return tuple(
+        entry["login"]
+        for entry in requests
+        if isinstance(entry, dict)
+        and entry.get("login")
+        and not _is_bot(entry["login"])
+    )
+
+
 def parse_status(data: dict, *, open_comments: int = 0) -> BranchStatus:
     """Parse a `gh pr view --json {_FIELDS}` payload into a `BranchStatus`."""
     if data["state"] == "MERGED":
@@ -158,6 +200,10 @@ def parse_status(data: dict, *, open_comments: int = 0) -> BranchStatus:
         # definite CONFLICTING counts, and only for a PR still in play.
         has_conflicts=data.get("mergeable") == "CONFLICTING"
         and pr_state in (PrState.OPEN, PrState.DRAFT),
+        additions=data.get("additions") or 0,
+        deletions=data.get("deletions") or 0,
+        assignees=tuple(a["login"] for a in data.get("assignees") or []),
+        reviewers=_requested_people(data.get("reviewRequests") or []),
     )
 
 

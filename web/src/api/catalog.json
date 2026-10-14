@@ -713,7 +713,7 @@
       "value": "wait_ci"
     },
     {
-      "label": "Publish PR",
+      "label": "Publish PR in GitHub",
       "tone": "accent",
       "legend": "A draft with green CI: mark it ready.",
       "reps": [
