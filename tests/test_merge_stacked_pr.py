@@ -12,6 +12,7 @@ import pytest
 import typer
 
 from toolbelt.git import workflow
+from toolbelt.git.worktrees_ops import WorktreeInUseError
 
 STACKED_ERROR = (
     "GraphQL: This pull request is part of a stack and must be merged using the "
@@ -30,7 +31,7 @@ class Gh:
         self.merge_stderr = merge_stderr
         self.api_responses = api_responses
         self.api_calls: list[list[str]] = []
-        self.synced: list[Path] = []
+        self.synced: list[tuple[Path, str]] = []
 
     def run(self, cmd, **kwargs):
         assert cmd[:3] == ["gh", "pr", "merge"]
@@ -61,7 +62,11 @@ def _install(monkeypatch: pytest.MonkeyPatch, gh: Gh, worktree: Path) -> None:
     monkeypatch.setattr(
         stack_worktree, "worktree_paths", lambda root: {"feature": worktree}
     )
-    monkeypatch.setattr(workflow, "sync_repo", gh.synced.append)
+    monkeypatch.setattr(
+        workflow, "sync_repo", lambda root, branch: gh.synced.append((root, branch))
+    )
+    monkeypatch.setattr(workflow, "main_worktree", lambda root: worktree.parent)
+    monkeypatch.setattr(workflow, "ensure_not_inside_worktree", lambda *a, **k: None)
     monkeypatch.setattr(workflow.time, "sleep", lambda seconds: None)
 
 
@@ -93,7 +98,7 @@ def test_stacked_pr_is_merged_through_the_async_api_then_synced(
         gh.api_calls[1:]
         == [["gh", "api", "repos/{owner}/{repo}/pulls/7/merge-async/abc"]] * 2
     )
-    assert gh.synced == [worktree]
+    assert gh.synced == [(worktree.parent, "feature")]
 
 
 def test_failed_async_merge_exits_without_syncing(
@@ -134,7 +139,7 @@ def test_regular_merge_does_not_use_the_async_api(
     workflow.git_merge("7")
 
     assert gh.api_calls == []
-    assert gh.synced == [worktree]
+    assert gh.synced == [(worktree.parent, "feature")]
 
 
 def test_other_merge_failures_exit_without_syncing(
@@ -148,3 +153,24 @@ def test_other_merge_failures_exit_without_syncing(
 
     assert gh.api_calls == []
     assert gh.synced == []
+
+
+def test_running_inside_the_branchs_worktree_is_refused_before_merging(
+    monkeypatch: pytest.MonkeyPatch, worktree: Path
+):
+    gh = Gh(merge_stderr="", api_responses=[])
+    _install(monkeypatch, gh, worktree)
+    merges = []
+    monkeypatch.setattr(
+        workflow.logged_process, "run", lambda *a, **k: merges.append(a)
+    )
+
+    def refuse(*args, **kwargs):
+        raise WorktreeInUseError("inside it")
+
+    monkeypatch.setattr(workflow, "ensure_not_inside_worktree", refuse)
+
+    with pytest.raises(WorktreeInUseError):
+        workflow.git_merge("7")
+
+    assert merges == [] and gh.synced == []

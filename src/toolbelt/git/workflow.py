@@ -44,14 +44,15 @@ def update_repo(target_path: Path):
         logged_process.run(["uv", "sync", "--all-groups"], check=True, cwd=target_path)
 
 
-def sync_repo(root: Path | None = None) -> None:
+def sync_repo(root: Path | None = None, *, branch: str | None = None) -> None:
     """Merge-sync the whole stack the current branch belongs to and refresh deps.
 
     Replaces the old git-town flow with the homegrown stack sync: each branch is
     merged parent -> child inside its own worktree and pushed (so no extra
     ``git push`` here — ``sync_stack`` pushes every branch). ``root`` defaults to
     the current worktree; pass a specific worktree to sync a stack the caller
-    just moved into (e.g. a freshly created branch).
+    just moved into (e.g. a freshly created branch). ``branch`` syncs the stack
+    of that branch instead of the one ``root`` has checked out.
 
     ``root`` itself can end up deleted by either step below: ``sync_stack``
     removes a landed branch's worktree (which can be ``root``, e.g. syncing
@@ -77,7 +78,7 @@ def sync_repo(root: Path | None = None) -> None:
     root = root or repo_root()
     main_wt = main_worktree(root)
     forge = GhForge(root)
-    sync_stack(root=root, forge=forge, stacked_prs=GhStackedPrs())
+    sync_stack(root=root, forge=forge, stacked_prs=GhStackedPrs(), branch=branch)
     git_branch_clean(root, forge=forge)
     update_repo(root if root.exists() else main_wt)
     start_background_pull(state_dir=state_dir, config_path=default_config_path())
@@ -121,14 +122,13 @@ def git_merge(pr: str) -> None:
     """Squash-merge a PR, then sync the stack the merged branch belongs to.
 
     ``pr`` is passed through to ``gh pr merge``/``gh pr view`` as-is (a PR
-    number, URL, or branch name). The stack synced is resolved from the
-    *merged branch's own* worktree, not wherever this happens to be invoked
-    from — merging a PR by number/URL should work the same from the main
-    worktree as from the branch's own worktree, and ``sync_stack`` requires
-    the current branch of whatever worktree it's rooted at to actually be
-    part of a tracked stack. If the branch has no tracked worktree (already
-    removed, or never tracked), there's no stack to restack, so this just
-    runs the repo-wide branch/lineage cleanup instead.
+    number, URL, or branch name). The stack synced is the merged branch's,
+    whatever worktree this is invoked from, and it is synced from the main
+    worktree because the merged branch's own worktree is removed by the sync.
+    Invoked from inside that worktree it refuses before merging anything. If
+    the branch has no tracked worktree (already removed, or never tracked),
+    there's no stack to restack, so this just runs the repo-wide
+    branch/lineage cleanup instead.
     """
     # Lazy import: worktrees -> bootstrap.repo_setup -> workflow would be a
     # circular import at module load time.
@@ -152,6 +152,8 @@ def git_merge(pr: str) -> None:
     from toolbelt.git.stack import lineage
 
     root = get_current_repo_root_path()
+    main_wt = main_worktree(root)
+    ensure_not_inside_worktree(branch, root=main_wt, caller_dirs=[Path.cwd()])
     lineage.link_pr(branch, [candidate_from_json(viewed)], root=root)
     merged = logged_process.run(
         ["gh", "pr", "merge", "--squash", pr], stderr=subprocess.PIPE, text=True
@@ -172,7 +174,7 @@ def git_merge(pr: str) -> None:
         )
         git_branch_clean(root, forge=GhForge(root))
         return
-    sync_repo(worktree)
+    sync_repo(main_wt, branch=branch)
 
 
 def record_branch_pr(branch: str, *, root: Path, forge: Forge) -> None:

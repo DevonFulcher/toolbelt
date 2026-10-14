@@ -216,9 +216,17 @@ def _rewritten_parent_tip(child: str, parent: str, *, worktree: Path) -> str | N
 
 
 def sync_stack(
-    *, root: Path, forge: Forge, stacked_prs: StackedPrs | None = None
+    *,
+    root: Path,
+    forge: Forge,
+    stacked_prs: StackedPrs | None = None,
+    branch: str | None = None,
 ) -> None:
     """Merge-sync the whole stack the current branch belongs to.
+
+    ``branch`` names the stack to sync by one of its branches, for a caller
+    running in a worktree that is not part of it (the main worktree, after
+    landing a branch whose own worktree is about to be removed).
 
     Processes branches root -> leaf so each parent is up to date before being
     merged into its children. The stack root merges ``origin/<base>`` so landed
@@ -234,7 +242,7 @@ def sync_stack(
     # When resuming after a restack conflict, this worktree is mid-rebase and
     # its HEAD is detached; recover the branch from the rebase state.
     rebasing = _branch_being_rebased(root)
-    branch = rebasing or current_branch(root)
+    branch = branch or rebasing or current_branch(root)
     parents = all_parents(root=root)
     tracked = set(parents.keys())
     if branch not in tracked:

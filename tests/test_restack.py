@@ -248,3 +248,17 @@ def test_a_child_restacked_by_hand_is_restacked_again_on_only_its_own_commits(
         )
         == "tests work"
     )
+
+
+def test_a_landed_stack_is_synced_from_the_main_worktree_by_naming_its_branch(
+    repo: Path, tmp_path: Path
+):
+    api_wt, tests_wt = _build_stack(repo, tmp_path)
+    _squash_merge_to_main(repo, "api.txt", "api\n")
+
+    sync_stack(root=repo, forge=FakeForge(merged={"devon/api"}), branch="devon/api")
+
+    assert lineage.get_parent("devon/api_tests", root=repo) == "main"
+    assert "devon/api" not in _branches(repo)
+    assert not api_wt.exists()
+    assert (tests_wt / "tests.txt").read_text() == "tests\n"
