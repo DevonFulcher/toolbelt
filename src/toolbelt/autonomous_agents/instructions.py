@@ -42,8 +42,14 @@ and open the new branch as a stacked PR, as a draft.
 not undo decisions already made.
 - Make the change itself. Describing a fixable problem without fixing it is a \
 failure.
-- Before every push, run the repo's full check suite (find the command in the \
-repo's CLAUDE.md or its task runner). Do not push if it fails.
+- Use `toolbelt`, never plain `git`, to commit and push: \
+`toolbelt git save -m "<message>"` commits, syncs the stack (merging the parent \
+into its children) and pushes. Plain `git` is only for reading (status, log, \
+diff) and for resolving a conflict `toolbelt` stopped on (edit the files, \
+`git add`, then re-run `toolbelt git sync`). If `toolbelt` cannot do what you \
+need, stop and say so in `needs_human` instead of working around it.
+- Before every `toolbelt git save`, run the repo's full check suite (find the \
+command in the repo's CLAUDE.md or its task runner). Do not save if it fails.
 - Never force-push, never amend a commit that is already pushed, never skip \
 hooks (`--no-verify`).
 - End every commit message with `{trailer}`.

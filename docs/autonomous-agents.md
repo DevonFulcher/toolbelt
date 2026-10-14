@@ -64,7 +64,9 @@ past the time limit ends as *timed out* (and keeps the cost it had accrued).
 unattended PR: where a fix goes by the PR's state (critical on the branch, a
 ready PR only if minimal, an approved PR always stacked; agents never get a
 draft),
-run the repo's checks before every push, never force-push, resolve conflicts
+commit and push only with `toolbelt git save` (never plain git: it syncs the
+stack, and a case toolbelt cannot handle is reported in `needs_human`, not
+worked around), run the repo's checks before every save, never force-push, resolve conflicts
 with `toolbelt git sync` and never abort them, the full flaky-CI protocol, and
 careful review-thread rules (bot threads may be answered and resolved; a human's
 thread is never resolved, and only a clear nit is replied to). Comments start

@@ -293,6 +293,8 @@ def test_instructions_carry_the_pr_the_worktree_and_the_ground_rules():
     assert "/wt/api/a" in text
     assert AI_PREFIX in text and "Co-Authored-By: AI Assistant" in text
     assert "Never force-push" in text
+    assert 'toolbelt git save -m "<message>"' in text
+    assert "never plain `git`" in text and "`needs_human`" in text
     assert (
         "15 minutes" not in text and "about 0 minutes" in text
     )  # LIMITS has a 1 s limit
