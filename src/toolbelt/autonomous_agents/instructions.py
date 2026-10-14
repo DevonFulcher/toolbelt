@@ -1,6 +1,8 @@
 """What an autonomous agent is told: the pr-shepherd skill's rules for one PR,
 adapted for a run that nobody supervises."""
 
+import json
+
 from toolbelt.autonomous_agents.dispatcher import Decision
 from toolbelt.autonomous_agents.limits import AgentLimits
 
@@ -151,7 +153,10 @@ _REPORT = """\
 
 Your last message must end with one line of JSON and nothing after it:
 
-{"actions_performed": "<what you did, including branches, pushes, replies and resolved threads>", "pushed": true or false, "needs_human": "<what a person must do, or an empty string>", "next_action": "<one short sentence>"}
+{"summary": "<what you did and, if a person must act, what they must do: one or two plain sentences>", "actions_performed": "<what you did, including branches, pushes, replies and resolved threads>", "pushed": true or false, "needs_human": "<what a person must do, or an empty string>", "next_action": "<one short sentence>"}
+
+The `summary` is shown in a table that does not render markdown: plain text \
+only, no links, backticks, bullets or bold, and at most 200 characters.
 """
 
 _TASKS = {
@@ -206,3 +211,18 @@ def build_prompt(decision: Decision) -> str:
         f"Please {_PROMPTS[decision.trigger]}: branch `{decision.branch}`, "
         f"{decision.pr_url or 'its PR'}. Follow the instructions you were given."
     )
+
+
+def report_summary(final_message: str) -> str:
+    """The `summary` from the JSON line that ends a run's final message; the
+    whole message when it does not end in a report that has one."""
+    lines = final_message.strip().splitlines()
+    try:
+        report = json.loads(lines[-1]) if lines else None
+    except json.JSONDecodeError:
+        return final_message
+    match report:
+        case {"summary": str(summary)} if summary:
+            return summary
+        case _:
+            return final_message

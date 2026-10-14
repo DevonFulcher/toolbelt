@@ -318,3 +318,13 @@ def test_each_trigger_has_its_own_task_and_prompt():
     assert "flake" in ci and "CODEOWNERS" in ci and "DRAFT PR" in ci
     assert "NEVER resolve a thread a human started" in comments
     assert "resolve the merge conflicts" in build_prompt(decision("resolve_conflicts"))
+
+
+def test_a_report_with_a_summary_is_recorded_as_that_summary(tmp_path: Path):
+    message = (
+        "Long account of everything.\n"
+        '{"summary": "Fixed the lint error and pushed.", "pushed": true}'
+    )
+    rig = Rig(tmp_path, [assistant(), result(result=message)])
+
+    assert rig.run().summary == "Fixed the lint error and pushed."

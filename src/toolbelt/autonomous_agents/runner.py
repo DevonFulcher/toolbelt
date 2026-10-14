@@ -23,7 +23,11 @@ lazy from claude_agent_sdk import query as sdk_query
 
 from toolbelt.autonomous_agents.claim_writer import HEARTBEAT_SECONDS, RunClaim
 from toolbelt.autonomous_agents.dispatcher import Decision
-from toolbelt.autonomous_agents.instructions import build_instructions, build_prompt
+from toolbelt.autonomous_agents.instructions import (
+    build_instructions,
+    build_prompt,
+    report_summary,
+)
 from toolbelt.autonomous_agents.limits import AgentLimits
 from toolbelt.git.stack.store import StackStore, TokenCounts
 from toolbelt.logger import logger
@@ -246,7 +250,9 @@ class AgentRunner:
                 tokens=tokens_of(result.usage)
                 if result and result.usage
                 else spend.tokens,
-                summary=(result.result or "")[:SUMMARY_LIMIT] if result else None,
+                summary=report_summary(result.result or "")[:SUMMARY_LIMIT]
+                if result
+                else None,
                 error=None if state == "succeeded" else error,
             )
         finally:
