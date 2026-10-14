@@ -499,3 +499,17 @@ def test_only_one_run_is_started_per_pass():
     r.tick()
 
     assert r.launched == ["a"]
+
+
+def test_a_draft_pr_is_held_back_with_that_reason_and_never_launched():
+    r = rig(
+        draft=PrSnapshot(status(pr=PrState.DRAFT), None),
+        ready=PrSnapshot(status(), None),
+    )
+
+    r.tick()
+
+    assert r.decision("draft").trigger == "fix_ci"
+    assert r.decision("draft").reason.code == "draft"
+    assert r.decision("ready").may_start
+    assert r.launched == ["ready"]

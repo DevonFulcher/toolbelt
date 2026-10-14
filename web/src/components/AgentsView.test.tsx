@@ -61,6 +61,31 @@ describe("the agents view", () => {
     expect(within(held).getByText("Resolve conflicts")).toBeInTheDocument();
   });
 
+  test("a draft PR is under the held-back tasks, with the reason", async () => {
+    const base = agents();
+    serve(
+      agents({
+        decisions: [
+          {
+            id: "1:devon/d",
+            repo: "api",
+            branch: "devon/d",
+            trigger: "fix_ci",
+            reason: { code: "draft", text: "The PR is a draft: agents leave drafts to you.", until: null },
+            decided_at: base.decisions[0].decided_at,
+          },
+        ],
+      }),
+    );
+    show();
+
+    const held = await screen.findByRole("region", { name: "Agents may not take these" });
+    expect(within(held).getByText("devon/d")).toBeInTheDocument();
+    expect(within(held).getByText("The PR is a draft: agents leave drafts to you.")).toBeInTheDocument();
+    const mayTake = screen.getByRole("region", { name: "Agents may take these" });
+    expect(within(mayTake).queryByText("devon/d")).not.toBeInTheDocument();
+  });
+
   test("shows every reason all agents are paused, in the banner", async () => {
     serve(
       agents({

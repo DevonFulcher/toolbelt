@@ -753,6 +753,7 @@ class Spend(Model):
 type AgentReasonCode = Literal[
     "disabled",
     "pr_not_open",
+    "draft",
     "inactive",
     "claimed",
     "no_worktree",

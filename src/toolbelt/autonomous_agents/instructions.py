@@ -156,11 +156,6 @@ _TASKS = {
 
 
 def _where_rule(decision: Decision) -> str:
-    if decision.is_draft:
-        return (
-            "- A draft has no reviewers to disturb: fix everything in place on "
-            "this branch."
-        )
     if decision.approved:
         return (
             "- An approved PR: critical fixes go on this branch; anything else, "
@@ -175,13 +170,7 @@ def _where_rule(decision: Decision) -> str:
 
 def build_instructions(decision: Decision, limits: AgentLimits) -> str:
     """The text appended to Claude Code's own system prompt for this run."""
-    kind = (
-        "a draft"
-        if decision.is_draft
-        else "approved"
-        if decision.approved
-        else "ready for review and not approved yet"
-    )
+    kind = "approved" if decision.approved else "ready for review and not approved yet"
     pr = decision.pr_url or "(no URL known: find it with `gh pr view`)"
     general = _GENERAL.format(
         worktree=decision.worktree,

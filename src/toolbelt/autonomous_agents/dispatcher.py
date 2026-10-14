@@ -74,7 +74,6 @@ class Decision:
     pr_number: int | None = None
     pr_url: str | None = None
     base_ref: str | None = None
-    is_draft: bool = False
     approved: bool = False
     #: Where the branch is checked out (None: nowhere).
     worktree: Path | None = None
@@ -280,6 +279,7 @@ class Dispatcher:
             task_id=task.task_id,
             action_kind=action.kind,
             pr_open=pr_is_open(snapshot.status),
+            pr_draft=snapshot.status.pr is PrState.DRAFT,
             head_sha=state.head_sha,
             last_commit_at=state.last_commit_at,
             has_worktree=task.worktree is not None,
@@ -301,7 +301,6 @@ class Dispatcher:
             pr_number=snapshot.facts.number if snapshot.facts else None,
             pr_url=snapshot.status.url,
             base_ref=snapshot.facts.base_ref if snapshot.facts else None,
-            is_draft=snapshot.status.pr is PrState.DRAFT,
             approved=snapshot.status.review is ReviewState.APPROVED,
             worktree=task.worktree,
         )

@@ -5,6 +5,7 @@
 export type AgentReasonCode =
   | "disabled"
   | "pr_not_open"
+  | "draft"
   | "inactive"
   | "claimed"
   | "no_worktree"

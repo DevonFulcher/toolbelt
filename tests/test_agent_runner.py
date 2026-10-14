@@ -37,7 +37,6 @@ def decision(trigger: str = "fix_ci", **changes) -> Decision:
         "pr_number": 7,
         "pr_url": "https://github.com/o/api/pull/7",
         "base_ref": "main",
-        "is_draft": True,
         "approved": False,
         "worktree": Path("/wt/api/a"),
     }
@@ -300,11 +299,10 @@ def test_instructions_carry_the_pr_the_worktree_and_the_ground_rules():
 
 
 def test_where_a_fix_goes_depends_on_the_prs_state():
-    draft = build_instructions(decision(is_draft=True), LIMITS)
-    ready = build_instructions(decision(is_draft=False, approved=False), LIMITS)
-    approved = build_instructions(decision(is_draft=False, approved=True), LIMITS)
+    ready = build_instructions(decision(approved=False), LIMITS)
+    approved = build_instructions(decision(approved=True), LIMITS)
 
-    assert "A draft has no reviewers to disturb" in draft
+    assert "draft has no reviewers" not in ready
     assert "not approved yet: commit a non-critical fix" in ready
     assert "however small, is stacked" in approved
 

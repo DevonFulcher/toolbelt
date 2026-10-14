@@ -28,6 +28,7 @@ def task(**changes) -> TaskFacts:
         task_id="t1",
         action_kind="fix_ci",
         pr_open=True,
+        pr_draft=False,
         head_sha="abc",
         last_commit_at=NOW - timedelta(hours=3),
         has_worktree=True,
@@ -125,6 +126,7 @@ def test_agents_switched_off_is_the_reason_for_every_task():
     ("changes", "code"),
     [
         ({"pr_open": False}, "pr_not_open"),
+        ({"pr_draft": True}, "draft"),
         ({"last_commit_at": None}, "inactive"),
         ({"claimed_by_other": True}, "claimed"),
         ({"has_worktree": False}, "no_worktree"),
@@ -136,6 +138,19 @@ def test_agents_switched_off_is_the_reason_for_every_task():
 )
 def test_task_conditions(changes, code):
     assert reason_code(task(**changes), world()) == code
+
+
+def test_a_draft_is_left_to_the_user_whatever_else_is_true_of_it():
+    reason = decide(
+        task(pr_draft=True, claimed_by_other=True, worktree_clean=False), world()
+    )
+
+    assert reason is not None and reason.code == "draft"
+    assert "draft" in reason.text
+
+
+def test_a_closed_pr_is_not_open_before_it_is_a_draft():
+    assert reason_code(task(pr_open=False, pr_draft=True), world()) == "pr_not_open"
 
 
 def test_a_branch_untouched_for_more_than_three_working_days_is_inactive():

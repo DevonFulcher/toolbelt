@@ -4,7 +4,7 @@ Pure functions over what the dispatcher has gathered, so every reason is
 testable and the UI can show the same ``Reason`` the dispatcher acted on.
 ``decide`` gives the one reason that matters most for a task, checked in the
 order of ``decide``'s body: whether agents are on at all, then what is true of
-the task for a while (its PR, how old its last commit is, who holds it, its
+the task for a while (its PR and whether it is still a draft, how old its last commit is, who holds it, its
 worktree, thrash, its run and spend limits), then what is true of all agents
 (spend limits, sign-in, the screen), then what passes soon (another run, a
 back-off).
@@ -22,6 +22,7 @@ from toolbelt.git.stack.store import AgentRun
 type ReasonCode = Literal[
     "disabled",
     "pr_not_open",
+    "draft",
     "inactive",
     "claimed",
     "no_worktree",
@@ -59,6 +60,8 @@ class TaskFacts:
     #: ``next_action``).
     action_kind: str
     pr_open: bool
+    #: The open PR is still a draft.
+    pr_draft: bool
     head_sha: str
     last_commit_at: datetime | None
     has_worktree: bool
@@ -168,6 +171,8 @@ def decide(task: TaskFacts, world: World) -> Reason | None:
         return Reason("disabled", "Autonomous agents are switched off.")
     if not task.pr_open:
         return Reason("pr_not_open", "The PR is not open.")
+    if task.pr_draft:
+        return Reason("draft", "The PR is a draft: agents leave drafts to you.")
     if task.last_commit_at is None:
         return Reason("inactive", "No commit on this branch to go by.")
     elapsed = working_days_between(

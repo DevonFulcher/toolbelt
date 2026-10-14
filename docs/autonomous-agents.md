@@ -25,6 +25,7 @@ card (with when it clears, if it clears by itself):
 | --- | --- |
 | agents off | the first switch |
 | PR not open | merged and closed PRs are left alone |
+| draft | agents only work on PRs that are ready for review; a draft is left to you, and sits under "No agent is on these" |
 | inactive | the branch was not committed to within 3 working days (weekends do not count) |
 | claimed | a person, or an interactive agent session, holds the task |
 | no worktree / dirty / busy | the worktree must exist, have no uncommitted changes, and not be mid-merge or mid-rebase |
@@ -61,7 +62,8 @@ past the time limit ends as *timed out* (and keeps the cost it had accrued).
 
 `autonomous_agents/instructions.py` adapts the `pr-shepherd` skill for one
 unattended PR: where a fix goes by the PR's state (critical on the branch, a
-draft in place, a ready PR only if minimal, an approved PR always stacked),
+ready PR only if minimal, an approved PR always stacked; agents never get a
+draft),
 run the repo's checks before every push, never force-push, resolve conflicts
 with `toolbelt git sync` and never abort them, the full flaky-CI protocol, and
 careful review-thread rules (bot threads may be answered and resolved; a human's
