@@ -5,6 +5,7 @@
 export type AgentReasonCode =
   | "disabled"
   | "pr_not_open"
+  | "working"
   | "draft"
   | "inactive"
   | "claimed"
@@ -168,7 +169,7 @@ export interface AgentReason {
 }
 /**
  * What the dispatcher concluded about one task whose next action is
- * something an agent does.
+ * something an agent does. A reason of ``working`` means an agent is on it.
  */
 export interface AgentDecision {
   branch: string;

@@ -25,6 +25,7 @@ card (with when it clears, if it clears by itself):
 | --- | --- |
 | agents off | the first switch |
 | PR not open | merged and closed PRs are left alone |
+| working | a run is already on the task: it shows under "An agent is on these", whatever else its run changes (a dirty worktree) |
 | draft | agents only work on PRs that are ready for review; a draft is left to you, and sits under "No agent is on these" |
 | inactive | the branch was not committed to within 3 working days (weekends do not count) |
 | claimed | a person, or an interactive agent session, holds the task |

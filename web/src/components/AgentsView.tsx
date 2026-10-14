@@ -286,8 +286,9 @@ function AgentsBody({ data, reload }: { data: Agents; reload: () => void }) {
   const [openRun, setOpenRun] = useState<string | null>(null);
   const toggleConversation = (runId: string): void => setOpenRun((open) => (open === runId ? null : runId));
   const { limits, spend } = data;
+  const working = data.decisions.filter((d) => d.reason?.code === "working");
   const ready = data.decisions.filter((d) => d.reason === null);
-  const held = data.decisions.filter((d) => d.reason !== null);
+  const held = data.decisions.filter((d) => d.reason !== null && d.reason.code !== "working");
   const runsFor = (id: string): AgentRunInfo[] => data.runs.filter((run) => run.id === id);
   const screen = data.screen === null ? "unknown" : !data.screen.awake ? "asleep" : data.screen.locked ? "locked" : "awake, unlocked";
   const signedIn = data.signed_in === null ? "not checked" : data.signed_in ? "signed in" : "not signed in";
@@ -359,6 +360,25 @@ function AgentsBody({ data, reload }: { data: Agents; reload: () => void }) {
       </div>
       {data.enabled && (
         <>
+          {working.length > 0 && (
+            <section className="agents-section" aria-label="Agents are on these">
+              <h2>An agent is on these</h2>
+              <div className="agents-cards">
+                {working.map((decision) => (
+                  <AgentCard
+                    key={decision.id}
+                    decision={decision}
+                    runs={runsFor(decision.id)}
+                    onStop={stop}
+                    onStart={start}
+                    launching={data.launching}
+                    openRun={openRun}
+                    onToggleConversation={toggleConversation}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
           <section className="agents-section" aria-label="Agents may take these">
             <h2>An agent may take these</h2>
             {ready.length === 0 ? (

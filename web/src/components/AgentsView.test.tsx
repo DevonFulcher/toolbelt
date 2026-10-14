@@ -276,4 +276,19 @@ describe("the agents view", () => {
 
     await waitFor(() => expect(posts).toEqual([{ url: "/api/agents/start", id: "1:devon/a" }]));
   });
+
+  test("a task an agent is working on is under its own heading, not the held-back ones", async () => {
+    const base = agents({ launching: true, dry_run: false });
+    const decision = { ...base.decisions[1], reason: { code: "working" as const, text: "An agent is working on this now.", until: null } };
+    const run = { ...base.runs[0], id: decision.id, state: "running" as const, ended_at: null, summary: null };
+    serve({ ...base, decisions: [decision], runs: [run] });
+    show();
+
+    const on = await screen.findByRole("region", { name: "Agents are on these" });
+    expect(within(on).getByText("devon/b")).toBeInTheDocument();
+    expect(within(on).getByText("An agent is working on this now.")).toBeInTheDocument();
+    expect(within(on).getByRole("button", { name: "Stop" })).toBeInTheDocument();
+    const held = screen.getByRole("region", { name: "Agents may not take these" });
+    expect(within(held).queryByText("devon/b")).not.toBeInTheDocument();
+  });
 });

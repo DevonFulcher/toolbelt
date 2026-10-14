@@ -371,7 +371,7 @@ def test_the_spend_caps_sign_in_and_the_run_limit_stay_even_for_a_person():
     assert override_code(task(), world(auth_ok=False)) == "auth"
     over = [run(cost=LIMITS.global_usd_per_day + 1)]
     assert override_code(task(), world(runs=over)) == "global_usd_per_day"
-    working = [run(state="running")]
+    working = [run(task_id="other", state="running")]
     assert override_code(task(), world(runs=working)) == "concurrency"
     assert override_code(task(), world(enabled=False)) == "disabled"
 
@@ -380,3 +380,16 @@ def test_an_overridden_reason_does_not_hide_one_that_stays():
     assert override_code(task(pr_draft=True, claimed_by_other=True), world()) == (
         "claimed"
     )
+
+
+def test_a_task_with_a_run_working_on_it_is_working_whatever_the_run_changed():
+    runs = [run(state="running")]
+
+    assert reason_code(task(worktree_clean=False), world(runs=runs)) == "working"
+    assert override_code(task(), world(runs=runs)) == "working"
+
+
+def test_another_tasks_working_run_is_only_a_concurrency_limit_for_this_one():
+    runs = [run(task_id="other", state="running")]
+
+    assert reason_code(task(), world(runs=runs)) == "concurrency"

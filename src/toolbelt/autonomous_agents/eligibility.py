@@ -22,6 +22,7 @@ from toolbelt.git.stack.store import AgentRun
 type ReasonCode = Literal[
     "disabled",
     "pr_not_open",
+    "working",
     "draft",
     "inactive",
     "claimed",
@@ -192,6 +193,11 @@ def _reasons(task: TaskFacts, world: World) -> Iterator[Reason]:
         return
     if not task.pr_open:
         yield Reason("pr_not_open", "The PR is not open.")
+        return
+    if any(r.task_id == task.task_id and r.state == "running" for r in world.runs):
+        # What the run changes (a dirty worktree, its claim) is not a reason
+        # to look at.
+        yield Reason("working", "An agent is working on this now.")
         return
     if task.pr_draft:
         yield Reason("draft", "The PR is a draft: agents leave drafts to you.")

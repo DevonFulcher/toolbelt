@@ -753,6 +753,7 @@ class Spend(Model):
 type AgentReasonCode = Literal[
     "disabled",
     "pr_not_open",
+    "working",
     "draft",
     "inactive",
     "claimed",
@@ -796,7 +797,7 @@ class AgentReason(Model):
 
 class AgentDecision(Model):
     """What the dispatcher concluded about one task whose next action is
-    something an agent does."""
+    something an agent does. A reason of ``working`` means an agent is on it."""
 
     #: The branch's row id (see ``Branch.id``).
     id: str
