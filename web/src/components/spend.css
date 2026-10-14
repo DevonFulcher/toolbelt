@@ -1,0 +1,26 @@
+/* The spend view. Uses the page's colour tokens, so light/dark follow it. */
+.spend { display: grid; gap: 16px; min-width: 0; }
+.spend-summary { color: var(--muted); font-size: 12px; margin: 0; }
+.spend-notices { display: grid; gap: 4px; }
+.spend-notices .notice { padding: 0; }
+.spend-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+.spend-tile { background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+              padding: 12px 14px; display: grid; gap: 2px; min-width: 0; }
+.spend-tile-label { color: var(--muted); font-size: 12px; }
+.spend-tile-cost { font-size: 22px; font-variant-numeric: tabular-nums; }
+.spend-tile-detail { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.spend-table { background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+               padding: 12px 14px; display: grid; gap: 8px; min-width: 0; overflow-x: auto; }
+.spend-table h2 { margin: 0; font-size: 14px; }
+.spend-description, .spend-empty { margin: 0; color: var(--muted); font-size: 12px; max-width: 70ch; }
+.spend-table table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.spend-table th, .spend-table td { text-align: left; padding: 4px 10px 4px 0; border-bottom: 1px solid var(--line); }
+.spend-table th { color: var(--muted); font-weight: 500; font-size: 12px; }
+.spend-table .num { text-align: right; font-variant-numeric: tabular-nums; padding-right: 0; padding-left: 10px; }
+.spend-unclaimed td { color: var(--muted); }
+.spend-flag { color: var(--muted); font-size: 11px; }
+.spend-notes { color: var(--muted); font-size: 12px; }
+.spend-notes summary { cursor: pointer; }
+.spend-notes dl { margin: 8px 0 0; display: grid; gap: 8px; }
+.spend-notes dt { color: var(--fg); }
+.spend-notes dd { margin: 0; max-width: 70ch; }

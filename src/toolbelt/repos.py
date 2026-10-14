@@ -1,8 +1,8 @@
 import os
-import subprocess
 from abc import ABC, abstractmethod
 from pathlib import Path
 
+from toolbelt import logged_process
 from toolbelt.env_var import get_git_projects_workdir
 
 
@@ -23,7 +23,7 @@ class Repo(ABC):
 
     def _run(self, cmd: list[str]) -> None:
         os.chdir(self.path())
-        subprocess.run(cmd, check=True)
+        logged_process.run(cmd, check=True)
 
     def hooks(self) -> list[Hook]:
         return []
@@ -50,7 +50,7 @@ class AiCodegeApi(Repo):
 
         class AiCodegeApiAfterFileEditHook(AfterFileEditHook):
             def run(self, *, file_path: Path) -> None:
-                subprocess.run(
+                logged_process.run(
                     ["uv", "run", "ruff", "format", str(file_path)],
                     cwd=repo_root,
                     check=True,
@@ -111,7 +111,7 @@ def repo_for_path(file_path: Path) -> Repo | None:
 
     try:
         relative = file_path.resolve().relative_to(Path(git_projects_workdir).resolve())
-    except Exception:
+    except ValueError, OSError:
         return None
 
     if not relative.parts:

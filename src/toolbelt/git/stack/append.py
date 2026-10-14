@@ -20,7 +20,15 @@ from toolbelt.git.worktrees import (
 from toolbelt.logger import logger
 
 
-def create_stacked_branch(name: str, *, root: Path, wt_path: Path) -> str:
+def create_stacked_branch(
+    name: str,
+    *,
+    root: Path,
+    wt_path: Path,
+    task: str | None = None,
+    task_tracker: str | None = None,
+    agent_link: str | None = None,
+) -> str:
     """Create a child branch off the current branch and a worktree for it.
 
     Any uncommitted work in ``root`` is committed onto the *current* branch
@@ -28,7 +36,8 @@ def create_stacked_branch(name: str, *, root: Path, wt_path: Path) -> str:
     keeps its exact in-flight state — just committed rather than dirty —
     instead of having it moved out from under it onto the new branch. The
     new branch then forks from that checkpoint. Records the new branch's
-    parent in lineage. Returns the new branch name. Does not run repo setup
+    parent (and ``task`` / ``task_tracker`` / ``agent_link``, when given) in
+    lineage. Returns the new branch name. Does not run repo setup
     or open an editor.
     """
     if wt_path.exists():
@@ -43,7 +52,14 @@ def create_stacked_branch(name: str, *, root: Path, wt_path: Path) -> str:
     # was already running against it.
     _commit_uncommitted(root=root)
     run(["git", "checkout", "-b", new_branch], cwd=root, exit_on_error=True)
-    set_parent(new_branch, parent, root=root)
+    set_parent(
+        new_branch,
+        parent,
+        root=root,
+        task=task,
+        task_tracker=task_tracker,
+        agent_link=agent_link,
+    )
     run(["git", "checkout", parent], cwd=root, exit_on_error=True)
     run(
         ["git", "worktree", "add", str(wt_path), new_branch],

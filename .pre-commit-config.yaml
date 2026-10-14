@@ -4,6 +4,8 @@ exclude: |
       | .venv/
       | __pycache__/
       | .ruff_cache/
+      | web/node_modules/
+      | src/toolbelt/ui/static/dist/
   )$
 
 repos:
@@ -40,3 +42,32 @@ repos:
         types_or: [python, pyi]
         pass_filenames: false
         require_serial: true
+      # The web client (web/): needs `pnpm --dir web install` once.
+      - id: web-typecheck
+        name: web typecheck
+        entry: pnpm --dir web typecheck
+        files: ^web/
+        exclude: ^web/node_modules/
+        language: system
+        pass_filenames: false
+      - id: web-lint
+        name: web lint
+        entry: pnpm --dir web lint
+        files: ^web/
+        exclude: ^web/node_modules/
+        language: system
+        pass_filenames: false
+      - id: web-test
+        name: web tests (vitest)
+        entry: pnpm --dir web test
+        files: ^web/
+        exclude: ^web/node_modules/
+        language: system
+        pass_filenames: false
+      # The client's API types are generated from the Python wire models.
+      - id: web-api-types
+        name: web API types are current
+        entry: pnpm --dir web check:types
+        files: ^(web/src/api/|src/toolbelt/ui/(api_models|api_schema|pr_states|next_action|pr_activity)\.py$)
+        language: system
+        pass_filenames: false

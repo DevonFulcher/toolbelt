@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from toolbelt.git.stack.store import PrCandidate
+
 
 @pytest.fixture(autouse=True)
 def _isolate_git_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -27,18 +29,80 @@ def _isolate_git_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "GIT_PREFIX",
         "GIT_COMMON_DIR",
         "GIT_OBJECT_DIRECTORY",
+        # The hook's own commit identity would override the throwaway repos'.
+        "GIT_AUTHOR_NAME",
+        "GIT_AUTHOR_EMAIL",
+        "GIT_AUTHOR_DATE",
+        "GIT_COMMITTER_NAME",
+        "GIT_COMMITTER_EMAIL",
+        "GIT_COMMITTER_DATE",
     ):
         monkeypatch.delenv(var, raising=False)
 
 
-class FakeForge:
-    """Test `Forge`: reports a branch merged iff it was seeded as merged."""
+@pytest.fixture(autouse=True)
+def _isolate_state_dir(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Point toolbelt's state dir (stack DB) at a per-test temp dir."""
+    monkeypatch.setenv("TOOLBELT_HOME", str(tmp_path_factory.mktemp("toolbelt-home")))
 
-    def __init__(self, merged: Iterable[str] = ()) -> None:
+
+@pytest.fixture(autouse=True)
+def _isolate_claude_config_dir(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Point Claude Code's config dir (where its session transcripts are) at a
+    per-test temp dir, so no test reads the developer's real transcripts."""
+    monkeypatch.setenv(
+        "CLAUDE_CONFIG_DIR", str(tmp_path_factory.mktemp("claude-config"))
+    )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_config_dir(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Point toolbelt's config (``config.yaml``) at a per-test temp dir, so no
+    test reads the developer's real one. Returns the config file's path."""
+    config_home = tmp_path_factory.mktemp("config-home")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    return config_home / "toolbelt" / "config.yaml"
+
+
+class FakeForge:
+    """Test `Forge`: a branch is merged iff seeded as such; every branch has
+    an open PR by default unless seeded via `no_pr` — most tests don't care
+    about this dimension and just want sync's normal "push automatically"
+    behavior.
+    """
+
+    def __init__(
+        self,
+        merged: Iterable[str] = (),
+        no_pr: Iterable[str] = (),
+        candidates: dict[str, list[PrCandidate]] | None = None,
+        conflicting: Iterable[str] = (),
+    ) -> None:
         self.merged = set(merged)
+        self.no_pr = set(no_pr)
+        self.conflicting = set(conflicting)
+        #: The PRs `pr_candidates` reports per branch (none by default).
+        self.candidates = candidates or {}
+        self.candidate_lookups: list[str] = []
 
     async def pr_is_merged(self, branch: str) -> bool:
         return branch in self.merged
+
+    async def pr_is_open(self, branch: str) -> bool:
+        return branch not in self.no_pr
+
+    async def pr_is_conflicting(self, branch: str) -> bool:
+        return branch in self.conflicting
+
+    async def pr_candidates(self, branch: str) -> list[PrCandidate]:
+        self.candidate_lookups.append(branch)
+        return self.candidates.get(branch, [])
 
 
 def git(*args: str, cwd: Path) -> str:

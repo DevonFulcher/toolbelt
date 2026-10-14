@@ -1,9 +1,10 @@
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 import typer
 
+from toolbelt import logged_process
 from toolbelt.logger import logger
 
 
@@ -14,6 +15,7 @@ def run(
     check: bool = True,
     exit_on_error: bool = False,
     capture_output: bool = False,
+    input: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """
     Run a command with consistent logging and error-handling policy.
@@ -28,6 +30,8 @@ def run(
             termination (avoids a traceback). This applies both when `check=True`
             (exception path) and when `check=False` (non-zero return code path).
         capture_output: If True, capture stdout/stderr into the returned result.
+        input: Text written to the command's stdin (e.g. a multi-line commit
+            message for `git commit -F -`).
 
     Notes:
         Common combinations:
@@ -39,12 +43,13 @@ def run(
     logger.info(" ".join(cmd))
 
     try:
-        result = subprocess.run(
+        result = logged_process.run(
             list(cmd),
             cwd=str(cwd) if cwd else None,
             check=check,
             text=True,
             capture_output=capture_output,
+            input=input,
         )
     except FileNotFoundError as err:
         logger.error(f"Command not found: {cmd[0]}")
@@ -70,7 +75,7 @@ def capture(
     cwd: Path | None = None,
 ) -> str:
     """Run a command and return stdout with surrounding whitespace removed."""
-    return subprocess.check_output(
+    return logged_process.check_output(
         list(cmd),
         cwd=str(cwd) if cwd else None,
         text=True,

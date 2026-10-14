@@ -4,7 +4,7 @@
 `target_path`, so its `asdf install`/`uv sync` calls must actually run there
 too (`cwd=target_path`) rather than inheriting whatever the process's ambient
 cwd happens to be — real for a newly created worktree, whose directory
-differs from wherever the command was invoked from. `subprocess.run` is faked
+differs from wherever the command was invoked from. `logged_process.run` is faked
 so this doesn't depend on asdf/uv actually being installed.
 """
 
@@ -29,7 +29,7 @@ def test_asdf_install_runs_in_target_path(
 ):
     (tmp_path / ".tool-versions").write_text("python 3.12.0\n")
     calls: list[tuple[list[str], Path | None]] = []
-    monkeypatch.setattr(workflow.subprocess, "run", _fake_run(calls))
+    monkeypatch.setattr(workflow.logged_process, "run", _fake_run(calls))
 
     workflow.update_repo(tmp_path)
 
@@ -39,7 +39,7 @@ def test_asdf_install_runs_in_target_path(
 def test_uv_sync_runs_in_target_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     (tmp_path / "uv.lock").write_text("")
     calls: list[tuple[list[str], Path | None]] = []
-    monkeypatch.setattr(workflow.subprocess, "run", _fake_run(calls))
+    monkeypatch.setattr(workflow.logged_process, "run", _fake_run(calls))
 
     workflow.update_repo(tmp_path)
 
@@ -50,7 +50,7 @@ def test_skips_both_commands_when_neither_file_present(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     calls: list[tuple[list[str], Path | None]] = []
-    monkeypatch.setattr(workflow.subprocess, "run", _fake_run(calls))
+    monkeypatch.setattr(workflow.logged_process, "run", _fake_run(calls))
 
     workflow.update_repo(tmp_path)
 

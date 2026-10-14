@@ -16,13 +16,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from typer.testing import CliRunner
-
 from conftest import git
+from typer.testing import CliRunner
 
 from toolbelt.git.cli import git_typer
 from toolbelt.git.stack import lineage
 from toolbelt.git.stack.append import create_stacked_branch
+from toolbelt.git.worktrees_ops import WorktreeInUseError
 
 runner = CliRunner()
 
@@ -38,9 +38,16 @@ def _git_projects_workdir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
 class Invocation:
     exit_code: int
     output: str  # combined stdout+stderr captured at the fd level
+    exception: BaseException | None = None
 
 
-def _invoke(args: list[str], *, cwd: Path, capfd: pytest.CaptureFixture) -> Invocation:
+def _invoke(
+    args: list[str],
+    *,
+    cwd: Path,
+    capfd: pytest.CaptureFixture,
+    env: dict[str, str | None] | None = None,
+) -> Invocation:
     """Invoke a `git_typer` command and capture its real console output.
 
     `toolbelt`'s logger binds a `StreamHandler` to whatever `sys.stdout` object
@@ -57,6 +64,10 @@ def _invoke(args: list[str], *, cwd: Path, capfd: pytest.CaptureFixture) -> Invo
     than `capfd`, so both are concatenated here, in the order each command
     actually emits them: log/trace lines (via capfd) before echoed data (via
     `result.output`) — true for every command today.
+
+    `env` is applied for the call only (a `None` value unsets the variable).
+    IS_PERSONAL is unset unless a test says otherwise, so the developer's own
+    shell never changes a result.
     """
     from toolbelt.logger import setup_logging
 
@@ -64,11 +75,14 @@ def _invoke(args: list[str], *, cwd: Path, capfd: pytest.CaptureFixture) -> Invo
     with pytest.MonkeyPatch.context() as mp:
         mp.chdir(cwd)
         setup_logging()
-        result = runner.invoke(git_typer, args)
+        result = runner.invoke(
+            git_typer, args, env={"IS_PERSONAL": None, **(env or {})}
+        )
     captured = capfd.readouterr()
     return Invocation(
         exit_code=result.exit_code,
         output=captured.out + captured.err + result.output,
+        exception=result.exception,
     )
 
 
@@ -241,17 +255,139 @@ def test_change_creates_new_branch(repo: Path, capfd: pytest.CaptureFixture):
 # --- append / switch / tree ------------------------------------------------
 
 
+_AGENT_LINK = "claude://claude.ai/epitaxy/local_0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
+_LINKS = ["--task", "ABC-1", "--agent-link", _AGENT_LINK]
+
+
 def test_append_creates_worktree_via_cli(repo: Path, capfd: pytest.CaptureFixture):
-    result = _invoke(["append", "feature"], cwd=repo, capfd=capfd)
+    result = _invoke(["append", "feature", *_LINKS], cwd=repo, capfd=capfd)
 
     assert result.exit_code == 0, result.output
     assert lineage.get_parent("devon/feature", root=repo) == "main"
+    links = lineage.get_links("devon/feature", root=repo)
+    assert links is not None
+    # No tracker is configured, so the ref is stored untagged.
+    assert (links.task, links.task_tracker, links.agent_link) == (
+        "ABC-1",
+        None,
+        _AGENT_LINK,
+    )
+
+
+def test_append_tags_the_task_with_the_configured_tracker(
+    repo: Path, capfd: pytest.CaptureFixture, _isolate_config_dir: Path
+):
+    _isolate_config_dir.parent.mkdir(parents=True)
+    _isolate_config_dir.write_text(
+        "tasks:\n  tracker: jira\n  jira:\n    base_url: https://j.example\n"
+    )
+
+    result = _invoke(["append", "feature", *_LINKS], cwd=repo, capfd=capfd)
+
+    assert result.exit_code == 0, result.output
+    links = lineage.get_links("devon/feature", root=repo)
+    assert links is not None
+    assert (links.task, links.task_tracker) == ("ABC-1", "jira")
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--agent-link", _AGENT_LINK],
+        ["--task", "ABC-1"],
+        ["--jira", "ABC-1", "--agent-link", _AGENT_LINK],
+        [],
+    ],
+)
+def test_append_requires_task_and_agent_link(
+    repo: Path, capfd: pytest.CaptureFixture, args: list[str]
+):
+    result = _invoke(["append", "feature", *args], cwd=repo, capfd=capfd)
+
+    assert result.exit_code != 0
+    assert lineage.get_parent("devon/feature", root=repo) is None
+
+
+_PERSONAL = {"IS_PERSONAL": "true"}
+
+
+def test_append_without_task_on_a_personal_machine_stores_no_task(
+    repo: Path, capfd: pytest.CaptureFixture, _isolate_config_dir: Path
+):
+    # Even with a tracker configured, no task means no tracker is recorded.
+    _isolate_config_dir.parent.mkdir(parents=True)
+    _isolate_config_dir.write_text(
+        "tasks:\n  tracker: jira\n  jira:\n    base_url: https://j.example\n"
+    )
+
+    result = _invoke(
+        ["append", "feature", "--agent-link", _AGENT_LINK],
+        cwd=repo,
+        capfd=capfd,
+        env=_PERSONAL,
+    )
+
+    assert result.exit_code == 0, result.output
+    links = lineage.get_links("devon/feature", root=repo)
+    assert links is not None
+    assert (links.task, links.task_tracker, links.agent_link) == (
+        None,
+        None,
+        _AGENT_LINK,
+    )
+
+
+def test_append_with_task_on_a_personal_machine_stores_it_as_usual(
+    repo: Path, capfd: pytest.CaptureFixture
+):
+    result = _invoke(
+        ["append", "feature", *_LINKS], cwd=repo, capfd=capfd, env=_PERSONAL
+    )
+
+    assert result.exit_code == 0, result.output
+    links = lineage.get_links("devon/feature", root=repo)
+    assert links is not None
+    assert (links.task, links.agent_link) == ("ABC-1", _AGENT_LINK)
+
+
+@pytest.mark.parametrize("env", [None, {"IS_PERSONAL": "false"}, {"IS_PERSONAL": "1"}])
+def test_append_without_task_elsewhere_is_an_error_naming_is_personal(
+    repo: Path, capfd: pytest.CaptureFixture, env: dict[str, str | None] | None
+):
+    result = _invoke(
+        ["append", "feature", "--agent-link", _AGENT_LINK],
+        cwd=repo,
+        capfd=capfd,
+        env=env,
+    )
+
+    assert result.exit_code != 0
+    assert "IS_PERSONAL" in result.output
+    assert lineage.get_parent("devon/feature", root=repo) is None
+
+
+def test_append_still_requires_the_agent_link_on_a_personal_machine(
+    repo: Path, capfd: pytest.CaptureFixture
+):
+    result = _invoke(["append", "feature"], cwd=repo, capfd=capfd, env=_PERSONAL)
+
+    assert result.exit_code != 0
+    assert lineage.get_parent("devon/feature", root=repo) is None
+
+
+def test_is_personal_reads_the_given_environment():
+    from toolbelt.personal_machine import is_personal
+
+    assert is_personal({"IS_PERSONAL": "true"})
+    assert not is_personal({"IS_PERSONAL": "True"})
+    assert not is_personal({"IS_PERSONAL": ""})
+    assert not is_personal({})
 
 
 def test_remove_deletes_branch_worktree_and_lineage_via_cli(
     repo: Path, capfd: pytest.CaptureFixture
 ):
-    _invoke(["append", "feature"], cwd=repo, capfd=capfd)
+    _invoke(["append", "feature", *_LINKS], cwd=repo, capfd=capfd)
     assert lineage.get_parent("devon/feature", root=repo) == "main"
 
     result = _invoke(["remove", "devon/feature", "--force"], cwd=repo, capfd=capfd)
@@ -264,13 +400,9 @@ def test_remove_deletes_branch_worktree_and_lineage_via_cli(
     )
 
 
-def test_remove_can_delete_the_branch_checked_out_in_cwd(
+def test_remove_refuses_to_delete_the_worktree_it_runs_in(
     repo: Path, tmp_path: Path, capfd: pytest.CaptureFixture
 ):
-    """`root` (from `repo_root()`) is the worktree being removed here — git
-    can't run `worktree remove` with cwd pointed at the worktree it's
-    removing, so this must actually run from the main worktree instead (see
-    `main_worktree`)."""
     feature_wt = tmp_path / "wt-feature"
     create_stacked_branch("feature", root=repo, wt_path=feature_wt)
 
@@ -278,9 +410,15 @@ def test_remove_can_delete_the_branch_checked_out_in_cwd(
         ["remove", "devon/feature", "--force"], cwd=feature_wt, capfd=capfd
     )
 
-    assert result.exit_code == 0, result.output
-    assert not feature_wt.exists()
-    assert lineage.get_parent("devon/feature", root=repo) is None
+    assert result.exit_code != 0
+    assert isinstance(result.exception, WorktreeInUseError)
+    assert "inside its worktree" in str(result.exception)
+    assert feature_wt.exists()
+    assert lineage.get_parent("devon/feature", root=repo) == "main"
+    assert (
+        "devon/feature"
+        in git("branch", "--format=%(refname:short)", cwd=repo).splitlines()
+    )
 
 
 def test_tree_reports_no_stacks_when_untracked(

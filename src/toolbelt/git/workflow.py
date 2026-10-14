@@ -1,10 +1,14 @@
+import asyncio
+import json
 import os
 import re
 import subprocess
+import time
 from pathlib import Path
 
 import typer
 
+from toolbelt import logged_process
 from toolbelt.git.commits import store_commit
 from toolbelt.git.constants import GIT_BRANCH_PREFIX
 from toolbelt.git.exec import capture, run
@@ -16,15 +20,28 @@ from .branches import (
     get_default_branch,
 )
 from .repo import current_repo_org, get_current_repo_root_path
-from .worktrees_ops import delete_branch_and_worktree, main_worktree
+from .repo_pull import (
+    default_config_path,
+    default_state_dir,
+    start_background_pull,
+    take_unreported_summary,
+)
+from .stack.forge import Forge, GhForge, candidate_from_json
+from .worktrees_ops import (
+    _is_worktree_dirty,
+    _worktree_paths_for_branch,
+    delete_branch_and_worktree,
+    ensure_not_inside_worktree,
+    main_worktree,
+)
 
 
 def update_repo(target_path: Path):
     if (target_path / ".tool-versions").exists():
         # This may fail if the plugins in .tool-versions are not installed
-        subprocess.run(["asdf", "install"], check=True, cwd=target_path)
+        logged_process.run(["asdf", "install"], check=True, cwd=target_path)
     if (target_path / "uv.lock").exists():
-        subprocess.run(["uv", "sync", "--all-groups"], check=True, cwd=target_path)
+        logged_process.run(["uv", "sync", "--all-groups"], check=True, cwd=target_path)
 
 
 def sync_repo(root: Path | None = None) -> None:
@@ -41,18 +58,63 @@ def sync_repo(root: Path | None = None) -> None:
     from inside a branch whose own PR just merged), and so can
     ``git_branch_clean``. ``update_repo`` needs a real, still-existing path,
     so it falls back to the main worktree when ``root`` no longer exists.
+
+    Finally it spawns a detached process that fast-forwards the repos listed
+    under ``sync.repos`` (see ``repo_pull``) without blocking; the summary of
+    the previous run is printed here, once, at the start of the next sync.
     """
+    state_dir = default_state_dir()
+    summary = take_unreported_summary(state_dir=state_dir)
+    if summary:
+        logger.info(summary)
+
     # Imported lazily: worktrees -> bootstrap.repo_setup -> workflow would be a
     # circular import at module load time.
-    from toolbelt.git.stack.forge import GhForge
+    from toolbelt.git.stack.gh_stack import GhStackedPrs
     from toolbelt.git.stack.sync import sync_stack
     from toolbelt.git.worktrees import repo_root
 
     root = root or repo_root()
     main_wt = main_worktree(root)
-    sync_stack(root=root, forge=GhForge(root))
-    git_branch_clean(root)
+    forge = GhForge(root)
+    sync_stack(root=root, forge=forge, stacked_prs=GhStackedPrs())
+    git_branch_clean(root, forge=forge)
     update_repo(root if root.exists() else main_wt)
+    start_background_pull(state_dir=state_dir, config_path=default_config_path())
+
+
+_STACKED_MERGE_ERROR = "asynchronous merge REST API"
+_ASYNC_MERGE_TIMEOUT_SECONDS = 300
+_ASYNC_MERGE_POLL_SECONDS = 2
+
+
+def _merge_stacked_pr(number: int) -> bool:
+    """Squash-merge a PR that is part of a GitHub stack, via the async merge API.
+
+    GitHub rejects the regular merge mutation for stacked PRs. The async endpoint
+    merges the PR together with every open PR below it in the stack. Returns True
+    once the PR is merged, False if it was queued in a merge queue instead.
+    """
+    endpoint = f"repos/{{owner}}/{{repo}}/pulls/{number}/merge-async"
+    logger.warning(
+        f"PR {number} is part of a GitHub stack: merging it also merges the open "
+        "PRs below it."
+    )
+    result = json.loads(
+        capture(["gh", "api", "-X", "PUT", endpoint, "-f", "merge_method=squash"])
+    )
+    deadline = time.monotonic() + _ASYNC_MERGE_TIMEOUT_SECONDS
+    while result["status"] == "pending":
+        if time.monotonic() > deadline:
+            logger.error(f"Timed out waiting for PR {number} to merge.")
+            raise typer.Exit(1)
+        time.sleep(_ASYNC_MERGE_POLL_SECONDS)
+        uuid = result["details"]["uuid"]
+        result = json.loads(capture(["gh", "api", f"{endpoint}/{uuid}"]))
+    if result["status"] == "failed":
+        logger.error(f"PR {number} did not merge: {result['details']['message']}")
+        raise typer.Exit(1)
+    return result["status"] == "merged"
 
 
 def git_merge(pr: str) -> None:
@@ -72,29 +134,73 @@ def git_merge(pr: str) -> None:
     # circular import at module load time.
     from toolbelt.git.stack.worktree import worktree_paths
 
-    branch = capture(
-        ["gh", "pr", "view", pr, "--json", "headRefName", "--jq", ".headRefName"]
+    viewed = json.loads(
+        capture(
+            [
+                "gh",
+                "pr",
+                "view",
+                pr,
+                "--json",
+                "headRefName,number,id,createdAt",
+            ]
+        )
     )
-    subprocess.run(["gh", "pr", "merge", "--squash", pr], check=True)
+    branch = viewed["headRefName"]
+    # Record which PR the branch's task landed as before the merge cleanup
+    # archives it (a no-op for an untracked branch or one already linked).
+    from toolbelt.git.stack import lineage
 
     root = get_current_repo_root_path()
+    lineage.link_pr(branch, [candidate_from_json(viewed)], root=root)
+    merged = logged_process.run(
+        ["gh", "pr", "merge", "--squash", pr], stderr=subprocess.PIPE, text=True
+    )
+    if merged.returncode and _STACKED_MERGE_ERROR in merged.stderr:
+        if not _merge_stacked_pr(viewed["number"]):
+            logger.info(f"PR {viewed['number']} was queued; not syncing the stack.")
+            return
+    elif merged.returncode:
+        typer.echo(merged.stderr, err=True)
+        raise typer.Exit(merged.returncode)
+
     worktree = worktree_paths(root=root).get(branch)
     if worktree is None:
         logger.warning(
             f"No worktree tracked for '{branch}'; skipping stack sync, just "
             "cleaning up local branches."
         )
-        git_branch_clean(root)
+        git_branch_clean(root, forge=GhForge(root))
         return
     sync_repo(worktree)
 
 
-def git_pr(skip_tests: bool, cwd: Path | None = None) -> None:
+def record_branch_pr(branch: str, *, root: Path, forge: Forge) -> None:
+    """Record the PR ``forge`` knows for ``branch`` as its task's PR, unless
+    one is already recorded (the lookup is skipped then). Does nothing for an
+    untracked branch."""
+    # Lazy import: worktrees -> bootstrap.repo_setup -> workflow would be a
+    # circular import at module load time.
+    from toolbelt.git.stack import lineage
+
+    if lineage.get_pr_link(branch, root=root) is None:
+        lineage.link_pr(branch, asyncio.run(forge.pr_candidates(branch)), root=root)
+
+
+def git_pr(
+    skip_tests: bool, cwd: Path | None = None, forge: Forge | None = None
+) -> None:
     # ``cwd`` targets the branch's worktree: when `git save` starts a new stacked
     # branch it lands in its own worktree, so the PR must be opened from there
     # rather than the (default-branch) directory the command was invoked in.
-    view_pr = subprocess.run(["gh", "pr", "view", "--web"], check=False, cwd=cwd)
+    from toolbelt.git.worktrees import current_branch, repo_root
+
+    root = cwd or repo_root()
+    forge = forge or GhForge(root)
+    view_pr = logged_process.run(["gh", "pr", "view", "--web"], check=False, cwd=cwd)
     if view_pr.returncode == 0:
+        # The PR exists: remember which one it is for this branch's task.
+        record_branch_pr(current_branch(root), root=root, forge=forge)
         return
     repo = current_repo()
     if repo and not skip_tests:
@@ -107,16 +213,18 @@ def git_pr(skip_tests: bool, cwd: Path | None = None) -> None:
     # which may differ — e.g. `git send` calls this with the freshly created
     # branch's worktree as ``cwd`` without chdir'ing the process into it).
     from toolbelt.git.stack.lineage import get_parent
-    from toolbelt.git.worktrees import current_branch, repo_root
 
-    root = cwd or repo_root()
     branch = current_branch(root)
     base = get_parent(branch, root=root) or get_default_branch()
-    subprocess.run(
+    logged_process.run(
         ["gh", "pr", "create", "--web", "--base", base],
         check=False,
         cwd=cwd,
     )
+    # `--web` only opens the browser's form, so the PR usually does not exist
+    # yet and nothing is recorded; it is when it was created by the time this
+    # runs, otherwise the next `git sync` records it.
+    record_branch_pr(branch, root=root, forge=forge)
 
 
 def _drop_lineage_entry(branch: str, *, root: Path) -> None:
@@ -136,19 +244,64 @@ def _drop_lineage_entry(branch: str, *, root: Path) -> None:
     lineage.remove_parent(branch, root=root)
 
 
-def _branch_exists(branch: str, *, root: Path) -> bool:
+def _branch_exists(branch: str, *, root: Path, remote: bool = False) -> bool:
+    prefix = "refs/remotes" if remote else "refs/heads"
     return (
-        subprocess.run(
-            ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
+        logged_process.run(
+            ["git", "show-ref", "--verify", "--quiet", f"{prefix}/{branch}"],
             cwd=root,
         ).returncode
         == 0
     )
 
 
-def git_branch_clean(root: Path | None = None) -> None:
+def _unsafe_to_delete_reason(branch: str, *, root: Path) -> str | None:
+    """Why a "gone" ``branch`` must be kept, or ``None`` if it's safe to delete.
+
+    Its upstream being gone only says the remote branch was deleted — which
+    also happens to PRs that were closed unmerged. So keep it when:
+
+    - it's checked out in the main worktree (``git branch -D`` would fail),
+    - a worktree holding it has uncommitted/untracked changes, or
+    - it carries changes not already in ``origin``'s default branch. Merging it
+      into that branch is simulated (``git merge-tree``) and must leave the
+      tree unchanged — this also holds for squash merges, where the branch's
+      commits themselves never become ancestors.
     """
-    Delete local branches whose upstream has been removed, and drop stale
+    worktrees = _worktree_paths_for_branch(branch, root)
+    if root in worktrees:
+        return "checked out in the main worktree"
+    if any(_is_worktree_dirty(path) for path in worktrees):
+        return "its worktree has uncommitted changes"
+
+    base = next(
+        (
+            f"origin/{name}"
+            for name in ("main", "master")
+            if _branch_exists(f"origin/{name}", root=root, remote=True)
+        ),
+        None,
+    )
+    if base is None:
+        return "no origin/main or origin/master to compare against"
+    merged = logged_process.run(
+        ["git", "merge-tree", "--write-tree", base, branch],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    base_tree = capture(["git", "rev-parse", f"{base}^{{tree}}"], cwd=root)
+    if merged.returncode != 0 or merged.stdout.split()[0] != base_tree:
+        return f"it has changes not in {base}"
+    return None
+
+
+def git_branch_clean(root: Path | None = None, *, forge: Forge | None = None) -> None:
+    """
+    Delete local branches whose upstream has been removed (unless they may
+    hold unmerged work or uncommitted changes; see ``_unsafe_to_delete_reason``
+    — those are kept and reported), and drop stale
     stack lineage entries — both this command's own deletions, and any
     tracked branch that's already gone by some other means (e.g. deleted
     directly with ``git branch -D``, bypassing this tool entirely). Without
@@ -162,15 +315,22 @@ def git_branch_clean(root: Path | None = None) -> None:
     actually runs from the repo's *main* worktree (see ``main_worktree``), not
     ``root`` itself — one of the "gone" branches can easily be the one
     checked out in ``root``, e.g. running this from inside the very worktree
-    whose branch just got merged.
+    whose branch just got merged. For the same reason, a branch whose worktree
+    contains ``root`` (or the cwd) is not deleted: ``WorktreeInUseError`` is
+    raised instead, asking the caller to run from another worktree.
+
+    When ``forge`` is given, the PR of each branch it deletes is first
+    recorded as its task's PR (unless already known), so the archived task
+    can be joined to it by id.
     """
     # Lazy import: worktrees -> bootstrap.repo_setup -> workflow would be a
     # circular import at module load time.
     from toolbelt.git.stack import lineage
 
-    root = main_worktree(root or get_current_repo_root_path())
-    subprocess.run(["git", "fetch", "-p"], check=True, cwd=root)
-    branch_list = subprocess.run(
+    caller_root = root or get_current_repo_root_path()
+    root = main_worktree(caller_root)
+    logged_process.run(["git", "fetch", "-p"], check=True, cwd=root)
+    branch_list = logged_process.run(
         ["git", "branch", "-vv"],
         check=True,
         capture_output=True,
@@ -179,6 +339,7 @@ def git_branch_clean(root: Path | None = None) -> None:
     ).stdout.splitlines()
 
     deleted_branches: list[str] = []
+    kept_branches: list[str] = []
     for line in branch_list:
         if ": gone]" not in line:
             continue
@@ -192,6 +353,16 @@ def git_branch_clean(root: Path | None = None) -> None:
         else:
             branch_name = tokens[0]
 
+        reason = _unsafe_to_delete_reason(branch_name, root=root)
+        if reason:
+            kept_branches.append(f"{branch_name} ({reason})")
+            continue
+
+        ensure_not_inside_worktree(
+            branch_name, root=root, caller_dirs=[caller_root, Path.cwd()]
+        )
+        if forge is not None:
+            record_branch_pr(branch_name, root=root, forge=forge)
         deleted_branch = delete_branch_and_worktree(branch_name, repo_root=root)
         _drop_lineage_entry(deleted_branch, root=root)
         deleted_branches.append(deleted_branch)
@@ -209,6 +380,10 @@ def git_branch_clean(root: Path | None = None) -> None:
             logger.info(f"  {branch_name}")
     else:
         logger.info("No branches to delete.")
+    if kept_branches:
+        logger.warning("Kept branches whose upstream is gone but may hold work:")
+        for entry in kept_branches:
+            logger.warning(f"  {entry}")
     if stale_entries:
         logger.info("Dropped stack entries for already-gone branches:")
         for branch_name in stale_entries:
@@ -238,7 +413,7 @@ def check_for_parent_branch_merge_conflicts(
         )
         return
 
-    merge_tree_result = subprocess.run(
+    merge_tree_result = logged_process.run(
         ["git", "merge-tree", "--write-tree", parent_branch, current_branch],
         cwd=root,
         capture_output=True,
@@ -266,7 +441,7 @@ def check_for_parent_branch_merge_conflicts(
     proceed = input("Do you want to continue anyway? (y/n): ")
     if proceed.lower() != "y":
         # Unstage changes if the user aborts.
-        subprocess.run(["git", "reset"], check=True, cwd=root)
+        logged_process.run(["git", "reset"], check=True, cwd=root)
         logger.info("Changes unstaged. Aborting commit.")
         raise typer.Exit(1)
 
@@ -274,7 +449,7 @@ def check_for_parent_branch_merge_conflicts(
 def _stage(*, root: Path, pathspec: list[str] | None) -> None:
     git_add_command = ["git", "add"]
     git_add_command.extend(pathspec if pathspec else ["-A"])
-    subprocess.run(git_add_command, check=True, cwd=root)
+    logged_process.run(git_add_command, check=True, cwd=root)
 
 
 def _commit(*, root: Path, message: str | None, amend: bool, no_verify: bool) -> None:
@@ -285,7 +460,7 @@ def _commit(*, root: Path, message: str | None, amend: bool, no_verify: bool) ->
         git_commit_command.append("--amend")
     if no_verify:
         git_commit_command.append("--no-verify")
-    subprocess.run(git_commit_command, check=True, text=True, cwd=root)
+    logged_process.run(git_commit_command, check=True, text=True, cwd=root)
 
 
 def _should_start_new_branch(
@@ -299,7 +474,7 @@ def _should_start_new_branch(
     current_org = os.getenv("CURRENT_ORG")
     if not current_org or current_branch != default_branch:
         return False
-    remote_url = subprocess.run(
+    remote_url = logged_process.run(
         ["git", "remote", "get-url", "origin"],
         check=True,
         capture_output=True,
@@ -444,7 +619,7 @@ def git_safe_pull() -> None:
     ensuring the pull can be done without conflicts.
     """
     # Check for uncommitted changes first
-    uncommitted_check = subprocess.run(
+    uncommitted_check = logged_process.run(
         ["git", "diff-index", "--quiet", "HEAD", "--"],
         capture_output=True,
         text=True,
@@ -460,11 +635,11 @@ def git_safe_pull() -> None:
 
     # Fetch latest changes
     logger.info("Fetching latest changes...")
-    subprocess.run(["git", "fetch"], check=True)
+    logged_process.run(["git", "fetch"], check=True)
 
     # Check if current branch has diverged from remote
     try:
-        subprocess.run(
+        logged_process.run(
             ["git", "merge-base", "--is-ancestor", "HEAD", f"origin/{current_branch}"],
             check=True,
             capture_output=True,
@@ -473,7 +648,7 @@ def git_safe_pull() -> None:
 
         # If we get here, it's safe to pull
         logger.info("Branch can be fast-forwarded. Pulling changes...")
-        subprocess.run(["git", "pull"], check=True)
+        logged_process.run(["git", "pull"], check=True)
         logger.info("Successfully pulled changes!")
 
     except subprocess.CalledProcessError:

@@ -1,7 +1,7 @@
 import os
 import sqlite3
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 
@@ -60,7 +60,7 @@ def store_commit(message: str, repo_name: str, org: str, branch: str) -> None:
                 repo_name,
                 org,
                 branch,
-                datetime.now(timezone.utc),
+                datetime.now(UTC).isoformat(" "),
             ),
         )
 
@@ -129,12 +129,10 @@ def get_standup_date_window(
     - end_date: yesterday (today - 1)
     - start_date: the day after the most recent standup date strictly before today
     """
-    now_utc = now or datetime.now(timezone.utc)
+    now_utc = now or datetime.now(UTC)
     today = now_utc.date()
-    end_date = today - timedelta(days=1)
-    if end_date < date.min:
-        # Defensive: should never happen in practice.
-        end_date = date.min
+    # Defensive: the clamp should never matter in practice.
+    end_date = max(today - timedelta(days=1), date.min)
 
     prev_standup = _previous_standup_date(today, standup_weekdays=standup_weekdays)
     start_date = prev_standup + timedelta(days=1)

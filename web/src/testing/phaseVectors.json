@@ -1,0 +1,158 @@
+{
+  "_comment": "Shared by web/src/logic/timeline.test.ts (phaseSpans) and tests/test_ui_aggregate.py (aggregate.phase_spans): the card timeline's phase rules and the aggregate view's replay of them must give the same spans. Times are minutes after the start of the track.",
+  "cases": [
+    {
+      "name": "draft, ready, review, changes requested, CI failing, approved, merged",
+      "state": "merged",
+      "draft": false,
+      "review": "approved",
+      "start": 0,
+      "end": 600,
+      "events": [
+        { "t": 60, "kind": "ready_for_review", "actor": "me", "subject": "", "detail": "marked ready for review", "ci": "" },
+        { "t": 61, "kind": "review_requested", "actor": "me", "subject": "sam", "detail": "requested review from sam", "ci": "" },
+        { "t": 300, "kind": "review", "actor": "sam", "subject": "sam", "detail": "requested changes", "ci": "" },
+        { "t": 320, "kind": "commit", "actor": "me", "subject": "", "detail": "c1 fix", "ci": "failed" },
+        { "t": 400, "kind": "commit", "actor": "me", "subject": "", "detail": "c2 fix again", "ci": "success" },
+        { "t": 500, "kind": "review", "actor": "sam", "subject": "sam", "detail": "approved", "ci": "" }
+      ],
+      "spans": [
+        ["draft", 0, 60],
+        ["waiting", 61, 300],
+        ["ci_failing", 320, 400],
+        ["approved", 500, 600]
+      ]
+    },
+    {
+      "name": "an approval that is no longer standing ends at the next push",
+      "state": "open",
+      "draft": false,
+      "review": "requested",
+      "start": 0,
+      "end": 100,
+      "events": [
+        { "t": 10, "kind": "review_requested", "actor": "me", "subject": "sam", "detail": "", "ci": "" },
+        { "t": 20, "kind": "review", "actor": "sam", "subject": "sam", "detail": "approved", "ci": "" },
+        { "t": 30, "kind": "commit", "actor": "me", "subject": "", "detail": "c1", "ci": "success" }
+      ],
+      "spans": [
+        ["waiting", 10, 20],
+        ["approved", 20, 30]
+      ]
+    },
+    {
+      "name": "converted back to draft, still a draft now",
+      "state": "open",
+      "draft": true,
+      "review": "requested",
+      "start": 0,
+      "end": 100,
+      "events": [
+        { "t": 10, "kind": "review_requested", "actor": "me", "subject": "sam", "detail": "", "ci": "" },
+        { "t": 50, "kind": "converted_to_draft", "actor": "me", "subject": "", "detail": "converted to draft", "ci": "" }
+      ],
+      "spans": [
+        ["waiting", 10, 50],
+        ["draft", 50, 100]
+      ]
+    },
+    {
+      "name": "a force push supersedes a failed commit",
+      "state": "open",
+      "draft": false,
+      "review": "none",
+      "start": 0,
+      "end": 100,
+      "events": [
+        { "t": 10, "kind": "commit", "actor": "me", "subject": "", "detail": "c1", "ci": "failed" },
+        { "t": 20, "kind": "force_push", "actor": "me", "subject": "", "detail": "force-pushed", "ci": "failed" }
+      ],
+      "spans": [["ci_failing", 10, 20]]
+    },
+    {
+      "name": "a removed review request settles it; a dismissed approval ends the approval",
+      "state": "open",
+      "draft": false,
+      "review": "none",
+      "start": 0,
+      "end": 100,
+      "events": [
+        { "t": 5, "kind": "review_requested", "actor": "me", "subject": "lee", "detail": "", "ci": "" },
+        { "t": 15, "kind": "review_request_removed", "actor": "me", "subject": "lee", "detail": "", "ci": "" },
+        { "t": 20, "kind": "review", "actor": "sam", "subject": "sam", "detail": "approved", "ci": "" },
+        { "t": 60, "kind": "review", "actor": "sam", "subject": "sam", "detail": "review dismissed", "ci": "" }
+      ],
+      "spans": [
+        ["waiting", 5, 15],
+        ["approved", 20, 60]
+      ]
+    },
+    {
+      "name": "a failing commit waits on CI until its checks complete, then fails until the next push; a passing one waited too",
+      "state": "open",
+      "draft": false,
+      "review": "none",
+      "start": 0,
+      "end": 100,
+      "events": [
+        { "t": 10, "kind": "commit", "actor": "me", "subject": "", "detail": "c1", "ci": "failed", "ciDone": 25 },
+        { "t": 60, "kind": "commit", "actor": "me", "subject": "", "detail": "c2", "ci": "success", "ciDone": 70 }
+      ],
+      "spans": [
+        ["ci_running", 10, 25],
+        ["ci_failing", 25, 60],
+        ["ci_running", 60, 70]
+      ]
+    },
+    {
+      "name": "a pending commit with no completion time runs until the next push",
+      "state": "open",
+      "draft": false,
+      "review": "none",
+      "start": 0,
+      "end": 100,
+      "events": [
+        { "t": 10, "kind": "commit", "actor": "me", "subject": "", "detail": "c1", "ci": "pending" },
+        { "t": 30, "kind": "commit", "actor": "me", "subject": "", "detail": "c2", "ci": "success" }
+      ],
+      "spans": [["ci_running", 10, 30]]
+    },
+    {
+      "name": "a force push ends a commit's running and failing phases",
+      "state": "open",
+      "draft": false,
+      "review": "none",
+      "start": 0,
+      "end": 100,
+      "events": [
+        { "t": 10, "kind": "commit", "actor": "me", "subject": "", "detail": "c1", "ci": "failed", "ciDone": 40 },
+        { "t": 20, "kind": "force_push", "actor": "me", "subject": "", "detail": "force-pushed", "ci": "failed" }
+      ],
+      "spans": [["ci_running", 10, 20]]
+    },
+    {
+      "name": "checks completing after the end of the PR are still running at its end",
+      "state": "merged",
+      "draft": false,
+      "review": "approved",
+      "start": 0,
+      "end": 100,
+      "events": [
+        { "t": 90, "kind": "commit", "actor": "me", "subject": "", "detail": "c1", "ci": "failed", "ciDone": 150 }
+      ],
+      "spans": [["ci_running", 90, 100]]
+    },
+    {
+      "name": "a commit whose checks completed before it was pushed fails from the push",
+      "state": "open",
+      "draft": false,
+      "review": "none",
+      "start": 0,
+      "end": 100,
+      "events": [
+        { "t": 30, "kind": "commit", "actor": "me", "subject": "", "detail": "c1", "ci": "failed", "ciDone": 20 }
+      ],
+      "spans": [["ci_failing", 30, 100]]
+    }
+  ]
+}

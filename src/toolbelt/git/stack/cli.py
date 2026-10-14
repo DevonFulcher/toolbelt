@@ -11,14 +11,21 @@ entirely folded in here — there is no separate `git worktree`/`git wt` group.
 import asyncio
 import subprocess
 import sys
+from dataclasses import replace
+from pathlib import Path
+from typing import Annotated
 
 import typer
 from rich.live import Live
 
+from toolbelt import logged_process
 from toolbelt.git.exec import run
+from toolbelt.git.repo_lock import repo_lock
+from toolbelt.git.repo_pull import default_config_path
 from toolbelt.git.stack import lineage
 from toolbelt.git.stack.append import create_stacked_branch
 from toolbelt.git.stack.forge import GhForge
+from toolbelt.git.stack.gh_stack import GhStackedPrs
 from toolbelt.git.stack.ops import (
     compress_branch,
     diff_parent_command,
@@ -26,7 +33,7 @@ from toolbelt.git.stack.ops import (
 )
 from toolbelt.git.stack.status import BranchStatus, stream_branch_statuses
 from toolbelt.git.stack.sync import sync_stack
-from toolbelt.git.stack.viz import render
+from toolbelt.git.stack.viz import Columns, RepoTree, render, render_repos
 from toolbelt.git.stack.worktree import worktree_paths
 from toolbelt.git.workflow import update_repo
 from toolbelt.git.worktrees import (
@@ -37,6 +44,8 @@ from toolbelt.git.worktrees import (
 )
 from toolbelt.git.worktrees_ops import delete_branch_and_worktree, main_worktree
 from toolbelt.logger import logger
+from toolbelt.personal_machine import is_personal
+from toolbelt.tasks.config import configured_tracker
 
 stack_typer = typer.Typer(help="Stack + worktree management")
 
@@ -47,6 +56,21 @@ def append(
         ...,
         help="Name of the new stacked branch, without the devon/ prefix "
         "(it is added for you).",
+    ),
+    task: str | None = typer.Option(
+        None,
+        "--task",
+        help="Task this branch is for, as its key or URL in the configured "
+        "tracker (tasks.tracker in the config file). Required, except on a "
+        "personal laptop (IS_PERSONAL=true), where it may be omitted.",
+    ),
+    agent_link: str = typer.Option(
+        ...,
+        "--agent-link",
+        help="Deep link to the Claude Desktop session working on this: "
+        "claude://claude.ai/epitaxy/local_<session-uuid>. The current "
+        "session's id is in $CLAUDE_CODE_HOST_SESSION_ID, so pass "
+        "claude://claude.ai/epitaxy/$CLAUDE_CODE_HOST_SESSION_ID.",
     ),
 ) -> None:
     """Create a new branch stacked on the current one, in its own worktree.
@@ -66,13 +90,32 @@ def append(
     NAME is prefixed with "devon/" and normalized for use as a branch and
     directory name: "/" and spaces become "_". So pass a bare name — an
     already-prefixed "devon/foo" would become "devon/devon_foo".
+
+    --task and --agent-link are stored as given with the branch; --task is
+    also tagged with the configured task tracker's name (if any). Without
+    --task (personal laptops only) the branch has no task and no tracker is
+    consulted.
     """
+    if task is None and not is_personal():
+        raise typer.BadParameter(
+            "--task is required unless IS_PERSONAL=true (personal laptop)",
+            param_hint="--task",
+        )
     root = repo_root()
-    wt_path = _worktree_path_for_name(name=name, repo_root=root)
-    create_stacked_branch(name, root=root, wt_path=wt_path)
-    # Copy dotfiles, then install deps so the worktree is runnable.
-    copy_dotfiles(root=root, wt_path=wt_path)
-    update_repo(wt_path)
+    tracker = configured_tracker(default_config_path()) if task is not None else None
+    with repo_lock(root):
+        wt_path = _worktree_path_for_name(name=name, repo_root=root)
+        create_stacked_branch(
+            name,
+            root=root,
+            wt_path=wt_path,
+            task=task,
+            task_tracker=tracker.name if tracker else None,
+            agent_link=agent_link,
+        )
+        # Copy dotfiles, then install deps so the worktree is runnable.
+        copy_dotfiles(root=root, wt_path=wt_path)
+        update_repo(wt_path)
     logger.info(f"Created worktree at {wt_path}")
 
 
@@ -90,14 +133,17 @@ def compress(
     left alone. Force-pushes (--force-with-lease) if the branch exists on
     origin. Child branches are untouched until the next `sync`.
     """
-    compress_branch(root=repo_root(), message=message)
+    root = repo_root()
+    with repo_lock(root):
+        compress_branch(root=root, message=message)
 
 
 @stack_typer.command(name="diff-parent")
 def diff_parent(
-    args: list[str] | None = typer.Argument(
-        None, help="Extra arguments passed through to `git diff`"
-    ),
+    args: Annotated[
+        list[str] | None,
+        typer.Argument(help="Extra arguments passed through to `git diff`"),
+    ] = None,
     line: bool = typer.Option(
         False,
         "--line",
@@ -133,48 +179,120 @@ def set_parent(
     parent; an existing PR's base is not changed.
     """
     root = repo_root()
-    set_branch_parent(root=root, new_parent=new_parent)
-    sync_stack(root=root, forge=GhForge(root))
+    with repo_lock(root):
+        set_branch_parent(root=root, new_parent=new_parent)
+        sync_stack(root=root, forge=GhForge(root), stacked_prs=GhStackedPrs())
+
+
+def _repo_root_or_none() -> Path | None:
+    result = logged_process.run(
+        ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True
+    )
+    return Path(result.stdout.strip()) if result.returncode == 0 else None
+
+
+def _known_repo_trees(cwd_root: Path | None) -> list[RepoTree]:
+    """Every known repo with tracked stacks, marking the cwd repo's current
+    branch. Repos whose checkout no longer exists are skipped."""
+    cwd_common_dir = (
+        lineage.repo_identity(cwd_root).git_common_dir if cwd_root else None
+    )
+    trees = []
+    for repo, parents in lineage.known_repos():
+        if not parents:
+            continue
+        if not repo.path.is_dir():
+            logger.warning(f"Skipping {repo.name}: {repo.path} no longer exists.")
+            continue
+        is_cwd_repo = repo.git_common_dir == cwd_common_dir
+        trees.append(
+            RepoTree(
+                name=repo.name,
+                path=repo.path,
+                parents=parents,
+                current=current_branch(cwd_root) if cwd_root and is_cwd_repo else None,
+                statuses={},
+            )
+        )
+    return trees
 
 
 @stack_typer.command()
-def tree() -> None:
-    """Print the stack tree, filling in each branch's PR/CI/review status.
+def tree(
+    next_action: Annotated[
+        bool,
+        typer.Option(
+            "--next",
+            help="Add what happens next on each branch (the `tt ui` Next column).",
+        ),
+    ] = False,
+    lines: Annotated[
+        bool,
+        typer.Option(
+            "--lines", help="Add the lines each PR adds and deletes (+added/-deleted)."
+        ),
+    ] = False,
+    assignee: Annotated[
+        bool,
+        typer.Option(
+            "--assignee",
+            help="Add who each PR is assigned to, or else who a review is "
+            "requested from.",
+        ),
+    ] = False,
+) -> None:
+    """Print every known repo's stack tree, with each branch's PR/CI/review status.
 
     Read-only.
 
-    The tree itself is local and renders instantly; the status column comes
-    from one `gh pr view` per branch, run concurrently, and fills in as each
-    completes. On a real terminal this redraws live; piped output waits for
-    every lookup and prints once.
+    Each repo toolbelt tracks stacks for appears under its own `name (path)`
+    header, with the current repo's current branch marked. The tree itself is
+    local and renders instantly; the status column comes from one `gh pr view`
+    per branch, run concurrently, and fills in as each completes. On a real
+    terminal this redraws live; piped output waits for every lookup and prints
+    once.
+
+    --next adds what happens next on each branch (the `tt ui` Next column, for
+    example "Publish PR in GitHub" for a draft that is ready), --lines the
+    lines each PR adds and deletes, and --assignee who each PR is assigned to,
+    or else who a review is requested from.
     """
-    root = repo_root()
-    parents = lineage.all_parents(root=root)
-    if not parents:
+    cwd_root = _repo_root_or_none()
+    if cwd_root is not None:
+        # Register (and import legacy config for) the current repo so it shows
+        # up even if no other command has touched it yet.
+        lineage.all_parents(root=cwd_root)
+    columns = Columns(next=next_action, lines=lines, assignee=assignee)
+    trees = [replace(t, columns=columns) for t in _known_repo_trees(cwd_root)]
+    if not trees:
         logger.info("No tracked stacks. Use `git append <name>` to start one.")
         return
 
-    current = current_branch(root)
-    branches = sorted(parents.keys())
-    statuses: dict[str, BranchStatus] = {}
+    # Per-repo statuses fill in as lookups complete (mutated in place).
+    statuses: list[dict[str, BranchStatus]] = [{} for _ in trees]
     live: Live | None = None
 
-    async def load() -> None:
-        async for branch, status in stream_branch_statuses(branches, root=root):
-            statuses[branch] = status
+    def view() -> str:
+        return render_repos([replace(t, statuses=s) for t, s in zip(trees, statuses)])
+
+    async def load_repo(index: int) -> None:
+        repo_tree = trees[index]
+        async for branch, status in stream_branch_statuses(
+            sorted(repo_tree.parents), root=repo_tree.path
+        ):
+            statuses[index][branch] = status
             if live is not None:
-                live.update(
-                    render(parents, current=current, statuses=statuses), refresh=True
-                )
+                live.update(view(), refresh=True)
+
+    async def load() -> None:
+        await asyncio.gather(*(load_repo(i) for i in range(len(trees))))
 
     if sys.stdout.isatty():
-        with Live(
-            render(parents, current=current, statuses=statuses), auto_refresh=False
-        ) as live:
+        with Live(view(), auto_refresh=False) as live:
             asyncio.run(load())
     else:
         asyncio.run(load())
-        typer.echo(render(parents, current=current, statuses=statuses))
+        typer.echo(view())
 
 
 @stack_typer.command()
@@ -202,7 +320,7 @@ def switch(
         typer.echo(render(parents, current=current_branch(root)))
         branches = sorted(parents.keys())
         try:
-            proc = subprocess.run(
+            proc = logged_process.run(
                 ["fzf"],
                 input="\n".join(branches).encode(),
                 capture_output=True,
@@ -258,7 +376,7 @@ def remove(
         typer.echo(render(parents, current=current_branch(root)))
         branches = sorted(parents.keys())
         try:
-            proc = subprocess.run(
+            proc = logged_process.run(
                 ["fzf"],
                 input="\n".join(branches).encode(),
                 capture_output=True,
@@ -272,5 +390,8 @@ def remove(
     # delete_branch_and_worktree resolves the prefixed/bare form; use its
     # return value (not the raw argument) as the lineage key so a bare name
     # like "feature" still clears "devon/feature"'s parent entry.
-    deleted_branch = delete_branch_and_worktree(name, repo_root=main_wt, force=force)
-    lineage.remove_parent(deleted_branch, root=main_wt)
+    with repo_lock(root):
+        deleted_branch = delete_branch_and_worktree(
+            name, repo_root=main_wt, force=force, caller_dirs=[root, Path.cwd()]
+        )
+        lineage.remove_parent(deleted_branch, root=main_wt)

@@ -3,6 +3,7 @@ from typing import Literal
 
 import typer
 
+from toolbelt import logged_process
 from toolbelt.logger import logger
 
 DefaultBranchName = Literal["main", "master", "current"]
@@ -17,7 +18,7 @@ DEFAULT_BRANCH_NAMES: tuple[DefaultBranchName, ...] = (
 def get_default_branch() -> DefaultBranchName:
     for branch_name in DEFAULT_BRANCH_NAMES:
         try:
-            subprocess.run(
+            logged_process.run(
                 ["git", "rev-parse", "--verify", branch_name],
                 check=True,
                 capture_output=True,
@@ -35,7 +36,7 @@ def get_default_branch() -> DefaultBranchName:
 
 
 def get_current_branch_name() -> str:
-    return subprocess.run(
+    return logged_process.run(
         ["git", "rev-parse", "--abbrev-ref", "HEAD"],
         check=True,
         capture_output=True,
@@ -48,10 +49,10 @@ def get_branch_name(
 ) -> str:
     if not branch:
         # Interactive branch selection
-        branches: str = subprocess.run(
+        branches: str = logged_process.run(
             ["git", "branch"], check=True, capture_output=True, text=True
         ).stdout
-        fzf = subprocess.Popen(
+        fzf = logged_process.Popen(
             ["fzf"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
         )
         selected_branch, _ = fzf.communicate(input=branches)
@@ -60,7 +61,7 @@ def get_branch_name(
         branch_name = get_default_branch()
     elif branch == "-":
         if command == "combine":
-            branch_name = subprocess.run(
+            branch_name = logged_process.run(
                 ["git", "rev-parse", "--abbrev-ref", "@{-1}"],
                 capture_output=True,
                 text=True,
@@ -70,7 +71,7 @@ def get_branch_name(
             branch_name = branch
     elif command == "change":
         try:
-            subprocess.run(
+            logged_process.run(
                 ["git", "rev-parse", "--verify", branch],
                 check=True,
                 capture_output=True,
@@ -91,14 +92,14 @@ def get_branch_name(
 
                 parent = get_current_branch_name()
                 root = Path(
-                    subprocess.run(
+                    logged_process.run(
                         ["git", "rev-parse", "--show-toplevel"],
                         check=True,
                         capture_output=True,
                         text=True,
                     ).stdout.strip()
                 )
-                subprocess.run(["git", "checkout", "-b", branch], check=True)
+                logged_process.run(["git", "checkout", "-b", branch], check=True)
                 set_parent(branch, parent, root=root)
                 branch_name = branch
             else:

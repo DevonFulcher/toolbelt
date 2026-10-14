@@ -1,63 +1,45 @@
 """Stack lineage: which branch is stacked on which.
 
-Parent pointers are persisted in git config under the ``toolbelt-stack``
-section, one key per tracked branch::
-
-    toolbelt-stack.<branch>.parent = <parent-branch>
-
-This is the entire data model. The stack tree is reconstructed by reading every
-``toolbelt-stack.*.parent`` key. Functions take ``root`` (the repo/worktree
+Parent pointers are persisted in toolbelt's SQLite stack DB (see ``store``),
+keyed by repo. Legacy ``toolbelt-stack.<branch>.parent`` git config keys are
+migrated whenever they are found: the first time a repo is touched in a process
+(so also keys re-written by an older toolbelt after an earlier import), parents
+not already in the DB are imported (the DB wins on conflict) and the legacy keys
+are unset so they stop going stale. Functions take ``root`` (the repo/worktree
 path) explicitly so they are easy to test against a throwaway repo.
 """
 
+import contextlib
+import functools
 import re
 from collections import defaultdict
+from collections.abc import Iterator
+from datetime import datetime
 from pathlib import Path
 
-from toolbelt.git.exec import run
+from toolbelt import logged_process
+from toolbelt.git.exec import capture, run
+from toolbelt.git.stack.store import (
+    BranchLinks,
+    Parents,
+    PrCandidate,
+    PrLink,
+    PublishedChain,
+    RepoIdentity,
+    RepoRecord,
+    StackStore,
+    default_db_path,
+)
 
 SECTION = "toolbelt-stack"
 _KEY_SUFFIX = ".parent"
 
-# parents maps a branch -> its parent branch.
-Parents = dict[str, str]
 # children maps a branch -> its sorted child branches.
 Children = dict[str, list[str]]
 
 
-def _parent_key(branch: str) -> str:
-    return f"{SECTION}.{branch}{_KEY_SUFFIX}"
-
-
-def get_parent(branch: str, *, root: Path) -> str | None:
-    """Return ``branch``'s recorded parent, or ``None`` if it is not tracked."""
-    result = run(
-        ["git", "config", "--get", _parent_key(branch)],
-        cwd=root,
-        check=False,
-        capture_output=True,
-    )
-    if result.returncode != 0:
-        return None
-    return result.stdout.strip() or None
-
-
-def set_parent(branch: str, parent: str, *, root: Path) -> None:
-    """Record ``parent`` as ``branch``'s parent."""
-    run(["git", "config", _parent_key(branch), parent], cwd=root)
-
-
-def remove_parent(branch: str, *, root: Path) -> None:
-    """Drop ``branch`` from the stack (no-op if it was untracked)."""
-    run(
-        ["git", "config", "--unset", _parent_key(branch)],
-        cwd=root,
-        check=False,
-    )
-
-
-def all_parents(*, root: Path) -> Parents:
-    """Read every recorded ``branch -> parent`` mapping for this repo."""
+def _legacy_parents(*, root: Path) -> Parents:
+    """Read the pre-SQLite ``toolbelt-stack.*.parent`` git config keys."""
     result = run(
         [
             "git",
@@ -79,6 +61,182 @@ def all_parents(*, root: Path) -> Parents:
         if branch and value:
             parents[branch] = value
     return parents
+
+
+# Repos (by git common dir) whose legacy config this process already checked,
+# so lineage access costs one `git config` read per repo per process.
+_legacy_checked: set[Path] = set()
+
+
+def recheck_legacy_config() -> None:
+    """Forget which repos were checked, so the next access looks again."""
+    _legacy_checked.clear()
+
+
+def _migrate_legacy_parents(store: StackStore, repo_id: int, root: Path) -> None:
+    legacy = _legacy_parents(root=root)
+    if not legacy:
+        return
+    store.import_parents(repo_id, legacy)
+    for branch in legacy:
+        run(
+            ["git", "config", "--unset-all", f"{SECTION}.{branch}{_KEY_SUFFIX}"],
+            cwd=root,
+        )
+
+
+@functools.cache
+def repo_identity(root: Path) -> RepoIdentity:
+    """Identify the repo ``root`` (any of its worktrees) belongs to."""
+    common = Path(capture(["git", "rev-parse", "--git-common-dir"], cwd=root))
+    if not common.is_absolute():
+        common = root / common
+    common = common.resolve()
+    remote = logged_process.run(
+        ["git", "config", "--get", "remote.origin.url"],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return RepoIdentity(
+        git_common_dir=common,
+        path=common.parent if common.name == ".git" else common,
+        remote_url=(remote.stdout.strip() or None) if remote.returncode == 0 else None,
+    )
+
+
+@contextlib.contextmanager
+def _repo_store(root: Path) -> Iterator[tuple[StackStore, int]]:
+    """Open the stack DB and the repo's id, migrating any legacy git config
+    the first time this process touches the repo."""
+    store = StackStore(default_db_path())
+    try:
+        identity = repo_identity(root)
+        repo_id = store.ensure_repo(identity)
+        if identity.git_common_dir not in _legacy_checked:
+            _migrate_legacy_parents(store, repo_id, root)
+            _legacy_checked.add(identity.git_common_dir)
+        yield store, repo_id
+    finally:
+        store.close()
+
+
+def get_parent(branch: str, *, root: Path) -> str | None:
+    """Return ``branch``'s recorded parent, or ``None`` if it is not tracked."""
+    with _repo_store(root) as (store, repo_id):
+        return store.get_parent(repo_id, branch)
+
+
+def set_parent(
+    branch: str,
+    parent: str,
+    *,
+    root: Path,
+    task: str | None = None,
+    task_tracker: str | None = None,
+    agent_link: str | None = None,
+) -> None:
+    """Record ``parent`` as ``branch``'s parent, and its links if given."""
+    with _repo_store(root) as (store, repo_id):
+        store.set_parent(
+            repo_id,
+            branch,
+            parent,
+            task=task,
+            task_tracker=task_tracker,
+            agent_link=agent_link,
+        )
+
+
+def get_links(branch: str, *, root: Path) -> BranchLinks | None:
+    """``branch``'s task / agent-session links, or ``None`` if untracked."""
+    with _repo_store(root) as (store, repo_id):
+        return store.get_links(repo_id, branch)
+
+
+def set_links(
+    branch: str,
+    *,
+    root: Path,
+    task: str | None = None,
+    task_tracker: str | None = None,
+    agent_link: str | None = None,
+) -> None:
+    """Set the given links on a tracked ``branch`` (omitted ones are kept).
+
+    Raises ``LookupError`` if ``branch`` is not tracked."""
+    with _repo_store(root) as (store, repo_id):
+        if not store.set_links(
+            repo_id,
+            branch,
+            task=task,
+            task_tracker=task_tracker,
+            agent_link=agent_link,
+        ):
+            raise LookupError(f"'{branch}' is not a tracked stack branch")
+
+
+def get_pr_link(branch: str, *, root: Path) -> PrLink | None:
+    """The PR recorded for ``branch``'s task, if any."""
+    with _repo_store(root) as (store, repo_id):
+        return store.get_pr_link(repo_id, branch)
+
+
+def link_pr(branch: str, candidates: list[PrCandidate], *, root: Path) -> PrLink | None:
+    """Record the PR of ``branch``'s task from ``candidates`` unless it is
+    already known (see ``StackStore.link_pr``); no-op for an untracked
+    branch."""
+    if not candidates:
+        return None
+    with _repo_store(root) as (store, repo_id):
+        return store.link_pr(repo_id, branch, candidates)
+
+
+def remove_parent(branch: str, *, root: Path, landed: bool = False) -> None:
+    """Drop ``branch`` from the stack (no-op if it was untracked). Its task
+    facts are archived; ``landed`` records that its PR was merged."""
+    with _repo_store(root) as (store, repo_id):
+        store.remove_branch(repo_id, branch, landed=landed)
+
+
+def get_gh_stack_unsupported_at(*, root: Path) -> datetime | None:
+    """When `gh stack` was last found unavailable for this repo, if ever."""
+    with _repo_store(root) as (store, repo_id):
+        return store.gh_stack_unsupported_at(repo_id)
+
+
+def set_gh_stack_unsupported_at(at: datetime | None, *, root: Path) -> None:
+    with _repo_store(root) as (store, repo_id):
+        store.set_gh_stack_unsupported_at(repo_id, at)
+
+
+def get_published_chain(bottom: str, *, root: Path) -> PublishedChain | None:
+    """The chain last linked on GitHub starting at ``bottom``, if any."""
+    with _repo_store(root) as (store, repo_id):
+        return store.get_published_chain(repo_id, bottom)
+
+
+def set_published_chain(
+    bottom: str, chain_hash: str, branches: list[str], at: datetime, *, root: Path
+) -> None:
+    with _repo_store(root) as (store, repo_id):
+        store.set_published_chain(repo_id, bottom, chain_hash, branches, at)
+
+
+def all_parents(*, root: Path) -> Parents:
+    """Read every recorded ``branch -> parent`` mapping for this repo."""
+    with _repo_store(root) as (store, repo_id):
+        return store.all_parents(repo_id)
+
+
+def known_repos() -> list[tuple[RepoRecord, Parents]]:
+    """Every repo in the stack DB with its ``branch -> parent`` mapping."""
+    store = StackStore(default_db_path())
+    try:
+        return [(repo, store.all_parents(repo.id)) for repo in store.repos()]
+    finally:
+        store.close()
 
 
 def children_map(parents: Parents) -> Children:

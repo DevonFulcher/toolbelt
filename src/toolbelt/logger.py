@@ -2,7 +2,6 @@
 
 import logging
 import sys
-from typing import Optional
 
 
 class WrenchFormatter(logging.Formatter):
@@ -65,7 +64,7 @@ def setup_app_only_logging(level: int = logging.INFO) -> None:
     app_logger.propagate = False
 
 
-def get_logger(name: Optional[str] = None) -> logging.Logger:
+def get_logger(name: str | None = None) -> logging.Logger:
     """Get a logger instance, setting up logging if not already configured."""
     # Set up logging if not already configured
     if not logging.getLogger().handlers:

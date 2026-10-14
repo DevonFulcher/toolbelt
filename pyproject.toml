@@ -4,7 +4,7 @@ version = "0.1.0"
 description = ""
 readme = "README.md"
 authors = []
-requires-python = ">=3.12"
+requires-python = ">=3.15"
 dependencies = [
     "boto3",
     "pyyaml",
@@ -15,13 +15,17 @@ dependencies = [
     "httpx>=0.28.1",
     "pydantic>=2.11.7",
     "rich>=13.9.4",
+    "fastapi>=0.143.0",
+    "uvicorn>=0.54.0",
+    "genai-prices>=0.1.11",
+    "claude-agent-sdk>=0.2.165",
 ]
 
 [dependency-groups]
 dev = [
     "pre-commit",
-    "mypy",
-    "ruff",
+    "mypy>=2.4",
+    "ruff>=0.17",
     "types-pyyaml>=6.0.12.20250516",
     "pandas-stubs>=2.2.3.250527",
     "boto3-stubs>=1.38.36",
@@ -49,3 +53,29 @@ module = [
     "langgraph.*",
 ]
 ignore_missing_imports = true
+
+# Child processes must go through `toolbelt.logged_process` so the invocation
+# log sees them; TID251 flags any direct use elsewhere.
+[tool.ruff.lint]
+extend-select = ["TID251", "TID254", "TID255"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+# These libraries cost far more to import than the rest of `tt` start-up
+# combined, so they must be `lazy import`ed (PEP 810); TID255 flags a lazy import
+# that is used at module level anyway. tests/test_cli_startup.py is the
+# runtime check.
+require-lazy = ["pandas", "matplotlib", "seaborn", "boto3"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"subprocess.run".msg = "Use toolbelt.logged_process.run"
+"subprocess.Popen".msg = "Use toolbelt.logged_process.Popen"
+"subprocess.check_output".msg = "Use toolbelt.logged_process.check_output"
+"subprocess.check_call".msg = "Use toolbelt.logged_process.run(check=True)"
+"subprocess.call".msg = "Use toolbelt.logged_process.run"
+"asyncio.create_subprocess_exec".msg = "Use toolbelt.logged_process.create_subprocess_exec"
+"asyncio.create_subprocess_shell".msg = "Use toolbelt.logged_process.create_subprocess_exec"
+"os.system".msg = "Use toolbelt.logged_process.run"
+
+[tool.ruff.lint.per-file-ignores]
+"src/toolbelt/logged_process.py" = ["TID251"]
+"tests/**" = ["TID251", "TID254"]

@@ -5,10 +5,10 @@ from pathlib import Path
 
 import pytest
 import typer
-
 from conftest import FakeForge, git
 
 from toolbelt.git.stack.append import create_stacked_branch
+from toolbelt.git.stack.ops import compress_branch
 from toolbelt.git.stack.sync import sync_stack
 
 
@@ -80,7 +80,7 @@ def test_sync_pushes_branches_to_origin(repo: Path, tmp_path: Path):
 def test_sync_reconciles_branch_with_its_own_remote(
     repo: Path, tmp_path: Path, git_remote: Path
 ):
-    api_wt, tests_wt = _build_stack(repo, tmp_path)
+    _api_wt, tests_wt = _build_stack(repo, tmp_path)
     sync_stack(root=tests_wt, forge=FakeForge())  # establish branches on origin
 
     # Someone else advances origin/devon/api_tests via a separate clone.
@@ -108,6 +108,160 @@ def test_sync_reconciles_branch_with_its_own_remote(
 
     assert (tests_wt / "remote.txt").read_text() == "from remote\n"
     assert (tests_wt / "local.txt").read_text() == "from local\n"
+
+
+def test_sync_keeps_the_parent_an_ancestor_so_the_pr_diff_stays_clean(
+    repo: Path, tmp_path: Path
+):
+    """GitHub diffs a PR from merge-base(base, head). Sync must leave the
+    parent reachable from the branch, or every file the parent changed since
+    the fork shows up as part of the branch's own diff."""
+    api_wt, tests_wt = _build_stack(repo, tmp_path)
+    (tests_wt / "own.txt").write_text("own work\n")
+    git("add", "-A", cwd=tests_wt)
+    git("commit", "-m", "own work", cwd=tests_wt)
+
+    for i in range(2):
+        (api_wt / f"api{i}.txt").write_text(f"{i}\n")
+        git("add", "-A", cwd=api_wt)
+        git("commit", "-m", f"api work {i}", cwd=api_wt)
+        sync_stack(root=tests_wt, forge=FakeForge())
+
+        assert git("merge-base", "devon/api", "HEAD", cwd=tests_wt) == git(
+            "rev-parse", "devon/api", cwd=tests_wt
+        )
+        own_diff = git(
+            "diff", "--name-only", "devon/api...HEAD", cwd=tests_wt
+        ).splitlines()
+        assert own_diff == ["own.txt"]
+
+
+def test_sync_does_not_push_a_leaf_with_no_pr(repo: Path, tmp_path: Path):
+    api_wt, tests_wt = _build_stack(repo, tmp_path)
+    (tests_wt / "own.txt").write_text("own work\n")
+    git("add", "-A", cwd=tests_wt)
+    git("commit", "-m", "own work", cwd=tests_wt)
+    (api_wt / "api.txt").write_text("api change\n")
+    git("add", "-A", cwd=api_wt)
+    git("commit", "-m", "api work", cwd=api_wt)
+
+    sync_stack(root=tests_wt, forge=FakeForge(no_pr=["devon/api_tests"]))
+
+    # Merged locally, but never pushed, since nothing has a PR to watch it yet.
+    remote_refs = git("ls-remote", "--heads", "origin", cwd=repo)
+    assert "devon/api_tests" not in remote_refs
+
+
+def test_sync_does_not_repush_when_nothing_new_since_last_push(
+    repo: Path, tmp_path: Path
+):
+    api_wt, tests_wt = _build_stack(repo, tmp_path)
+    (tests_wt / "own.txt").write_text("own work\n")
+    git("add", "-A", cwd=tests_wt)
+    git("commit", "-m", "own work", cwd=tests_wt)
+    (api_wt / "api.txt").write_text("api change\n")
+    git("add", "-A", cwd=api_wt)
+    git("commit", "-m", "api work", cwd=api_wt)
+
+    sync_stack(root=tests_wt, forge=FakeForge())
+    pushed = git("rev-parse", "origin/devon/api_tests", cwd=tests_wt)
+
+    sync_stack(root=tests_wt, forge=FakeForge())  # nothing new since the push
+
+    assert git("rev-parse", "origin/devon/api_tests", cwd=tests_wt) == pushed
+    assert git("rev-parse", "HEAD", cwd=tests_wt) == pushed
+
+
+def test_sync_pushes_a_leaf_whose_pr_conflicts_so_the_resolution_reaches_github(
+    repo: Path, tmp_path: Path
+):
+    """Absorbing the parent is not new work, but when the PR conflicts the
+    merge is what fixes it, and only a push clears it on GitHub."""
+    api_wt, tests_wt = _build_stack(repo, tmp_path)
+    (tests_wt / "own.txt").write_text("own work\n")
+    git("add", "-A", cwd=tests_wt)
+    git("commit", "-m", "own work", cwd=tests_wt)
+    sync_stack(root=tests_wt, forge=FakeForge())  # pushes the leaf once
+    before = git("rev-parse", "origin/devon/api_tests", cwd=tests_wt)
+
+    (api_wt / "api.txt").write_text("api change\n")
+    git("add", "-A", cwd=api_wt)
+    git("commit", "-m", "api work", cwd=api_wt)
+
+    sync_stack(root=tests_wt, forge=FakeForge())  # no conflict: stays local
+    assert git("rev-parse", "origin/devon/api_tests", cwd=tests_wt) == before
+
+    sync_stack(root=tests_wt, forge=FakeForge(conflicting=["devon/api_tests"]))
+    assert git("rev-parse", "origin/devon/api_tests", cwd=tests_wt) == git(
+        "rev-parse", "HEAD", cwd=tests_wt
+    )
+    assert git("rev-parse", "HEAD", cwd=tests_wt) != before
+
+
+def test_sync_pushes_once_new_work_and_a_pr_both_show_up(repo: Path, tmp_path: Path):
+    """Quiet syncs (no PR yet) accumulate merges locally with no push; once
+    there's both a PR to watch it *and* new work of your own, the next sync
+    pushes everything accumulated so far in one go."""
+    api_wt, tests_wt = _build_stack(repo, tmp_path)
+    (tests_wt / "own.txt").write_text("own work\n")
+    git("add", "-A", cwd=tests_wt)
+    git("commit", "-m", "own work", cwd=tests_wt)
+
+    for i in range(2):
+        (api_wt / f"api{i}.txt").write_text(f"{i}\n")
+        git("add", "-A", cwd=api_wt)
+        git("commit", "-m", f"api work {i}", cwd=api_wt)
+        sync_stack(root=tests_wt, forge=FakeForge(no_pr=["devon/api_tests"]))
+
+    remote_refs = git("ls-remote", "--heads", "origin", cwd=repo)
+    assert "devon/api_tests" not in remote_refs
+
+    (tests_wt / "mine.txt").write_text("mine\n")
+    git("add", "-A", cwd=tests_wt)
+    git("commit", "-m", "my own new work", cwd=tests_wt)
+    sync_stack(root=tests_wt, forge=FakeForge())  # PR now open, elsewhere
+
+    remote_refs = git("ls-remote", "--heads", "origin", cwd=repo)
+    assert "devon/api_tests" in remote_refs
+    assert git("rev-parse", "origin/devon/api_tests", cwd=tests_wt) == git(
+        "rev-parse", "HEAD", cwd=tests_wt
+    )
+    assert (tests_wt / "api0.txt").read_text() == "0\n"
+    assert (tests_wt / "api1.txt").read_text() == "1\n"
+    assert (tests_wt / "mine.txt").read_text() == "mine\n"
+
+
+def test_sync_keeps_child_subject_after_parent_is_compressed(
+    repo: Path, tmp_path: Path
+):
+    api_wt = tmp_path / "wt-api"
+    create_stacked_branch("api", root=repo, wt_path=api_wt)
+    (api_wt / "api.txt").write_text("api\n")
+    git("add", "-A", cwd=api_wt)
+    git("commit", "-m", "parent work", cwd=api_wt)
+    # The child forks from the parent's commit, so that commit stays in the
+    # child's history after the parent is squashed into a new one by hand.
+    tests_wt = tmp_path / "wt-api-tests"
+    create_stacked_branch("api_tests", root=api_wt, wt_path=tests_wt)
+    (tests_wt / "tests.txt").write_text("tests\n")
+    git("add", "-A", cwd=tests_wt)
+    git("commit", "-m", "child work", cwd=tests_wt)
+
+    for i in range(2):
+        (api_wt / f"api{i}.txt").write_text(f"{i}\n")
+        git("add", "-A", cwd=api_wt)
+        git("commit", "-m", f"parent follow-up {i}", cwd=api_wt)
+        compress_branch(root=api_wt)
+
+        sync_stack(root=tests_wt, forge=FakeForge())
+
+        assert git("log", "-1", "--format=%s", cwd=api_wt) == "parent work"
+        subjects = git("log", "--format=%s", cwd=tests_wt).splitlines()
+        assert subjects.count("child work") == 1, (
+            "the child's own commit must stay distinct, even once the "
+            "parent it forked from has been rewritten away"
+        )
+        assert (tests_wt / f"api{i}.txt").read_text() == f"{i}\n"
 
 
 def test_merge_conflict_then_resume(repo: Path, tmp_path: Path):

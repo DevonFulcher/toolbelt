@@ -4,12 +4,12 @@ from pathlib import Path
 
 import pytest
 import typer
-
 from conftest import FakeForge, git
 
 from toolbelt.git.stack import lineage
 from toolbelt.git.stack.append import create_stacked_branch
 from toolbelt.git.stack.sync import sync_stack
+from toolbelt.git.worktrees_ops import WorktreeInUseError
 
 
 def _branches(repo: Path) -> set[str]:
@@ -41,7 +41,7 @@ def _squash_merge_to_main(repo: Path, filename: str, content: str) -> None:
 
 
 def test_restack_on_clean_squash_land(repo: Path, tmp_path: Path):
-    api_wt, tests_wt = _build_stack(repo, tmp_path)
+    _api_wt, tests_wt = _build_stack(repo, tmp_path)
     _squash_merge_to_main(repo, "api.txt", "api\n")
 
     sync_stack(root=tests_wt, forge=FakeForge(merged={"devon/api"}))
@@ -60,7 +60,7 @@ def test_restack_on_clean_squash_land(repo: Path, tmp_path: Path):
 
 
 def test_abandoned_parent_is_not_restacked(repo: Path, tmp_path: Path):
-    api_wt, tests_wt = _build_stack(repo, tmp_path)
+    _api_wt, tests_wt = _build_stack(repo, tmp_path)
 
     # Nothing reported merged -> normal merge sync, no restack, no deletion.
     sync_stack(root=tests_wt, forge=FakeForge())
@@ -113,16 +113,20 @@ def test_sync_on_untracked_branch_errors(repo: Path, tmp_path: Path):
         sync_stack(root=repo, forge=FakeForge())
 
 
-def test_cleanup_landed_branch_while_standing_in_it(repo: Path, tmp_path: Path):
-    api_wt, tests_wt = _build_stack(repo, tmp_path)
+def test_sync_refuses_to_delete_the_landed_worktree_it_runs_in(
+    repo: Path, tmp_path: Path
+):
+    api_wt, _tests_wt = _build_stack(repo, tmp_path)
     _squash_merge_to_main(repo, "api.txt", "api\n")
 
     # Run sync from the landed branch's own worktree.
-    sync_stack(root=api_wt, forge=FakeForge(merged={"devon/api"}))
+    with pytest.raises(WorktreeInUseError, match="inside its worktree"):
+        sync_stack(root=api_wt, forge=FakeForge(merged={"devon/api"}))
 
-    # It is still cleaned up (cleanup runs from the main worktree).
-    assert "devon/api" not in _branches(repo)
-    assert lineage.get_parent("devon/api_tests", root=repo) == "main"
+    # Nothing was restacked or deleted.
+    assert api_wt.exists()
+    assert "devon/api" in _branches(repo)
+    assert lineage.get_parent("devon/api_tests", root=repo) == "devon/api"
 
 
 def test_restack_when_child_never_synced_with_parent(repo: Path, tmp_path: Path):
@@ -193,3 +197,54 @@ def test_restack_conflict_then_resume(repo: Path, tmp_path: Path):
     assert lineage.get_parent("devon/api_tests", root=repo) == "main"
     assert "devon/api" not in _branches(repo)
     assert (tests_wt / "shared.txt").read_text() == "resolved\n"
+
+
+def _push_main_file(repo: Path, name: str, text: str) -> None:
+    (repo / name).write_text(text)
+    git("add", "-A", cwd=repo)
+    git("commit", "-m", f"main: {name} = {text.strip()}", cwd=repo)
+    git("push", "origin", "main", cwd=repo)
+
+
+def test_a_child_restacked_by_hand_is_restacked_again_on_only_its_own_commits(
+    repo: Path, tmp_path: Path
+):
+    """After a restack conflict, finishing the rebase by hand left the branch
+    unpushed and the lineage on the landed parent. The next sync must replay
+    only the child's own commits onto the newer main: replaying everything on
+    main since the parent (as the parent's tip as the base does) conflicts
+    with work other people have landed since."""
+    _api_wt, tests_wt = _build_stack(repo, tmp_path)
+    git("push", "-u", "origin", "devon/api_tests", cwd=tests_wt)
+    _squash_merge_to_main(repo, "api.txt", "api\n")
+    _push_main_file(repo, "shared.txt", "one\n")
+    git("fetch", "origin", cwd=tests_wt)
+    git("rebase", "--onto", "origin/main", "devon/api", "devon/api_tests", cwd=tests_wt)
+    stale_remote = git("rev-parse", "origin/devon/api_tests", cwd=tests_wt)
+    assert stale_remote != git("rev-parse", "HEAD", cwd=tests_wt)
+    # Main moves on, in the same file the replayed history would add.
+    _push_main_file(repo, "shared.txt", "two\n")
+
+    sync_stack(root=tests_wt, forge=FakeForge(merged={"devon/api"}))
+
+    assert lineage.get_parent("devon/api_tests", root=repo) == "main"
+    assert (tests_wt / "shared.txt").read_text() == "two\n"
+    assert (tests_wt / "tests.txt").read_text() == "tests\n"
+    assert git("rev-parse", "origin/devon/api_tests", cwd=tests_wt) == git(
+        "rev-parse", "HEAD", cwd=tests_wt
+    )
+    assert git("rev-parse", "origin/devon/api_tests", cwd=tests_wt) != stale_remote
+    assert "devon/api" not in _branches(repo)
+    assert git(
+        "diff", "--name-only", "main", "devon/api_tests", cwd=repo
+    ).splitlines() == ["tests.txt"]
+    assert (
+        git(
+            "log",
+            "--no-merges",
+            "--format=%s",
+            "origin/main..devon/api_tests",
+            cwd=repo,
+        )
+        == "tests work"
+    )

@@ -14,13 +14,14 @@ from toolbelt.git.stack.lineage import all_parents, get_parent, set_parent
 from toolbelt.git.worktrees import current_branch
 from toolbelt.logger import logger
 
+_ATTRIBUTION_TRAILER = "Co-Authored-By"
+
 
 def _parent_or_exit(branch: str, *, root: Path) -> str:
     parent = get_parent(branch, root=root)
     if parent is None:
         logger.error(
-            f"'{branch}' is not tracked in a stack. Start one with "
-            "`git append <name>`."
+            f"'{branch}' is not tracked in a stack. Start one with `git append <name>`."
         )
         raise typer.Exit(1)
     return parent
@@ -36,18 +37,157 @@ def _remote_branch_exists(branch: str, *, root: Path) -> bool:
     return result.returncode == 0
 
 
-def compress_branch(*, root: Path, message: str | None = None) -> None:
+def _is_ancestor(ancestor: str, descendant: str, *, root: Path) -> bool:
+    result = run(
+        ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+        cwd=root,
+        check=False,
+        capture_output=True,
+    )
+    return result.returncode == 0
+
+
+def _rev_parse(ref: str, *, root: Path) -> str:
+    return run(["git", "rev-parse", ref], cwd=root, capture_output=True).stdout.strip()
+
+
+def _parent_ref(parent: str, *, root: Path) -> str:
+    """The ref to measure a branch against its stack parent.
+
+    A parent that is itself in the stack is current locally: ``sync`` merges it
+    into its children straight from the local branch. The stack's base (e.g.
+    ``main``) is not tracked, ``sync`` merges ``origin/<base>`` into the stack
+    root, and nothing updates the local base branch, so it is often behind the
+    remote. Measuring against that stale branch treats every newer base commit
+    already merged into the branch as the branch's own work, and a squash then
+    folds them in. Use ``origin/<base>`` when the local base is behind it or has
+    diverged from it (``sync`` only ever merges the remote's side); keep the
+    local base when it is strictly ahead of the remote.
+    """
+    if parent in all_parents(root=root):
+        return parent
+    run(["git", "fetch", "origin", parent], cwd=root, check=False, capture_output=True)
+    remote = f"origin/{parent}"
+    if (
+        _remote_branch_exists(parent, root=root)
+        and _rev_parse(parent, root=root) != _rev_parse(remote, root=root)
+        and not _is_ancestor(remote, parent, root=root)
+    ):
+        return remote
+    return parent
+
+
+def past_tips(branch: str, *, root: Path) -> list[str]:
+    """Every commit ``branch`` has pointed at, per its reflog, newest first.
+
+    Branch reflogs live in the common git dir, so every worktree sees the same
+    entries. Empty when ``branch`` has no reflog or isn't a local ref.
+    """
+    result = run(
+        ["git", "rev-list", "--walk-reflogs", branch],
+        cwd=root,
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        return []
+    return list(dict.fromkeys(result.stdout.split()))
+
+
+def _default_message(*, parent: str, base: str, root: Path) -> str:
+    """The full message (subject, body, trailers) of the branch's oldest own commit.
+
+    ``base..HEAD`` can still hold commits the parent has since rewritten away
+    (e.g. squashed by ``sync``), because the branch forked from or merged them.
+    Excluding everything reachable from any tip the parent has ever had, plus
+    merge commits, leaves the branch's own commits. If that leaves nothing,
+    falls back to the oldest commit in ``base..HEAD``.
+
+    The parent's past tips go on the command line; branch reflogs expire and
+    stay small, so this is well under the argument-length limit.
+    """
+    own = run(
+        [
+            "git",
+            "log",
+            "--reverse",
+            "--no-merges",
+            "--format=%H",
+            f"{base}..HEAD",
+            "--not",
+            *past_tips(parent, root=root),
+        ],
+        cwd=root,
+        capture_output=True,
+    ).stdout.split()
+    if own:
+        chosen = own[0]
+    else:
+        chosen = run(
+            ["git", "log", "--reverse", "--format=%H", f"{base}..HEAD"],
+            cwd=root,
+            capture_output=True,
+        ).stdout.split()[0]
+    message = run(
+        ["git", "log", "-1", "--format=%B", chosen], cwd=root, capture_output=True
+    ).stdout.strip()
+    return _with_attribution_trailers(message, base=base, root=root)
+
+
+def _with_attribution_trailers(message: str, *, base: str, root: Path) -> str:
+    """``message`` plus every ``Co-Authored-By`` trailer from ``base..HEAD``.
+
+    Squashing drops all but one commit's message, so attribution trailers from
+    the other commits are carried over. ``git interpret-trailers`` adds each one
+    to the message's trailer block (starting one if needed) unless an identical
+    trailer is already there.
+    """
+    found = run(
+        [
+            "git",
+            "log",
+            "--reverse",
+            "--no-merges",
+            f"--format=%(trailers:key={_ATTRIBUTION_TRAILER},unfold)",
+            f"{base}..HEAD",
+        ],
+        cwd=root,
+        capture_output=True,
+    ).stdout.splitlines()
+    trailers = list(dict.fromkeys(line.strip() for line in found if line.strip()))
+    if not trailers:
+        return message
+    args = [
+        "git",
+        "interpret-trailers",
+        "--no-divider",
+        "--where",
+        "end",
+        "--if-exists",
+        "addIfDifferent",
+    ]
+    for trailer in trailers:
+        args += ["--trailer", trailer]
+    return run(args, cwd=root, capture_output=True, input=message + "\n").stdout.strip()
+
+
+def compress_branch(
+    *, root: Path, message: str | None = None, push: bool = True
+) -> None:
     """Squash the current branch's own commits (those after its parent) into one.
 
-    Rewrites history, so the branch's remote is force-pushed to match. Children
-    are left untouched — a later ``git sync`` reconciles them cleanly, since the
-    squashed commit carries the same tree they already merged.
+    Rewrites history, so the branch's remote is force-pushed to match (unless
+    ``push`` is False — ``sync`` sets this since it does its own push right
+    after, for every branch, compressed or not). Children are left untouched,
+    but they still contain the commits that were squashed, so merging this
+    branch into them afterwards can report false conflicts. ``sync`` only
+    compresses leaves for that reason.
     """
     branch = current_branch(root)
     parent = _parent_or_exit(branch, root=root)
 
     base = run(
-        ["git", "merge-base", parent, "HEAD"],
+        ["git", "merge-base", _parent_ref(parent, root=root), "HEAD"],
         cwd=root,
         capture_output=True,
     ).stdout.strip()
@@ -70,30 +210,57 @@ def compress_branch(*, root: Path, message: str | None = None) -> None:
         return
 
     if message is None:
-        # Default to the branch's first (oldest) commit subject, like git-town.
-        message = (
-            run(
-                ["git", "log", "--reverse", "--format=%s", f"{base}..HEAD"],
-                cwd=root,
-                capture_output=True,
-            )
-            .stdout.splitlines()[0]
-            .strip()
-        )
+        # Default to the branch's first (oldest) commit message, like git-town.
+        message = _default_message(parent=parent, base=base, root=root)
 
     # Soft reset keeps the working tree and index, so the commit captures every
     # change since the fork point as one commit; unstaged work is left alone.
     run(["git", "reset", "--soft", base], cwd=root, exit_on_error=True)
-    run(["git", "commit", "-m", message], cwd=root, exit_on_error=True)
+    # The message goes over stdin so a multi-line body survives intact; the
+    # explicit cleanup mode keeps a body line starting with ``#`` from being
+    # treated as a comment.
+    run(
+        ["git", "commit", "--cleanup=whitespace", "-F", "-"],
+        cwd=root,
+        exit_on_error=True,
+        input=message.strip() + "\n",
+    )
     logger.info(f"Compressed {count} commits on '{branch}' into one.")
 
-    if _remote_branch_exists(branch, root=root):
+    if push and _remote_branch_exists(branch, root=root):
         run(
             ["git", "push", "--force-with-lease", "origin", branch],
             cwd=root,
             exit_on_error=True,
         )
         logger.info(f"Force-pushed '{branch}'.")
+
+
+def has_unpushed_real_work(branch: str, *, root: Path) -> bool:
+    """True if ``branch`` has a commit of its own that isn't on its remote yet.
+
+    Merge commits (``sync`` absorbing the parent) don't count, and walking
+    only the first-parent chain skips the parent's own commits that those
+    merges bring in. Vacuously true if the branch has no remote yet.
+
+    Lets ``sync`` push only when there's something worth a fresh CI run or
+    reviewer look, rather than on every sync that merely kept a branch
+    current with its parent.
+    """
+    if not _remote_branch_exists(branch, root=root):
+        return True
+    commits = run(
+        [
+            "git",
+            "rev-list",
+            "--first-parent",
+            "--no-merges",
+            f"origin/{branch}..HEAD",
+        ],
+        cwd=root,
+        capture_output=True,
+    ).stdout.split()
+    return bool(commits)
 
 
 def diff_parent_command(
@@ -112,7 +279,8 @@ def diff_parent_command(
     branch = current_branch(root)
     parent = _parent_or_exit(branch, root=root)
     config_args = [] if line else ["-c", "diff.external=difft"]
-    return ["git", *config_args, "diff", f"{parent}...HEAD", *(extra_args or [])]
+    parent_ref = _parent_ref(parent, root=root)
+    return ["git", *config_args, "diff", f"{parent_ref}...HEAD", *(extra_args or [])]
 
 
 def _would_create_cycle(*, branch: str, new_parent: str, root: Path) -> bool:

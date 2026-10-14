@@ -1,8 +1,8 @@
 import os
-import subprocess
 from datetime import datetime
 from pathlib import Path
 
+from toolbelt import logged_process
 from toolbelt.bootstrap.helm_env import render_helm_yaml
 from toolbelt.env_var import get_git_projects_workdir
 from toolbelt.git.workflow import update_repo
@@ -70,5 +70,5 @@ def git_setup(
         with open(target_path / ".envrc", "a") as f:
             f.write("dotenv\n")
     if (target_path / ".pre-commit-config.yaml").exists():
-        subprocess.run(["pre-commit", "install"], check=True)
+        logged_process.run(["pre-commit", "install"], check=True)
     update_repo(target_path)

@@ -2,18 +2,42 @@
 
 One `gh pr view` per branch, run concurrently (see `stream_branch_statuses`) so
 a full-stack lookup costs about one network round trip regardless of stack
-size. Parsing is split out as a pure function (`_parse_status`) so it's
+size. Parsing is split out as a pure function (`parse_status`) so it's
 testable without shelling out.
 """
 
 import asyncio
 import json
+import re
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import AsyncIterator
 
-_FIELDS = "state,isDraft,reviewDecision,reviewRequests,statusCheckRollup"
+from toolbelt import logged_process
+
+_FIELDS = (
+    "state,isDraft,reviewDecision,reviewRequests,statusCheckRollup,url,mergeable,"
+    "additions,deletions,assignees"
+)
+
+# `gh pr view --json` has no field for review-thread resolution, so the
+# unresolved-comment count needs a raw GraphQL call instead; this pulls
+# owner/repo/number out of the PR url already fetched above, rather than
+# paying for a separate `gh repo view` just to learn the owner/repo.
+_PR_URL_RE = re.compile(r"github\.com/([^/]+)/([^/]+)/pull/(\d+)")
+
+_REVIEW_THREADS_QUERY = """
+query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100) {
+        nodes { isResolved }
+      }
+    }
+  }
+}
+"""
 
 # Check-run/status-context outcomes that mean the run did not pass. Anything
 # else completed (SUCCESS, NEUTRAL, SKIPPED, STALE) counts as passing for our
@@ -49,36 +73,70 @@ class BranchStatus:
     pr: PrState
     ci: CiState
     review: ReviewState
+    url: str | None
+    open_comments: int = 0
+    has_conflicts: bool = False
+    #: Lines the PR adds and deletes against its base (its parent branch for a
+    #: stacked PR).
+    additions: int = 0
+    deletions: int = 0
+    #: GitHub logins of the PR's assignees and of the people (not teams or
+    #: bots) whose review is requested.
+    assignees: tuple[str, ...] = ()
+    reviewers: tuple[str, ...] = ()
 
 
-NO_PR = BranchStatus(pr=PrState.NONE, ci=CiState.NONE, review=ReviewState.NONE)
+NO_PR = BranchStatus(
+    pr=PrState.NONE, ci=CiState.NONE, review=ReviewState.NONE, url=None
+)
 
 
 # Widths of the longest value each field can take (excluding NONE, which is
-# never shown alongside other fields — see `format_status`). Padding to these
-# fixed widths, rather than each row's own longest value, keeps a field
-# (e.g. "CI") starting at the same column on every row, including as more
-# rows stream in with values `tree` hasn't seen yet.
+# never shown alongside other fields — see `format_status`). Every field has a
+# fixed-width slot, blank when it doesn't apply, so a field starts at the same
+# column on every row no matter which other fields that row happens to have,
+# including as more rows stream in with values `tree` hasn't seen yet.
 _PR_WIDTH = max(len(s.value) for s in PrState if s is not PrState.NONE)
 _CI_WIDTH = max(len(s.value) for s in CiState if s is not CiState.NONE)
 _REVIEW_WIDTH = max(len(s.value) for s in ReviewState if s is not ReviewState.NONE)
+_CONFLICTS_LABEL = "merge conflicts"
+# Room for the cap of 100 threads `_REVIEW_THREADS_QUERY` fetches.
+_COMMENTS_WIDTH = len("open comments: 100")
+
+
+#: Width of `format_status`'s fixed-width slots (two spaces between them), for
+#: lining up columns that follow it.
+STATUS_WIDTH = (
+    len("PR ")
+    + _PR_WIDTH
+    + len("CI ")
+    + _CI_WIDTH
+    + len("review ")
+    + _REVIEW_WIDTH
+    + len(_CONFLICTS_LABEL)
+    + _COMMENTS_WIDTH
+    + 2 * 4
+)
 
 
 def format_status(status: BranchStatus) -> str:
     """Render a status as the `tree` suffix, e.g. "PR open    CI failed"."""
     if status.pr is PrState.NONE:
         return "PR none"
-    fields = [("PR", status.pr.value, _PR_WIDTH)]
-    if status.ci is not CiState.NONE:
-        fields.append(("CI", status.ci.value, _CI_WIDTH))
-    if status.review is not ReviewState.NONE:
-        fields.append(("review", status.review.value, _REVIEW_WIDTH))
-    last = len(fields) - 1
-    parts = [
-        f"{label} {value}" if i == last else f"{label} {value.ljust(width)}"
-        for i, (label, value, width) in enumerate(fields)
+    slots = [
+        f"PR {status.pr.value}".ljust(len("PR ") + _PR_WIDTH),
+        f"CI {status.ci.value}".ljust(len("CI ") + _CI_WIDTH)
+        if status.ci is not CiState.NONE
+        else " " * (len("CI ") + _CI_WIDTH),
+        f"review {status.review.value}".ljust(len("review ") + _REVIEW_WIDTH)
+        if status.review is not ReviewState.NONE
+        else " " * (len("review ") + _REVIEW_WIDTH),
+        _CONFLICTS_LABEL if status.has_conflicts else " " * len(_CONFLICTS_LABEL),
+        f"open comments: {status.open_comments}".ljust(_COMMENTS_WIDTH)
+        if status.open_comments > 0
+        else " " * _COMMENTS_WIDTH,
     ]
-    return "  ".join(parts)
+    return "  ".join(slots).rstrip()
 
 
 def _ci_state(rollup: list[dict]) -> CiState:
@@ -95,7 +153,23 @@ def _ci_state(rollup: list[dict]) -> CiState:
     return CiState.SUCCESS
 
 
-def _parse_status(data: dict) -> BranchStatus:
+def _is_bot(login: str) -> bool:
+    folded = login.casefold()
+    return folded.endswith("[bot]") or "copilot" in folded
+
+
+def _requested_people(requests: list) -> tuple[str, ...]:
+    """Logins of the people a review is requested from: not a team, not a bot."""
+    return tuple(
+        entry["login"]
+        for entry in requests
+        if isinstance(entry, dict)
+        and entry.get("login")
+        and not _is_bot(entry["login"])
+    )
+
+
+def parse_status(data: dict, *, open_comments: int = 0) -> BranchStatus:
     """Parse a `gh pr view --json {_FIELDS}` payload into a `BranchStatus`."""
     if data["state"] == "MERGED":
         pr_state = PrState.MERGED
@@ -120,12 +194,70 @@ def _parse_status(data: dict) -> BranchStatus:
         pr=pr_state,
         ci=_ci_state(data.get("statusCheckRollup") or []),
         review=review_state,
+        url=data["url"],
+        open_comments=open_comments,
+        # `mergeable` is UNKNOWN while GitHub is still computing it; only a
+        # definite CONFLICTING counts, and only for a PR still in play.
+        has_conflicts=data.get("mergeable") == "CONFLICTING"
+        and pr_state in (PrState.OPEN, PrState.DRAFT),
+        additions=data.get("additions") or 0,
+        deletions=data.get("deletions") or 0,
+        assignees=tuple(a["login"] for a in data.get("assignees") or []),
+        reviewers=_requested_people(data.get("reviewRequests") or []),
     )
 
 
-async def fetch_branch_status(branch: str, *, root: Path) -> BranchStatus:
-    """Look up `branch`'s PR/CI/review status. No PR at all is `NO_PR`."""
-    process = await asyncio.create_subprocess_exec(
+def count_unresolved_nodes(nodes: list[dict]) -> int:
+    """Count unresolved threads among a `reviewThreads` connection's nodes."""
+    return sum(1 for node in nodes if not node["isResolved"])
+
+
+def _count_unresolved(payload: dict) -> int:
+    """Count unresolved review threads in a `reviewThreads` GraphQL payload."""
+    return count_unresolved_nodes(
+        payload["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]
+    )
+
+
+async def _fetch_open_comment_count(url: str, *, root: Path) -> int:
+    """Unresolved review-thread count for the PR at `url`. Best-effort: this
+    is cosmetic `tree` display, not something worth failing the whole lookup
+    over, so any `gh` failure (or an unparseable url) just counts as 0."""
+    match = _PR_URL_RE.search(url)
+    if match is None:
+        return 0
+    owner, repo, number = match.groups()
+    process = await logged_process.create_subprocess_exec(
+        "gh",
+        "api",
+        "graphql",
+        "-f",
+        f"query={_REVIEW_THREADS_QUERY}",
+        "-f",
+        f"owner={owner}",
+        "-f",
+        f"repo={repo}",
+        "-F",
+        f"number={number}",
+        cwd=root,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, _ = await process.communicate()
+    if process.returncode != 0:
+        return 0
+    return _count_unresolved(json.loads(stdout))
+
+
+# GitHub reports `mergeable: UNKNOWN` while it recomputes after the base or
+# head moves, and settles within a few seconds.
+MERGEABLE_RETRIES = 4
+MERGEABLE_RETRY_DELAY_SECONDS = 1.5
+
+
+async def _gh_pr_view(branch: str, *, root: Path) -> dict | None:
+    """`gh pr view` payload for `branch`, or None when it has no PR."""
+    process = await logged_process.create_subprocess_exec(
         "gh",
         "pr",
         "view",
@@ -140,8 +272,22 @@ async def fetch_branch_status(branch: str, *, root: Path) -> BranchStatus:
     if process.returncode != 0:
         # `gh pr view` exits non-zero when the branch has no PR — that's the
         # expected, common case here, not an infra failure to guard against.
+        return None
+    return json.loads(stdout)
+
+
+async def fetch_branch_status(branch: str, *, root: Path) -> BranchStatus:
+    """Look up `branch`'s PR/CI/review status. No PR at all is `NO_PR`."""
+    data = await _gh_pr_view(branch, root=root)
+    for _ in range(MERGEABLE_RETRIES):
+        if data is None or data.get("mergeable") != "UNKNOWN":
+            break
+        await asyncio.sleep(MERGEABLE_RETRY_DELAY_SECONDS)
+        data = await _gh_pr_view(branch, root=root)
+    if data is None:
         return NO_PR
-    return _parse_status(json.loads(stdout))
+    open_comments = await _fetch_open_comment_count(data["url"], root=root)
+    return parse_status(data, open_comments=open_comments)
 
 
 async def stream_branch_statuses(

@@ -1,17 +1,20 @@
 import os
 import re
-import subprocess
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 
+from toolbelt import logged_process
 from toolbelt.bootstrap.repo_setup import git_setup
 from toolbelt.editor import open_in_editor
 from toolbelt.env_var import get_git_projects_workdir
 from toolbelt.git.branches import get_branch_name
 from toolbelt.git.commands import is_git_repo
 from toolbelt.git.repo import get_current_repo_root_path
+from toolbelt.git.repo_lock import repo_lock
+from toolbelt.git.stack.cli import stack_typer
+from toolbelt.git.stack.forge import GhForge
 from toolbelt.git.workflow import (
     git_branch_clean,
     git_merge,
@@ -21,7 +24,7 @@ from toolbelt.git.workflow import (
     sync_repo,
     update_repo,
 )
-from toolbelt.git.stack.cli import stack_typer
+from toolbelt.git.worktrees import repo_root
 
 git_typer = typer.Typer(
     help="""Git workflow commands, built around stacked branches.
@@ -74,14 +77,19 @@ def merge(
 ):
     """Squash-merge a PR on GitHub, then sync the stack it belongs to.
 
-    Runs `gh pr merge --squash PR`, then `sync` rooted at the merged branch's
-    own worktree, so it works from any directory. That sync rebases the merged
-    branch's children onto the next unmerged ancestor and force-pushes them,
-    then force-removes the merged branch's worktree (discarding any
-    uncommitted changes there) and deletes its local branch and stack entry.
-    If the branch has no worktree, only `branch-clean` runs.
+    Runs `gh pr merge --squash PR`. A PR that is part of a GitHub stack is
+    merged through GitHub's asynchronous merge API instead, which also merges
+    every open PR below it in the stack.
+
+    Then runs `sync` rooted at the merged branch's own worktree, so it works
+    from any directory. That sync rebases the merged branch's children onto
+    the next unmerged ancestor and force-pushes them, then force-removes the
+    merged branch's worktree (discarding any uncommitted changes there) and
+    deletes its local branch and stack entry. If the branch has no worktree,
+    only `branch-clean` runs.
     """
-    git_merge(pr)
+    with repo_lock(repo_root()):
+        git_merge(pr)
 
 
 @git_typer.command(name="branch-clean")
@@ -94,7 +102,9 @@ def branch_clean():
     branches that no longer exist, reparenting their children onto the gone
     branch's parent. `sync` runs this automatically.
     """
-    git_branch_clean()
+    root = repo_root()
+    with repo_lock(root):
+        git_branch_clean(forge=GhForge(root))
 
 
 @git_typer.command(
@@ -104,7 +114,7 @@ def branch_clean():
 def get(
     repo_url: Annotated[str, typer.Argument(help="URL of the repository to get")],
     service_name: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             help="The name of the service for retrieving helm values. If not provided, "
             + "the repo name will be used"
@@ -119,7 +129,7 @@ def get(
     )
     clone_path = git_projects_workdir / repo_name
     if not is_git_repo(clone_path):
-        subprocess.run(
+        logged_process.run(
             ["git", "clone", repo_url, str(clone_path)],
             check=True,
         )
@@ -179,7 +189,9 @@ def save(
     The commit message is also recorded in ~/.toolbelt/storage.db for
     `toolbelt standup`.
     """
-    git_save(message, no_verify, no_sync, amend, pathspec, yes)
+    """Add, commit, and push changes"""
+    with repo_lock(repo_root()):
+        git_save(message, no_verify, no_sync, amend, pathspec, yes)
 
 
 @git_typer.command()
@@ -213,20 +225,22 @@ def send(
     what `pr` does: opens the existing PR, or runs unit tests (unless
     --skip-tests) and opens `gh pr create --web` against the stack parent.
     """
-    commit_root = git_save(message, no_verify, no_sync, False, pathspec, yes)
-    git_pr(skip_tests, cwd=commit_root)
+    """Save changes and create PR"""
+    with repo_lock(repo_root()):
+        commit_root = git_save(message, no_verify, no_sync, False, pathspec, yes)
+        git_pr(skip_tests, cwd=commit_root)
 
 
 @git_typer.command()
 def change(
     branch: Annotated[
-        Optional[str],
+        str | None,
         typer.Argument(
             help="Branch name to change to. If omitted, will use fzf to select"
         ),
     ] = None,
     new_branch: Annotated[
-        Optional[str], typer.Option("-b", help="Create a new branch and switch to it")
+        str | None, typer.Option("-b", help="Create a new branch and switch to it")
     ] = None,
 ):
     """Check out a branch in this worktree, fast-forward pull it, refresh deps.
@@ -242,9 +256,9 @@ def change(
     stacked branch.
     """
     if new_branch:
-        subprocess.run(["git", "checkout", "-b", new_branch], check=True)
+        logged_process.run(["git", "checkout", "-b", new_branch], check=True)
     else:
-        subprocess.run(
+        logged_process.run(
             ["git", "checkout", get_branch_name(branch, "change")], check=True
         )
         git_safe_pull()
@@ -299,7 +313,7 @@ def compare(
     git_config_args = [] if line else ["-c", "diff.external=difft"]
     revisions, paths = _split_revisions_and_paths(compare_args or [], cwd=Path.cwd())
     # Exclude files from diff that I rarely care about. Reference: https://stackoverflow.com/a/48259275/8925314
-    subprocess.run(
+    logged_process.run(
         ["git"]
         + git_config_args
         + ["diff", "--ignore-all-space"]  # Ignore all whitespace differences
@@ -327,14 +341,14 @@ def combine(
     main, master and current all mean the repo's default branch; `-` means
     the previously checked-out branch.
     """
-    subprocess.run(["git", "merge", get_branch_name(branch)], check=True)
+    logged_process.run(["git", "merge", get_branch_name(branch)], check=True)
 
 
 @git_typer.command(help="Set up a repository with common config")
 def setup(
     repo_path: Annotated[str, typer.Argument(help="Path to the repository to setup")],
     service_name: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             help="The name of the service for retrieving helm values. If not provided, "
             + "the repo name will be used."
@@ -361,7 +375,7 @@ def safe_pull():
 @git_typer.command(name="list", help="List all repos")
 def git_list():
     git_projects_workdir = get_git_projects_workdir()
-    subprocess.run(
+    logged_process.run(
         [
             "eza",
             "--classify",
@@ -392,7 +406,9 @@ def sync():
     then origin/<branch>, then runs `git push -u`. If a branch's PR has
     merged on GitHub, its children are instead rebased onto the nearest
     unmerged ancestor, reparented onto it, and force-pushed
-    (--force-with-lease). The merged branch's worktree is then force-removed
+    (--force-with-lease). A child whose parent was rewritten (restacked,
+    amended or squashed) holds old copies of the parent's commits, so its
+    own commits are replayed onto the parent the same way instead of merging. The merged branch's worktree is then force-removed
     (discarding any uncommitted changes there), and its local branch and
     stack entry are deleted.
 
@@ -405,4 +421,5 @@ def sync():
     resolve, `git add`, then rerun `sync`, which finishes the merge commit or
     runs `git rebase --continue` for you.
     """
-    sync_repo()
+    with repo_lock(repo_root()):
+        sync_repo()

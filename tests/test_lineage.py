@@ -6,6 +6,8 @@ helpers are pure and tested directly.
 
 from pathlib import Path
 
+import pytest
+
 from toolbelt.git.stack import lineage
 
 
@@ -18,6 +20,24 @@ def test_set_get_remove_parent(repo: Path):
     assert lineage.get_parent("devon/api", root=repo) == "main"
     lineage.remove_parent("devon/api", root=repo)
     assert lineage.get_parent("devon/api", root=repo) is None
+
+
+def test_removing_a_parent_archives_the_branch_and_records_a_landing(repo: Path):
+    from toolbelt.git.stack.store import StackStore, default_db_path
+
+    lineage.set_parent("devon/api", "main", root=repo, task="PLAT-1")
+    lineage.set_parent("devon/docs", "main", root=repo)
+    lineage.remove_parent("devon/api", root=repo, landed=True)
+    lineage.remove_parent("devon/docs", root=repo)
+
+    store = StackStore(default_db_path())
+    try:
+        archived = {r.name: r for r in store.removed_branches()}
+    finally:
+        store.close()
+    assert archived["devon/api"].landed is True
+    assert archived["devon/api"].task == "PLAT-1"
+    assert archived["devon/docs"].landed is False
 
 
 def test_branch_name_with_slashes_and_dots(repo: Path):
@@ -81,3 +101,29 @@ def test_stack_root_and_resolve_stack(repo: Path):
     stack = lineage.resolve_stack("devon/api_tests", root=repo)
     assert stack[0] == "devon/api"
     assert set(stack) == {"devon/api", "devon/api_tests", "devon/api_docs"}
+
+
+def test_links_default_to_none_and_roundtrip(repo: Path):
+    assert lineage.get_links("devon/api", root=repo) is None
+
+    lineage.set_parent("devon/api", "main", root=repo)
+    links = lineage.get_links("devon/api", root=repo)
+    assert links is not None
+    assert (links.task, links.task_tracker, links.agent_link) == (None, None, None)
+
+    lineage.set_links("devon/api", root=repo, task="ABC-1", task_tracker="jira")
+    lineage.set_links("devon/api", root=repo, agent_link="claude://session/1")
+    # Reparenting leaves the links alone.
+    lineage.set_parent("devon/api", "develop", root=repo)
+    links = lineage.get_links("devon/api", root=repo)
+    assert links is not None
+    assert (links.task, links.task_tracker, links.agent_link) == (
+        "ABC-1",
+        "jira",
+        "claude://session/1",
+    )
+
+
+def test_set_links_on_untracked_branch_raises(repo: Path):
+    with pytest.raises(LookupError):
+        lineage.set_links("devon/nope", root=repo, task="ABC-1")

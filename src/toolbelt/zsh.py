@@ -3,10 +3,10 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
-import matplotlib.pyplot as plt
-import pandas as pd
-import seaborn as sns
 import typer
+lazy import matplotlib.pyplot as plt
+lazy import pandas as pd
+lazy import seaborn as sns
 
 from toolbelt.logger import logger
 
@@ -61,7 +61,7 @@ def load_zsh_history(path):
     df = pd.DataFrame(
         {"Timestamp": timestamps, "full_command": full_commands} | sub_commands
     )
-    df["Timestamp"] = pd.to_datetime(df["Timestamp"], unit="s")
+    df["Timestamp"] = pd.to_datetime(pd.to_numeric(df["Timestamp"]), unit="s")
     return df
 
 

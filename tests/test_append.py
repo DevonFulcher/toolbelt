@@ -1,5 +1,6 @@
 """Integration tests for `append` (create_stacked_branch), real git in tmp."""
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 from conftest import git
@@ -95,3 +96,20 @@ def test_append_stacks_on_current_branch(repo: Path, tmp_path: Path):
     # the full stack resolves root -> leaf
     stack = lineage.resolve_stack("devon/api_tests", root=repo)
     assert stack == ["devon/api", "devon/api_tests"]
+
+
+def test_append_records_when_the_task_started_and_reparenting_keeps_it(
+    repo: Path, tmp_path: Path
+):
+    before = datetime.now(UTC)
+    create_stacked_branch("api", root=repo, wt_path=tmp_path / "wt-api")
+    after = datetime.now(UTC)
+
+    with lineage._repo_store(repo) as (s, repo_id):
+        started = s.get_started_at(repo_id, "devon/api")
+    assert started is not None
+    assert before <= started <= after
+
+    lineage.set_parent("devon/api", "develop", root=repo)  # reparent
+    with lineage._repo_store(repo) as (s, repo_id):
+        assert s.get_started_at(repo_id, "devon/api") == started
