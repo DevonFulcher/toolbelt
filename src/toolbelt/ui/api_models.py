@@ -257,6 +257,10 @@ class PrDetail(Model):
     ci_failures: int
     #: Reviewers with a review request outstanding.
     reviewers: list[str]
+    #: Lines the PR adds and deletes against its base (its parent branch for a
+    #: stacked PR).
+    additions: int
+    deletions: int
     #: ISO time the PR was created, when it ended (merged/closed; ``None``
     #: while open) and whether it is a draft: what the per-card timeline
     #: track is scaled and shaded from.

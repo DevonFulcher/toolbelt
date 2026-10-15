@@ -54,7 +54,7 @@ query($owner: String!, $repo: String!, $branch: String!) {{
                  orderBy: {{field: CREATED_AT, direction: DESC}}) {{
       nodes {{
         number url title state isDraft createdAt mergedAt closedAt
-        headRefOid baseRefName mergeable reviewDecision
+        headRefOid baseRefName mergeable reviewDecision additions deletions
         author {{ login }}
         reviewRequests(first: 20) {{ nodes {{ {_REVIEWER} }} }}
         reviewThreads(first: 100) {{ nodes {{ isResolved }} }}
@@ -339,6 +339,8 @@ def parse_snapshot(payload: dict) -> PrSnapshot:
         merged_at=_parse_optional_time(node["mergedAt"]),
         closed_at=_parse_optional_time(node["closedAt"]),
         requested_reviewers=reviewers,
+        additions=node["additions"],
+        deletions=node["deletions"],
         commit_rollups=tuple(
             (entry["commit"]["oid"], _rollup_state(entry["commit"]))
             for entry in node["recent"]["nodes"]

@@ -348,8 +348,10 @@ export interface LoadedStatus {
   review: ReviewState;
 }
 export interface PrDetail {
+  additions: number;
   ci_failures: number;
   created: string;
+  deletions: number;
   draft_age: Age | null;
   ended: string | null;
   events: TimelineEvent[];
@@ -624,6 +626,7 @@ export interface SlotDimensions {
   comments: CatalogDimension | null;
   descendants: CatalogDimension | null;
   in_draft: CatalogDimension | null;
+  lines: CatalogDimension | null;
   merge: CatalogDimension | null;
   next: CatalogDimension | null;
   pr: CatalogDimension | null;

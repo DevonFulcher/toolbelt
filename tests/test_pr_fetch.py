@@ -32,6 +32,8 @@ def pr_node(**overrides) -> dict:
         "baseRefName": "main",
         "mergeable": "MERGEABLE",
         "reviewDecision": None,
+        "additions": 120,
+        "deletions": 4,
         "author": {"login": "devon"},
         "reviewRequests": {"nodes": []},
         "reviewThreads": {"nodes": []},
@@ -235,6 +237,7 @@ def test_facts_carry_the_pr_and_its_timeline_in_time_order():
     assert facts is not None
     assert (facts.number, facts.title, facts.author) == (42, "Add the thing", "devon")
     assert facts.state == "MERGED"
+    assert (facts.additions, facts.deletions) == (120, 4)
     assert facts.created_at == datetime(2026, 10, 1, 9, 0, tzinfo=UTC)
     assert facts.merged_at == datetime(2026, 10, 3, 12, 0, tzinfo=UTC)
     assert [(i.kind, i.actor) for i in facts.items] == [

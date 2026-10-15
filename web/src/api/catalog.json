@@ -152,6 +152,7 @@
     "task_age": "task",
     "pr_age": "pr",
     "timeline": "pr",
+    "lines": null,
     "repo": null,
     "branch": null,
     "task": null,

@@ -420,6 +420,7 @@ function PrSlots({ status, note }: { status: LiveStatus; note: ReactNode }) {
       ["review", "Review"],
       ["comments", "Comments"],
       ["merge", "Merge"],
+      ["lines", "Lines"],
       ["pr_age", "PR age"],
       ["in_draft", "In draft"],
       ["review_requested", "Review requested"],
@@ -531,6 +532,12 @@ function LoadedPrSlots({ status }: { status: LoadedStatus }) {
 
           {detail ? (
             <>
+              <Slot id="lines" label="Lines">
+                <span title="lines added and deleted">
+                  <span className="lines-added">{`+${detail.additions}`}</span>{" "}
+                  <span className="lines-deleted">{`-${detail.deletions}`}</span>
+                </span>
+              </Slot>
               <Slot id="pr_age" label="PR age">
                 <Age {...detail.pr_age} />
               </Slot>
@@ -598,6 +605,7 @@ function LoadedPrSlots({ status }: { status: LoadedStatus }) {
 /** The PR-detail slots of a card that has no PR (or no detail), each saying why. */
 function UnavailableSlots({ note }: { note: string }) {
   const keys: [SlotKey, string][] = [
+    ["lines", "Lines"],
     ["pr_age", "PR age"],
     ["in_draft", "In draft"],
     ["review_requested", "Review requested"],

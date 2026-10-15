@@ -2261,11 +2261,17 @@
     "PrDetail": {
       "additionalProperties": false,
       "properties": {
+        "additions": {
+          "type": "integer"
+        },
         "ci_failures": {
           "type": "integer"
         },
         "created": {
           "type": "string"
+        },
+        "deletions": {
+          "type": "integer"
         },
         "draft_age": {
           "anyOf": [
@@ -2326,6 +2332,8 @@
         "review_request_age",
         "ci_failures",
         "reviewers",
+        "additions",
+        "deletions",
         "created",
         "ended",
         "is_draft",
@@ -2735,6 +2743,16 @@
             }
           ]
         },
+        "lines": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogDimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "merge": {
           "anyOf": [
             {
@@ -2881,6 +2899,7 @@
         "task_age",
         "pr_age",
         "timeline",
+        "lines",
         "repo",
         "branch",
         "task",

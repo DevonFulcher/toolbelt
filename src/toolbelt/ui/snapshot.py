@@ -218,6 +218,8 @@ def pr_detail(facts: PrFacts, now: datetime) -> api.PrDetail:
         ),
         ci_failures=activity.ci_failure_count,
         reviewers=list(facts.requested_reviewers),
+        additions=facts.additions,
+        deletions=facts.deletions,
         created=_iso(facts.created_at),
         ended=_iso(ended) if ended else None,
         is_draft=facts.is_draft,

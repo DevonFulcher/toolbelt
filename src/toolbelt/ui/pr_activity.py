@@ -102,6 +102,10 @@ class PrFacts:
     #: when the commit had no CI.
     commit_rollups: tuple[tuple[str, str | None], ...]
     items: tuple[TimelineItem, ...]
+    #: Lines the PR adds and deletes against its base (0 where the source of
+    #: the facts does not carry them, as in the aggregate history).
+    additions: int = 0
+    deletions: int = 0
 
 
 @dataclass(frozen=True)

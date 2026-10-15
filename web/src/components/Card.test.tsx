@@ -28,6 +28,7 @@ const SLOT_LABELS: Record<string, string> = {
   review: "Review",
   comments: "Comments",
   merge: "Merge",
+  lines: "Lines",
   task: "Task",
   session: "Session",
   ancestors: "Ancestors",
@@ -80,6 +81,8 @@ describe("a card's labelled slots", () => {
         review_request_age: { text: "1d", since: new Date(NOW - DAY).toISOString() },
         ci_failures: 2,
         reviewers: ["sam", "lee"],
+        additions: 120,
+        deletions: 4,
       }),
     });
     const draft = pr({
@@ -115,6 +118,9 @@ describe("a card's labelled slots", () => {
     expect(b.comments).toEqual(["Comments", "ok", "3 comments"]);
     expect(b.merge[2]).toBe("conflicts");
     expect(b.pr_age[2]).toBe("5d");
+    expect(b.lines[2]).toBe("+120 -4");
+    expect(document.querySelector('article[data-id="1:devon/b"] [data-slot="lines"] .lines-added')).toHaveTextContent("+120");
+    expect(document.querySelector('article[data-id="1:devon/b"] [data-slot="lines"] .lines-deleted')).toHaveTextContent("-4");
     expect(b.in_draft).toEqual(["In draft", "na", "not a draft"]);
     expect(b.review_requested).toEqual(["Review requested", "ok", "1d"]);
     expect(b.ci_failures[2]).toBe("2 failures");
@@ -167,7 +173,7 @@ describe("a card's labelled slots", () => {
     expect(labels(found)).toEqual(SLOT_LABELS);
     expect(found.next[2]).toBe("Open PR needs you");
     expect(found.pr).toEqual(["PR", "gap", "no PR"]);
-    for (const key of ["ci", "review", "comments", "merge", "pr_age", "in_draft", "review_requested", "ci_failures", "reviewers", "title"]) {
+    for (const key of ["ci", "review", "comments", "merge", "lines", "pr_age", "in_draft", "review_requested", "ci_failures", "reviewers", "title"]) {
       expect(found[key].slice(1), key).toEqual(["na", "no PR"]);
     }
     // No start recorded and no PR: nothing to draw, and no chip row repeating
@@ -238,7 +244,7 @@ describe("a card's labelled slots", () => {
       const keys = groups.map((g) => [...g.querySelectorAll<HTMLElement>(".slot")].map((s) => s.dataset.slot));
       expect(keys).toEqual([
         ["repo", "branch", "ancestors", "descendants"],
-        ["title", "pr", "ci", "review", "comments", "merge", "pr_age", "in_draft", "review_requested", "ci_failures", "reviewers"],
+        ["title", "pr", "ci", "review", "comments", "merge", "lines", "pr_age", "in_draft", "review_requested", "ci_failures", "reviewers"],
         ["next", "task_age", "task", "session"],
       ]);
       // The timeline is its own box, the last child, not one of the groups.

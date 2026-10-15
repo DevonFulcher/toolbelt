@@ -194,6 +194,8 @@ a.pill:hover { text-decoration: none; background: color-mix(in srgb, currentColo
 
 /* Per-card timeline track. Colours come from the catalog's tone tokens. */
 .tone-green { --tone: var(--green); }
+.lines-added { color: var(--green); }
+.lines-deleted { color: var(--red); }
 .tone-red { --tone: var(--red); }
 .tone-amber { --tone: var(--amber); }
 .tone-gray { --tone: var(--gray); }

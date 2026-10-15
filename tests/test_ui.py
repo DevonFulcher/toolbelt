@@ -572,6 +572,8 @@ def make_facts(**overrides) -> PrFacts:
         "merged_at": None,
         "closed_at": None,
         "requested_reviewers": ("sam",),
+        "additions": 120,
+        "deletions": 4,
         "commit_rollups": (("a", "FAILURE"), ("b", "SUCCESS"), ("c", "ERROR")),
         "items": (
             TimelineItem(
@@ -604,6 +606,7 @@ class TestPrDetail:
         ) == ("3h", "2026-10-06T06:00:00Z")
         assert detail.ci_failures == 2
         assert detail.reviewers == ["sam"]
+        assert (detail.additions, detail.deletions) == (120, 4)
         assert (detail.created, detail.ended, detail.is_draft) == (
             "2026-10-01T09:00:00Z",
             None,
