@@ -45,8 +45,8 @@ from toolbelt.git.worktrees import (
 )
 from toolbelt.git.worktrees_ops import delete_branch_and_worktree, main_worktree
 from toolbelt.logger import logger
-from toolbelt.personal_machine import is_personal
-from toolbelt.tasks.config import configured_tracker
+from toolbelt.tasks.config import configured_tracker, employer_orgs
+from toolbelt.tasks.requirement import origin_owner, task_required
 
 stack_typer = typer.Typer(help="Stack + worktree management")
 
@@ -62,8 +62,10 @@ def append(
         None,
         "--task",
         help="Task this branch is for, as its key or URL in the configured "
-        "tracker (tasks.tracker in the config file). Required, except on a "
-        "personal laptop (IS_PERSONAL=true), where it may be omitted.",
+        "tracker (tasks.tracker in the config file). Required for repos owned by "
+        "an employer org (tasks.employer_orgs in the config file, default "
+        "dbt-labs and fivetran); optional for any other repo, and on a "
+        "personal laptop (IS_PERSONAL=true).",
     ),
     agent_link: str = typer.Option(
         ...,
@@ -93,17 +95,31 @@ def append(
     already-prefixed "devon/foo" would become "devon/devon_foo".
 
     --task and --agent-link are stored as given with the branch; --task is
-    also tagged with the configured task tracker's name (if any). Without
-    --task (personal laptops only) the branch has no task and no tracker is
-    consulted.
+    also tagged with the configured task tracker's name (if any).
+
+    --task is required only when the GitHub owner of `origin` is an employer
+    org (tasks.employer_orgs in the config file, default dbt-labs and
+    fivetran) or cannot be determined. Repos owned by anyone else are
+    personal and may omit it, as may any repo with IS_PERSONAL=true. Without
+    --task the branch has no task and no tracker is consulted.
     """
-    if task is None and not is_personal():
+    root = repo_root()
+    config_file = default_config_path()
+    if task is None and task_required(root, config_file):
+        orgs = ", ".join(employer_orgs(config_file))
+        owner = origin_owner(root)
+        why = (
+            f"the repo's GitHub owner ({owner}) is an employer org"
+            if owner
+            else "the repo has no github.com `origin` remote to tell whose it is"
+        )
         raise typer.BadParameter(
-            "--task is required unless IS_PERSONAL=true (personal laptop)",
+            f"--task is required: {why}. Repos whose owner is outside the "
+            f"employer orgs ({orgs}; tasks.employer_orgs in the config file) "
+            f"are personal and don't need a task. IS_PERSONAL=true also waives it.",
             param_hint="--task",
         )
-    root = repo_root()
-    tracker = configured_tracker(default_config_path()) if task is not None else None
+    tracker = configured_tracker(config_file) if task is not None else None
     with repo_lock(root):
         wt_path = _worktree_path_for_name(name=name, repo_root=root)
         create_stacked_branch(

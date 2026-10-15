@@ -350,20 +350,148 @@ def test_append_with_task_on_a_personal_machine_stores_it_as_usual(
     assert (links.task, links.agent_link) == ("ABC-1", _AGENT_LINK)
 
 
-@pytest.mark.parametrize("env", [None, {"IS_PERSONAL": "false"}, {"IS_PERSONAL": "1"}])
-def test_append_without_task_elsewhere_is_an_error_naming_is_personal(
-    repo: Path, capfd: pytest.CaptureFixture, env: dict[str, str | None] | None
-):
-    result = _invoke(
+def _set_origin(repo: Path, url: str) -> None:
+    git("remote", "set-url", "origin", url, cwd=repo)
+
+
+def _append_without_task(
+    repo: Path, capfd: pytest.CaptureFixture, env: dict[str, str | None] | None = None
+) -> Invocation:
+    return _invoke(
         ["append", "feature", "--agent-link", _AGENT_LINK],
         cwd=repo,
         capfd=capfd,
         env=env,
     )
 
+
+@pytest.mark.parametrize("env", [None, {"IS_PERSONAL": "false"}, {"IS_PERSONAL": "1"}])
+@pytest.mark.parametrize(
+    "url",
+    [
+        "git@github.com:dbt-labs/example.git",
+        "https://github.com/dbt-labs/example.git",
+        "ssh://git@github.com/Fivetran/example",
+        "https://user@github.com/fivetran/example/",
+    ],
+)
+def test_append_without_task_in_an_employer_org_repo_is_an_error(
+    repo: Path,
+    capfd: pytest.CaptureFixture,
+    url: str,
+    env: dict[str, str | None] | None,
+):
+    _set_origin(repo, url)
+
+    result = _append_without_task(repo, capfd, env)
+
     assert result.exit_code != 0
+    assert "employer org" in result.output
+    assert "dbt-labs, fivetran" in result.output
+    assert "personal" in result.output
     assert "IS_PERSONAL" in result.output
     assert lineage.get_parent("devon/feature", root=repo) is None
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "git@github.com:DevonFulcher/example.git",
+        "https://github.com/DevonFulcher/example.git",
+        "ssh://git@github.com:22/DevonFulcher/example",
+    ],
+)
+def test_append_without_task_in_a_personal_owner_repo_stores_no_task(
+    repo: Path, capfd: pytest.CaptureFixture, url: str, _isolate_config_dir: Path
+):
+    _set_origin(repo, url)
+    # Even with a tracker configured, no task means no tracker is recorded.
+    _isolate_config_dir.parent.mkdir(parents=True)
+    _isolate_config_dir.write_text(
+        "tasks:\n  tracker: jira\n  jira:\n    base_url: https://j.example\n"
+    )
+
+    result = _append_without_task(repo, capfd)
+
+    assert result.exit_code == 0, result.output
+    links = lineage.get_links("devon/feature", root=repo)
+    assert links is not None
+    assert (links.task, links.task_tracker) == (None, None)
+
+
+def test_append_with_task_in_a_personal_owner_repo_stores_it_as_usual(
+    repo: Path, capfd: pytest.CaptureFixture
+):
+    _set_origin(repo, "git@github.com:DevonFulcher/example.git")
+
+    result = _invoke(["append", "feature", *_LINKS], cwd=repo, capfd=capfd)
+
+    assert result.exit_code == 0, result.output
+    links = lineage.get_links("devon/feature", root=repo)
+    assert links is not None
+    assert links.task == "ABC-1"
+
+
+def test_is_personal_waives_the_task_in_an_employer_org_repo(
+    repo: Path, capfd: pytest.CaptureFixture
+):
+    _set_origin(repo, "git@github.com:dbt-labs/example.git")
+
+    result = _append_without_task(repo, capfd, _PERSONAL)
+
+    assert result.exit_code == 0, result.output
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        None,  # no origin remote at all
+        "not a url",
+        "git@gitlab.com:DevonFulcher/example.git",
+        "https://github.com/DevonFulcher",
+        "https://example.com/github.com/DevonFulcher/example",
+    ],
+)
+def test_append_without_task_keeps_the_requirement_for_an_unknown_remote(
+    repo: Path, capfd: pytest.CaptureFixture, url: str | None
+):
+    if url is None:
+        git("remote", "remove", "origin", cwd=repo)
+    else:
+        _set_origin(repo, url)
+
+    result = _append_without_task(repo, capfd)
+
+    assert result.exit_code != 0
+    # The error panel wraps lines: compare the text with its box edges removed.
+    flat = " ".join(result.output.replace("│", " ").split())
+    assert "no github.com `origin` remote" in flat
+    assert lineage.get_parent("devon/feature", root=repo) is None
+
+
+@pytest.mark.parametrize(
+    ("url", "needs_task"),
+    [
+        ("git@github.com:dbt-labs/example.git", False),  # no longer an employer
+        ("git@github.com:devonfulcher/example.git", True),  # now an employer
+    ],
+)
+def test_config_employer_orgs_replaces_the_default_list(
+    repo: Path,
+    capfd: pytest.CaptureFixture,
+    _isolate_config_dir: Path,
+    url: str,
+    needs_task: bool,
+):
+    _isolate_config_dir.parent.mkdir(parents=True)
+    _isolate_config_dir.write_text("tasks:\n  employer_orgs: [Acme, DevonFulcher]\n")
+    _set_origin(repo, url)
+
+    result = _append_without_task(repo, capfd)
+
+    assert (result.exit_code != 0) is needs_task, result.output
+    if needs_task:
+        assert "acme, devonfulcher" in result.output
 
 
 def test_append_still_requires_the_agent_link_on_a_personal_machine(

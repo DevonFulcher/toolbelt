@@ -10,6 +10,11 @@
         email: me@example.com           # basic auth only; $JIRA_EMAIL wins
         auth: basic                     # basic (Cloud, default) | bearer (Server/DC)
         api_version: 3                  # 2 for Server / Data Center
+      employer_orgs: [dbt-labs, fivetran]   # GitHub owners whose repos need a task
+
+``tasks.employer_orgs`` defaults to ``dbt-labs`` and ``fivetran``. A repo whose
+GitHub ``origin`` owner is in it needs ``--task`` on ``toolbelt git append``;
+any other repo does not (see ``toolbelt.tasks.requirement``).
 
 The API token is never kept in this file: it comes from ``$JIRA_API_TOKEN``
 (see ``toolbelt.tasks.jira``).
@@ -24,6 +29,19 @@ lazy import yaml
 
 from toolbelt.tasks.jira import JiraTracker
 from toolbelt.tasks.tracker import TaskTracker
+
+DEFAULT_EMPLOYER_ORGS = ("dbt-labs", "fivetran")
+
+
+def employer_orgs(config_file: Path) -> tuple[str, ...]:
+    """``tasks.employer_orgs`` (lower case), or ``DEFAULT_EMPLOYER_ORGS`` if unset."""
+    if not config_file.exists():
+        return DEFAULT_EMPLOYER_ORGS
+    tasks = (yaml.safe_load(config_file.read_text()) or {}).get("tasks") or {}
+    orgs = tasks.get("employer_orgs")
+    if orgs is None:
+        return DEFAULT_EMPLOYER_ORGS
+    return tuple(str(org).lower() for org in orgs)
 
 
 def configured_tracker(
