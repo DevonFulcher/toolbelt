@@ -5,11 +5,13 @@ testable against a throwaway repo. The CLI layer resolves the current worktree
 and (for set-parent) triggers a sync afterward.
 """
 
+import asyncio
 from pathlib import Path
 
 import typer
 
 from toolbelt.git.exec import run
+from toolbelt.git.stack.forge import Forge
 from toolbelt.git.stack.lineage import all_parents, get_parent, set_parent
 from toolbelt.git.worktrees import current_branch
 from toolbelt.logger import logger
@@ -263,6 +265,24 @@ def has_unpushed_real_work(branch: str, *, root: Path) -> bool:
     return bool(commits)
 
 
+def tree_differs_from_remote(branch: str, *, root: Path) -> bool:
+    """True if ``HEAD``'s tree differs from ``origin/<branch>``'s tree.
+
+    After ``sync`` merges the parent into a leaf, a differing tree means the
+    merge pulled in parent changes the branch's PR has not seen, even though
+    the merge commit itself is not "real work". Vacuously true if the branch
+    has no remote yet.
+    """
+    if not _remote_branch_exists(branch, root=root):
+        return True
+    local, remote = run(
+        ["git", "rev-parse", "HEAD^{tree}", f"origin/{branch}^{{tree}}"],
+        cwd=root,
+        capture_output=True,
+    ).stdout.split()
+    return local != remote
+
+
 def diff_parent_command(
     *, root: Path, extra_args: list[str] | None = None, line: bool = False
 ) -> list[str]:
@@ -331,3 +351,18 @@ def set_branch_parent(*, root: Path, new_parent: str) -> str:
     set_parent(branch, new_parent, root=root)
     logger.info(f"Set parent of '{branch}' to '{new_parent}'.")
     return branch
+
+
+def retarget_open_pr(branch: str, new_parent: str, *, forge: Forge) -> None:
+    """Point ``branch``'s open PR at ``new_parent`` if its base differs.
+
+    Does nothing when the branch has no open PR or the base already matches.
+    """
+    open_pr = asyncio.run(forge.open_pr_base(branch))
+    if open_pr is None:
+        return
+    number, base = open_pr
+    if base == new_parent:
+        return
+    asyncio.run(forge.set_pr_base(number, new_parent))
+    logger.info(f"Retargeted PR #{number} from '{base}' to '{new_parent}'.")

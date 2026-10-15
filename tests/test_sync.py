@@ -188,14 +188,48 @@ def test_sync_pushes_a_leaf_whose_pr_conflicts_so_the_resolution_reaches_github(
     git("add", "-A", cwd=api_wt)
     git("commit", "-m", "api work", cwd=api_wt)
 
-    sync_stack(root=tests_wt, forge=FakeForge())  # no conflict: stays local
-    assert git("rev-parse", "origin/devon/api_tests", cwd=tests_wt) == before
-
     sync_stack(root=tests_wt, forge=FakeForge(conflicting=["devon/api_tests"]))
     assert git("rev-parse", "origin/devon/api_tests", cwd=tests_wt) == git(
         "rev-parse", "HEAD", cwd=tests_wt
     )
     assert git("rev-parse", "HEAD", cwd=tests_wt) != before
+
+
+def test_sync_pushes_a_merge_only_leaf_when_the_parent_brought_changes(
+    repo: Path, tmp_path: Path
+):
+    """The leaf's only new commit is the merge absorbing the parent, but its
+    tree now differs from origin's, so the PR is stale until it is pushed."""
+    api_wt, tests_wt = _build_stack(repo, tmp_path)
+    (tests_wt / "own.txt").write_text("own work\n")
+    git("add", "-A", cwd=tests_wt)
+    git("commit", "-m", "own work", cwd=tests_wt)
+    sync_stack(root=tests_wt, forge=FakeForge())  # pushes the leaf once
+    before = git("rev-parse", "origin/devon/api_tests", cwd=tests_wt)
+
+    (api_wt / "api.txt").write_text("api change\n")
+    git("add", "-A", cwd=api_wt)
+    git("commit", "-m", "api work", cwd=api_wt)
+    sync_stack(root=tests_wt, forge=FakeForge())
+
+    head = git("rev-parse", "HEAD", cwd=tests_wt)
+    assert head != before
+    assert git("rev-parse", "origin/devon/api_tests", cwd=tests_wt) == head
+
+
+def test_sync_does_not_push_a_leaf_when_the_parent_had_nothing_new(
+    repo: Path, tmp_path: Path
+):
+    _, tests_wt = _build_stack(repo, tmp_path)
+    (tests_wt / "own.txt").write_text("own work\n")
+    git("add", "-A", cwd=tests_wt)
+    git("commit", "-m", "own work", cwd=tests_wt)
+    sync_stack(root=tests_wt, forge=FakeForge())
+    before = git("rev-parse", "origin/devon/api_tests", cwd=tests_wt)
+
+    sync_stack(root=tests_wt, forge=FakeForge())  # parent unchanged: a no-op
+
+    assert git("rev-parse", "origin/devon/api_tests", cwd=tests_wt) == before
 
 
 def test_sync_pushes_once_new_work_and_a_pr_both_show_up(repo: Path, tmp_path: Path):

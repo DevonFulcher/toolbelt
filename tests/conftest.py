@@ -90,6 +90,9 @@ class FakeForge:
         #: The PRs `pr_candidates` reports per branch (none by default).
         self.candidates = candidates or {}
         self.candidate_lookups: list[str] = []
+        #: Open PR per branch as `(number, base)`; `set_pr_base` updates it.
+        self.open_prs: dict[str, tuple[int, str]] = {}
+        self.retargets: list[tuple[int, str]] = []
 
     async def pr_is_merged(self, branch: str) -> bool:
         return branch in self.merged
@@ -99,6 +102,12 @@ class FakeForge:
 
     async def pr_is_conflicting(self, branch: str) -> bool:
         return branch in self.conflicting
+
+    async def open_pr_base(self, branch: str) -> tuple[int, str] | None:
+        return self.open_prs.get(branch)
+
+    async def set_pr_base(self, number: int, base: str) -> None:
+        self.retargets.append((number, base))
 
     async def pr_candidates(self, branch: str) -> list[PrCandidate]:
         self.candidate_lookups.append(branch)

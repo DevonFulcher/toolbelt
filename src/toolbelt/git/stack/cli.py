@@ -29,6 +29,7 @@ from toolbelt.git.stack.gh_stack import GhStackedPrs
 from toolbelt.git.stack.ops import (
     compress_branch,
     diff_parent_command,
+    retarget_open_pr,
     set_branch_parent,
 )
 from toolbelt.git.stack.status import BranchStatus, stream_branch_statuses
@@ -176,12 +177,14 @@ def set_parent(
     forms), then runs `sync` (see `sync --help`), which merges the new parent
     in and pushes. It merges rather than rebases, so commits inherited from
     the old parent stay on the branch. Future `pr`/`send` target the new
-    parent; an existing PR's base is not changed.
+    parent; an open PR on the branch is retargeted onto the new parent.
     """
     root = repo_root()
+    forge = GhForge(root)
     with repo_lock(root):
-        set_branch_parent(root=root, new_parent=new_parent)
-        sync_stack(root=root, forge=GhForge(root), stacked_prs=GhStackedPrs())
+        branch = set_branch_parent(root=root, new_parent=new_parent)
+        sync_stack(root=root, forge=forge, stacked_prs=GhStackedPrs())
+        retarget_open_pr(branch, new_parent, forge=forge)
 
 
 def _repo_root_or_none() -> Path | None:

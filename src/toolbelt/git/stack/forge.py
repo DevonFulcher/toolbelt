@@ -32,6 +32,14 @@ class Forge(Protocol):
         its base, per the forge."""
         ...
 
+    async def open_pr_base(self, branch: str) -> tuple[int, str] | None:
+        """``(number, base branch)`` of the branch's open PR, or None."""
+        ...
+
+    async def set_pr_base(self, number: int, base: str) -> None:
+        """Retarget PR ``number`` onto ``base``."""
+        ...
+
     async def pr_candidates(self, branch: str) -> list[PrCandidate]:
         """Every PR (any state) whose head is ``branch``, best first: the
         identity ``store.StackStore.link_pr`` records for the branch's task."""
@@ -148,6 +156,51 @@ class GhForge:
             )
             raise typer.Exit(1)
         return stdout.decode().strip() not in ("", "0")
+
+    async def open_pr_base(self, branch: str) -> tuple[int, str] | None:
+        process = await logged_process.create_subprocess_exec(
+            "gh",
+            "pr",
+            "list",
+            "--head",
+            branch,
+            "--state",
+            "open",
+            "--json",
+            "number,baseRefName",
+            cwd=self._root,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await process.communicate()
+        if process.returncode != 0:
+            logger.error(
+                f"`gh` failed reading the open PR of '{branch}': "
+                f"{stderr.decode().strip()}"
+            )
+            raise typer.Exit(1)
+        prs = json.loads(stdout)
+        return (prs[0]["number"], prs[0]["baseRefName"]) if prs else None
+
+    async def set_pr_base(self, number: int, base: str) -> None:
+        process = await logged_process.create_subprocess_exec(
+            "gh",
+            "pr",
+            "edit",
+            str(number),
+            "--base",
+            base,
+            cwd=self._root,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await process.communicate()
+        if process.returncode != 0:
+            logger.error(
+                f"`gh` failed retargeting PR #{number} onto '{base}': "
+                f"{stderr.decode().strip()}"
+            )
+            raise typer.Exit(1)
 
     async def pr_candidates(self, branch: str) -> list[PrCandidate]:
         process = await logged_process.create_subprocess_exec(

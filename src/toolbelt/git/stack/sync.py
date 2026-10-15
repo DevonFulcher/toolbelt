@@ -30,7 +30,11 @@ from toolbelt.git.stack.lineage import (
     resolve_stack,
     set_parent,
 )
-from toolbelt.git.stack.ops import has_unpushed_real_work, past_tips
+from toolbelt.git.stack.ops import (
+    has_unpushed_real_work,
+    past_tips,
+    tree_differs_from_remote,
+)
 from toolbelt.git.stack.store import PrCandidate
 from toolbelt.git.stack.worktree import worktree_paths
 from toolbelt.git.worktrees import current_branch
@@ -397,11 +401,13 @@ def sync_stack(
 
             # A branch with children is always pushed: they track it. A leaf
             # is pushed only when there's an open PR to show it to *and* a
-            # reason to: new work of its own, or the PR conflicts with its
-            # base, which this sync's merge may just have resolved (the push
-            # is what clears it on GitHub). Otherwise this sync merely
-            # absorbed upstream movement, and pushing it would re-trigger CI
-            # and review for nothing new.
+            # reason to: new work of its own, the PR conflicts with its base
+            # (which this sync's merge may just have resolved; the push is
+            # what clears it on GitHub), or its tree now differs from
+            # origin's because the merge absorbed parent changes the PR has
+            # not seen (otherwise the PR and its CI stay stale relative to
+            # the parent). A no-op sync leaves the tree equal to origin's, so
+            # it pushes nothing and re-triggers no CI or review.
             has_children = any(
                 parent == child and other not in landed
                 for other, parent in parents.items()
@@ -412,6 +418,7 @@ def sync_stack(
                 and (
                     child in has_conflicts
                     or has_unpushed_real_work(child, root=worktree)
+                    or tree_differs_from_remote(child, root=worktree)
                 )
             ):
                 run(
@@ -422,7 +429,7 @@ def sync_stack(
             else:
                 logger.info(
                     f"'{child}' is up to date locally; not pushing "
-                    "(nothing new worth sharing yet)."
+                    "(nothing new relative to origin)."
                 )
 
     # Every landed branch has had its children restacked away, so each is now a

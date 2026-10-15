@@ -4,13 +4,14 @@ from pathlib import Path
 
 import pytest
 import typer
-from conftest import git
+from conftest import FakeForge, git
 
 from toolbelt.git.stack import lineage
 from toolbelt.git.stack.append import create_stacked_branch
 from toolbelt.git.stack.ops import (
     compress_branch,
     diff_parent_command,
+    retarget_open_pr,
     set_branch_parent,
 )
 
@@ -345,6 +346,32 @@ def test_set_parent_repoints_lineage(repo: Path, tmp_path: Path):
     set_branch_parent(root=tests, new_parent="main")
 
     assert lineage.get_parent("devon/api_tests", root=tests) == "main"
+
+
+def test_retarget_open_pr_points_pr_at_new_parent():
+    forge = FakeForge()
+    forge.open_prs["devon/api_tests"] = (7, "devon/api")
+
+    retarget_open_pr("devon/api_tests", "main", forge=forge)
+
+    assert forge.retargets == [(7, "main")]
+
+
+def test_retarget_open_pr_leaves_matching_base_alone():
+    forge = FakeForge()
+    forge.open_prs["devon/api_tests"] = (7, "main")
+
+    retarget_open_pr("devon/api_tests", "main", forge=forge)
+
+    assert forge.retargets == []
+
+
+def test_retarget_open_pr_does_nothing_without_open_pr():
+    forge = FakeForge()
+
+    retarget_open_pr("devon/api_tests", "main", forge=forge)
+
+    assert forge.retargets == []
 
 
 def test_set_parent_rejects_cycle(repo: Path, tmp_path: Path):
