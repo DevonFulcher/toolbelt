@@ -29,19 +29,19 @@ runner = CliRunner()
 
 PUBLIC_MANIFEST = """
 visibility = "public"
-adopt_dir = "Mackup"
+adopt_dir = "files"
 
 [[link]]
-src = "Mackup/.zshrc"
+src = "files/.zshrc"
 dest = "~/.zshrc"
 
 [[link]]
-src = "Mackup/.config/tool"
+src = "files/.config/tool"
 dest = "~/.config/tool"
 kind = "dir"
 
 [[link]]
-src = "Mackup/.claude/skills"
+src = "files/.claude/skills"
 dest = "~/.claude/skills"
 kind = "merge_dir"
 """
@@ -87,11 +87,11 @@ def machine(tmp_path: Path) -> Machine:
     private = tmp_path / "dotfiles-private"
     home.mkdir()
     write(public / "dotfiles.toml", PUBLIC_MANIFEST)
-    write(public / "Mackup/.zshrc", "export A=1\n")
-    write(public / "Mackup/.config/tool/config", "c\n")
-    write(public / "Mackup/.claude/skills/python/SKILL.md")
-    write(public / "Mackup/.claude/skills/testing/SKILL.md")
-    write(public / "Mackup/.claude/skills/.DS_Store")
+    write(public / "files/.zshrc", "export A=1\n")
+    write(public / "files/.config/tool/config", "c\n")
+    write(public / "files/.claude/skills/python/SKILL.md")
+    write(public / "files/.claude/skills/testing/SKILL.md")
+    write(public / "files/.claude/skills/.DS_Store")
     write(private / "dotfiles.toml", PRIVATE_MANIFEST)
     write(private / "skills/read-email/SKILL.md")
     write(private / "home/.netrc", "machine example\n")
@@ -192,7 +192,7 @@ def test_status_on_fresh_home_is_all_missing(machine: Machine) -> None:
 
 def test_status_classifies_each_state(machine: Machine) -> None:
     home = machine.home
-    (home / ".zshrc").symlink_to(machine.public / "Mackup/.zshrc")
+    (home / ".zshrc").symlink_to(machine.public / "files/.zshrc")
     write(home / ".netrc", "real file")
     (home / ".config").mkdir(exist_ok=True)
     (home / ".config/tool").symlink_to(machine.private)
@@ -200,17 +200,17 @@ def test_status_classifies_each_state(machine: Machine) -> None:
     assert seen[".zshrc"] is State.OK
     assert seen[".netrc"] is State.CONFLICT
     assert seen[".config/tool"] is State.WRONG_TARGET
-    (machine.public / "Mackup/.config/tool").rename(machine.public / "Mackup/moved")
+    (machine.public / "files/.config/tool").rename(machine.public / "files/moved")
     assert states(machine)[".config/tool"] is State.MISSING_SOURCE
 
 
 def test_status_accepts_trailing_slash_and_relative_links(machine: Machine) -> None:
     skills = machine.home / ".claude/skills"
     skills.mkdir(parents=True)
-    src = machine.public / "Mackup/.claude/skills/python"
+    src = machine.public / "files/.claude/skills/python"
     (skills / "python").symlink_to(f"{src}/")
     (skills / "testing").symlink_to(
-        os.path.relpath(machine.public / "Mackup/.claude/skills/testing", skills)
+        os.path.relpath(machine.public / "files/.claude/skills/testing", skills)
     )
     seen = states(machine)
     assert seen[".claude/skills/python"] is State.OK
@@ -220,7 +220,7 @@ def test_status_accepts_trailing_slash_and_relative_links(machine: Machine) -> N
 def test_status_reports_stale_link_into_repo(machine: Machine) -> None:
     skills = machine.home / ".claude/skills"
     skills.mkdir(parents=True)
-    (skills / "gone").symlink_to(machine.public / "Mackup/.claude/skills/gone")
+    (skills / "gone").symlink_to(machine.public / "files/.claude/skills/gone")
     (skills / "elsewhere").symlink_to(machine.home / "nowhere")
     seen = states(machine)
     assert seen[".claude/skills/gone"] is State.STALE
@@ -265,12 +265,12 @@ def test_link_replaces_symlinked_skills_dir_without_touching_repo(
 ) -> None:
     skills = machine.home / ".claude/skills"
     skills.parent.mkdir(parents=True)
-    skills.symlink_to(machine.public / "Mackup/.claude/skills")
+    skills.symlink_to(machine.public / "files/.claude/skills")
     link_for_real(machine)
     assert not skills.is_symlink()
     assert (skills / "read-email").is_symlink()
     # The repo's skills directory must not have gained the private skill.
-    assert not (machine.public / "Mackup/.claude/skills/read-email").exists()
+    assert not (machine.public / "files/.claude/skills/read-email").exists()
     assert (
         machine.home / ".toolbelt/dotfiles-backups/20260102T030405/.claude/skills"
     ).is_symlink()
@@ -279,7 +279,7 @@ def test_link_replaces_symlinked_skills_dir_without_touching_repo(
 def test_link_removes_stale_links(machine: Machine) -> None:
     link_for_real(machine)
     skills = machine.home / ".claude/skills"
-    (skills / "gone").symlink_to(machine.public / "Mackup/.claude/skills/gone")
+    (skills / "gone").symlink_to(machine.public / "files/.claude/skills/gone")
     link_for_real(machine)
     assert not (skills / "gone").is_symlink()
 
@@ -307,7 +307,7 @@ def test_copy_mode(machine: Machine) -> None:
     write(
         machine.public / "dotfiles.toml",
         PUBLIC_MANIFEST
-        + '\n[[link]]\nsrc="Mackup/.zshrc"\ndest="~/.zshrc"\nmode="copy"\n',
+        + '\n[[link]]\nsrc="files/.zshrc"\ndest="~/.zshrc"\nmode="copy"\n',
     )
     link_for_real(machine)
     zshrc = machine.home / ".zshrc"
@@ -322,7 +322,7 @@ def test_copy_mode(machine: Machine) -> None:
 
 
 def test_missing_source_aborts_link(machine: Machine) -> None:
-    (machine.public / "Mackup/.zshrc").unlink()
+    (machine.public / "files/.zshrc").unlink()
     with pytest.raises(FileNotFoundError):
         link_actions(plan_for(machine))
 
@@ -368,7 +368,7 @@ def test_check_scans_tracked_and_untracked_but_not_ignored(machine: Machine) -> 
     write(repo / ".gitignore", "secrets\n")
     write(repo / "secrets/token", "ghp_" + "d" * 36)
     assert scan_repo(repo) == []
-    write(repo / "Mackup/.zshrc", "export GH=" + "ghp_" + "e" * 36 + "\n")
+    write(repo / "files/.zshrc", "export GH=" + "ghp_" + "e" * 36 + "\n")
     findings = scan_repo(repo)
     assert [(f.path.name, f.line, f.rule) for f in findings] == [
         (".zshrc", 1, "GitHub token")
@@ -440,6 +440,6 @@ def test_check_scans_an_unconfigured_directory_that_has_a_manifest(
     write(worktree / "dotfiles.toml", PUBLIC_MANIFEST)
     subprocess.run(["git", "init", "-q"], cwd=worktree, check=True)
     assert machine.cli("check", str(worktree)).exit_code == 0
-    write(worktree / "Mackup/.zshrc", "export GH=" + "ghp_" + "f" * 36 + "\n")
+    write(worktree / "files/.zshrc", "export GH=" + "ghp_" + "f" * 36 + "\n")
     assert machine.cli("check", str(worktree)).exit_code == 1
     assert machine.cli("check", str(tmp_path / "nowhere")).exit_code != 0
