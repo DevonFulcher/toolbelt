@@ -319,3 +319,24 @@ def test_merge_conflict_then_resume(repo: Path, tmp_path: Path):
 
     assert (tests_wt / "shared.txt").read_text() == "resolved\n"
     assert git("status", "--porcelain", cwd=tests_wt) == ""
+
+
+def test_merge_conflict_logs_the_merged_ref_and_files(
+    repo: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    api_wt, tests_wt = _build_stack(repo, tmp_path)
+    for i in range(12):
+        (api_wt / f"f{i:02}.txt").write_text("from api\n")
+        (tests_wt / f"f{i:02}.txt").write_text("from tests\n")
+    git("add", "-A", cwd=api_wt)
+    git("commit", "-m", "api files", cwd=api_wt)
+    api_tip = git("rev-parse", "--short", "HEAD", cwd=api_wt)
+    git("add", "-A", cwd=tests_wt)
+    git("commit", "-m", "tests files", cwd=tests_wt)
+
+    with pytest.raises(typer.Exit):
+        sync_stack(root=tests_wt, forge=FakeForge())
+
+    assert f"Conflict merging 'devon/api' (tip {api_tip} \"api files\")." in caplog.text
+    assert "Conflicted files: f00.txt, f01.txt," in caplog.text
+    assert "f09.txt and 2 more." in caplog.text

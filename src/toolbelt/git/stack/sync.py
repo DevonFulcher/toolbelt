@@ -15,6 +15,7 @@ Worktree-per-branch is assumed: each branch is synced inside its own worktree.
 """
 
 import asyncio
+from dataclasses import dataclass
 from pathlib import Path
 
 import typer
@@ -98,6 +99,103 @@ def _has_unmerged_paths(worktree: Path) -> bool:
         capture_output=True,
     )
     return bool(result.stdout.strip())
+
+
+_MAX_CONFLICT_FILES_LOGGED = 10
+
+
+@dataclass(frozen=True)
+class ConflictDetails:
+    """What a stopped rebase or merge is stuck on.
+
+    ``commit`` is the short hash and subject of the commit being applied (the
+    rebase's ``REBASE_HEAD``) or the tip being merged (``MERGE_HEAD``); None when
+    git has no such ref. ``step``/``steps`` give the commit's position in a
+    rebase (None for a merge or when the rebase state is unreadable).
+    """
+
+    rebasing: bool
+    commit: str | None
+    step: int | None
+    steps: int | None
+    files: tuple[str, ...]
+
+
+def _commit_summary(worktree: Path, ref: str) -> str | None:
+    """``<short hash> "<subject>"`` of ``ref``, or None if it does not exist."""
+    result = run(
+        ["git", "log", "-1", '--format=%h "%s"', ref, "--"],
+        cwd=worktree,
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def _todo_lines(path: Path | None) -> int | None:
+    """Number of commands in a rebase todo-style file, None if it is missing."""
+    if path is None or not path.exists():
+        return None
+    return sum(
+        1
+        for line in path.read_text().splitlines()
+        if line.strip() and not line.startswith("#")
+    )
+
+
+def _rebase_position(worktree: Path) -> tuple[int, int] | None:
+    """(step, steps) of the commit a ``rebase-merge`` is stopped on."""
+    done = _todo_lines(_git_path(worktree, "rebase-merge/done"))
+    todo = _todo_lines(_git_path(worktree, "rebase-merge/git-rebase-todo"))
+    if done is None or todo is None:
+        return None
+    return done, done + todo
+
+
+def read_conflict(worktree: Path) -> ConflictDetails:
+    """Describe the conflict ``worktree`` is stopped on (mid-rebase or mid-merge)."""
+    rebasing = _rebase_in_progress(worktree)
+    commit = _commit_summary(worktree, "REBASE_HEAD" if rebasing else "MERGE_HEAD")
+    position = _rebase_position(worktree) if rebasing else None
+    files = run(
+        ["git", "diff", "--name-only", "--diff-filter=U"],
+        cwd=worktree,
+        check=False,
+        capture_output=True,
+    ).stdout.splitlines()
+    return ConflictDetails(
+        rebasing=rebasing,
+        commit=commit,
+        step=position[0] if position else None,
+        steps=position[1] if position else None,
+        files=tuple(files),
+    )
+
+
+def _log_conflict(worktree: Path, *, merge_ref: str | None = None) -> None:
+    """Log which commit a stopped rebase/merge came from and the conflicted files.
+
+    ``merge_ref`` names the ref being merged, when known.
+    """
+    details = read_conflict(worktree)
+    if details.commit is not None:
+        if details.rebasing:
+            position = (
+                f" (commit {details.step} of {details.steps})"
+                if details.step is not None
+                else ""
+            )
+            logger.error(f"Conflict in commit {details.commit}{position}.")
+        else:
+            name = f"'{merge_ref}' " if merge_ref else ""
+            logger.error(f"Conflict merging {name}(tip {details.commit}).")
+    shown = details.files[:_MAX_CONFLICT_FILES_LOGGED]
+    if shown:
+        hidden = len(details.files) - len(shown)
+        more = f" and {hidden} more" if hidden else ""
+        logger.error(f"Conflicted files: {', '.join(shown)}{more}.")
 
 
 def _remote_branch_exists(branch: str, *, root: Path) -> bool:
@@ -332,6 +430,7 @@ def sync_stack(
                     child, direct_parent, onto=onto, worktree=worktree
                 ),
             ):
+                _log_conflict(worktree)
                 logger.error(
                     f"Rebase conflict restacking '{child}' onto '{base}' in "
                     f"{worktree}. Resolve, `git add`, then re-run `git sync`."
@@ -354,6 +453,7 @@ def sync_stack(
                 onto=direct_parent,
                 upstream=rewritten_from or direct_parent,
             ):
+                _log_conflict(worktree)
                 logger.error(
                     f"Rebase conflict replaying '{child}' onto its rewritten "
                     f"parent '{direct_parent}' in {worktree}. Resolve, "
@@ -370,6 +470,7 @@ def sync_stack(
             # (symmetric with the rebase --continue resume path).
             if _merge_in_progress(worktree):
                 if _has_unmerged_paths(worktree):
+                    _log_conflict(worktree)
                     logger.error(
                         f"Unresolved merge in '{child}' ({worktree}). Resolve, "
                         "`git add`, then re-run `git sync`."
@@ -393,6 +494,7 @@ def sync_stack(
                     check=False,
                 )
                 if result.returncode != 0:
+                    _log_conflict(worktree, merge_ref=merge_ref)
                     logger.error(
                         f"Merge conflict while syncing '{child}' in {worktree}. "
                         "Resolve the conflict, `git add`, then re-run `git sync`."

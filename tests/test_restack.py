@@ -199,6 +199,37 @@ def test_restack_conflict_then_resume(repo: Path, tmp_path: Path):
     assert (tests_wt / "shared.txt").read_text() == "resolved\n"
 
 
+def test_restack_conflict_logs_the_conflicting_commit_and_files(
+    repo: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    api_wt = tmp_path / "wt-api"
+    create_stacked_branch("api", root=repo, wt_path=api_wt)
+    (api_wt / "shared.txt").write_text("from api\n")
+    git("add", "-A", cwd=api_wt)
+    git("commit", "-m", "api shared", cwd=api_wt)
+
+    tests_wt = tmp_path / "wt-api-tests"
+    create_stacked_branch("api_tests", root=api_wt, wt_path=tests_wt)
+    (tests_wt / "shared.txt").write_text("from api + tests\n")
+    git("add", "-A", cwd=tests_wt)
+    git("commit", "-m", "tests shared", cwd=tests_wt)
+    (tests_wt / "more.txt").write_text("more\n")
+    git("add", "-A", cwd=tests_wt)
+    git("commit", "-m", "tests more", cwd=tests_wt)
+    conflicting = git("rev-parse", "--short", "HEAD~1", cwd=tests_wt)
+
+    _squash_merge_to_main(repo, "shared.txt", "from main\n")
+
+    with pytest.raises(typer.Exit):
+        sync_stack(root=tests_wt, forge=FakeForge(merged={"devon/api"}))
+
+    assert f'Conflict in commit {conflicting} "tests shared" (commit 1 of 2).' in (
+        caplog.text
+    )
+    assert "Conflicted files: shared.txt." in caplog.text
+    print(caplog.text)
+
+
 def _push_main_file(repo: Path, name: str, text: str) -> None:
     (repo / name).write_text(text)
     git("add", "-A", cwd=repo)
