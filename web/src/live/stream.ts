@@ -88,7 +88,7 @@ export function startLiveUpdates(deps: LiveDeps): LiveUpdates {
         state.claimsChanged(event.branches, event.v);
         return undefined;
       case "refreshed":
-        state.refreshed(event.v);
+        state.refreshed(event.v, event.fetched);
         return undefined;
       case "untracked":
         state.untrackedChanged(event.untracked, event.v);

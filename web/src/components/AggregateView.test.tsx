@@ -27,7 +27,7 @@ function show(search = "?view=aggregate", branches = [branch(1, "devon/a", { sta
 
 describe("the aggregate view", () => {
   test("a page refresh shows the saved short-window result while the server request is pending", () => {
-    sessionStorage.setItem("toolbelt:aggregate:v1:4:", JSON.stringify(aggregate({ weeks: 4 })));
+    sessionStorage.setItem("toolbelt:aggregate:v2:4:", JSON.stringify(aggregate({ weeks: 4 })));
     const fetchMock = vi.fn(() => new Promise<Response>(() => {}));
     vi.stubGlobal("fetch", fetchMock);
     show("?view=aggregate&weeks=4");
@@ -521,5 +521,12 @@ describe("the aggregate view", () => {
     show();
 
     expect(await screen.findByText(/Could not load the aggregate: \/api\/aggregate: HTTP 502/)).toBeInTheDocument();
+  });
+
+  test("says when the GitHub history was last refreshed, since it is only refreshed every 15 minutes", async () => {
+    serve(aggregate());
+    show();
+
+    expect(await screen.findByText(/GitHub history last refreshed .* about every 15 minutes/)).toBeInTheDocument();
   });
 });

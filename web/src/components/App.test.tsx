@@ -343,13 +343,13 @@ describe("the shell", () => {
     expect(screen.getByText("Could not load the stacks: Error: HTTP 500")).toBeInTheDocument();
   });
 
-  test("the live indicator shows the connection and how fresh the data is", () => {
+  test("the live indicator shows only the connection: freshness is on each card", () => {
     const { store } = show(stack());
     expect(screen.getByRole("status")).toHaveTextContent("connecting…");
 
     act(() => store.getState().hello(0, 12));
     expect(screen.getByRole("status")).toHaveAttribute("data-state", "live");
-    expect(screen.getByRole("status").textContent).toMatch(/^live · updated (\d+s|just now)/);
+    expect(screen.getByRole("status").textContent).toBe("live");
 
     act(() => store.getState().setConnection("paused"));
     expect(screen.getByRole("status")).toHaveTextContent("paused (tab hidden)");

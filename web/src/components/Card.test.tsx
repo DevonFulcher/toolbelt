@@ -267,7 +267,7 @@ describe("a card's labelled slots", () => {
     for (const card of document.querySelectorAll<HTMLElement>("article.card")) {
       const groups = [...card.querySelectorAll<HTMLElement>(":scope > .group")];
       expect(groups.map((g) => g.getAttribute("aria-label"))).toEqual(["Git", "PR", "Task", "Agent", "Spend"]);
-      expect(groups.map((g) => g.querySelector(".group-title")?.textContent)).toEqual(["Git", "PR", "Task", "Agent", "Spend"]);
+      expect(groups.map((g) => g.querySelector(".group-title > span")?.textContent)).toEqual(["Git", "PR", "Task", "Agent", "Spend"]);
       const keys = groups.map((g) => [...g.querySelectorAll<HTMLElement>(".slot")].map((s) => s.dataset.slot));
       expect(keys).toEqual([
         ["repo", "branch", "ancestors", "descendants"],
@@ -625,5 +625,46 @@ describe("a card whose next action is Merge", () => {
     });
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Nothing to merge");
+  });
+});
+
+
+describe("a card says how old its data is", () => {
+  const fresh = (ageMs: number | null, status = pr({ pr_number: 8 })) => {
+    useCardExtras.getState().set([], NOW - 3_000);
+    return showCards([branch(1, "devon/a", { status })], { search: "?done=1" })
+      .store.getState()
+      .refreshed(1, ageMs === null ? [] : [{ branch_id: "1:devon/a", fetched_at: new Date(NOW - ageMs).toISOString() }]);
+  };
+  const pill = (group: string): HTMLElement =>
+    document.querySelector(`article[data-id="1:devon/a"] .g-${group} .fresh`) as HTMLElement;
+
+  test("the PR box says when the PR was last looked up, and the agent and spend boxes when theirs were read", () => {
+    act(() => fresh(40_000));
+
+    expect(pill("pr")).toHaveTextContent("updated 40s ago");
+    expect(pill("pr")).not.toHaveClass("stale");
+    expect(pill("agent")).toHaveTextContent("updated just now");
+    expect(pill("spend")).toHaveTextContent("updated just now");
+  });
+
+  test("it goes amber when the lookup is overdue, and says so before the first one", () => {
+    act(() => fresh(5 * 60_000));
+    expect(pill("pr")).toHaveTextContent("updated 5m ago");
+    expect(pill("pr")).toHaveClass("stale");
+  });
+
+  test("a PR that is merged is looked up rarely, so it is not overdue for minutes", () => {
+    const merged = pr({ pr: "merged", pr_number: 3, merge: "none", next: { label: "Done", who: "none", kind: "done" } });
+
+    act(() => fresh(5 * 60_000, merged));
+
+    expect(pill("pr")).not.toHaveClass("stale");
+  });
+
+  test("before its first lookup the PR box says so", () => {
+    act(() => fresh(null));
+
+    expect(pill("pr")).toHaveTextContent("not read yet");
   });
 });

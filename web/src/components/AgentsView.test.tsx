@@ -291,4 +291,11 @@ describe("the agents view", () => {
     const held = screen.getByRole("region", { name: "Agents may not take these" });
     expect(within(held).queryByText("devon/b")).not.toBeInTheDocument();
   });
+
+  test("says when the tasks were last decided", async () => {
+    serve(agents());
+    show();
+
+    expect(await screen.findByText(/Tasks last decided .*every few seconds/)).toBeInTheDocument();
+  });
 });

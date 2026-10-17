@@ -535,6 +535,12 @@ type UntrackedPrs = Annotated[
 ]
 
 
+class FetchedBranch(Model):
+    branch_id: str
+    #: ISO time its PR status was looked up.
+    fetched_at: str
+
+
 class Snapshot(Model):
     #: The event version this was read at: events with a higher ``v``
     #: happened after it.
@@ -548,6 +554,10 @@ class Snapshot(Model):
     filters: list[FilterSpec]
     #: Open PRs of the user's that are not tracked branches.
     untracked: UntrackedPrs
+    #: When each branch's PR status was last looked up (a branch with no lookup
+    #: yet is left out). Cards say how old their data is by it; ``refreshed``
+    #: events keep it current.
+    fetched: list[FetchedBranch]
 
 
 # ---- the aggregate view (see aggregate.py) --------------------------------------
@@ -1061,10 +1071,12 @@ class StructureEvent(Model):
 
 
 class RefreshedEvent(Model):
-    """A polling pass finished (drives the "updated Ns ago" label)."""
+    """A polling pass finished: the branches it looked up (changed or not)
+    and when, which their cards say they are as old as."""
 
     type: Literal["refreshed"]
     v: int
+    fetched: list[FetchedBranch]
 
 
 class UntrackedEvent(Model):

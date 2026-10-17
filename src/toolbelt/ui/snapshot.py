@@ -366,6 +366,7 @@ def build_snapshot(
     try:
         repos: list[api.Repo] = []
         branches: list[api.Branch] = []
+        fetched: list[api.FetchedBranch] = []
         for repo in sorted(store.repos(), key=lambda r: (r.name, r.id)):
             parents = store.all_parents(repo.id)
             if not parents:
@@ -393,6 +394,14 @@ def build_snapshot(
                     links.task_tracker if links else None, tracker
                 )
                 parent = parents.get(name)
+                looked_up = refresher.get(repo.id, name)
+                if looked_up is not None and looked_up.wall_at is not None:
+                    fetched.append(
+                        api.FetchedBranch(
+                            branch_id=row_id(repo.id, name),
+                            fetched_at=_iso(looked_up.wall_at),
+                        )
+                    )
                 fetchable = owner is not None and bool(links and links.task)
                 task = branch_links.task_link(
                     links.task if links else None, tracker=owner
@@ -439,6 +448,7 @@ def build_snapshot(
             catalog=api.build_catalog(),
             filters=filters(),
             untracked=untracked,
+            fetched=fetched,
         )
     finally:
         store.close()

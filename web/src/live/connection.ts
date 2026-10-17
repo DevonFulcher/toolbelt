@@ -4,7 +4,6 @@
 // stop polling GitHub, and it is reopened as soon as the page is visible
 // again (the server then refetches whatever went stale). A brief tab switch
 // shorter than the grace period never closes the stream.
-import { formatAgo } from "../logic/format";
 
 export const RECONNECT_DELAY_MS = 3000;
 export const GRACE_MS = 15000;
@@ -46,8 +45,9 @@ export function connectionAction(input: {
   return hiddenForMs >= graceMs ? "disconnect" : "wait";
 }
 
-/** The label for the connection indicator. */
-export function statusLabel(state: ConnectionState, updatedSecondsAgo: number | null): string {
+/** The label for the connection indicator. (How fresh the data is is said on
+ * each card and view: this only says whether the page is connected.) */
+export function statusLabel(state: ConnectionState): string {
   switch (state) {
     case "connecting":
       return "connecting…";
@@ -60,8 +60,7 @@ export function statusLabel(state: ConnectionState, updatedSecondsAgo: number | 
     case "disconnected":
       return "disconnected";
     case "live":
-      if (updatedSecondsAgo === null) return "live · updating…";
-      return `live · updated ${formatAgo(updatedSecondsAgo)}`;
+      return "live";
   }
 }
 

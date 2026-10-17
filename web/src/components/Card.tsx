@@ -50,13 +50,39 @@ function Slot({
   );
 }
 
-/** A titled, bordered box of related slots (Git, PR, Task). */
-function Group({ id, title, children }: { id: string; title: string; children: ReactNode }) {
+/** A titled, bordered box of related slots (Git, PR, Task). ``aside`` sits at
+ * the right of the title (how fresh the box's data is). */
+function Group({ id, title, aside, children }: { id: string; title: string; aside?: ReactNode; children: ReactNode }) {
   return (
     <div className={`group g-${id}`} role="group" aria-label={title}>
-      <div className="group-title">{title}</div>
+      <div className="group-title">
+        <span>{title}</span>
+        {aside}
+      </div>
       <div className="group-slots">{children}</div>
     </div>
+  );
+}
+
+const shortAgo = (seconds: number): string =>
+  seconds < 60 ? `${Math.floor(seconds)}s` : seconds < 3600 ? `${Math.floor(seconds / 60)}m` : `${Math.floor(seconds / 3600)}h`;
+
+/** How old a box's data is ("updated 12s ago"), amber once it is older than
+ * ``staleAfter`` seconds. ``at`` is when it was last read (ms), if ever. */
+function Freshness({ at, staleAfter, title }: { at: number | null | undefined; staleAfter: number; title: string }) {
+  const now = useNow();
+  if (at === null || at === undefined) {
+    return (
+      <span className="fresh" title={title}>
+        not read yet
+      </span>
+    );
+  }
+  const seconds = Math.max((now - at) / 1000, 0);
+  return (
+    <span className={`fresh${seconds > staleAfter ? " stale" : ""}`} title={title}>
+      {seconds < 5 ? "updated just now" : `updated ${shortAgo(seconds)} ago`}
+    </span>
   );
 }
 
@@ -145,6 +171,8 @@ export const Card = memo(
     const task = useApp((s) => s.tasks[id]) ?? null;
     const claim = useApp((s) => s.claims[id]) ?? NO_CLAIM;
     const extras = useCardExtras((s) => s.byId[id]);
+    const extrasAt = useCardExtras((s) => s.updatedAt);
+    const fetchedAt = useApp((s) => s.fetchedAt[id]);
     const catalog = useApp((s) => s.catalog);
     const flashed = useFlashOnChange(status);
     const now = useNow();
@@ -265,7 +293,18 @@ export const Card = memo(
           <Slot id="ancestors" label="Ancestors">{String(branch.depth)}</Slot>
           <Slot id="descendants" label="Descendants">{String(descendants)}</Slot>
         </Group>
-        <Group id="pr" title="PR">
+        <Group
+          id="pr"
+          title="PR"
+          aside={
+            <Freshness
+              at={fetchedAt}
+              // Merged and closed PRs are looked up every 5 minutes, the rest every 20 seconds.
+              staleAfter={taskDone || (status.load === "loaded" && status.pr === "closed") ? 900 : 90}
+              title="When this PR's status was last looked up on GitHub. It is looked up about every 20 seconds while this page is open (every 5 minutes for merged and closed PRs)."
+            />
+          }
+        >
           <PrSlots status={status} note={note} />
         </Group>
         <Group id="task" title="Task">
@@ -290,10 +329,30 @@ export const Card = memo(
             {branch.task ? <TaskValue link={branch.task} task={task} /> : "no task linked"}
           </Slot>
         </Group>
-        <Group id="agent" title="Agent">
+        <Group
+          id="agent"
+          title="Agent"
+          aside={
+            <Freshness
+              at={extrasAt}
+              staleAfter={60}
+              title="When the agent, run and spend data was last read from toolbelt. It is read every 10 seconds while this page is visible."
+            />
+          }
+        >
           <AgentSlots extras={extras} branchId={id} session={branch.agent} Slot={Slot} />
         </Group>
-        <Group id="spend" title="Spend">
+        <Group
+          id="spend"
+          title="Spend"
+          aside={
+            <Freshness
+              at={extrasAt}
+              staleAfter={60}
+              title="When this was last read from toolbelt. Interactive spend is read from session transcripts about once a minute."
+            />
+          }
+        >
           <SpendSlots extras={extras} Slot={Slot} />
         </Group>
         <div className="g-timeline">

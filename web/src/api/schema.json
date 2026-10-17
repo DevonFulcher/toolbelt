@@ -1718,6 +1718,23 @@
       "title": "FailedStatus",
       "type": "object"
     },
+    "FetchedBranch": {
+      "additionalProperties": false,
+      "properties": {
+        "branch_id": {
+          "type": "string"
+        },
+        "fetched_at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "branch_id",
+        "fetched_at"
+      ],
+      "title": "FetchedBranch",
+      "type": "object"
+    },
     "FilterKey": {
       "enum": [
         "next",
@@ -2705,8 +2722,14 @@
     },
     "RefreshedEvent": {
       "additionalProperties": false,
-      "description": "A polling pass finished (drives the \"updated Ns ago\" label).",
+      "description": "A polling pass finished: the branches it looked up (changed or not)\nand when, which their cards say they are as old as.",
       "properties": {
+        "fetched": {
+          "items": {
+            "$ref": "#/$defs/FetchedBranch"
+          },
+          "type": "array"
+        },
         "type": {
           "const": "refreshed",
           "type": "string"
@@ -2717,7 +2740,8 @@
       },
       "required": [
         "type",
-        "v"
+        "v",
+        "fetched"
       ],
       "title": "RefreshedEvent",
       "type": "object"
@@ -3239,6 +3263,12 @@
         "catalog": {
           "$ref": "#/$defs/Catalog"
         },
+        "fetched": {
+          "items": {
+            "$ref": "#/$defs/FetchedBranch"
+          },
+          "type": "array"
+        },
         "filters": {
           "items": {
             "$ref": "#/$defs/FilterSpec"
@@ -3265,7 +3295,8 @@
         "branches",
         "catalog",
         "filters",
-        "untracked"
+        "untracked",
+        "fetched"
       ],
       "title": "Snapshot",
       "type": "object"

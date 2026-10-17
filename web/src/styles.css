@@ -173,7 +173,9 @@ a.pill:hover { text-decoration: none; background: color-mix(in srgb, currentColo
 .group-title, .g-timeline > .slot > .slot-label {
   font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em;
   color: var(--fg); }
-.group-title { margin-bottom: 4px; }
+.group-title { margin-bottom: 4px; display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.fresh { font-size: 10px; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--muted); }
+.fresh.stale { color: var(--amber); font-weight: 600; }
 /* Slots flow into as many columns as fit; the track minimum is capped by the
    box's own width so a narrow box gets one column, never an overflow. */
 .group-slots { display: grid; gap: 6px 12px; align-items: start;

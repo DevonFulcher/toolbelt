@@ -536,11 +536,17 @@ export interface StructureEvent {
   v: number;
 }
 /**
- * A polling pass finished (drives the "updated Ns ago" label).
+ * A polling pass finished: the branches it looked up (changed or not)
+ * and when, which their cards say they are as old as.
  */
 export interface RefreshedEvent {
+  fetched: FetchedBranch[];
   type: "refreshed";
   v: number;
+}
+export interface FetchedBranch {
+  branch_id: string;
+  fetched_at: string;
 }
 /**
  * The list of open PRs that toolbelt does not track changed.
@@ -592,6 +598,7 @@ export interface Snapshot {
   age: number | null;
   branches: Branch[];
   catalog: Catalog;
+  fetched: FetchedBranch[];
   filters: FilterSpec[];
   repos: Repo[];
   untracked: UntrackedPrs;

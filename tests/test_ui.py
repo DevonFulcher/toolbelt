@@ -344,7 +344,7 @@ def test_the_catalog_in_the_snapshot_is_the_state_catalog(make_client):
 
 
 def test_status_shows_pr_ci_review_comments_conflicts(tmp_path, make_client, fetcher):
-    seed_repo(tmp_path, "api", {"devon/a": "main"})
+    repo_id = seed_repo(tmp_path, "api", {"devon/a": "main"})
     fetcher.statuses["devon/a"] = BranchStatus(
         pr=PrState.OPEN,
         ci=CiState.FAILED,
@@ -354,6 +354,7 @@ def test_status_shows_pr_ci_review_comments_conflicts(tmp_path, make_client, fet
         has_conflicts=True,
     )
     client = make_client()
+    assert snap(client)["fetched"] == []
 
     assert refresh(client) == 1
 
@@ -365,6 +366,9 @@ def test_status_shows_pr_ci_review_comments_conflicts(tmp_path, make_client, fet
     assert (status["ci"], status["review"]) == ("failed", "approved")
     assert (status["open_comments"], status["merge"]) == (2, "conflicts")
     assert status["open_comments_bot"] == 0
+    # When the lookup finished: what the card says its data is as old as.
+    fetched = {f["branch_id"]: f["fetched_at"] for f in snap(client)["fetched"]}
+    assert set(fetched) == {f"{repo_id}:devon/a"}
 
 
 def test_draft_and_no_pr_status(tmp_path, make_client, fetcher):

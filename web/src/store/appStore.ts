@@ -8,6 +8,7 @@
 // patch re-renders only that branch's card.
 import { createStore, type StoreApi } from "zustand/vanilla";
 import type {
+  FetchedBranch,
   Branch,
   BranchClaim,
   Catalog,
@@ -60,6 +61,8 @@ export interface AppState {
   claims: Record<string, BranchClaim>;
   /** Only for branches whose task the configured tracker owns. */
   tasks: Record<string, TaskLive>;
+  /** When (ms) each branch's PR status was last looked up on GitHub. */
+  fetchedAt: Record<string, number>;
   catalog: Catalog | null;
   filters: FilterSpec[];
   /** Open PRs of the user's that are not tracked branches (links only). */
@@ -86,7 +89,8 @@ export interface AppState {
   taskChanged(branchId: string, task: TaskLive, v: number): void;
   /** Claims changed on some branches: their claim and re-derived status. */
   claimsChanged(patches: ClaimPatch[], v: number): void;
-  refreshed(v: number): void;
+  /** A polling pass finished; ``fetched`` are the branches it looked up. */
+  refreshed(v: number, fetched: FetchedBranch[]): void;
   untrackedChanged(untracked: UntrackedPrs, v: number): void;
   hello(v: number, ageSeconds: number | null): void;
   setConnection(state: ConnectionState): void;
@@ -147,6 +151,7 @@ export function createAppStore(init: StoreInit = {}): AppStore {
     statuses: {},
     claims: {},
     tasks: {},
+    fetchedAt: {},
     catalog: null,
     filters: [],
     untracked: { state: "loading" },
@@ -187,6 +192,7 @@ export function createAppStore(init: StoreInit = {}): AppStore {
         statuses: share(prev.statuses, statuses),
         tasks: share(prev.tasks, tasks),
         claims: share(prev.claims, claims),
+        fetchedAt: Object.fromEntries(snapshot.fetched.map((f) => [f.branch_id, Date.parse(f.fetched_at)])),
         catalog: prev.catalog && same(prev.catalog, snapshot.catalog) ? prev.catalog : snapshot.catalog,
         filters: same(prev.filters, snapshot.filters) ? prev.filters : snapshot.filters,
         untracked: same(prev.untracked, snapshot.untracked) ? prev.untracked : snapshot.untracked,
@@ -236,10 +242,12 @@ export function createAppStore(init: StoreInit = {}): AppStore {
       set({ version: v, statuses, claims });
     },
 
-    refreshed(v) {
+    refreshed(v, fetched) {
       const state = get();
       if (state.version !== null && v <= state.version) return;
-      set({ version: v, updatedAt: clock() });
+      const fetchedAt = { ...state.fetchedAt };
+      for (const f of fetched) fetchedAt[f.branch_id] = Date.parse(f.fetched_at);
+      set({ version: v, updatedAt: clock(), fetchedAt });
     },
 
     untrackedChanged(untracked, v) {

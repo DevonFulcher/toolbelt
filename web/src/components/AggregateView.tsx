@@ -6,6 +6,7 @@ import { fetchAggregate } from "../api/client";
 import type { Aggregate, MixWho, Tone } from "../api/generated";
 import { formatBucketDate } from "../logic/aggregateChart";
 import { bucketDays, leadTimeSeries, STAGES, type StageKey } from "../logic/leadTime";
+import { formatAbsolute } from "../logic/format";
 import { browserTimeZone, formatLocalDate, windowStart } from "../logic/localTime";
 import { linesThroughput, throughput } from "../logic/throughput";
 import type { Counts } from "../store/selectors";
@@ -18,7 +19,7 @@ type Load =
   | { weeks: number; repo: string; state: "ready"; data: Aggregate }
   | { weeks: number; repo: string; state: "error"; message: string };
 
-const storedKey = (weeks: number, repo: string): string => `toolbelt:aggregate:v1:${weeks}:${repo}`;
+const storedKey = (weeks: number, repo: string): string => `toolbelt:aggregate:v2:${weeks}:${repo}`;
 
 function storedAggregate(weeks: number, repo: string): Aggregate | null {
   if (weeks > 12) return null;
@@ -258,6 +259,7 @@ export function AggregatePanels({
         {`${formatLocalDate(start, timeZone)} to ${formatLocalDate(now, timeZone)} (${data.weeks} weeks, ${timeZone}): ${inWindow.length} of your PRs`}
         {coverage.tasks_without_pr > 0 && `, ${coverage.tasks_without_pr} task${coverage.tasks_without_pr === 1 ? "" : "s"} without a PR yet`}
         {"."}
+        {` GitHub history last refreshed ${formatAbsolute(Date.parse(data.fetched_at))} (it is refreshed about every 15 minutes while toolbelt runs, so a PR changed since then is not in it yet).`}
       </p>
       <div className="agg-notices">
         {inWindow.length === 0 && (

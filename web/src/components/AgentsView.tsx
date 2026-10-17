@@ -333,6 +333,9 @@ function AgentsBody({ data, reload }: { data: Agents; reload: () => void }) {
           </ul>
         )}
         {data.enabled && data.blockers.length === 0 && <p className="agents-description">Ready: nothing is stopping the agents.</p>}
+        {data.ticked_at !== null && (
+          <p className="agents-description">{`Tasks last decided ${when(data.ticked_at)} (every few seconds; PRs are looked up again about every 5 minutes).`}</p>
+        )}
       </div>
       <div className="agents-tiles">
         <Tile

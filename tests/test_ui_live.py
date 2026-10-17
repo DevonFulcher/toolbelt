@@ -213,6 +213,50 @@ class TestStatusRefresher:
         event = run(scenario())
         assert event is not None and event[0] == "refreshed"
 
+    def test_each_pass_says_which_branches_it_looked_up_and_when_even_if_unchanged(
+        self,
+    ):
+        from datetime import UTC, datetime, timedelta
+
+        wall = [datetime(2026, 10, 17, 12, 0, tzinfo=UTC)]
+        s = Setup(["a", "b"], wall_clock=lambda: wall[0])
+        s.fetcher.statuses = {"a": OPEN, "b": OPEN}
+
+        async def scenario():
+            queue = s.hub.subscribe()
+            await s.refresher.run_once()
+            first = queue.get_nowait()
+            s.clock.now += 20
+            wall[0] += timedelta(seconds=20)
+            await s.refresher.run_once()  # nothing changed
+            return first, queue.get_nowait()
+
+        first, second = run(scenario())
+
+        assert first[1]["fetched"] == [
+            {"branch_id": "1:a", "fetched_at": "2026-10-17T12:00:00Z"},
+            {"branch_id": "1:b", "fetched_at": "2026-10-17T12:00:00Z"},
+        ]
+        assert second[1]["fetched"] == [
+            {"branch_id": "1:a", "fetched_at": "2026-10-17T12:00:20Z"},
+            {"branch_id": "1:b", "fetched_at": "2026-10-17T12:00:20Z"},
+        ]
+        assert s.changed_branches() == ["a", "b"]
+
+    def test_a_failed_lookup_is_left_out_of_what_was_looked_up(self):
+        s = Setup(["bad", "good"])
+        s.fetcher.failing = {"bad"}
+        s.fetcher.statuses["good"] = OPEN
+
+        async def scenario():
+            queue = s.hub.subscribe()
+            await s.refresher.run_once()
+            return queue.get_nowait()
+
+        event = run(scenario())
+
+        assert [f["branch_id"] for f in event[1]["fetched"]] == ["1:good"]
+
     def test_polls_only_while_a_browser_is_connected(self):
         async def scenario():
             wake = asyncio.Event()

@@ -29,6 +29,7 @@ import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 from toolbelt.git.stack.status import BranchStatus, PrState
@@ -69,6 +70,13 @@ class Fetched:
     facts: PrFacts | None = None
     #: Where the branch's conflict comes from, when it has one.
     conflict: ConflictCommit | None = None
+    #: When (wall clock) the lookup finished: what a card says its data is as
+    #: old as.
+    wall_at: datetime | None = None
+
+
+def _iso(moment: datetime) -> str:
+    return moment.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 class EventHub:
@@ -158,7 +166,13 @@ class StatusRefresher:
         settled_interval: float = DEFAULT_SETTLED_INTERVAL_SECONDS,
         concurrency: int = DEFAULT_CONCURRENCY,
         tick: float = DEFAULT_TICK_SECONDS,
+        wall_clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        branch_id: Callable[[int, str], str] = lambda repo_id, name: (
+            f"{repo_id}:{name}"
+        ),
     ) -> None:
+        self._wall_clock = wall_clock
+        self._branch_id = branch_id
         self._branches = branches
         self._fetch = fetch
         self._hub = hub
@@ -200,12 +214,26 @@ class StatusRefresher:
         due = [branch for branch in branches if self._is_due(branch.key, now)]
         if not due:
             return 0
-        await asyncio.gather(*(self._refresh(branch) for branch in due))
+        fetched = await asyncio.gather(*(self._refresh(branch) for branch in due))
         self.last_refreshed_at = self._clock()
-        self._hub.publish("refreshed", {})
+        # Which branches were looked up and when, including those whose answer
+        # did not change: their cards say how old their data is.
+        self._hub.publish(
+            "refreshed",
+            {
+                "fetched": [
+                    {
+                        "branch_id": self._branch_id(branch.repo_id, branch.branch),
+                        "fetched_at": _iso(result.wall_at),
+                    }
+                    for branch, result in fetched
+                    if result.status is not None and result.wall_at is not None
+                ]
+            },
+        )
         return len(due)
 
-    async def _refresh(self, branch: TrackedBranch) -> None:
+    async def _refresh(self, branch: TrackedBranch) -> tuple[TrackedBranch, Fetched]:
         async with self._slots:
             try:
                 snapshot: PrSnapshot | None = await self._fetch(
@@ -222,6 +250,7 @@ class StatusRefresher:
             at=self._clock(),
             facts=snapshot.facts if snapshot else None,
             conflict=snapshot.conflict if snapshot else None,
+            wall_at=self._wall_clock(),
         )
         self._cache[branch.key] = fetched
         if (
@@ -231,6 +260,7 @@ class StatusRefresher:
             or previous.conflict != fetched.conflict
         ):
             self._on_change(branch, fetched)
+        return branch, fetched
 
     async def _pause(self) -> None:
         """Sleep one tick, or less when a browser connects meanwhile."""

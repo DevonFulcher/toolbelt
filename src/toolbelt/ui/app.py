@@ -489,6 +489,8 @@ def create_app(
         settled_interval=settled_refresh_interval,
         concurrency=concurrency,
         tick=tick,
+        wall_clock=wall_clock,
+        branch_id=row_id,
     )
     task_feed = TaskFeed(
         tasks=lambda: _linked_tasks(tracker()),

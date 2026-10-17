@@ -12,12 +12,16 @@ export const EXTRAS_REFRESH_MS = 10_000;
 
 interface CardExtrasState {
   byId: Record<string, BranchExtras>;
-  set(branches: BranchExtras[]): void;
+  /** When (ms) they were last read from the server; null before the first time. */
+  updatedAt: number | null;
+  set(branches: BranchExtras[], at?: number): void;
 }
 
 export const useCardExtras = create<CardExtrasState>((set) => ({
   byId: {},
-  set: (branches) => set({ byId: Object.fromEntries(branches.map((branch) => [branch.id, branch])) }),
+  updatedAt: null,
+  set: (branches, at = Date.now()) =>
+    set({ byId: Object.fromEntries(branches.map((branch) => [branch.id, branch])), updatedAt: at }),
 }));
 
 const isExtras = (value: unknown): value is BranchExtras =>

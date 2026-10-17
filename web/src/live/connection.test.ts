@@ -29,13 +29,12 @@ test("a reconnect only reloads when the event version moved on", () => {
 });
 
 test("statusLabel describes the connection state", () => {
-  expect(statusLabel("connecting", null)).toBe("connecting…");
-  expect(statusLabel("reconnecting", 4)).toBe("reconnecting…");
-  expect(statusLabel("disconnected", 4)).toBe("disconnected");
-  expect(statusLabel("live", null)).toBe("live · updating…");
-  expect(statusLabel("live", 12)).toBe("live · updated 12s ago");
-  expect(statusLabel("paused", 400)).toBe("paused (tab hidden)");
-  expect(statusLabel("resuming", 400)).toBe("resuming…");
+  expect(statusLabel("connecting")).toBe("connecting…");
+  expect(statusLabel("reconnecting")).toBe("reconnecting…");
+  expect(statusLabel("disconnected")).toBe("disconnected");
+  expect(statusLabel("live")).toBe("live");
+  expect(statusLabel("paused")).toBe("paused (tab hidden)");
+  expect(statusLabel("resuming")).toBe("resuming…");
 });
 
 test("connectionAction opens the stream only while visible, closes after the grace period", () => {
