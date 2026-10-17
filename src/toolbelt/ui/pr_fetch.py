@@ -28,10 +28,12 @@ from toolbelt.git.stack.status import (
     MERGEABLE_RETRY_DELAY_SECONDS,
     NO_PR,
     BranchStatus,
+    count_unresolved_bot_nodes,
     count_unresolved_nodes,
     parse_status,
 )
 from toolbelt.ui import pr_activity
+from toolbelt.ui.conflict_commit import ConflictCommit
 from toolbelt.ui.pr_activity import PrFacts, TimelineItem
 
 # How many of the PR's most recent commits / timeline entries are looked at.
@@ -57,7 +59,7 @@ query($owner: String!, $repo: String!, $branch: String!) {{
         headRefOid baseRefName mergeable reviewDecision additions deletions
         author {{ login }}
         reviewRequests(first: 20) {{ nodes {{ {_REVIEWER} }} }}
-        reviewThreads(first: 100) {{ nodes {{ isResolved }} }}
+        reviewThreads(first: 100) {{ nodes {{ isResolved comments(first: 1) {{ nodes {{ author {{ __typename login }} }} }} }} }}
         head: commits(last: 1) {{ nodes {{ commit {{
           statusCheckRollup {{ state contexts(first: 100) {{ nodes {{
             __typename
@@ -108,6 +110,9 @@ class PrSnapshot:
 
     status: BranchStatus
     facts: PrFacts | None
+    #: Where the branch's conflict comes from, when it has one (set by the
+    #: caller that reads local git; ``fetch_snapshot`` itself leaves it unset).
+    conflict: ConflictCommit | None = None
 
 
 NO_SNAPSHOT = PrSnapshot(status=NO_PR, facts=None)
@@ -325,6 +330,7 @@ def parse_snapshot(payload: dict) -> PrSnapshot:
             "mergeable": node["mergeable"],
         },
         open_comments=count_unresolved_nodes(node["reviewThreads"]["nodes"]),
+        bot_comments=count_unresolved_bot_nodes(node["reviewThreads"]["nodes"]),
     )
     items = timeline_items(node["timelineItems"]["nodes"])
     facts = PrFacts(

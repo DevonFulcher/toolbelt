@@ -418,8 +418,10 @@ function PrSlots({ status, note }: { status: LiveStatus; note: ReactNode }) {
       ["pr", "PR"],
       ["ci", "CI"],
       ["review", "Review"],
-      ["comments", "Comments"],
+      ["comments", "Human comments"],
+      ["bot_comments", "Bot comments"],
       ["merge", "Merge"],
+      ["conflict_commit", "Conflict commit"],
       ["lines", "Lines"],
       ["pr_age", "PR age"],
       ["in_draft", "In draft"],
@@ -470,6 +472,7 @@ function TimelineSlot({
 function LoadedPrSlots({ status }: { status: LoadedStatus }) {
   const { detail } = status;
   const hasPr = status.pr !== "none";
+  const humanComments = status.open_comments - status.open_comments_bot;
   return (
     <>
       <Slot id="title" label="PR title" state={detail && hasPr ? "ok" : "na"}>
@@ -505,17 +508,24 @@ function LoadedPrSlots({ status }: { status: LoadedStatus }) {
               <Pill tone="gray">no review requested</Pill>
             </Slot>
           )}
-          {status.open_comments > 0 ? (
-            <Slot id="comments" label="Comments">
-              <Pill tone="amber" title="unresolved review threads">
-                {`${status.open_comments} comment${status.open_comments === 1 ? "" : "s"}`}
+          <Slot id="comments" label="Human comments">
+            {humanComments > 0 ? (
+              <Pill tone="amber" title="unresolved review threads a person started">
+                {`${humanComments} comment${humanComments === 1 ? "" : "s"}`}
               </Pill>
-            </Slot>
-          ) : (
-            <Slot id="comments" label="Comments">
+            ) : (
               <Pill tone="green">0 comments</Pill>
-            </Slot>
-          )}
+            )}
+          </Slot>
+          <Slot id="bot_comments" label="Bot comments">
+            {status.open_comments_bot > 0 ? (
+              <Pill tone="amber" title="unresolved review threads a bot (Copilot) started">
+                {`${status.open_comments_bot} comment${status.open_comments_bot === 1 ? "" : "s"}`}
+              </Pill>
+            ) : (
+              <Pill tone="green">0 comments</Pill>
+            )}
+          </Slot>
           {status.merge === "conflicts" ? (
             <Slot id="merge" label="Merge">
               <Pill tone="red">conflicts</Pill>
@@ -527,6 +537,16 @@ function LoadedPrSlots({ status }: { status: LoadedStatus }) {
           ) : (
             <Slot id="merge" label="Merge" state="na">
               {`n/a (PR ${status.pr})`}
+            </Slot>
+          )}
+
+          {status.conflict ? (
+            <Slot id="conflict_commit" label="Conflict commit">
+              <ConflictCommit conflict={status.conflict} />
+            </Slot>
+          ) : (
+            <Slot id="conflict_commit" label="Conflict commit" state="na">
+              no conflict
             </Slot>
           )}
 
@@ -589,16 +609,41 @@ function LoadedPrSlots({ status }: { status: LoadedStatus }) {
           <Slot id="review" label="Review" state="na">
             no PR
           </Slot>
-          <Slot id="comments" label="Comments" state="na">
+          <Slot id="comments" label="Human comments" state="na">
+            no PR
+          </Slot>
+          <Slot id="bot_comments" label="Bot comments" state="na">
             no PR
           </Slot>
           <Slot id="merge" label="Merge" state="na">
+            no PR
+          </Slot>
+          <Slot id="conflict_commit" label="Conflict commit" state="na">
             no PR
           </Slot>
           <UnavailableSlots note="no PR" />
         </>
       )}
     </>
+  );
+}
+
+/** Where a branch's conflict comes from: the commit (a link to it when the PR
+ *  is known), what it is stopped on, and the files that conflict. */
+function ConflictCommit({ conflict }: { conflict: NonNullable<LoadedStatus["conflict"]> }) {
+  const short = conflict.sha.slice(0, 7);
+  const where =
+    conflict.source === "rebase"
+      ? `rebase stopped here${conflict.step !== null && conflict.steps !== null ? `, commit ${conflict.step} of ${conflict.steps}` : ""}`
+      : conflict.source === "merge"
+        ? "merge stopped here"
+        : "first commit that conflicts with the base";
+  return (
+    <span title={conflict.files.length > 0 ? `conflicts in ${conflict.files.join(", ")}` : undefined}>
+      {conflict.url ? <ExternalLink href={conflict.url}>{short}</ExternalLink> : short}
+      {` ${conflict.subject} `}
+      <span className="muted">{`(${where}${conflict.files.length > 0 ? `: ${conflict.files.join(", ")}` : ""})`}</span>
+    </span>
   );
 }
 

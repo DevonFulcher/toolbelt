@@ -26,8 +26,10 @@ const SLOT_LABELS: Record<string, string> = {
   pr: "PR",
   ci: "CI",
   review: "Review",
-  comments: "Comments",
+  comments: "Human comments",
+  bot_comments: "Bot comments",
   merge: "Merge",
+  conflict_commit: "Conflict commit",
   lines: "Lines",
   task: "Task",
   session: "Session",
@@ -73,7 +75,17 @@ describe("a card's labelled slots", () => {
       pr_url: "https://github.com/o/r/pull/8",
       review: "requested",
       open_comments: 3,
+      open_comments_bot: 1,
       merge: "conflicts",
+      conflict: {
+        sha: "abcdef1234567",
+        subject: "Rewrite the loader",
+        url: "https://github.com/o/r/commit/abcdef1234567",
+        files: ["src/a.py", "src/b.py"],
+        source: "pr",
+        step: null,
+        steps: null,
+      },
       next: { label: "Resolve conflicts", who: "you", kind: "resolve_conflicts" },
       detail: detail({
         title: "Add <b>the</b> thing",
@@ -115,8 +127,17 @@ describe("a card's labelled slots", () => {
     expect(b.pr).toEqual(["PR", "ok", "#8 open"]);
     expect(b.ci[2]).toBe("success");
     expect(b.review[2]).toBe("requested");
-    expect(b.comments).toEqual(["Comments", "ok", "3 comments"]);
+    expect(b.comments).toEqual(["Human comments", "ok", "2 comments"]);
+    expect(b.bot_comments).toEqual(["Bot comments", "ok", "1 comment"]);
     expect(b.merge[2]).toBe("conflicts");
+    expect(b.conflict_commit[1]).toBe("ok");
+    expect(b.conflict_commit[2]).toContain("abcdef1 Rewrite the loader");
+    expect(b.conflict_commit[2]).toContain("first commit that conflicts with the base: src/a.py, src/b.py");
+    expect(document.querySelector('article[data-id="1:devon/b"] [data-slot="conflict_commit"] a')).toHaveAttribute(
+      "href",
+      "https://github.com/o/r/commit/abcdef1234567",
+    );
+    expect(a.conflict_commit).toEqual(["Conflict commit", "na", "no conflict"]);
     expect(b.pr_age[2]).toBe("5d");
     expect(b.lines[2]).toBe("+120 -4");
     expect(document.querySelector('article[data-id="1:devon/b"] [data-slot="lines"] .lines-added')).toHaveTextContent("+120");
@@ -173,7 +194,7 @@ describe("a card's labelled slots", () => {
     expect(labels(found)).toEqual(SLOT_LABELS);
     expect(found.next[2]).toBe("Open PR needs you");
     expect(found.pr).toEqual(["PR", "gap", "no PR"]);
-    for (const key of ["ci", "review", "comments", "merge", "lines", "pr_age", "in_draft", "review_requested", "ci_failures", "reviewers", "title"]) {
+    for (const key of ["ci", "review", "comments", "bot_comments", "merge", "conflict_commit", "lines", "pr_age", "in_draft", "review_requested", "ci_failures", "reviewers", "title"]) {
       expect(found[key].slice(1), key).toEqual(["na", "no PR"]);
     }
     // No start recorded and no PR: nothing to draw, and no chip row repeating
@@ -207,13 +228,14 @@ describe("a card's labelled slots", () => {
     expect(labels(found)).toEqual(SLOT_LABELS);
     expect(found.ci).toEqual(["CI", "na", "no CI configured"]);
     expect(found.review).toEqual(["Review", "gap", "no review requested"]);
-    expect(found.comments).toEqual(["Comments", "ok", "0 comments"]);
+    expect(found.comments).toEqual(["Human comments", "ok", "0 comments"]);
+    expect(found.bot_comments).toEqual(["Bot comments", "ok", "0 comments"]);
     expect(found.merge).toEqual(["Merge", "ok", "clean"]);
     expect(found.in_draft).toEqual(["In draft", "na", "not a draft"]);
     expect(found.review_requested).toEqual(["Review requested", "na", "not requested"]);
     expect(found.ci_failures).toEqual(["CI failures", "ok", "0 failures"]);
     const card = document.querySelector('article[data-id="1:devon/q"]') as HTMLElement;
-    for (const key of ["comments", "merge", "ci_failures"]) {
+    for (const key of ["comments", "bot_comments", "merge", "ci_failures"]) {
       expect(card.querySelector(`[data-slot="${key}"] .pill`)).toHaveClass("tone-green");
     }
     expect(found.reviewers).toEqual(["Reviewers", "na", "none requested"]);
@@ -244,7 +266,7 @@ describe("a card's labelled slots", () => {
       const keys = groups.map((g) => [...g.querySelectorAll<HTMLElement>(".slot")].map((s) => s.dataset.slot));
       expect(keys).toEqual([
         ["repo", "branch", "ancestors", "descendants"],
-        ["title", "pr", "ci", "review", "comments", "merge", "lines", "pr_age", "in_draft", "review_requested", "ci_failures", "reviewers"],
+        ["title", "pr", "ci", "review", "comments", "bot_comments", "merge", "conflict_commit", "lines", "pr_age", "in_draft", "review_requested", "ci_failures", "reviewers"],
         ["next", "task_age", "task", "session"],
       ]);
       // The timeline is its own box, the last child, not one of the groups.

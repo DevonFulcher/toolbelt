@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from toolbelt.git.stack.status import BranchStatus, PrState
+from toolbelt.ui.conflict_commit import ConflictCommit
 from toolbelt.ui.pr_activity import PrFacts
 from toolbelt.ui.pr_fetch import PrSnapshot
 
@@ -66,6 +67,8 @@ class Fetched:
     status: BranchStatus | None
     at: float
     facts: PrFacts | None = None
+    #: Where the branch's conflict comes from, when it has one.
+    conflict: ConflictCommit | None = None
 
 
 class EventHub:
@@ -218,12 +221,14 @@ class StatusRefresher:
             status=snapshot.status if snapshot else None,
             at=self._clock(),
             facts=snapshot.facts if snapshot else None,
+            conflict=snapshot.conflict if snapshot else None,
         )
         self._cache[branch.key] = fetched
         if (
             previous is None
             or previous.status != fetched.status
             or previous.facts != fetched.facts
+            or previous.conflict != fetched.conflict
         ):
             self._on_change(branch, fetched)
 

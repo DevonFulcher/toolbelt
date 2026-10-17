@@ -75,6 +75,9 @@ class BranchStatus:
     review: ReviewState
     url: str | None
     open_comments: int = 0
+    #: How many of the ``open_comments`` threads a bot (Copilot) started; the
+    #: rest are a person's.
+    bot_comments: int = 0
     has_conflicts: bool = False
     #: Lines the PR adds and deletes against its base (its parent branch for a
     #: stacked PR).
@@ -169,7 +172,9 @@ def _requested_people(requests: list) -> tuple[str, ...]:
     )
 
 
-def parse_status(data: dict, *, open_comments: int = 0) -> BranchStatus:
+def parse_status(
+    data: dict, *, open_comments: int = 0, bot_comments: int = 0
+) -> BranchStatus:
     """Parse a `gh pr view --json {_FIELDS}` payload into a `BranchStatus`."""
     if data["state"] == "MERGED":
         pr_state = PrState.MERGED
@@ -196,6 +201,7 @@ def parse_status(data: dict, *, open_comments: int = 0) -> BranchStatus:
         review=review_state,
         url=data["url"],
         open_comments=open_comments,
+        bot_comments=bot_comments,
         # `mergeable` is UNKNOWN while GitHub is still computing it; only a
         # definite CONFLICTING counts, and only for a PR still in play.
         has_conflicts=data.get("mergeable") == "CONFLICTING"
@@ -210,6 +216,20 @@ def parse_status(data: dict, *, open_comments: int = 0) -> BranchStatus:
 def count_unresolved_nodes(nodes: list[dict]) -> int:
     """Count unresolved threads among a `reviewThreads` connection's nodes."""
     return sum(1 for node in nodes if not node["isResolved"])
+
+
+def count_unresolved_bot_nodes(nodes: list[dict]) -> int:
+    """Count unresolved threads a bot started (its comment is the thread's
+    first) among a `reviewThreads` connection's nodes."""
+    return sum(
+        1 for node in nodes if not node["isResolved"] and _thread_started_by_bot(node)
+    )
+
+
+def _thread_started_by_bot(node: dict) -> bool:
+    comments = (node.get("comments") or {}).get("nodes") or []
+    author = (comments[0].get("author") or {}) if comments else {}
+    return author.get("__typename") == "Bot" or _is_bot(author.get("login") or "")
 
 
 def _count_unresolved(payload: dict) -> int:

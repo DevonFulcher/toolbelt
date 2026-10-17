@@ -22,12 +22,14 @@ from toolbelt.tasks.tracker import TaskTracker
 from toolbelt.ui import api_models as api
 from toolbelt.ui import branch_links, pr_states
 from toolbelt.ui.claims_feed import BranchHolder
+from toolbelt.ui.conflict_commit import ConflictCommit
 from toolbelt.ui.live_status import Fetched, StatusRefresher
 from toolbelt.ui.next_action import WHO_ORDER, ParentContext, next_action
 from toolbelt.ui.pr_activity import PrFacts, derive_activity, format_age
 from toolbelt.ui.task_feed import TaskFeed
 
 _PR_NUMBER_RE = re.compile(r"/pull/(\d+)")
+_PR_URL_RE = re.compile(r"(https://github\.com/[^/]+/[^/]+)/pull/\d+")
 
 # The comments filter's values (and what the client's sort/filter reads).
 COMMENTS_OPEN = "has comments"
@@ -240,6 +242,19 @@ def pr_detail(facts: PrFacts, now: datetime) -> api.PrDetail:
     )
 
 
+def conflict_info(conflict: ConflictCommit, pr_url: str | None) -> api.ConflictInfo:
+    match = _PR_URL_RE.match(pr_url) if pr_url else None
+    return api.ConflictInfo(
+        sha=conflict.sha,
+        subject=conflict.subject,
+        url=f"{match.group(1)}/commit/{conflict.sha}" if match else None,
+        files=list(conflict.files),
+        source=conflict.source,
+        step=conflict.step,
+        steps=conflict.steps,
+    )
+
+
 def loaded_status(
     status: BranchStatus,
     *,
@@ -248,6 +263,7 @@ def loaded_status(
     now: datetime,
     claimed: bool = False,
     autonomous: bool = False,
+    conflict: ConflictCommit | None = None,
 ) -> api.LoadedStatus:
     """``parent`` is the stack context for the next action; ``facts`` (with
     ``now``) adds the PR's history as ``detail``; ``claimed``: a live working
@@ -259,6 +275,7 @@ def loaded_status(
     if status.pr in (PrState.OPEN, PrState.DRAFT):
         merge = "conflicts" if status.has_conflicts else "clean"
     open_comments = status.open_comments if has_pr else 0
+    open_comments_bot = status.bot_comments if has_pr else 0
     action = next_action(status, parent, claimed, autonomous)
     chips = pr_states.current_states(
         pr=status.pr.value,
@@ -281,6 +298,7 @@ def loaded_status(
             "review": status.review,
             "merge": merge,
             "open_comments": open_comments,
+            "open_comments_bot": open_comments_bot,
             "next": {
                 "label": action.label,
                 "who": action.who,
@@ -293,6 +311,7 @@ def loaded_status(
                 if action.would_be
                 else None,
             },
+            "conflict": conflict_info(conflict, status.url) if conflict else None,
             "detail": pr_detail(facts, now) if facts is not None else None,
             "now": [
                 {"dimension": c["dimension"], "value": c["value"], **c["args"]}
@@ -320,6 +339,7 @@ def live_status(
         now=now,
         claimed=claimed,
         autonomous=autonomous,
+        conflict=fetched.conflict,
     )
 
 

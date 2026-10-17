@@ -336,16 +336,30 @@ export interface FailedStatus {
 }
 export interface LoadedStatus {
   ci: CiState;
+  conflict: ConflictInfo | null;
   detail: PrDetail | null;
   load: "loaded";
   merge: MergeValue;
   next: NextActionInfo;
   now: Chip[];
   open_comments: number;
+  open_comments_bot: number;
   pr: PrState;
   pr_number: number | null;
   pr_url: string | null;
   review: ReviewState;
+}
+/**
+ * The commit a branch's conflict comes from.
+ */
+export interface ConflictInfo {
+  files: string[];
+  sha: string;
+  source: "pr" | "rebase" | "merge";
+  step: number | null;
+  steps: number | null;
+  subject: string;
+  url: string | null;
 }
 export interface PrDetail {
   additions: number;
@@ -620,10 +634,12 @@ export interface Span {
 }
 export interface SlotDimensions {
   ancestors: CatalogDimension | null;
+  bot_comments: CatalogDimension | null;
   branch: CatalogDimension | null;
   ci: CatalogDimension | null;
   ci_failures: CatalogDimension | null;
   comments: CatalogDimension | null;
+  conflict_commit: CatalogDimension | null;
   descendants: CatalogDimension | null;
   in_draft: CatalogDimension | null;
   lines: CatalogDimension | null;

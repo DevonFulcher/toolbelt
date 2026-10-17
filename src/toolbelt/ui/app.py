@@ -47,6 +47,7 @@ import functools
 import json
 import time
 from collections.abc import AsyncIterator, Callable
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -102,6 +103,7 @@ from toolbelt.ui.claims_feed import (
     ClaimsFeed,
 )
 from toolbelt.ui.client_build import CLIENT_DIST
+from toolbelt.ui.conflict_commit import conflict_for
 from toolbelt.ui.live_status import (
     DEFAULT_CONCURRENCY,
     DEFAULT_GRACE_SECONDS,
@@ -144,7 +146,17 @@ _KEEPALIVE_SECONDS = 15.0
 
 
 async def fetch_status(branch: str, root: Path) -> PrSnapshot:
-    return await fetch_snapshot(branch, root)
+    snapshot = await fetch_snapshot(branch, root)
+    facts = snapshot.facts
+    conflict = await asyncio.to_thread(
+        conflict_for,
+        root,
+        branch,
+        base_ref=facts.base_ref if facts else None,
+        head_oid=facts.head_oid if facts else None,
+        pr_conflicts=snapshot.status.has_conflicts,
+    )
+    return replace(snapshot, conflict=conflict)
 
 
 @functools.cache

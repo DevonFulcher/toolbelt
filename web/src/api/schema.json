@@ -1360,6 +1360,73 @@
       ],
       "type": "string"
     },
+    "ConflictInfo": {
+      "additionalProperties": false,
+      "description": "The commit a branch's conflict comes from.",
+      "properties": {
+        "files": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "sha": {
+          "type": "string"
+        },
+        "source": {
+          "enum": [
+            "pr",
+            "rebase",
+            "merge"
+          ],
+          "type": "string"
+        },
+        "step": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "steps": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "subject": {
+          "type": "string"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "sha",
+        "subject",
+        "url",
+        "files",
+        "source",
+        "step",
+        "steps"
+      ],
+      "title": "ConflictInfo",
+      "type": "object"
+    },
     "DraftCatalogState": {
       "additionalProperties": false,
       "properties": {
@@ -1682,6 +1749,16 @@
         "ci": {
           "$ref": "#/$defs/CiState"
         },
+        "conflict": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConflictInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "detail": {
           "anyOf": [
             {
@@ -1709,6 +1786,9 @@
           "type": "array"
         },
         "open_comments": {
+          "type": "integer"
+        },
+        "open_comments_bot": {
           "type": "integer"
         },
         "pr": {
@@ -1747,7 +1827,9 @@
         "review",
         "merge",
         "open_comments",
+        "open_comments_bot",
         "next",
+        "conflict",
         "detail",
         "now"
       ],
@@ -2683,6 +2765,16 @@
             }
           ]
         },
+        "bot_comments": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogDimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "branch": {
           "anyOf": [
             {
@@ -2714,6 +2806,16 @@
           ]
         },
         "comments": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogDimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "conflict_commit": {
           "anyOf": [
             {
               "$ref": "#/$defs/CatalogDimension"
@@ -2890,7 +2992,9 @@
         "ci",
         "review",
         "comments",
+        "bot_comments",
         "merge",
+        "conflict_commit",
         "in_draft",
         "review_requested",
         "reviewers",

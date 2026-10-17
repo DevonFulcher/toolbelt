@@ -343,6 +343,23 @@ class FailedStatus(Model):
     load: Literal["failed"]
 
 
+class ConflictInfo(Model):
+    """The commit a branch's conflict comes from."""
+
+    sha: str
+    subject: str
+    #: Where to open the commit on GitHub (``None`` when the PR is unknown).
+    url: str | None
+    #: The files that conflict, at most ten.
+    files: list[str]
+    #: ``pr``: the first commit of the PR that conflicts with its base;
+    #: ``rebase`` / ``merge``: what the branch's worktree is stopped on.
+    source: Literal["pr", "rebase", "merge"]
+    #: For a stopped rebase: which commit this is, of how many.
+    step: int | None
+    steps: int | None
+
+
 class LoadedStatus(Model):
     load: Literal["loaded"]
     pr: PrState
@@ -353,7 +370,11 @@ class LoadedStatus(Model):
     #: Only meaningful for an open PR (``none`` otherwise).
     merge: MergeValue
     open_comments: int
+    #: How many of those a bot (Copilot) started; the rest are a person's.
+    open_comments_bot: int
     next: NextActionInfo
+    #: Where the conflict comes from, when the branch has one.
+    conflict: ConflictInfo | None
     #: The PR's history; ``None`` when there is no PR.
     detail: PrDetail | None
     #: The "now" chips of the card's timeline.

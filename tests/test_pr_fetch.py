@@ -117,6 +117,38 @@ def test_one_call_returns_the_status_the_table_shows():
     assert status.has_conflicts
 
 
+def _thread(*, resolved: bool, typename: str, login: str) -> dict:
+    return {
+        "isResolved": resolved,
+        "comments": {"nodes": [{"author": {"__typename": typename, "login": login}}]},
+    }
+
+
+def test_unresolved_threads_a_bot_started_are_counted_apart_from_a_persons():
+    node = pr_node(
+        reviewThreads={
+            "nodes": [
+                _thread(
+                    resolved=False,
+                    typename="Bot",
+                    login="copilot-pull-request-reviewer",
+                ),
+                _thread(resolved=False, typename="User", login="sam"),
+                _thread(resolved=False, typename="User", login="Copilot"),
+                _thread(
+                    resolved=True, typename="Bot", login="copilot-pull-request-reviewer"
+                ),
+                {"isResolved": False, "comments": {"nodes": []}},
+            ]
+        }
+    )
+
+    status = fetch(Graphql(response(node))).status
+
+    assert status.open_comments == 4
+    assert status.bot_comments == 2
+
+
 @pytest.mark.parametrize(
     ("contexts", "expected"),
     [

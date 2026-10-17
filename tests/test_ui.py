@@ -363,6 +363,7 @@ def test_status_shows_pr_ci_review_comments_conflicts(tmp_path, make_client, fet
     assert status["pr_url"] == "https://github.com/o/r/pull/42"
     assert (status["ci"], status["review"]) == ("failed", "approved")
     assert (status["open_comments"], status["merge"]) == (2, "conflicts")
+    assert status["open_comments_bot"] == 0
 
 
 def test_draft_and_no_pr_status(tmp_path, make_client, fetcher):

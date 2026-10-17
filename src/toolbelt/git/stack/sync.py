@@ -63,7 +63,7 @@ def _git_path(worktree: Path, name: str) -> Path | None:
     return path
 
 
-def _branch_being_rebased(worktree: Path) -> str | None:
+def branch_being_rebased(worktree: Path) -> str | None:
     """The branch a mid-rebase worktree is rebasing, or None if not rebasing.
 
     During a rebase the worktree's HEAD is detached, so the branch name must be
@@ -343,7 +343,7 @@ def sync_stack(
 
     # When resuming after a restack conflict, this worktree is mid-rebase and
     # its HEAD is detached; recover the branch from the rebase state.
-    rebasing = _branch_being_rebased(root)
+    rebasing = branch_being_rebased(root)
     branch = branch or rebasing or current_branch(root)
     parents = all_parents(root=root)
     tracked = set(parents.keys())
