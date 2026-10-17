@@ -24,17 +24,15 @@ import {
   formatBucketDate,
   formatDuration,
   labelIndexes,
-  linePath,
   linearScale,
   medianPositive,
   nearestIndex,
   niceMax,
-  rangePath,
   stackShares,
   timeAxis,
   weekendSpans,
 } from "../logic/aggregateChart";
-import { TOTAL_STAGE, type LeadTimeSeries, type StageKey } from "../logic/leadTime";
+import type { LeadTimeSeries, StageKey } from "../logic/leadTime";
 import {
   addLocalDays,
   formatLocalDate,
@@ -42,7 +40,7 @@ import {
   formatLocalInstant,
   isWeekend,
 } from "../logic/localTime";
-import type { Throughput } from "../logic/throughput";
+import type { LinesThroughput, Throughput } from "../logic/throughput";
 import "./aggregate.css";
 
 const MARGIN = { left: 44, right: 12, top: 10, bottom: 30 };
@@ -508,6 +506,197 @@ export function ThroughputChart({
   );
 }
 
+export interface LinesSeries {
+  added: SeriesStyle;
+  deleted: SeriesStyle;
+}
+
+/** Lines added and deleted by the PRs merged in each day or week. */
+export function LinesChart({
+  data,
+  weekdayData,
+  timeZone,
+  styles,
+}: {
+  data: LinesThroughput;
+  weekdayData: LinesThroughput;
+  timeZone: string;
+  styles: LinesSeries;
+}) {
+  const [ref, width] = useWidth();
+  const id = useId();
+  const [hover, setHover] = useState<Hover | null>(null);
+  const [excludeWeekends, setExcludeWeekends] = useState(false);
+  const { buckets, added, deleted, granularity } = excludeWeekends ? weekdayData : data;
+  const daily = granularity === "day";
+  const indexes = buckets.map((_, i) => i).filter((i) => !excludeWeekends || !daily || !buckets[i].weekend);
+  const shown = indexes.map((i) => buckets[i]);
+  const height = 220;
+  const plotW = Math.max(width - MARGIN.left - MARGIN.right, 50);
+  const plotH = height - MARGIN.top - MARGIN.bottom;
+  const max = Math.max(1, ...indexes.map((i) => added[i]), ...indexes.map((i) => deleted[i]));
+  const ticks = countTicks(max);
+  const top = niceMax(ticks[ticks.length - 1]);
+  const y = linearScale([0, top], [MARGIN.top + plotH, MARGIN.top]);
+  const slot = plotW / Math.max(shown.length, 1);
+  const barW = Math.max(Math.min(slot * 0.4, 22), 1);
+  const centre = (i: number): number => MARGIN.left + slot * (i + 0.5);
+  const totalAdded = indexes.reduce((a, i) => a + added[i], 0);
+  const totalDeleted = indexes.reduce((a, i) => a + deleted[i], 0);
+  const first = buckets[0].start;
+  const lastEnd = buckets[buckets.length - 1].end;
+  const bucketX = (ms: number): number => MARGIN.left + ((ms - first) / Math.max(lastEnd - first, 1)) * plotW;
+  const dates = daily
+    ? dayLabels(shown, timeZone, slot, excludeWeekends ? 5 : 7)
+    : shown.map((b, i) =>
+        labelIndexes(shown.length, Math.max(2, Math.floor(plotW / 70))).includes(i)
+          ? formatLocalDate(b.start, timeZone)
+          : null,
+      );
+  const title = (i: number): string =>
+    daily ? formatLocalDay(shown[i].start, timeZone) : `Week of ${formatLocalDay(shown[i].start, timeZone)}`;
+  const lines = (n: number): string => n.toLocaleString("en-US");
+
+  const move = (event: PointerEvent<SVGRectElement>): void => {
+    const box = event.currentTarget.getBoundingClientRect();
+    const index = Math.min(shown.length - 1, Math.max(0, Math.floor((event.clientX - box.left) / slot)));
+    setHover({ index, x: centre(index) });
+  };
+  const key = (event: KeyboardEvent): void => {
+    const step = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+    if (event.key === "Escape") setHover(null);
+    if (!step) return;
+    event.preventDefault();
+    const next = Math.min(shown.length - 1, Math.max(0, (hover?.index ?? (step > 0 ? -1 : shown.length)) + step));
+    setHover({ index: next, x: centre(next) });
+  };
+
+  const both = [styles.added, styles.deleted];
+  const summary = `${lines(totalAdded)} lines added and ${lines(totalDeleted)} deleted by merged PRs over ${shown.length} ${daily ? "days" : "weeks"}, from ${formatLocalDay(first, timeZone)}${excludeWeekends && daily ? ", excluding weekends" : ""}.`;
+  return (
+    <ChartFrame
+      title="Lines changed"
+      description={`Lines added and deleted by the PRs merged each ${daily ? "day" : "week"} in your time zone (${timeZone}), each PR counted at its merge time. A stacked PR counts its own diff against its parent, so a stack is not counted twice. ${excludeWeekends ? "Merges on weekends are removed from the chart and totals." : daily ? "Saturdays and Sundays are hatched." : "Weeks start on Monday."}`}
+      legend={
+        <div className="agg-lead-controls">
+          <Legend
+            id={id}
+            series={both}
+            values={{ added: `${lines(totalAdded)} total`, deleted: `${lines(totalDeleted)} total` }}
+          />
+          <WeekendControl excluded={excludeWeekends} onChange={(value) => { setExcludeWeekends(value); setHover(null); }} />
+        </div>
+      }
+      table={
+        <table className="agg-table">
+          <caption>{`Lines changed by PRs merged per ${daily ? "day" : "week"} (${timeZone})`}</caption>
+          <thead>
+            <tr>
+              <th scope="col">{daily ? "Day" : "Week of"}</th>
+              <th scope="col">Added</th>
+              <th scope="col">Deleted</th>
+            </tr>
+          </thead>
+          <tbody>
+            {shown.map((bucket, position) => {
+              const i = indexes[position];
+              return (
+                <tr key={bucket.start}>
+                  <th scope="row">{formatLocalDay(bucket.start, timeZone)}</th>
+                  <td>{lines(added[i])}</td>
+                  <td>{lines(deleted[i])}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      }
+    >
+      <div className="agg-plot" ref={ref}>
+        <svg
+          width={width}
+          height={height}
+          role="img"
+          aria-label={summary}
+          tabIndex={0}
+          onKeyDown={key}
+          onBlur={() => setHover(null)}
+        >
+          <Patterns id={id} series={both} />
+          <WeekendPattern id={id} />
+          {daily && !excludeWeekends && (
+            <WeekendBands
+              id={id}
+              from={first}
+              to={lastEnd}
+              timeZone={timeZone}
+              x={bucketX}
+              top={MARGIN.top}
+              bottom={MARGIN.top + plotH}
+            />
+          )}
+          {ticks.map((t) => (
+            <g key={t}>
+              <line className="agg-grid" x1={MARGIN.left} x2={MARGIN.left + plotW} y1={y(t)} y2={y(t)} />
+              <text className="agg-tick" x={MARGIN.left - 6} y={y(t)} textAnchor="end" dominantBaseline="middle">
+                {lines(t)}
+              </text>
+            </g>
+          ))}
+          {dates.map((text, i) =>
+            text === null ? null : (
+              <text key={i} className="agg-tick" x={centre(i)} y={height - 10} textAnchor="middle">
+                {text}
+              </text>
+            ),
+          )}
+          <text className="agg-axis-title" transform={`translate(11 ${MARGIN.top + plotH / 2}) rotate(-90)`} textAnchor="middle">
+            {`lines per ${daily ? "day" : "week"}`}
+          </text>
+          {indexes.map((sourceIndex, i) => (
+            <g key={buckets[sourceIndex].start} className={hover?.index === i ? "agg-col agg-col-active" : "agg-col"}>
+              {([
+                [styles.added, added[sourceIndex], -barW],
+                [styles.deleted, deleted[sourceIndex], 0],
+              ] as const).map(([series, value, dx]) => (
+                <g key={series.key} className={`tone-${series.tone}`}>
+                  <rect
+                    x={centre(i) + dx}
+                    y={y(value)}
+                    width={barW}
+                    height={Math.max(y(0) - y(value), 0)}
+                    fill={fillOf(id, series)}
+                  />
+                </g>
+              ))}
+            </g>
+          ))}
+          <line className="agg-axis" x1={MARGIN.left} x2={MARGIN.left + plotW} y1={y(0)} y2={y(0)} />
+          <rect
+            className="agg-hit"
+            x={MARGIN.left}
+            y={MARGIN.top}
+            width={plotW}
+            height={plotH}
+            onPointerMove={move}
+            onPointerLeave={() => setHover(null)}
+          />
+        </svg>
+        <ChartTooltip hover={hover} width={width}>
+          {hover && (
+            <>
+              <strong>{title(hover.index)}</strong>
+              {shown[hover.index].weekend && <div className="agg-tip-sub">weekend</div>}
+              <div>{`+${lines(added[indexes[hover.index]])} added`}</div>
+              <div>{`-${lines(deleted[indexes[hover.index]])} deleted`}</div>
+            </>
+          )}
+        </ChartTooltip>
+      </div>
+    </ChartFrame>
+  );
+}
+
 // ---- lead time over time ------------------------------------------------------------------------
 
 export interface LeadStageStyle extends SeriesStyle {
@@ -539,46 +728,32 @@ export function LeadTimeChart({
 }) {
   const [ref, width] = useWidth();
   const id = useId();
-  const [hover, setHover] = useState<
-    | { type: "bucket"; index: number; x: number }
-    | { type: "point"; stage: StageKey; index: number; x: number }
-    | null
-  >(null);
+  const [hover, setHover] = useState<Hover | null>(null);
   const [hidden, setHidden] = useState<ReadonlySet<StageKey>>(new Set());
-  const [band, setBand] = useState(false);
   const visible = series.stages.filter((s) => !hidden.has(s.key));
   const height = 260;
   const plotW = Math.max(width - MARGIN.left - MARGIN.right, 50);
   const plotH = height - MARGIN.top - MARGIN.bottom;
-  const total = series.stages.find((s) => s.key === TOTAL_STAGE);
-  const eventMode = series.granularity === "event";
-  const bandShown = !eventMode && band && total !== undefined && !hidden.has(TOTAL_STAGE);
-  const values = [
-    ...visible.flatMap((s) => eventMode ? s.points.map((p) => p.seconds) : s.buckets.map((b) => b.median ?? 0)),
-    ...(bandShown && total ? total.buckets.map((b) => b.p90 ?? 0) : []),
-  ];
+  const values = visible.flatMap((s) => s.buckets.map((b) => b.median ?? 0));
   const axis = durationAxis(Math.max(0, ...values));
   const y = linearScale([0, axis.top], [MARGIN.top + plotH, MARGIN.top]);
-  const pointY = (seconds: number): number => y(Math.min(seconds, axis.top));
   const project = timeAxis(windowStart, now, timeZone, excludeWeekends);
   const xMs = (ms: number): number => MARGIN.left + project(ms) * plotW;
-  const centres = series.buckets.map((b) => xMs(eventMode ? b.start : (b.start + Math.min(b.end, now)) / 2));
-  const bucketX = (i: number): number => centres[i];
-  const axisLabels = eventMode
-    ? series.buckets.reduce<number[]>((picked, bucket, i) => {
-        if ((!excludeWeekends || !isWeekend(bucket.start, timeZone)) &&
-          (!picked.length || xMs(bucket.start) - xMs(series.buckets[picked[picked.length - 1]].start) >= 70)) picked.push(i);
-        return picked;
-      }, [])
-    : labelIndexes(series.buckets.length, Math.max(2, Math.floor(plotW / 70)));
+  const spans = series.buckets.map((b) => {
+    const left = xMs(b.start);
+    return { left, right: Math.max(xMs(Math.min(b.end, now)), left) };
+  });
+  const centres = spans.map((span) => (span.left + span.right) / 2);
+  const axisLabels = labelIndexes(series.buckets.length, Math.max(2, Math.floor(plotW / 70)));
   const style = (key: StageKey): LeadStageStyle => styles.find((x) => x.key === key) as LeadStageStyle;
   const label = (ms: number): string => formatLocalDate(ms, timeZone);
   const rangeLabel = (i: number): string => {
     const b = series.buckets[i];
-    if (eventMode) return `${formatLocalInstant(b.start, timeZone)}${b.pr ? ` · ${b.pr.repo}#${b.pr.number}` : ""}`;
     const last = addLocalDays(b.end, -1, timeZone);
     return b.end - b.start > 24 * 3_600_000 * 1.5 ? `${label(b.start)} - ${label(last)}` : label(b.start);
   };
+  const days = series.buckets.length > 0 ? Math.round((series.buckets[0].end - series.buckets[0].start) / 86_400_000) : 1;
+  const bucketName = days <= 1 ? "day" : days === 7 ? "week" : `${days} days`;
   const dur = (seconds: number | null): string => (seconds === null ? "-" : formatDuration(seconds));
   const noneKnown = series.stages.every((s) => s.points.length === 0);
 
@@ -588,15 +763,15 @@ export function LeadTimeChart({
     if (!step) return;
     event.preventDefault();
     const count = series.buckets.length;
-    const from = hover?.type === "bucket" ? hover.index : step > 0 ? -1 : count;
+    const from = hover?.index ?? (step > 0 ? -1 : count);
     const next = Math.min(count - 1, Math.max(0, from + step));
-    setHover({ type: "bucket", index: next, x: centres[next] });
+    setHover({ index: next, x: centres[next] });
   };
   const move = (event: PointerEvent<SVGRectElement>): void => {
     const box = event.currentTarget.getBoundingClientRect();
     const px = MARGIN.left + ((event.clientX - box.left) / Math.max(box.width, 1)) * plotW;
     const index = nearestIndex(centres, px);
-    setHover({ type: "bucket", index, x: centres[index] });
+    setHover({ index, x: centres[index] });
   };
   const toggle = (stage: StageKey): void => {
     const next = new Set(hidden);
@@ -605,7 +780,7 @@ export function LeadTimeChart({
     setHidden(next);
   };
 
-  const aria = `Lead time (${modeLabel}), ${label(windowStart)} to ${label(now)}, by merge date: ${series.stages
+  const aria = `Lead time (${modeLabel}), ${label(windowStart)} to ${label(now)}, median per ${bucketName} by merge date: ${series.stages
     .map((s) =>
       s.summary.n > 0
         ? `${s.label} median ${dur(s.summary.median)} over ${s.summary.n} PRs`
@@ -616,11 +791,7 @@ export function LeadTimeChart({
   return (
     <ChartFrame
       title={`Lead time over time (${modeLabel})`}
-      description={
-        eventMode
-          ? `Each point is one PR at its exact merge time (${timeZone}), using ${modeLabel.toLowerCase()}. Lines connect known values for each step; missing milestones leave gaps. Hover a point for its PR and duration.${excludeWeekends ? " Weekend hours have zero width on the x-axis." : ""}`
-          : `Each PR is placed at the time it merged (${timeZone}), and each line is the median of a step over the PRs that merged in each week, using ${modeLabel.toLowerCase()}. A bucket with no PR whose step is known is a gap. The dots are single PRs; hover one for its details. The scale follows the medians; longer individual PRs appear at the top edge with their full duration in the tooltip.${excludeWeekends ? " Weekend hours have zero width on the x-axis." : ""}`
-      }
+      description={`Each group of bars is the PRs that merged in one ${bucketName} (${timeZone}); each bar is the median of one step over the PRs in it whose step is known, using ${modeLabel.toLowerCase()}. A step with no known PR in a ${bucketName} has no bar. Hover a group for the median, p75 and the number of PRs behind each bar.${excludeWeekends ? " Weekend hours have zero width on the x-axis." : ""}`}
       legend={
         <div className="agg-lead-controls">
           <ul className="agg-legend">
@@ -656,16 +827,12 @@ export function LeadTimeChart({
                 {text}
               </button>
             ))}
-            {!eventMode && <label className="agg-check">
-              <input type="checkbox" checked={band} onChange={(event) => setBand(event.target.checked)} />
-              p75 to p90 band (total)
-            </label>}
           </div>
         </div>
       }
       table={
         <table className="agg-table">
-          <caption>{eventMode ? `Lead time (${modeLabel}) per merged PR` : `Lead time (${modeLabel}) per bucket: median (PRs known / unknown)`}</caption>
+          <caption>{`Lead time (${modeLabel}) per ${bucketName}: median (PRs known / unknown)`}</caption>
           <thead>
             <tr>
               <th scope="col">Merged in</th>
@@ -682,7 +849,7 @@ export function LeadTimeChart({
                 <th scope="row">{rangeLabel(i)}</th>
                 {series.stages.map((s) => {
                   const b = s.buckets[i];
-                  return <td key={s.key}>{eventMode ? dur(b.median) : b.n > 0 ? `${dur(b.median)} (${b.n} / ${b.unknown})` : `- (0 / ${b.unknown})`}</td>;
+                  return <td key={s.key}>{b.n > 0 ? `${dur(b.median)} (${b.n} / ${b.unknown})` : `- (0 / ${b.unknown})`}</td>;
                 })}
               </tr>
             ))}
@@ -727,15 +894,46 @@ export function LeadTimeChart({
               </g>
             ))}
             {axisLabels.map((i) => (
-              <text key={i} className="agg-tick" x={xMs(series.buckets[i].start)} y={height - 10} textAnchor="start">
+              <text key={i} className="agg-tick" x={centres[i]} y={height - 10} textAnchor="middle">
                 {label(series.buckets[i].start)}
               </text>
             ))}
             <text className="agg-axis-title" transform={`translate(11 ${MARGIN.top + plotH / 2}) rotate(-90)`} textAnchor="middle">
-              {`time (${axis.unit === "m" ? "minutes" : axis.unit === "h" ? "hours" : "days"})`}
+              {`median time (${axis.unit === "m" ? "minutes" : axis.unit === "h" ? "hours" : "days"})`}
             </text>
+            {series.buckets.map((bucket, i) => {
+              // A group is as wide as its time span (less a gap), with a cap so
+              // a long span does not make fat bars.
+              const group = Math.min(Math.max(spans[i].right - spans[i].left, 0) * 0.8, visible.length * 22);
+              const barW = group / Math.max(visible.length, 1);
+              return (
+                <g key={bucket.start} className={hover?.index === i ? "agg-col agg-col-active" : "agg-col"}>
+                  {visible.map((stage, k) => {
+                    const median = stage.buckets[i].median;
+                    if (median === null || barW <= 0) return null;
+                    const st = style(stage.key);
+                    return (
+                      <g key={stage.key} className={`tone-${st.tone}`}>
+                        <rect
+                          className="agg-bar"
+                          x={centres[i] - group / 2 + k * barW}
+                          y={y(Math.min(median, axis.top))}
+                          width={Math.max(barW - 1, 1)}
+                          height={Math.max(y(0) - y(Math.min(median, axis.top)), 0)}
+                          fill={fillOf(id, st)}
+                        />
+                      </g>
+                    );
+                  })}
+                </g>
+              );
+            })}
+            <line className="agg-axis" x1={MARGIN.left} x2={MARGIN.left + plotW} y1={y(0)} y2={y(0)} />
+            {hover && (
+              <line className="agg-cursor" x1={hover.x} x2={hover.x} y1={MARGIN.top} y2={MARGIN.top + plotH} />
+            )}
             <rect
-              className="agg-hit agg-hit-under"
+              className="agg-hit"
               x={MARGIN.left}
               y={MARGIN.top}
               width={plotW}
@@ -743,61 +941,9 @@ export function LeadTimeChart({
               onPointerMove={move}
               onPointerLeave={() => setHover(null)}
             />
-            {bandShown && total && (
-              <path
-                className="agg-range"
-                d={rangePath(
-                  total.buckets.map((b) => b.p75),
-                  total.buckets.map((b) => b.p90),
-                  bucketX,
-                  y,
-                  8,
-                )}
-              />
-            )}
-            {visible.map((stage) => {
-              const st = style(stage.key);
-              return (
-                <g key={stage.key} className={`tone-${st.tone}`}>
-                  {stage.points.map((point, i) => (
-                    <circle
-                      key={`${point.pr.repo}#${point.pr.number}-${i}`}
-                      className="agg-dot"
-                      cx={xMs(point.ms)}
-                      cy={pointY(point.seconds)}
-                      r={2.5}
-                      onPointerEnter={() =>
-                        setHover({ type: "point", stage: stage.key, index: i, x: xMs(point.ms) })
-                      }
-                      onPointerLeave={() => setHover(null)}
-                    />
-                  ))}
-                </g>
-              );
-            })}
-            {visible.map((stage) => {
-              const st = style(stage.key);
-              return (
-                <path
-                  key={stage.key}
-                  className={`tone-${st.tone} agg-line${stage.key === TOTAL_STAGE ? " agg-line-total" : ""}`}
-                  d={linePath(
-                    stage.buckets.map((b) => b.median),
-                    bucketX,
-                    y,
-                  )}
-                  fill="none"
-                  stroke="var(--tone)"
-                  strokeDasharray={st.hatch ? "5 3" : undefined}
-                />
-              );
-            })}
-            {hover && (
-              <line className="agg-cursor" x1={hover.x} x2={hover.x} y1={MARGIN.top} y2={MARGIN.top + plotH} />
-            )}
           </svg>
           <ChartTooltip hover={hover} width={width}>
-            {hover?.type === "bucket" && (
+            {hover && (
               <>
                 <strong>{`Merged ${rangeLabel(hover.index)}`}</strong>
                 {visible.map((stage) => {
@@ -807,36 +953,15 @@ export function LeadTimeChart({
                       <Swatch id={id} series={style(stage.key)} />
                       <span>{style(stage.key).label}</span>
                       <span className="agg-tip-value">
-                        {eventMode
-                          ? dur(b.median)
-                          : b.n > 0
-                            ? `median ${dur(b.median)}, p75 ${dur(b.p75)}, n=${b.n}${b.unknown ? ` (${b.unknown} unknown)` : ""}`
-                            : `no data${b.unknown ? ` (${b.unknown} unknown)` : ""}`}
+                        {b.n > 0
+                          ? `median ${dur(b.median)}, p75 ${dur(b.p75)}, n=${b.n}${b.unknown ? ` (${b.unknown} unknown)` : ""}`
+                          : `no data${b.unknown ? ` (${b.unknown} unknown)` : ""}`}
                       </span>
                     </div>
                   );
                 })}
               </>
             )}
-            {hover?.type === "point" &&
-              (() => {
-                const point = series.stages.find((s) => s.key === hover.stage)?.points[hover.index];
-                if (!point) return null;
-                const pr = point.pr;
-                return (
-                  <>
-                    <strong>{`${pr.repo}#${pr.number}`}</strong>
-                    <div>{pr.title}</div>
-                    <div className="agg-tip-sub">{style(hover.stage).label}</div>
-                    <div>{`${formatDuration(point.seconds)} (${modeLabel.toLowerCase()})`}</div>
-                    <div className="agg-tip-sub">
-                      {`opened ${formatLocalInstant(Date.parse(pr.opened), timeZone)}`}
-                      <br />
-                      {`merged ${formatLocalInstant(point.ms, timeZone)}`}
-                    </div>
-                  </>
-                );
-              })()}
           </ChartTooltip>
         </div>
       )}

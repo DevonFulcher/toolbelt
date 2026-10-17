@@ -20,6 +20,8 @@ function pr(number: number, parts: Partial<PrMilestones>): PrMilestones {
     first_review_requested: null,
     first_review: null,
     first_review_after_request: null,
+    additions: 10,
+    deletions: 2,
     ...parts,
   };
 }
@@ -147,8 +149,8 @@ describe("lead time over time", () => {
     expect(weekdays.summary.median).toBe(16 * HOUR);
   });
 
-  test("4 and 12 weeks show every merge, while 26 and 52 keep weekly buckets", () => {
-    expect([4, 12, 26, 52].map(bucketDays)).toEqual([null, null, 7, 7]);
+  test("the bars group by day for 4 weeks, by week up to 26 and by two weeks beyond; per-merge events remain available", () => {
+    expect([4, 12, 26, 52].map(bucketDays)).toEqual([1, 7, 7, 14]);
     const sameDay = [
       pr(1, { task_started: "2026-10-08T10:00:00Z", ended: "2026-10-08T12:00:00Z" }),
       pr(2, { task_started: "2026-10-08T11:00:00Z", ended: "2026-10-08T13:00:00Z" }),

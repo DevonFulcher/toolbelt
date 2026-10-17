@@ -704,6 +704,8 @@ def milestones(task: Task, matched_by: str | None) -> api.PrMilestones:
         first_review_requested=iso(requested),
         first_review=iso(min(reviews, default=None)),
         first_review_after_request=iso(min(after_request, default=None)),
+        additions=facts.additions,
+        deletions=facts.deletions,
     )
 
 

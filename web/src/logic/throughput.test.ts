@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import type { PrMilestones } from "../api/generated";
 import { localMidnight, windowStart } from "./localTime";
-import { granularityFor, throughput } from "./throughput";
+import { granularityFor, linesThroughput, throughput } from "./throughput";
 
 const CHICAGO = "America/Chicago";
 
@@ -19,6 +19,8 @@ function pr(number: number, opened: string, ended: string | null, state: PrMiles
     first_review_requested: null,
     first_review: null,
     first_review_after_request: null,
+    additions: 10,
+    deletions: 2,
   };
 }
 
@@ -95,5 +97,70 @@ describe("throughput", () => {
       expect(result.opened.reduce((sum, n) => sum + n, 0)).toBe(1);
       expect(result.merged.reduce((sum, n) => sum + n, 0)).toBe(1);
     }
+  });
+});
+
+describe("linesThroughput", () => {
+  const options = {
+    windowStart: Date.parse("2026-10-05T05:00:00Z"),
+    now: NOW,
+    weeks: 4,
+    timeZone: CHICAGO,
+  };
+  const merged = (number: number, ended: string, additions: number, deletions: number): PrMilestones => ({
+    ...pr(number, "2026-10-01T15:00:00Z", ended, "MERGED"),
+    additions,
+    deletions,
+  });
+
+  test("sums the lines of the PRs merged in each day", () => {
+    const result = linesThroughput(
+      [
+        merged(1, "2026-10-07T15:00:00Z", 100, 10),
+        merged(2, "2026-10-07T20:00:00Z", 50, 5),
+        merged(3, "2026-10-08T15:00:00Z", 7, 3),
+      ],
+      options,
+    );
+
+    const day = (iso: string): number => {
+      const d = new Date(iso);
+      return result.buckets.findIndex((b) => b.start === localMidnight(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), CHICAGO));
+    };
+    expect(result.granularity).toBe("day");
+    expect(result.added[day("2026-10-07T15:00:00Z")]).toBe(150);
+    expect(result.deleted[day("2026-10-07T15:00:00Z")]).toBe(15);
+    expect(result.added[day("2026-10-08T15:00:00Z")]).toBe(7);
+    expect(result.added.reduce((a, b) => a + b, 0)).toBe(157);
+  });
+
+  test("counts only merged PRs, by when they merged", () => {
+    const closed = { ...pr(4, "2026-10-01T15:00:00Z", "2026-10-07T15:00:00Z", "CLOSED"), additions: 999, deletions: 999 };
+    const open = { ...pr(5, "2026-10-01T15:00:00Z", null, "OPEN"), additions: 888, deletions: 888 };
+    const before = merged(6, "2026-09-01T15:00:00Z", 777, 777);
+
+    const result = linesThroughput([closed, open, before], options);
+
+    expect(result.added.every((n) => n === 0)).toBe(true);
+    expect(result.deleted.every((n) => n === 0)).toBe(true);
+  });
+
+  test("leaves out merges on weekends when asked", () => {
+    const saturday = merged(7, "2026-10-10T17:00:00Z", 40, 4);
+    const monday = merged(8, "2026-10-12T17:00:00Z", 60, 6);
+
+    const all = linesThroughput([saturday, monday], options);
+    const weekdays = linesThroughput([saturday, monday], { ...options, excludeWeekends: true });
+
+    expect(all.added.reduce((a, b) => a + b, 0)).toBe(100);
+    expect(weekdays.added.reduce((a, b) => a + b, 0)).toBe(60);
+    expect(weekdays.deleted.reduce((a, b) => a + b, 0)).toBe(6);
+  });
+
+  test("buckets by week for the long windows", () => {
+    const result = linesThroughput([merged(9, "2026-10-07T15:00:00Z", 5, 1)], { ...options, weeks: 26, windowStart: Date.parse("2026-04-20T05:00:00Z") });
+
+    expect(result.granularity).toBe("week");
+    expect(result.added.reduce((a, b) => a + b, 0)).toBe(5);
   });
 });

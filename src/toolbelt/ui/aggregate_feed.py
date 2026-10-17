@@ -74,7 +74,7 @@ query($search: String!, $after: String) {{
     nodes {{
       ... on PullRequest {{
         id number url title state isDraft createdAt updatedAt mergedAt closedAt
-        headRefName baseRefName reviewDecision
+        headRefName baseRefName reviewDecision additions deletions
         author {{ login }}
         repository {{ nameWithOwner isArchived }}
         reviewRequests {{ totalCount }}
@@ -151,6 +151,8 @@ def parse_pr(node: dict) -> aggregate.PrRecord:
         requested_reviewers=(),
         commit_rollups=(),
         items=timeline_items(entries),
+        additions=node.get("additions") or 0,
+        deletions=node.get("deletions") or 0,
     )
     changes = sorted(
         (_time(e["createdAt"]), e["previousRefName"], e["currentRefName"])

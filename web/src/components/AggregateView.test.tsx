@@ -45,7 +45,7 @@ describe("the aggregate view", () => {
     await screen.findByRole("heading", { name: "Throughput" });
 
     expect(fetchMock).toHaveBeenCalledWith("/api/aggregate?weeks=12", expect.anything());
-    for (const name of ["Throughput", "Lead time over time (All time)", "Status mix", "Who is it waiting on"]) {
+    for (const name of ["Throughput", "Lines changed", "Lead time over time (All time)", "Status mix", "Who is it waiting on"]) {
       expect(screen.getByRole("heading", { name })).toBeInTheDocument();
     }
     // The status legend carries the catalog's labels (as served), and the
@@ -389,22 +389,60 @@ describe("the aggregate view", () => {
     expect(row("Task started to merged")).toMatch(/^Task started to merged221\.9d/);
     // Reviewed: PRs 1 (8h), 2 (24h) and 3 (23h); PR 4 has no review.
     expect(row("Review requested to first review")).toMatch(/^Review requested to first review3123h/);
-    // The line chart has an accessible summary naming the mode.
+    // The bar chart has an accessible summary naming the mode and the bucket.
     expect(within(lead).getByRole("img").getAttribute("aria-label")).toMatch(
-      /^Lead time \(All time\), Jul 20 to Oct 8, by merge date:/,
+      /^Lead time \(All time\), Jul 20 to Oct 8, median per week by merge date:/,
     );
+  });
+
+  test("lead times are grouped bars, one bar per step in each week, not points and lines", async () => {
+    serve(aggregate());
+    show();
+    const lead = await screen.findByRole("region", { name: "Lead time over time (All time)" });
+
+    expect(lead.querySelectorAll("g.agg-col rect.agg-bar").length).toBeGreaterThan(0);
+    expect(lead.querySelectorAll("path.agg-line")).toHaveLength(0);
+    expect(lead.querySelectorAll("circle.agg-dot")).toHaveLength(0);
+    expect(lead).toHaveTextContent("Each group of bars is the PRs that merged in one week");
+    expect(within(lead).queryByRole("checkbox", { name: /p75 to p90/ })).not.toBeInTheDocument();
+  });
+
+  test("lines added and deleted by merged PRs are charted next to throughput", async () => {
+    const base = aggregate();
+    const merged = (number: number, ended: string, additions: number, deletions: number) => ({
+      ...base.prs[0],
+      number,
+      state: "MERGED" as const,
+      ended,
+      additions,
+      deletions,
+    });
+    serve(
+      aggregate({
+        prs: [merged(101, "2026-10-06T15:00:00Z", 100, 10), merged(102, "2026-10-07T15:00:00Z", 50, 5)],
+      }),
+    );
+    show();
+    const lines = await screen.findByRole("region", { name: "Lines changed" });
+
+    const legend = within(lines).getByRole("list");
+    expect(within(legend).getByText("Lines added").parentElement).toHaveTextContent("150 total");
+    expect(within(legend).getByText("Lines deleted").parentElement).toHaveTextContent("15 total");
+    expect(lines.querySelectorAll("g.agg-col rect").length).toBeGreaterThan(0);
+    fireEvent.click(within(lines).getByRole("button", { name: "Show data table" }));
+    expect(within(within(lines).getByRole("table")).getByText("100")).toBeInTheDocument();
   });
 
   test("a step can be hidden from the legend so the total reads on its own", async () => {
     serve(aggregate());
     show();
     const lead = await screen.findByRole("region", { name: "Lead time over time (All time)" });
-    const steps = lead.querySelectorAll("path.agg-line");
+    const steps = lead.querySelectorAll("rect.agg-bar");
     expect(steps.length).toBeGreaterThan(1);
 
     fireEvent.click(within(lead).getByRole("button", { name: "Task started to PR opened" }));
 
-    expect(lead.querySelectorAll("path.agg-line")).toHaveLength(steps.length - 1);
+    expect(lead.querySelectorAll("rect.agg-bar").length).toBeLessThan(steps.length);
     expect(within(lead).getByRole("button", { name: "Task started to PR opened" })).toHaveAttribute(
       "aria-pressed",
       "false",

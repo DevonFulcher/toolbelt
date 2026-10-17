@@ -634,6 +634,10 @@ class PrMilestones(Model):
     #: at or after the first request.
     first_review: str | None
     first_review_after_request: str | None
+    #: Lines the PR adds and deletes against its base (its parent branch for a
+    #: stacked PR, so a stack's lines are not counted twice).
+    additions: int
+    deletions: int
 
 
 class AggregateCoverage(Model):

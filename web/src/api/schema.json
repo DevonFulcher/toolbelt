@@ -2579,6 +2579,12 @@
       "additionalProperties": false,
       "description": "One PR of the user's and the UTC instants its lead times are measured\nbetween. The server does no calendar arithmetic (day, week and weekend\nare the viewer's time zone's): the client buckets and subtracts.",
       "properties": {
+        "additions": {
+          "type": "integer"
+        },
+        "deletions": {
+          "type": "integer"
+        },
         "ended": {
           "anyOf": [
             {
@@ -2679,7 +2685,9 @@
         "matched_by",
         "first_review_requested",
         "first_review",
-        "first_review_after_request"
+        "first_review_after_request",
+        "additions",
+        "deletions"
       ],
       "title": "PrMilestones",
       "type": "object"

@@ -7,11 +7,11 @@ import type { Aggregate, MixWho, Tone } from "../api/generated";
 import { formatBucketDate } from "../logic/aggregateChart";
 import { bucketDays, leadTimeSeries, STAGES, type StageKey } from "../logic/leadTime";
 import { browserTimeZone, formatLocalDate, windowStart } from "../logic/localTime";
-import { throughput } from "../logic/throughput";
+import { linesThroughput, throughput } from "../logic/throughput";
 import type { Counts } from "../store/selectors";
 import { NEXT_SECTIONS } from "../logic/layout";
 import { useApp, useAppStore } from "../store/StoreContext";
-import { LeadTimeChart, MixChart, ThroughputChart, withHatches, type LeadStageStyle } from "./AggregateCharts";
+import { LeadTimeChart, LinesChart, MixChart, ThroughputChart, withHatches, type LeadStageStyle } from "./AggregateCharts";
 import { FilterBar } from "./FilterBar";
 
 type Load =
@@ -205,6 +205,8 @@ export function AggregatePanels({
   });
   const flow = throughput(data.prs, { windowStart: start, now, weeks, timeZone });
   const weekdayFlow = throughput(data.prs, { windowStart: start, now, weeks, timeZone, excludeWeekends: true });
+  const linesFlow = linesThroughput(data.prs, { windowStart: start, now, weeks, timeZone });
+  const weekdayLines = linesThroughput(data.prs, { windowStart: start, now, weeks, timeZone, excludeWeekends: true });
   const lead = leadTimeSeries(data.prs, {
     windowStart: start,
     now,
@@ -233,12 +235,16 @@ export function AggregatePanels({
     { key: "opened", label: "PRs opened", tone: opened?.tone ?? "green", legend: "PRs opened in each local day or week." },
     { key: "merged", label: "PRs merged", tone: merged?.tone ?? "purple", legend: "PRs merged in each local day or week." },
   ]);
+  const linesStyles = withHatches([
+    { key: "added", label: "Lines added", tone: "green", legend: "Lines added by the PRs merged in each local day or week." },
+    { key: "deleted", label: "Lines deleted", tone: "red", legend: "Lines deleted by the PRs merged in each local day or week." },
+  ]);
   const leadStyles = withHatches(
     STAGES.map(({ key, label }) => ({
       key,
       label,
       tone: LEAD_TONES[key],
-      legend: `${LEAD_DESCRIPTIONS[key]} ${weeks <= 12 ? "Each point is one merged PR." : "The line shows the weekly median."}`,
+      legend: `${LEAD_DESCRIPTIONS[key]} Each bar is the median over the PRs merged in a group.`,
     })),
   ) as LeadStageStyle[];
   const startsAfterWindow = Date.parse(coverage.task_starts_since) > start;
@@ -279,6 +285,12 @@ export function AggregatePanels({
         weekdayData={weekdayFlow}
         timeZone={timeZone}
         styles={{ opened: throughputStyles[0], merged: throughputStyles[1] }}
+      />
+      <LinesChart
+        data={linesFlow}
+        weekdayData={weekdayLines}
+        timeZone={timeZone}
+        styles={{ added: linesStyles[0], deleted: linesStyles[1] }}
       />
       <LeadTimeChart
         series={lead}

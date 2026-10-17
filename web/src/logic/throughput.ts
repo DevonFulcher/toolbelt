@@ -46,3 +46,34 @@ export function throughput(
   }
   return { granularity, buckets, opened, merged, closed };
 }
+
+export interface LinesThroughput {
+  granularity: Granularity;
+  buckets: Bucket[];
+  /** Lines added and deleted by the PRs merged in each bucket. */
+  added: number[];
+  deleted: number[];
+}
+
+/** Lines added and deleted by the PRs merged in each local day or week. A
+ * stacked PR counts its own diff against its parent, so a stack is not
+ * counted twice. */
+export function linesThroughput(
+  prs: readonly PrMilestones[],
+  options: { windowStart: number; now: number; weeks: number; timeZone: string; excludeWeekends?: boolean },
+): LinesThroughput {
+  const granularity = granularityFor(options.weeks);
+  const buckets = localBuckets(options.windowStart, options.now, granularity === "day" ? 1 : 7, options.timeZone);
+  const added = buckets.map(() => 0);
+  const deleted = buckets.map(() => 0);
+  for (const pr of prs) {
+    if (pr.state !== "MERGED" || pr.ended === null) continue;
+    const at = Date.parse(pr.ended);
+    const index = bucketIndex(buckets, at);
+    if (index < 0) continue;
+    if (options.excludeWeekends && isWeekend(at, options.timeZone)) continue;
+    added[index] += pr.additions;
+    deleted[index] += pr.deletions;
+  }
+  return { granularity, buckets, added, deleted };
+}

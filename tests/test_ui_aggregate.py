@@ -839,6 +839,8 @@ def node(
         "headRefName": head or f"branch-{number}",
         "baseRefName": "main",
         "reviewDecision": decision,
+        "additions": 30,
+        "deletions": 7,
         "author": {"login": "me"},
         "repository": {"nameWithOwner": repo, "isArchived": archived},
         "reviewRequests": {"totalCount": 0},
@@ -1471,3 +1473,26 @@ def test_the_aggregate_is_not_fetched_by_the_snapshot_or_at_startup(client_and_p
     client.get("/api/snapshot")
 
     assert pages.calls == []
+
+
+def test_a_prs_lines_added_and_deleted_reach_its_milestones():
+    from toolbelt.ui.aggregate_feed import parse_pr
+
+    record = parse_pr(node(5, state="MERGED", merged_at="2026-10-07T09:00:00Z"))
+
+    assert (record.facts.additions, record.facts.deletions) == (30, 7)
+
+    result = compute([record], facts=[])
+
+    assert [(m.additions, m.deletions) for m in result.prs] == [(30, 7)]
+
+
+def test_a_node_without_line_counts_has_zero():
+    from toolbelt.ui.aggregate_feed import parse_pr
+
+    bare = node(6)
+    del bare["additions"], bare["deletions"]
+
+    record = parse_pr(bare)
+
+    assert (record.facts.additions, record.facts.deletions) == (0, 0)

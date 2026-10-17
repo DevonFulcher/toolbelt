@@ -27,6 +27,8 @@ function milestones(number: number, parts: Partial<PrMilestones>): PrMilestones 
     first_review_requested: null,
     first_review: null,
     first_review_after_request: null,
+    additions: 10,
+    deletions: 2,
     ...parts,
   };
 }

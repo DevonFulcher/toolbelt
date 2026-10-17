@@ -293,6 +293,8 @@ export interface AggregateNote {
  * are the viewer's time zone's): the client buckets and subtracts.
  */
 export interface PrMilestones {
+  additions: number;
+  deletions: number;
   ended: string | null;
   first_review: string | null;
   first_review_after_request: string | null;
