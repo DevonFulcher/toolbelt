@@ -72,6 +72,27 @@ class AutonomousUsage:
     by_task: list[AutonomousTask]
 
 
+#: The autonomous run triggers, in the order the chart stacks them.
+TRIGGERS = ("resolve_conflicts", "resolve_comments", "fix_ci")
+
+
+@dataclass(frozen=True)
+class SpendBucket:
+    """What one stretch of time cost: interactive sessions, and autonomous runs
+    (each run's own cost, at the time it started) by what they were for."""
+
+    start: datetime
+    interactive_usd: float
+    by_trigger: dict[str, float]
+
+
+@dataclass(frozen=True)
+class SpendOverTime:
+    #: How long each bucket is: an hour for a one-day window, else a day (UTC).
+    bucket_hours: int
+    buckets: list[SpendBucket]
+
+
 @dataclass(frozen=True)
 class SpendSummary:
     as_of: datetime
@@ -86,6 +107,39 @@ class SpendSummary:
     #: unclaimed. None when none has been recorded.
     claims_since: datetime | None
     autonomous: AutonomousUsage
+    over_time: SpendOverTime
+
+
+def _bucket_start(moment: datetime, bucket_hours: int) -> datetime:
+    utc = moment.astimezone(UTC)
+    floored = utc.replace(minute=0, second=0, microsecond=0)
+    return floored if bucket_hours == 1 else floored.replace(hour=0)
+
+
+def _over_time(
+    store: StackStore, start: datetime, end: datetime, bucket_hours: int
+) -> SpendOverTime:
+    first = _bucket_start(start, bucket_hours)
+    step = timedelta(hours=bucket_hours)
+    starts: list[datetime] = []
+    moment = first
+    while moment < end:
+        starts.append(moment)
+        moment += step
+    interactive = {s: 0.0 for s in starts}
+    autonomous: dict[datetime, dict[str, float]] = {s: {} for s in starts}
+    for hour, cost in store.interactive_cost_by_hour(first, end).items():
+        at = datetime.fromisoformat(f"{hour}:00:00+00:00")
+        interactive[_bucket_start(at, bucket_hours)] += cost
+    for run in store.agent_runs(since=first):
+        bucket = _bucket_start(run.started_at, bucket_hours)
+        if bucket in autonomous:
+            costs = autonomous[bucket]
+            costs[run.trigger] = costs.get(run.trigger, 0.0) + run.cost_usd
+    return SpendOverTime(
+        bucket_hours=bucket_hours,
+        buckets=[SpendBucket(s, interactive[s], autonomous[s]) for s in starts],
+    )
 
 
 def _window(
@@ -215,4 +269,7 @@ def summarize(
         unpriced_models=store.unpriced_models(),
         claims_since=store.first_claim_seen(),
         autonomous=_autonomous(store, starts, start),
+        over_time=_over_time(
+            store, start, end, bucket_hours=1 if breakdown_days == 1 else 24
+        ),
     )

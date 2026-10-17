@@ -21,6 +21,14 @@ export function spend(parts: Partial<Spend> = {}): Spend {
       { label: "Last 30 days", start: "2026-09-13T12:00:00+00:00", calls: 15234, tokens: tokens({ cache_read: 4_800_000_000 }), cost_usd: 1368.7, unpriced_calls: 0 },
       { label: "This month (UTC)", start: "2026-10-01T00:00:00+00:00", calls: 7951, tokens: tokens({ cache_read: 2_600_000_000 }), cost_usd: 574.42, unpriced_calls: 0 },
     ],
+    over_time: {
+      bucket_hours: 24,
+      buckets: [
+        { start: "2026-10-11T00:00:00+00:00", interactive_usd: 40, resolve_conflicts_usd: 0, resolve_comments_usd: 0.02, fix_ci_usd: 0 },
+        { start: "2026-10-12T00:00:00+00:00", interactive_usd: 100, resolve_conflicts_usd: 0.1, resolve_comments_usd: 0, fix_ci_usd: 0.05 },
+        { start: "2026-10-13T00:00:00+00:00", interactive_usd: 60, resolve_conflicts_usd: 0, resolve_comments_usd: 0.08, fix_ci_usd: 0 },
+      ],
+    },
     by_model: [
       { model: "claude-sonnet-5-5", calls: 5090, tokens: tokens({ cache_read: 1_600_000_000 }), cost_usd: 322.55, unpriced_calls: 0 },
       { model: "claude-haiku-5-5", calls: 42, tokens: tokens({ cache_read: 3_600_000 }), cost_usd: 0.18, unpriced_calls: 0 },

@@ -3327,6 +3327,9 @@
             }
           ]
         },
+        "over_time": {
+          "$ref": "#/$defs/SpendOverTime"
+        },
         "unpriced_models": {
           "items": {
             "$ref": "#/$defs/UnpricedModel"
@@ -3349,9 +3352,40 @@
         "by_task",
         "unpriced_models",
         "claims_since",
-        "autonomous"
+        "autonomous",
+        "over_time"
       ],
       "title": "Spend",
+      "type": "object"
+    },
+    "SpendBucket": {
+      "additionalProperties": false,
+      "description": "What one stretch of time cost.",
+      "properties": {
+        "fix_ci_usd": {
+          "type": "number"
+        },
+        "interactive_usd": {
+          "type": "number"
+        },
+        "resolve_comments_usd": {
+          "type": "number"
+        },
+        "resolve_conflicts_usd": {
+          "type": "number"
+        },
+        "start": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "start",
+        "interactive_usd",
+        "resolve_conflicts_usd",
+        "resolve_comments_usd",
+        "fix_ci_usd"
+      ],
+      "title": "SpendBucket",
       "type": "object"
     },
     "SpendModel": {
@@ -3381,6 +3415,26 @@
         "unpriced_calls"
       ],
       "title": "SpendModel",
+      "type": "object"
+    },
+    "SpendOverTime": {
+      "additionalProperties": false,
+      "properties": {
+        "bucket_hours": {
+          "type": "integer"
+        },
+        "buckets": {
+          "items": {
+            "$ref": "#/$defs/SpendBucket"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "bucket_hours",
+        "buckets"
+      ],
+      "title": "SpendOverTime",
       "type": "object"
     },
     "SpendTask": {

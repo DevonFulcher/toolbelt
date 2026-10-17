@@ -208,8 +208,42 @@ describe("the aggregate view", () => {
     expect(mix.querySelectorAll("path.agg-band").length).toBeGreaterThan(0);
     expect(mix.querySelectorAll("path.agg-line")).toHaveLength(0);
     expect(mix.querySelectorAll("line.agg-transition-tick")).toHaveLength(2);
-    // The tasks-in-flight strip still follows the exact instants.
-    expect(mix.querySelectorAll("rect.agg-inflight")).toHaveLength(3);
+    // The separate tasks-in-flight strip is gone: the number scale shows it.
+    expect(mix.querySelectorAll("rect.agg-inflight")).toHaveLength(0);
+  });
+
+  test("the mix charts show shares by default and can switch to the number of tasks", async () => {
+    serve(aggregate());
+    show();
+    const mix = await screen.findByRole("region", { name: "Status mix" });
+    const ticks = (): string[] => [...mix.querySelectorAll("text.agg-tick")].map((t) => t.textContent ?? "");
+
+    expect(within(mix).getByRole("button", { name: "Share of tasks" })).toHaveAttribute("aria-pressed", "true");
+    expect(ticks()).toEqual(expect.arrayContaining(["0%", "50%", "100%"]));
+    expect(mix).toHaveTextContent("share of tasks in flight");
+
+    fireEvent.click(within(mix).getByRole("button", { name: "Number of tasks" }));
+
+    expect(within(mix).getByRole("button", { name: "Number of tasks" })).toHaveAttribute("aria-pressed", "true");
+    // The most in flight in the fixture is 10: the axis runs to a nice number above it.
+    expect(ticks()).not.toContain("100%");
+    expect(ticks()).toEqual(expect.arrayContaining(["0", "10"]));
+    expect(mix).toHaveTextContent("tasks in flight");
+    expect(mix.querySelectorAll("path.agg-band").length).toBeGreaterThan(0);
+
+    fireEvent.click(within(mix).getByRole("button", { name: "Share of tasks" }));
+    expect(ticks()).toContain("100%");
+  });
+
+  test("the who-is-it-waiting-on chart has the same switch", async () => {
+    serve(aggregate());
+    show();
+    const who = await screen.findByRole("region", { name: "Who is it waiting on" });
+
+    fireEvent.click(within(who).getByRole("button", { name: "Number of tasks" }));
+
+    expect(within(who).getByRole("button", { name: "Number of tasks" })).toHaveAttribute("aria-pressed", "true");
+    expect(who.querySelectorAll("path.agg-band").length).toBeGreaterThan(0);
   });
 
   test("who the work is waiting on keeps its stacked chart and exact transition times", async () => {

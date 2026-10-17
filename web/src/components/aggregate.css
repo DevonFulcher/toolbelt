@@ -86,3 +86,10 @@
 .agg-notes summary { cursor: pointer; }
 .agg-notes dt { color: var(--fg); font-weight: 600; margin-top: 6px; }
 .agg-notes dd { margin: 0; }
+
+/* A two-way switch (share / number): the pressed button is filled. */
+.agg-seg { display: inline-flex; justify-self: start; width: fit-content; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.agg-seg button { font: inherit; font-size: 12px; padding: 2px 10px; border: 0; background: transparent;
+                  color: var(--fg); cursor: pointer; }
+.agg-seg button + button { border-left: 1px solid var(--line); }
+.agg-seg button[aria-pressed="true"] { background: var(--fg); color: var(--card); }

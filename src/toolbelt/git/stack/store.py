@@ -995,6 +995,26 @@ class StackStore:
             for r in rows
         ]
 
+    def interactive_cost_by_hour(
+        self, start: datetime, end: datetime
+    ) -> dict[str, float]:
+        """Cost of the interactive calls (those of autonomous runs' sessions
+        are not) made in ``[start, end)``, by UTC hour as ``YYYY-MM-DDTHH``.
+        Calls with no price count as nothing."""
+        rows = self._conn.execute(
+            """
+            SELECT substr(at, 1, 13) AS hour, SUM(COALESCE(cost_usd, 0)) AS cost
+            FROM usage_calls
+            WHERE at >= ? AND at < ?
+              AND session_id NOT IN (
+                  SELECT session_id FROM agent_runs WHERE session_id IS NOT NULL
+              )
+            GROUP BY hour
+            """,
+            (_iso(start), _iso(end)),
+        )
+        return {row["hour"]: row["cost"] for row in rows}
+
     def usage_by_task(self, start: datetime, end: datetime) -> list[TaskUsage]:
         """Calls made in ``[start, end)`` attributed to tasks: a call belongs
         to each task that a claim span of the call's session covers at the

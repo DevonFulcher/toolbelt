@@ -910,8 +910,10 @@ export function MixChart({
   const id = useId();
   const [hover, setHover] = useState<Hover | null>(null);
   const [excludeWeekends, setExcludeWeekends] = useState(false);
+  // Each band is a share of the tasks in flight (summing to 100%), or how many
+  // tasks that is (the whole stack is the number in flight).
+  const [scale, setScale] = useState<"share" | "count">("share");
   const height = 240;
-  const stripHeight = 52;
   const plotW = Math.max(width - MARGIN.left - MARGIN.right, 50);
   const plotH = height - MARGIN.top - MARGIN.bottom;
   const count = starts.length;
@@ -919,7 +921,8 @@ export function MixChart({
   const project = timeAxis(times[0], times[count - 1], timeZone, excludeWeekends);
   const xs = times.map((t) => MARGIN.left + project(t) * plotW);
   const x = (i: number): number => xs[i];
-  const y = linearScale([0, 1], [MARGIN.top + plotH, MARGIN.top]);
+  const countMax = niceMax(Math.max(...inflight, 1));
+  const y = linearScale([0, scale === "share" ? 1 : countMax], [MARGIN.top + plotH, MARGIN.top]);
   const hasData = inflight.some((n) => n > 0);
   const last = (() => {
     for (let i = count - 1; i >= 0; i--) if (inflight[i] > 0) return i;
@@ -958,11 +961,17 @@ export function MixChart({
   const summary = `${title}, ${formatLocalDate(times[0], timeZone)} to ${formatLocalDate(times[count - 1], timeZone)}. At the latest change with tasks in flight (${inflight[last]} tasks): ${series
     .map((s) => `${s.label} ${latest[s.key]}`)
     .join(", ")}.`;
-  const bands = stackShares(shares);
-  const stripMax = niceMax(Math.max(...inflight));
-  const stripY = linearScale([0, stripMax], [stripHeight - 6, 4]);
+  const bands = stackShares(
+    scale === "share" ? shares : counts.map((row) => row.map((n, i) => (inflight[i] > 0 ? n : null))),
+  );
   const barW = Math.max(plotW / count, 1);
-  const ticks = [0, 0.25, 0.5, 0.75, 1];
+  // Whole numbers only: quarters of the axis when they come out whole, else halves.
+  const ticks =
+    scale === "share"
+      ? [0, 0.25, 0.5, 0.75, 1]
+      : (countMax % 4 === 0 ? [0, 1, 2, 3, 4].map((i) => (countMax * i) / 4) : [0, countMax / 2, countMax]).filter(
+          Number.isInteger,
+        );
   const labels: number[] = [];
   xs.forEach((at, i) => {
     if ((!excludeWeekends || !isWeekend(times[i], timeZone)) &&
@@ -975,6 +984,14 @@ export function MixChart({
       description={<>{description}{excludeWeekends && " Weekend hours have zero width on the x-axis; use the arrow keys to inspect changes that share an x position."}</>}
       legend={<div className="agg-lead-controls">
         <Legend id={id} series={series} values={latest} />
+        <div className="agg-seg" role="group" aria-label="Scale">
+          <button type="button" aria-pressed={scale === "share"} onClick={() => setScale("share")}>
+            Share of tasks
+          </button>
+          <button type="button" aria-pressed={scale === "count"} onClick={() => setScale("count")}>
+            Number of tasks
+          </button>
+        </div>
         <WeekendControl excluded={excludeWeekends} onChange={(value) => { setExcludeWeekends(value); setHover(null); }} />
       </div>}
       table={
@@ -1005,7 +1022,7 @@ export function MixChart({
         </table>
       }
     >
-      {typical < COARSE_BELOW && (
+      {scale === "share" && typical < COARSE_BELOW && (
         <div className="agg-mode">
           <span className="agg-coarse">
             {`Typically ${typical} task${typical === 1 ? "" : "s"} in flight: the percentages are coarse.`}
@@ -1015,7 +1032,7 @@ export function MixChart({
       <div className="agg-plot" ref={ref}>
         <svg
           width={width}
-          height={height + stripHeight}
+          height={height}
           role="img"
           aria-label={summary}
           tabIndex={0}
@@ -1028,7 +1045,7 @@ export function MixChart({
             <g key={t}>
               <line className="agg-grid" x1={MARGIN.left} x2={MARGIN.left + plotW} y1={y(t)} y2={y(t)} />
               <text className="agg-tick" x={MARGIN.left - 6} y={y(t)} textAnchor="end" dominantBaseline="middle">
-                {`${t * 100}%`}
+                {scale === "share" ? `${t * 100}%` : String(t)}
               </text>
             </g>
           ))}
@@ -1038,7 +1055,7 @@ export function MixChart({
             </text>
           ))}
           <text className="agg-axis-title" transform={`translate(11 ${MARGIN.top + plotH / 2}) rotate(-90)`} textAnchor="middle">
-            share of tasks in flight
+            {scale === "share" ? "share of tasks in flight" : "tasks in flight"}
           </text>
           {series.map((s, i) => (
             <path
@@ -1051,40 +1068,15 @@ export function MixChart({
           {transitionTicks && xs.slice(1, -1).map((at, i) => (
             <line key={starts[i + 1]} className="agg-transition-tick" x1={at} x2={at} y1={MARGIN.top + plotH} y2={MARGIN.top + plotH + 5} />
           ))}
-          {/* Tasks in flight: n at each sample, on the same time axis. */}
-          <g transform={`translate(0 ${height})`}>
-            <text className="agg-tick" x={MARGIN.left - 6} y={stripY(0)} textAnchor="end" dominantBaseline="middle">
-              0
-            </text>
-            <text className="agg-tick" x={MARGIN.left - 6} y={stripY(stripMax)} textAnchor="end" dominantBaseline="middle">
-              {stripMax}
-            </text>
-            <text className="agg-axis-title" x={MARGIN.left + plotW} y={2} textAnchor="end" dominantBaseline="hanging">
-              tasks in flight
-            </text>
-            <line className="agg-axis" x1={MARGIN.left} x2={MARGIN.left + plotW} y1={stripY(0)} y2={stripY(0)} />
-            {inflight.map((n, i) =>
-              n > 0 ? (
-                <rect
-                  key={starts[i]}
-                  className="agg-inflight"
-                  x={xs[i]}
-                  y={stripY(n)}
-                  width={i + 1 < count ? Math.max(xs[i + 1] - xs[i], 0) : 2}
-                  height={stripY(0) - stripY(n)}
-                />
-              ) : null,
-            )}
-          </g>
           {hover && (
-            <line className="agg-cursor" x1={hover.x} x2={hover.x} y1={MARGIN.top} y2={height + stripHeight - 6} />
+            <line className="agg-cursor" x1={hover.x} x2={hover.x} y1={MARGIN.top} y2={MARGIN.top + plotH} />
           )}
           <rect
             className="agg-hit"
             x={MARGIN.left}
             y={MARGIN.top}
             width={plotW}
-            height={plotH + stripHeight}
+            height={plotH}
             onPointerMove={move}
             onPointerLeave={() => setHover(null)}
           />
@@ -1121,6 +1113,206 @@ export function MixChart({
                     <span className="agg-tip-value">
                       {`${pct(shares[series.indexOf(s)][hover.index])} (${counts[series.indexOf(s)][hover.index]} of ${inflight[hover.index]})`}
                     </span>
+                  </div>
+                ))}
+            </>
+          )}
+        </ChartTooltip>
+      </div>
+    </ChartFrame>
+  );
+}
+
+// ---- stacked bars over time ---------------------------------------------------------------
+
+/** Bars one per stretch of time, each stacked from the series' values (money,
+ * counts: anything that adds up). */
+export function StackedBarsChart({
+  title,
+  description,
+  series,
+  starts,
+  values,
+  bucketHours,
+  timeZone,
+  format,
+  yLabel,
+  empty,
+}: {
+  title: string;
+  description: ReactNode;
+  series: SeriesStyle[];
+  /** ISO start of each bucket. */
+  starts: string[];
+  /** Per series, its value in each bucket. */
+  values: number[][];
+  /** How long a bucket is: an hour, or a day (24). */
+  bucketHours: number;
+  timeZone: string;
+  /** A value as text (axis, tooltip, table). */
+  format: (value: number) => string;
+  yLabel: string;
+  /** Said when every value is zero. */
+  empty: ReactNode;
+}) {
+  const [ref, width] = useWidth();
+  const id = useId();
+  const [hover, setHover] = useState<Hover | null>(null);
+  const height = 220;
+  const plotW = Math.max(width - MARGIN.left - MARGIN.right, 50);
+  const plotH = height - MARGIN.top - MARGIN.bottom;
+  const count = starts.length;
+  const times = starts.map((t) => Date.parse(t));
+  const totals = starts.map((_, i) => values.reduce((sum, row) => sum + row[i], 0));
+  const seriesTotals = values.map((row) => row.reduce((sum, v) => sum + v, 0));
+  if (count === 0 || totals.every((t) => t === 0)) {
+    return (
+      <ChartFrame title={title} description={description} table={null}>
+        <EmptyChart>{empty}</EmptyChart>
+      </ChartFrame>
+    );
+  }
+  const max = niceMax(Math.max(...totals));
+  const y = linearScale([0, max], [MARGIN.top + plotH, MARGIN.top]);
+  const slot = plotW / count;
+  const barW = Math.max(slot * 0.7, 1);
+  const centre = (i: number): number => MARGIN.left + slot * (i + 0.5);
+  const label = (i: number): string =>
+    bucketHours === 1 ? formatLocalInstant(times[i], timeZone) : formatLocalDate(times[i], timeZone);
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((t) => t * max);
+  const labelled: number[] = [];
+  for (let i = 0; i < count; i++) {
+    if (labelled.length === 0 || centre(i) - centre(labelled[labelled.length - 1]) >= 80) labelled.push(i);
+  }
+  const at = (index: number): void => setHover({ index, x: centre(index) });
+  const move = (event: PointerEvent<SVGRectElement>): void => {
+    const box = event.currentTarget.getBoundingClientRect();
+    const px = ((event.clientX - box.left) / Math.max(box.width, 1)) * plotW;
+    at(Math.min(count - 1, Math.max(0, Math.floor(px / slot))));
+  };
+  const key = (event: KeyboardEvent): void => {
+    if (event.key === "Escape") setHover(null);
+    const step = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+    if (!step) return;
+    event.preventDefault();
+    const from = hover?.index ?? (step > 0 ? -1 : count);
+    at(Math.min(count - 1, Math.max(0, from + step)));
+  };
+  const legendValues: Record<string, string> = {};
+  series.forEach((s, k) => {
+    legendValues[s.key] = format(seriesTotals[k]);
+  });
+  const summary = `${title}, ${label(0)} to ${label(count - 1)}: ${series
+    .map((s, k) => `${s.label} ${format(seriesTotals[k])}`)
+    .join(", ")}.`;
+
+  return (
+    <ChartFrame
+      title={title}
+      description={description}
+      legend={<Legend id={id} series={series} values={legendValues} />}
+      table={
+        <table className="agg-table">
+          <caption>{`${title}: what each ${bucketHours === 1 ? "hour" : "day"} cost`}</caption>
+          <thead>
+            <tr>
+              <th scope="col">{`${bucketHours === 1 ? "Hour" : "Day"} (${timeZone})`}</th>
+              {series.map((s) => (
+                <th key={s.key} scope="col">
+                  {s.label}
+                </th>
+              ))}
+              <th scope="col">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {starts.map((start, i) => (
+              <tr key={start}>
+                <th scope="row">{label(i)}</th>
+                {values.map((row, k) => (
+                  <td key={series[k].key}>{format(row[i])}</td>
+                ))}
+                <td>{format(totals[i])}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      }
+    >
+      <div className="agg-plot" ref={ref}>
+        <svg
+          width={width}
+          height={height}
+          role="img"
+          aria-label={summary}
+          tabIndex={0}
+          onKeyDown={key}
+          onBlur={() => setHover(null)}
+        >
+          <Patterns id={id} series={series} />
+          {ticks.map((t) => (
+            <g key={t}>
+              <line className="agg-grid" x1={MARGIN.left} x2={MARGIN.left + plotW} y1={y(t)} y2={y(t)} />
+              <text className="agg-tick" x={MARGIN.left - 6} y={y(t)} textAnchor="end" dominantBaseline="middle">
+                {format(t)}
+              </text>
+            </g>
+          ))}
+          {labelled.map((i) => (
+            <text key={starts[i]} className="agg-tick" x={centre(i)} y={height - 10} textAnchor="middle">
+              {label(i)}
+            </text>
+          ))}
+          <text className="agg-axis-title" transform={`translate(11 ${MARGIN.top + plotH / 2}) rotate(-90)`} textAnchor="middle">
+            {yLabel}
+          </text>
+          {starts.map((start, i) => {
+            let bottom = 0;
+            return (
+              <g key={start}>
+                {series.map((s, k) => {
+                  const value = values[k][i];
+                  const rect = (
+                    <rect
+                      key={s.key}
+                      className={`tone-${s.tone} agg-bar`}
+                      x={centre(i) - barW / 2}
+                      y={y(bottom + value)}
+                      width={barW}
+                      height={y(bottom) - y(bottom + value)}
+                      fill={fillOf(id, s)}
+                    />
+                  );
+                  bottom += value;
+                  return value > 0 ? rect : null;
+                })}
+              </g>
+            );
+          })}
+          {hover && <line className="agg-cursor" x1={hover.x} x2={hover.x} y1={MARGIN.top} y2={MARGIN.top + plotH} />}
+          <rect
+            className="agg-hit"
+            x={MARGIN.left}
+            y={MARGIN.top}
+            width={plotW}
+            height={plotH}
+            onPointerMove={move}
+            onPointerLeave={() => setHover(null)}
+          />
+        </svg>
+        <ChartTooltip hover={hover} width={width}>
+          {hover && (
+            <>
+              <strong>{label(hover.index)}</strong>
+              <div className="agg-tip-sub">{`${format(totals[hover.index])} in all`}</div>
+              {[...series]
+                .reverse()
+                .filter((s) => values[series.indexOf(s)][hover.index] > 0)
+                .map((s) => (
+                  <div key={s.key} className="agg-tip-row">
+                    <Swatch id={id} series={s} />
+                    <span>{s.label}</span>
+                    <span className="agg-tip-value">{format(values[series.indexOf(s)][hover.index])}</span>
                   </div>
                 ))}
             </>

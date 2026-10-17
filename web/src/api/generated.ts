@@ -826,6 +826,7 @@ export interface Spend {
   by_task: SpendTask[];
   claims_since: string | null;
   ingested_at: string | null;
+  over_time: SpendOverTime;
   unpriced_models: UnpricedModel[];
   windows: SpendWindow[];
 }
@@ -888,6 +889,20 @@ export interface SpendTask {
   task_id: string | null;
   tokens: number;
   unpriced_calls: number;
+}
+export interface SpendOverTime {
+  bucket_hours: number;
+  buckets: SpendBucket[];
+}
+/**
+ * What one stretch of time cost.
+ */
+export interface SpendBucket {
+  fix_ci_usd: number;
+  interactive_usd: number;
+  resolve_comments_usd: number;
+  resolve_conflicts_usd: number;
+  start: string;
 }
 export interface UnpricedModel {
   calls: number;

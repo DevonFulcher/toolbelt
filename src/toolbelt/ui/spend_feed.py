@@ -77,6 +77,21 @@ def to_api(summary: SpendSummary, ingested_at: datetime | None) -> api.Spend:
             for model, calls in summary.unpriced_models.items()
         ],
         claims_since=summary.claims_since.isoformat() if summary.claims_since else None,
+        over_time=api.SpendOverTime(
+            bucket_hours=summary.over_time.bucket_hours,
+            buckets=[
+                api.SpendBucket(
+                    start=bucket.start.isoformat(),
+                    interactive_usd=bucket.interactive_usd,
+                    resolve_conflicts_usd=bucket.by_trigger.get(
+                        "resolve_conflicts", 0.0
+                    ),
+                    resolve_comments_usd=bucket.by_trigger.get("resolve_comments", 0.0),
+                    fix_ci_usd=bucket.by_trigger.get("fix_ci", 0.0),
+                )
+                for bucket in summary.over_time.buckets
+            ],
+        ),
         autonomous=api.AutonomousSpend(
             windows=[
                 api.AutonomousWindow(

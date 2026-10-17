@@ -756,6 +756,26 @@ class AutonomousSpend(Model):
     by_task: list[AutonomousTask]
 
 
+class SpendBucket(Model):
+    """What one stretch of time cost."""
+
+    #: ISO time the bucket starts (UTC).
+    start: str
+    #: Interactive sessions, estimated from transcripts.
+    interactive_usd: float
+    #: Autonomous runs that started in it, by what they were for: each run's
+    #: own reported cost.
+    resolve_conflicts_usd: float
+    resolve_comments_usd: float
+    fix_ci_usd: float
+
+
+class SpendOverTime(Model):
+    #: How long each bucket is, in hours (an hour for a one-day window, else a day).
+    bucket_hours: int
+    buckets: list[SpendBucket]
+
+
 class Spend(Model):
     as_of: str
     #: When the transcripts were last read; ``None`` until the first read ends.
@@ -770,6 +790,7 @@ class Spend(Model):
     #: When claims began to be recorded (``None``: none yet).
     claims_since: str | None
     autonomous: AutonomousSpend
+    over_time: SpendOverTime
 
 
 # ---- autonomous agents ------------------------------------------------------------

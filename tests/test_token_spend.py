@@ -469,3 +469,86 @@ def test_autonomous_spend_is_the_runs_own_cost_by_window_trigger_and_task(
     assert [(t.branch, t.runs, round(t.cost_usd, 2)) for t in autonomous.by_task] == [
         ("devon/a", 2, 0.40)
     ]
+
+
+def _finished_run(store: StackStore, trigger: str, at: datetime, cost: float) -> None:
+    run_id = store.start_agent_run(
+        task_id="t",
+        repo_id=1,
+        branch="devon/t",
+        trigger=trigger,
+        head_sha="abc",
+        model="m",
+        at=at,
+        session_id=f"agent-{at.isoformat()}",
+    )
+    store.finish_agent_run(
+        run_id,
+        state="succeeded",
+        ended_at=at + timedelta(minutes=3),
+        cost_usd=cost,
+        tokens=TokenCounts(output=1),
+    )
+
+
+def test_spend_over_time_buckets_interactive_and_autonomous_cost_by_day(tmp_path: Path):
+    from toolbelt.token_spend.summary import summarize
+
+    store = StackStore(tmp_path / "stacks.db")
+    now = datetime(2026, 10, 13, 12, 0, tzinfo=UTC)
+    store.add_usage_calls(
+        [
+            call("a", now - timedelta(days=2, hours=1), cost=2.0),
+            call("b", now - timedelta(days=2, hours=3), cost=1.0),
+            call("c", now - timedelta(hours=1), cost=4.0),
+            call("agent", now - timedelta(hours=1), session="agent-s", cost=9.0),
+        ],
+        transcript="t",
+        offset=1,
+    )
+    _finished_run(store, "fix_ci", now - timedelta(days=2), 0.25)
+    _finished_run(store, "fix_ci", now - timedelta(days=2, hours=2), 0.25)
+    _finished_run(store, "resolve_comments", now - timedelta(hours=1), 0.5)
+    store.start_agent_run(
+        task_id="t",
+        repo_id=1,
+        branch="devon/t",
+        trigger="fix_ci",
+        head_sha="x",
+        model="m",
+        at=now - timedelta(hours=5),
+        session_id="agent-s",
+    )
+
+    over_time = summarize(store, now, breakdown_days=7).over_time
+
+    assert over_time.bucket_hours == 24
+    assert [b.start.date().isoformat() for b in over_time.buckets] == [
+        f"2026-10-{day}" for day in ("06", "07", "08", "09", "10", "11", "12", "13")
+    ]
+    by_day = {b.start.date().isoformat(): b for b in over_time.buckets}
+    assert by_day["2026-10-11"].interactive_usd == 3.0
+    assert by_day["2026-10-11"].by_trigger == {"fix_ci": 0.5}
+    assert by_day["2026-10-13"].interactive_usd == 4.0
+    # The run still working has cost nothing yet.
+    assert by_day["2026-10-13"].by_trigger == {"resolve_comments": 0.5, "fix_ci": 0.0}
+    assert by_day["2026-10-09"].interactive_usd == 0.0
+
+
+def test_a_one_day_window_is_bucketed_by_the_hour(tmp_path: Path):
+    from toolbelt.token_spend.summary import summarize
+
+    store = StackStore(tmp_path / "stacks.db")
+    now = datetime(2026, 10, 13, 12, 30, tzinfo=UTC)
+    store.add_usage_calls(
+        [call("a", now - timedelta(hours=2, minutes=10), cost=1.5)],
+        transcript="t",
+        offset=1,
+    )
+
+    over_time = summarize(store, now, breakdown_days=1).over_time
+
+    assert over_time.bucket_hours == 1
+    assert len(over_time.buckets) in (24, 25)
+    at_ten = next(b for b in over_time.buckets if b.start.hour == 10)
+    assert at_ten.interactive_usd == 1.5

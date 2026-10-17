@@ -7,9 +7,11 @@ import { fetchSpend } from "../api/client";
 import type { Spend, SpendTokens } from "../api/generated";
 import { TRIGGER_LABEL } from "./AgentsView";
 import { formatAbsolute } from "../logic/format";
+import { browserTimeZone } from "../logic/localTime";
 import { formatTokens, formatUsd } from "../logic/spendFormat";
 import type { Counts } from "../store/selectors";
 import { useApp } from "../store/StoreContext";
+import { StackedBarsChart, withHatches } from "./AggregateCharts";
 import { FilterBar } from "./FilterBar";
 import "./spend.css";
 
@@ -73,7 +75,37 @@ export function SpendPage({ counts }: { counts: Counts }) {
   );
 }
 
+const TYPE_SERIES = withHatches([
+  {
+    key: "interactive",
+    label: "Interactive sessions",
+    tone: "accent",
+    legend: "Claude Code sessions you ran, estimated from their transcripts at list prices.",
+  },
+  {
+    key: "resolve_conflicts",
+    label: TRIGGER_LABEL.resolve_conflicts,
+    tone: "red",
+    legend: "Autonomous agent runs that resolved merge conflicts: each run's own reported cost, when it started.",
+  },
+  {
+    key: "resolve_comments",
+    label: TRIGGER_LABEL.resolve_comments,
+    tone: "amber",
+    legend: "Autonomous agent runs that resolved review comments: each run's own reported cost, when it started.",
+  },
+  {
+    key: "fix_ci",
+    label: TRIGGER_LABEL.fix_ci,
+    tone: "purple",
+    legend: "Autonomous agent runs that fixed or re-ran failing CI: each run's own reported cost, when it started.",
+  },
+]);
+
 function SpendBody({ data }: { data: Spend }) {
+  // Autonomous runs cost cents beside interactive sessions' dollars: on their
+  // own they are visible.
+  const [typeScope, setTypeScope] = useState<"all" | "autonomous">("all");
   const windowLabel = data.breakdown_days === 1 ? "day" : `${data.breakdown_days} days`;
   const unpriced = data.unpriced_models.reduce((total, u) => total + u.calls, 0);
   return (
@@ -108,6 +140,31 @@ function SpendBody({ data }: { data: Spend }) {
           </div>
         ))}
       </div>
+      <div className="agg-seg" role="group" aria-label="Spend by task type: which spend">
+        <button type="button" aria-pressed={typeScope === "all"} onClick={() => setTypeScope("all")}>
+          All spend
+        </button>
+        <button type="button" aria-pressed={typeScope === "autonomous"} onClick={() => setTypeScope("autonomous")}>
+          Autonomous runs only
+        </button>
+      </div>
+      <StackedBarsChart
+        title="Spend by task type over time"
+        description={`What each ${data.over_time.bucket_hours === 1 ? "hour" : "day"} (UTC) of the last ${windowLabel} cost: interactive sessions, and autonomous agent runs by what they were for (resolve conflicts, resolve comments, fix CI).${typeScope === "all" ? " Autonomous runs cost cents beside interactive sessions: switch to autonomous runs only to see them." : ""}`}
+        series={typeScope === "all" ? TYPE_SERIES : TYPE_SERIES.slice(1)}
+        starts={data.over_time.buckets.map((b) => b.start)}
+        values={[
+          ...(typeScope === "all" ? [data.over_time.buckets.map((b) => b.interactive_usd)] : []),
+          data.over_time.buckets.map((b) => b.resolve_conflicts_usd),
+          data.over_time.buckets.map((b) => b.resolve_comments_usd),
+          data.over_time.buckets.map((b) => b.fix_ci_usd),
+        ]}
+        bucketHours={data.over_time.bucket_hours}
+        timeZone={browserTimeZone()}
+        format={formatUsd}
+        yLabel="cost"
+        empty="Nothing was spent in this window."
+      />
       <section className="spend-table" aria-label="By model">
         <h2>{`By model, last ${windowLabel}`}</h2>
         {data.by_model.length === 0 ? (

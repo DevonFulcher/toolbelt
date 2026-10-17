@@ -142,4 +142,67 @@ describe("the spend view", () => {
 
     await waitFor(() => expect(url.location.search).toBe("?view=spend"));
   });
+
+  test("charts spend by task type over time, with each type's total in the legend", async () => {
+    serve(spend());
+    show();
+
+    const chart = await screen.findByRole("region", { name: "Spend by task type over time" });
+
+    const legend = within(chart).getByRole("list");
+    expect(within(legend).getByText("Interactive sessions").parentElement).toHaveTextContent("$200.00");
+    expect(within(legend).getByText("Resolve conflicts").parentElement).toHaveTextContent("$0.10");
+    expect(within(legend).getByText("Resolve comments").parentElement).toHaveTextContent("$0.10");
+    expect(within(legend).getByText("Fix / re-run CI").parentElement).toHaveTextContent("$0.05");
+    // One bar segment per type that cost something, per day.
+    expect(chart.querySelectorAll("rect.agg-bar").length).toBe(2 + 3 + 2);
+  });
+
+  test("the chart's data table lists every day with its total", async () => {
+    serve(spend());
+    show();
+    const chart = await screen.findByRole("region", { name: "Spend by task type over time" });
+
+    fireEvent.click(within(chart).getByRole("button", { name: "Show data table" }));
+
+    const table = within(chart).getByRole("table");
+    expect(within(table).getAllByRole("row")).toHaveLength(1 + 3);
+    expect(within(table).getByText("$100.15")).toBeInTheDocument();
+  });
+
+  test("says when nothing was spent in the window", async () => {
+    const base = spend();
+    serve(
+      spend({
+        over_time: {
+          bucket_hours: 24,
+          buckets: base.over_time.buckets.map((b) => ({
+            ...b,
+            interactive_usd: 0,
+            resolve_conflicts_usd: 0,
+            resolve_comments_usd: 0,
+            fix_ci_usd: 0,
+          })),
+        },
+      }),
+    );
+    show();
+
+    const chart = await screen.findByRole("region", { name: "Spend by task type over time" });
+
+    expect(within(chart).getByText("Nothing was spent in this window.")).toBeInTheDocument();
+  });
+
+  test("can show the autonomous runs on their own, where their cents are visible", async () => {
+    serve(spend());
+    show();
+    const chart = await screen.findByRole("region", { name: "Spend by task type over time" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Autonomous runs only" }));
+
+    const legend = within(chart).getByRole("list");
+    expect(within(legend).queryByText("Interactive sessions")).not.toBeInTheDocument();
+    expect(within(legend).getByText("Resolve conflicts")).toBeInTheDocument();
+    expect(chart.querySelectorAll("rect.agg-bar").length).toBe(2 + 1 + 1);
+  });
 });
