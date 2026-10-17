@@ -14,6 +14,9 @@ import { serializeState } from "../logic/viewState";
 import { rollup, youText } from "../logic/rollup";
 import { LOADING, subtreeIds } from "../store/selectors";
 import { useApp, useAppStore } from "../store/StoreContext";
+import { mergeBranch } from "../api/client";
+import { useCardExtras } from "../store/cardExtras";
+import { AgentSlots, SpendSlots } from "./CardAgentSlots";
 import { Timeline } from "./Timeline";
 import { Age, CI_TONE, ExternalLink, PR_TONE, Pill, REVIEW_TONE, TaskValue, WHO_TEXT, WHO_TONE } from "./presentation";
 import { useNow } from "./useNow";
@@ -141,6 +144,7 @@ export const Card = memo(
     const status = useApp((s) => s.statuses[id]) ?? LOADING;
     const task = useApp((s) => s.tasks[id]) ?? null;
     const claim = useApp((s) => s.claims[id]) ?? NO_CLAIM;
+    const extras = useCardExtras((s) => s.byId[id]);
     const catalog = useApp((s) => s.catalog);
     const flashed = useFlashOnChange(status);
     const now = useNow();
@@ -265,7 +269,7 @@ export const Card = memo(
           <PrSlots status={status} note={note} />
         </Group>
         <Group id="task" title="Task">
-          <NextSlot status={status} note={note} claim={claim} />
+          <NextSlot id={id} status={status} note={note} claim={claim} />
           <Slot
             id="task_age"
             label="Task age"
@@ -285,17 +289,12 @@ export const Card = memo(
           <Slot id="task" label="Task" state={branch.task ? "ok" : "gap"}>
             {branch.task ? <TaskValue link={branch.task} task={task} /> : "no task linked"}
           </Slot>
-          <Slot id="session" label="Session" state={branch.agent ? "ok" : "gap"}>
-            {branch.agent ? (
-              branch.agent.href ? (
-                <a href={branch.agent.href}>{branch.agent.label}</a>
-              ) : (
-                branch.agent.label
-              )
-            ) : (
-              "no session linked"
-            )}
-          </Slot>
+        </Group>
+        <Group id="agent" title="Agent">
+          <AgentSlots extras={extras} branchId={id} session={branch.agent} Slot={Slot} />
+        </Group>
+        <Group id="spend" title="Spend">
+          <SpendSlots extras={extras} Slot={Slot} />
         </Group>
         <div className="g-timeline">
           <TimelineSlot
@@ -336,10 +335,12 @@ function unloadedNote(status: Exclude<LiveStatus, LoadedStatus>, pathMissing: bo
 
 /** The Next slot (the Task group's first). */
 function NextSlot({
+  id,
   status,
   note,
   claim,
 }: {
+  id: string;
   status: LiveStatus;
   note: ReactNode;
   claim: BranchClaim;
@@ -355,14 +356,58 @@ function NextSlot({
   const { would_be: wouldBe } = status.next;
   return (
     <Slot id="next" label="Next">
-      <Pill tone={WHO_TONE[status.next.who]} title={status.next.kind}>
-        {status.next.label}
-      </Pill>{" "}
+      {status.next.kind === "merge" ? (
+        <MergeButton id={id} status={status} />
+      ) : (
+        <Pill tone={WHO_TONE[status.next.who]} title={status.next.kind}>
+          {status.next.label}
+        </Pill>
+      )}{" "}
       <span className="card-next-who muted">
         {wouldBe ? `would be: ${wouldBe.label}` : WHO_TEXT[status.next.who]}
       </span>
       <ClaimChips claim={claim} />
     </Slot>
+  );
+}
+
+/** Next is Merge: a button that lands the PR with `toolbelt git merge` (after
+ * asking). The branch leaves the page when the merge syncs the stack. */
+function MergeButton({ id, status }: { id: string; status: LoadedStatus }) {
+  const [state, setState] = useState<{ phase: "idle" | "merging" } | { phase: "failed"; text: string }>({
+    phase: "idle",
+  });
+  const target = status.pr_number !== null ? `PR #${status.pr_number}` : "this PR";
+  const press = (): void => {
+    const ok = window.confirm(
+      `Squash-merge ${target} on GitHub and sync its stack (toolbelt git merge)?\n\n` +
+        "If the PR is part of a GitHub stack, this also merges the open PRs below it.",
+    );
+    if (!ok) return;
+    setState({ phase: "merging" });
+    mergeBranch(id)
+      .then((result) => setState(result.ok ? { phase: "idle" } : { phase: "failed", text: result.output }))
+      .catch((error: unknown) =>
+        setState({ phase: "failed", text: error instanceof Error ? error.message : String(error) }),
+      );
+  };
+  return (
+    <>
+      <button
+        type="button"
+        className="merge-button"
+        disabled={state.phase === "merging"}
+        title="Runs toolbelt git merge for this PR"
+        onClick={press}
+      >
+        {state.phase === "merging" ? "Merging…" : status.next.label}
+      </button>
+      {state.phase === "failed" && (
+        <pre className="merge-error" role="alert">
+          {state.text}
+        </pre>
+      )}
+    </>
   );
 }
 
@@ -632,6 +677,8 @@ function LoadedPrSlots({ status }: { status: LoadedStatus }) {
  *  is known), what it is stopped on, and the files that conflict. */
 function ConflictCommit({ conflict }: { conflict: NonNullable<LoadedStatus["conflict"]> }) {
   const short = conflict.sha.slice(0, 7);
+  const shown = conflict.files.slice(0, 3);
+  const hidden = conflict.files.length - shown.length;
   const where =
     conflict.source === "rebase"
       ? `rebase stopped here${conflict.step !== null && conflict.steps !== null ? `, commit ${conflict.step} of ${conflict.steps}` : ""}`
@@ -642,7 +689,7 @@ function ConflictCommit({ conflict }: { conflict: NonNullable<LoadedStatus["conf
     <span title={conflict.files.length > 0 ? `conflicts in ${conflict.files.join(", ")}` : undefined}>
       {conflict.url ? <ExternalLink href={conflict.url}>{short}</ExternalLink> : short}
       {` ${conflict.subject} `}
-      <span className="muted">{`(${where}${conflict.files.length > 0 ? `: ${conflict.files.join(", ")}` : ""})`}</span>
+      <span className="muted">{`(${where}${conflict.files.length > 0 ? `: ${shown.join(", ")}${hidden > 0 ? ` and ${hidden} more` : ""}` : ""})`}</span>
     </span>
   );
 }

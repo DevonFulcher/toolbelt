@@ -162,6 +162,9 @@ a.pill:hover { text-decoration: none; background: color-mix(in srgb, currentColo
 .card .g-git { --basis: 15rem; flex-grow: 3; }
 .card .g-pr { --basis: 24rem; flex-grow: 5; }
 .card .g-task { --basis: 18rem; flex-grow: 3; }
+.card .g-agent { --basis: 26rem; flex-grow: 5; }
+.card .g-spend { --basis: 14rem; flex-grow: 2; }
+.s-agent_cost .slot-value, .s-cost .slot-value { white-space: normal; overflow: visible; }
 /* The timeline takes the whole row. It is not a `.group` and `.card .slot`
    sets no flex, so nothing outranks this. */
 .card .g-timeline { flex: 1 0 100%; min-width: 0; }
@@ -183,7 +186,10 @@ a.pill:hover { text-decoration: none; background: color-mix(in srgb, currentColo
 .v-na .slot-value { color: var(--muted); opacity: .8; }
 .v-gap .slot-value { color: var(--fg); font-style: italic;
                      text-decoration: underline dashed var(--amber); text-underline-offset: 3px; }
-.s-branch, .s-next, .s-task, .s-session, .s-reviewers, .s-title { grid-column: 1 / -1; }
+.s-branch, .s-next, .s-task, .s-session, .s-reviewers, .s-title,
+.s-agent_status, .s-agent_run, .s-conflict_commit { grid-column: 1 / -1; }
+.s-agent_status .slot-value, .s-agent_run .slot-value, .s-conflict_commit .slot-value {
+  white-space: normal; overflow: visible; }
 /* The table-row indentation of `.branch` has no meaning inside a card. */
 .s-branch .branch { margin-left: 0; overflow-wrap: anywhere; }
 .s-title .slot-value { color: var(--fg); }
@@ -368,3 +374,11 @@ main:has(.focus-bar) { --focus-h: 2.6rem; }
 .claim-chips { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-left: 4px; }
 .claim-chip { font-size: 11px; }
 .claim-chip a { color: inherit; }
+
+/* Next is Merge: a button, not a pill. */
+.merge-button { font: inherit; font-size: 12px; font-weight: 600; padding: 1px 12px; cursor: pointer;
+                color: #fff; background: var(--green); border: 1px solid var(--green); border-radius: 12px; }
+.merge-button:hover:not(:disabled) { filter: brightness(1.1); }
+.merge-button:disabled { opacity: .6; cursor: progress; }
+.merge-error { margin: 4px 0 0; max-height: 10rem; overflow: auto; white-space: pre-wrap; font-size: 11px;
+               color: var(--red); }

@@ -902,6 +902,63 @@ class Agents(Model):
     runs: list[AgentRunInfo]
 
 
+class CardAgent(Model):
+    """What a task card says about the autonomous agents on one branch."""
+
+    #: The branch's next action is something an agent does (``trigger`` says
+    #: what); without it there is nothing for an agent to take.
+    has_action: bool
+    trigger: AgentTrigger | None
+    #: Why no agent is on the task (``working``: one is); ``None`` with an
+    #: action: one may start on it.
+    reason: AgentReason | None
+    #: A person can start a run by hand past ``reason``.
+    can_override: bool
+    #: The branch's most recent run, if it has had one.
+    latest_run: AgentRunInfo | None
+    runs: int
+
+
+class CardSpend(Model):
+    """What a task has cost, over all the spend on record."""
+
+    #: Interactive sessions, estimated from their transcripts at list prices.
+    interactive_usd: float
+    #: Calls with no price (so ``interactive_usd`` is low by their cost).
+    interactive_unpriced_calls: float
+    #: Autonomous runs, as each run's own reported cost.
+    autonomous_usd: float
+    autonomous_runs: int
+
+
+class BranchExtras(Model):
+    """The parts of a task card that do not come with its PR status."""
+
+    #: The branch's row id (see ``Branch.id``).
+    id: str
+    agent: CardAgent
+    spend: CardSpend
+
+
+class CardExtras(Model):
+    branches: list[BranchExtras]
+
+
+class MergeRequest(Model):
+    """The body of ``POST /api/merge``: land the branch's PR."""
+
+    #: The branch's row id (see ``Branch.id``).
+    id: str
+
+
+class MergeResult(Model):
+    """What `toolbelt git merge` did."""
+
+    ok: bool
+    #: The end of its output (the error when it failed).
+    output: str
+
+
 class AgentsEnabled(Model):
     """The body of ``POST /api/agents/enabled``."""
 
@@ -1033,5 +1090,8 @@ class Wire(Model):
     agents: Agents
     agents_enabled: AgentsEnabled
     agents_launching: AgentsLaunching
+    card_extras: CardExtras
+    merge_request: MergeRequest
+    merge_result: MergeResult
     agent_conversation: AgentConversation
     agent_start: AgentStart

@@ -520,6 +520,10 @@ SLOT_STATES: dict[str, str | None] = {
     # Not PR states: where the branch is, what it is linked to, and how big
     # the PR is.
     "lines": None,
+    "agent_status": None,
+    "agent_run": None,
+    "cost": None,
+    "agent_cost": None,
     "repo": None,
     "branch": None,
     "task": None,

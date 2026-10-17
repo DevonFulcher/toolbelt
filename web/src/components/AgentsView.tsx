@@ -3,7 +3,7 @@
 // their recent runs. Polled every few seconds while the page is visible.
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { fetchAgentConversation, fetchAgents, setAgentsEnabled, setAgentsLaunching, startAgentRun, stopAgentRun } from "../api/client";
-import type { AgentConversation, AgentDecision, AgentMessage, AgentReason, AgentRunInfo, AgentTrigger, Agents } from "../api/generated";
+import type { Tone, AgentConversation, AgentDecision, AgentMessage, AgentReason, AgentRunInfo, AgentTrigger, Agents } from "../api/generated";
 import { formatAbsolute } from "../logic/format";
 import { formatUsd } from "../logic/spendFormat";
 import type { Counts } from "../store/selectors";
@@ -23,7 +23,7 @@ export const TRIGGER_LABEL: Record<AgentTrigger, string> = {
   fix_ci: "Fix / re-run CI",
 };
 
-const RUN_TONE: Record<AgentRunInfo["state"], string> = {
+export const RUN_TONE: Record<AgentRunInfo["state"], Tone> = {
   running: "purple",
   succeeded: "green",
   failed: "red",
@@ -33,7 +33,7 @@ const RUN_TONE: Record<AgentRunInfo["state"], string> = {
   abandoned: "gray",
 };
 
-const RUN_TEXT: Record<AgentRunInfo["state"], string> = {
+export const RUN_TEXT: Record<AgentRunInfo["state"], string> = {
   running: "running",
   succeeded: "finished",
   failed: "failed",
@@ -82,12 +82,12 @@ export function AgentsPage({ counts }: { counts: Counts }) {
   );
 }
 
-const when = (iso: string): string => formatAbsolute(Date.parse(iso));
+export const when = (iso: string): string => formatAbsolute(Date.parse(iso));
 
 /** A run costs cents or less: keep four digits under a dollar. */
-const runCost = (usd: number): string => (usd < 1 ? `$${usd.toFixed(4)}` : formatUsd(usd));
+export const runCost = (usd: number): string => (usd < 1 ? `$${usd.toFixed(4)}` : formatUsd(usd));
 
-function reasonText(reason: AgentReason): string {
+export function reasonText(reason: AgentReason): string {
   return reason.until ? `${reason.text} Clears ${when(reason.until)}.` : reason.text;
 }
 

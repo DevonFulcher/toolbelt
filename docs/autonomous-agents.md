@@ -98,3 +98,9 @@ with "🤖 AI-generated on behalf of Devon:". It ends with a one-line JSON repor
   said, and each tool it ran with the output (long output is cut). It is read
   from the run's own Claude session transcript, so it fills in live while the
   run works.
+* On the task card, an **Agent** group holds the branch's interactive session
+  and the autonomous agents' view of it: what an agent would do or why none is
+  on it (with Run an agent now / anyway and Stop buttons), and the latest run
+  with its conversation. A **Spend** group shows what the task has cost:
+  interactive (estimated from transcripts) and autonomous (each run's own
+  cost). The Agents view keeps the log of every run.

@@ -1,4 +1,4 @@
-import type { Aggregate, AgentConversation, Agents, Snapshot, Spend } from "./generated";
+import type { Aggregate, AgentConversation, Agents, CardExtras, MergeResult, Snapshot, Spend } from "./generated";
 
 export const SNAPSHOT_URL = "/api/snapshot";
 export const EVENTS_URL = "/api/events";
@@ -97,4 +97,29 @@ export async function startAgentRun(id: string, fetchImpl: typeof fetch = fetch)
   if (response.ok) return;
   const detail = ((await response.json().catch(() => ({}))) as { detail?: unknown }).detail;
   throw new Error(typeof detail === "string" ? detail : `${AGENTS_URL}/start: HTTP ${response.status}`);
+}
+
+export const CARD_EXTRAS_URL = "/api/card-extras";
+
+/** What a task card shows beyond its PR status: the agents' view of each
+ * branch and what each task has cost. */
+export async function fetchCardExtras(fetchImpl: typeof fetch = fetch): Promise<CardExtras> {
+  const response = await fetchImpl(CARD_EXTRAS_URL, { headers: { Accept: "application/json" } });
+  if (!response.ok) throw new Error(`${CARD_EXTRAS_URL}: HTTP ${response.status}`);
+  return (await response.json()) as CardExtras;
+}
+
+/** Land a branch's PR (`toolbelt git merge`); resolves with what it did, and
+ * rejects with the server's reason when the branch is not ready to merge. */
+export async function mergeBranch(id: string, fetchImpl: typeof fetch = fetch): Promise<MergeResult> {
+  const response = await fetchImpl("/api/merge", {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify({ id }),
+  });
+  if (!response.ok) {
+    const detail = ((await response.json().catch(() => ({}))) as { detail?: unknown }).detail;
+    throw new Error(typeof detail === "string" ? detail : `/api/merge: HTTP ${response.status}`);
+  }
+  return (await response.json()) as MergeResult;
 }

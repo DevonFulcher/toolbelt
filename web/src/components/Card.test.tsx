@@ -1,6 +1,7 @@
 import { act, screen, within } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
-import type { Branch, BranchClaim, LoadedStatus } from "../api/generated";
+import type { Branch, BranchClaim, BranchExtras, LoadedStatus } from "../api/generated";
+import { useCardExtras } from "../store/cardExtras";
 import { branch, catalog, detail, event, noPr, pr, repo, snapshot, DAY, NOW } from "../testing/fixtures";
 import { renderWith } from "../testing/render";
 import { App } from "./App";
@@ -32,7 +33,11 @@ const SLOT_LABELS: Record<string, string> = {
   conflict_commit: "Conflict commit",
   lines: "Lines",
   task: "Task",
-  session: "Session",
+  session: "Interactive session",
+  agent_status: "Autonomous agent",
+  agent_run: "Latest agent run",
+  cost: "Cost",
+  agent_cost: "Autonomous agent cost",
   ancestors: "Ancestors",
   descendants: "Descendants",
   task_age: "Task age",
@@ -81,7 +86,7 @@ describe("a card's labelled slots", () => {
         sha: "abcdef1234567",
         subject: "Rewrite the loader",
         url: "https://github.com/o/r/commit/abcdef1234567",
-        files: ["src/a.py", "src/b.py"],
+        files: ["src/a.py", "src/b.py", "src/c.py", "src/d.py"],
         source: "pr",
         step: null,
         steps: null,
@@ -132,7 +137,7 @@ describe("a card's labelled slots", () => {
     expect(b.merge[2]).toBe("conflicts");
     expect(b.conflict_commit[1]).toBe("ok");
     expect(b.conflict_commit[2]).toContain("abcdef1 Rewrite the loader");
-    expect(b.conflict_commit[2]).toContain("first commit that conflicts with the base: src/a.py, src/b.py");
+    expect(b.conflict_commit[2]).toContain("first commit that conflicts with the base: src/a.py, src/b.py, src/c.py and 1 more");
     expect(document.querySelector('article[data-id="1:devon/b"] [data-slot="conflict_commit"] a')).toHaveAttribute(
       "href",
       "https://github.com/o/r/commit/abcdef1234567",
@@ -205,7 +210,7 @@ describe("a card's labelled slots", () => {
     expect(found.timeline[2]).not.toContain("Open PR");
     // Missing but settable reads as a gap, not as "not applicable".
     expect(found.task).toEqual(["Task", "gap", "no task linked"]);
-    expect(found.session).toEqual(["Session", "gap", "no session linked"]);
+    expect(found.session).toEqual(["Interactive session", "gap", "no session linked"]);
     expect(found.ancestors[2]).toBe("0");
     expect(found.descendants[2]).toBe("0");
   });
@@ -253,7 +258,7 @@ describe("a card's labelled slots", () => {
     expect(found.timeline[2]).toContain("PR history unavailable");
   });
 
-  test("slots are grouped into Git, PR and Task boxes, with the timeline below them", () => {
+  test("slots are grouped into Git, PR, Task, Agent and Spend boxes, with the timeline below them", () => {
     showCards([
       branch(1, "devon/a", { status: pr({ detail: detail() }) }),
       branch(1, "devon/b"),
@@ -261,13 +266,15 @@ describe("a card's labelled slots", () => {
 
     for (const card of document.querySelectorAll<HTMLElement>("article.card")) {
       const groups = [...card.querySelectorAll<HTMLElement>(":scope > .group")];
-      expect(groups.map((g) => g.getAttribute("aria-label"))).toEqual(["Git", "PR", "Task"]);
-      expect(groups.map((g) => g.querySelector(".group-title")?.textContent)).toEqual(["Git", "PR", "Task"]);
+      expect(groups.map((g) => g.getAttribute("aria-label"))).toEqual(["Git", "PR", "Task", "Agent", "Spend"]);
+      expect(groups.map((g) => g.querySelector(".group-title")?.textContent)).toEqual(["Git", "PR", "Task", "Agent", "Spend"]);
       const keys = groups.map((g) => [...g.querySelectorAll<HTMLElement>(".slot")].map((s) => s.dataset.slot));
       expect(keys).toEqual([
         ["repo", "branch", "ancestors", "descendants"],
         ["title", "pr", "ci", "review", "comments", "bot_comments", "merge", "conflict_commit", "lines", "pr_age", "in_draft", "review_requested", "ci_failures", "reviewers"],
-        ["next", "task_age", "task", "session"],
+        ["next", "task_age", "task"],
+        ["session", "agent_status", "agent_run"],
+        ["cost", "agent_cost"],
       ]);
       // The timeline is its own box, the last child, not one of the groups.
       const timeline = card.lastElementChild as HTMLElement;
@@ -284,7 +291,7 @@ describe("a card's labelled slots", () => {
 
     expect(labels(found)).toEqual(SLOT_LABELS);
     for (const key of Object.keys(SLOT_LABELS)) {
-      if (["repo", "branch", "ancestors", "descendants", "task", "session", "task_age"].includes(key)) continue;
+      if (["repo", "branch", "ancestors", "descendants", "task", "session", "task_age", "agent_status", "agent_run", "cost", "agent_cost"].includes(key)) continue;
       expect(found[key].slice(1), key).toEqual(["na", "loading…"]);
     }
   });
@@ -432,5 +439,191 @@ describe("claims", () => {
 
     expect(slotsOf("devon/a").next[2]).toContain("With an agent");
     expect(screen.getByText("With an agent", { selector: ".cg-label" })).toBeInTheDocument();
+  });
+});
+
+describe("a card's agent and spend slots", () => {
+  const extras = (over: Partial<BranchExtras["agent"]> = {}, spend: Partial<BranchExtras["spend"]> = {}): BranchExtras => ({
+    id: "1:devon/a",
+    agent: { has_action: true, trigger: "fix_ci", reason: null, can_override: false, latest_run: null, runs: 0, ...over },
+    spend: { interactive_usd: 1.5, interactive_unpriced_calls: 0, autonomous_usd: 0.05, autonomous_runs: 2, ...spend },
+  });
+  const show = (data: BranchExtras | null, status = pr({ pr_number: 8, ci: "failed" })) => {
+    useCardExtras.getState().set(data ? [data] : []);
+    showCards([branch(1, "devon/a", { status, agent: { label: "Open session", href: "claude://x" } })]);
+    return slotsOf("devon/a");
+  };
+
+  test("the session moved into the Agent group as the interactive session", () => {
+    const found = show(extras());
+
+    expect(found.session).toEqual(["Interactive session", "ok", "Open session"]);
+  });
+
+  test("a branch an agent may take says what it would do, with a button to run one", () => {
+    const found = show(extras());
+
+    expect(found.agent_status[2]).toBe("may fix / re-run ci now Run an agent now");
+    expect(found.agent_run).toEqual(["Latest agent run", "na", "no run yet"]);
+  });
+
+  test("a held-back branch says why, and offers a run only when a person may override it", () => {
+    const held = extras({
+      trigger: "resolve_comments",
+      reason: { code: "draft", text: "The PR is a draft: agents leave drafts to you.", until: null },
+      can_override: true,
+    });
+
+    const found = show(held);
+
+    expect(found.agent_status[2]).toContain("Resolve comments: The PR is a draft: agents leave drafts to you.");
+    expect(screen.getByRole("button", { name: "Run an agent anyway" })).toBeInTheDocument();
+  });
+
+  test("a branch an agent is working on says so, with a stop button", () => {
+    const working = extras({
+      reason: { code: "working", text: "An agent is working on this now.", until: null },
+      latest_run: {
+        run_id: "r9",
+        id: "1:devon/a",
+        repo: "api",
+        branch: "devon/a",
+        trigger: "fix_ci",
+        model: "claude-haiku-5-5",
+        state: "running",
+        started_at: new Date(NOW - 3 * 60_000).toISOString(),
+        ended_at: null,
+        turns: 3,
+        cost_usd: 0.0123,
+        summary: null,
+        error: null,
+      },
+      runs: 1,
+    });
+
+    const found = show(working);
+
+    expect(found.agent_status[2]).toBe("working Stop");
+    expect(found.agent_run[2]).toContain("running");
+    expect(found.agent_run[2]).toContain("$0.0123");
+  });
+
+  test("the latest run shows its result and the cost of every run on the task", () => {
+    const done = extras({
+      has_action: false,
+      trigger: null,
+      latest_run: {
+        run_id: "r1",
+        id: "1:devon/a",
+        repo: "api",
+        branch: "devon/a",
+        trigger: "resolve_comments",
+        model: "claude-haiku-5-5",
+        state: "succeeded",
+        started_at: new Date(NOW - 3600_000).toISOString(),
+        ended_at: new Date(NOW - 3000_000).toISOString(),
+        turns: 9,
+        cost_usd: 0.0831,
+        summary: "Replied to two Copilot threads.",
+        error: null,
+      },
+      runs: 2,
+    });
+
+    const found = show(done);
+
+    expect(found.agent_status[2]).toBe("nothing for an agent to do");
+    expect(found.agent_run[2]).toContain("finished");
+    expect(found.agent_run[2]).toContain("Replied to two Copilot threads.");
+    expect(found.agent_run[2]).toContain("(2 runs in all)");
+    expect(found.cost).toEqual(["Cost", "ok", "$1.50"]);
+    expect(found.agent_cost).toEqual(["Autonomous agent cost", "ok", "$0.0500 over 2 runs"]);
+  });
+
+  test("without extras the slots say they are loading", () => {
+    const found = show(null);
+
+    expect(found.agent_status.slice(1)).toEqual(["na", "loading agent info…"]);
+    expect(found.cost.slice(1)).toEqual(["na", "loading spend…"]);
+  });
+});
+
+describe("a card whose next action is Merge", () => {
+  const ready = pr({
+    pr_number: 8,
+    review: "approved",
+    next: { label: "Merge", who: "you", kind: "merge" },
+  });
+  const merge = (result: { ok: boolean; output: string } | Error, confirmed = true) => {
+    const fetchMock = vi.fn(async (...args: [string, RequestInit?]) => {
+      void args;
+      if (result instanceof Error) return { ok: false, status: 409, json: async () => ({ detail: result.message }) };
+      return { ok: true, status: 200, json: async () => result };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("confirm", vi.fn(() => confirmed));
+    showCards([branch(1, "devon/a", { status: ready })]);
+    return fetchMock;
+  };
+  const mergePosts = (fetchMock: ReturnType<typeof merge>) =>
+    fetchMock.mock.calls.filter(([url]) => url === "/api/merge");
+
+  test("shows Merge as a button, not a pill", () => {
+    merge({ ok: true, output: "" });
+
+    const card = document.querySelector('article[data-id="1:devon/a"]') as HTMLElement;
+    expect(within(card).getByRole("button", { name: "Merge" })).toBeInTheDocument();
+    expect(card.querySelector('[data-slot="next"] .pill')).toBeNull();
+  });
+
+  test("other next actions stay pills", () => {
+    showCards([branch(1, "devon/a", { status: pr({ pr_number: 8 }) })]);
+
+    const card = document.querySelector('article[data-id="1:devon/a"]') as HTMLElement;
+    expect(within(card).queryByRole("button", { name: "Merge" })).toBeNull();
+    expect(card.querySelector('[data-slot="next"] .pill')).not.toBeNull();
+  });
+
+  test("pressing it asks first, then lands the PR", async () => {
+    const fetchMock = merge({ ok: true, output: "merged" });
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Merge" }).click();
+    });
+
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("PR #8"));
+    const [posted] = mergePosts(fetchMock);
+    expect(posted[1]?.method).toBe("POST");
+    expect(JSON.parse(String(posted[1]?.body))).toEqual({ id: "1:devon/a" });
+  });
+
+  test("declining the question lands nothing", async () => {
+    const fetchMock = merge({ ok: true, output: "" }, false);
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Merge" }).click();
+    });
+
+    expect(mergePosts(fetchMock)).toHaveLength(0);
+  });
+
+  test("a merge that fails shows toolbelt's output on the card", async () => {
+    merge({ ok: false, output: "GraphQL: not mergeable" });
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Merge" }).click();
+    });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("GraphQL: not mergeable");
+  });
+
+  test("a refusal from the server is shown too", async () => {
+    merge(new Error("Nothing to merge: the branch's next action is not Merge."));
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Merge" }).click();
+    });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Nothing to merge");
   });
 });

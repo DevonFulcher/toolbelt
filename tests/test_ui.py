@@ -31,6 +31,7 @@ from toolbelt.tasks.tracker import TaskInfo
 from toolbelt.ui import api_models, pr_states, snapshot
 from toolbelt.ui.app import create_app
 from toolbelt.ui.branch_links import agent_link, owning_tracker, task_link
+from toolbelt.ui.merge_pr import MergeOutcome
 from toolbelt.ui.pr_activity import PrFacts, TimelineItem
 from toolbelt.ui.pr_fetch import PrSnapshot
 
@@ -986,3 +987,67 @@ def test_tt_ui_serves_over_uvicorn(tmp_path):
     finally:
         process.terminate()
         process.wait(timeout=10)
+
+
+# ---- landing a PR from the page ---------------------------------------------------------
+
+
+def test_a_branch_whose_next_action_is_merge_is_landed_with_toolbelt_in_its_repo(
+    tmp_path, make_client, fetcher
+):
+    repo_id = seed_repo(tmp_path, "api", {"devon/a": "main"})
+    fetcher.statuses["devon/a"] = open_status(review=ReviewState.APPROVED)
+    calls: list[tuple[Path, str]] = []
+
+    def merger(path: Path, pr_url: str):
+        calls.append((path, pr_url))
+        return MergeOutcome(ok=True, output="merged")
+
+    client = make_client(merger=merger)
+    refresh(client)
+
+    body = client.post("/api/merge", json={"id": f"{repo_id}:devon/a"}).json()
+
+    assert body == {"ok": True, "output": "merged"}
+    assert calls == [(tmp_path / "api", "https://github.com/o/r/pull/5")]
+
+
+def test_a_failed_merge_reports_the_error_for_the_page_to_show(
+    tmp_path, make_client, fetcher
+):
+    repo_id = seed_repo(tmp_path, "api", {"devon/a": "main"})
+    fetcher.statuses["devon/a"] = open_status(review=ReviewState.APPROVED)
+    client = make_client(
+        merger=lambda path, url: MergeOutcome(ok=False, output="GraphQL: not mergeable")
+    )
+    refresh(client)
+
+    body = client.post("/api/merge", json={"id": f"{repo_id}:devon/a"}).json()
+
+    assert body == {"ok": False, "output": "GraphQL: not mergeable"}
+
+
+def test_a_branch_that_is_not_ready_to_merge_is_refused_and_nothing_runs(
+    tmp_path, make_client, fetcher
+):
+    repo_id = seed_repo(tmp_path, "api", {"devon/a": "main"})
+    fetcher.statuses["devon/a"] = open_status(review=ReviewState.NONE)
+    calls: list[str] = []
+    client = make_client(
+        merger=lambda path, url: calls.append(url) or MergeOutcome(ok=True, output="")
+    )
+    refresh(client)
+
+    response = client.post("/api/merge", json={"id": f"{repo_id}:devon/a"})
+
+    assert response.status_code == 409
+    assert "not Merge" in response.json()["detail"]
+    assert calls == []
+
+
+def test_merging_an_unknown_branch_is_a_404(tmp_path, make_client):
+    seed_repo(tmp_path, "api", {"devon/a": "main"})
+    client = make_client()
+
+    assert client.post("/api/merge", json={"id": "1:devon/zzz"}).status_code == 404
+    assert client.post("/api/merge", json={"id": "garbage"}).status_code == 404

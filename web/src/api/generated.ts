@@ -117,7 +117,10 @@ export interface Wire {
   agents_enabled: AgentsEnabled;
   agents_launching: AgentsLaunching;
   aggregate: Aggregate;
+  card_extras: CardExtras;
   event: ServerEvent;
+  merge_request: MergeRequest;
+  merge_result: MergeResult;
   snapshot: Snapshot;
   spend: Spend;
 }
@@ -302,6 +305,37 @@ export interface PrMilestones {
   task_started: string | null;
   title: string;
   url: string;
+}
+export interface CardExtras {
+  branches: BranchExtras[];
+}
+/**
+ * The parts of a task card that do not come with its PR status.
+ */
+export interface BranchExtras {
+  agent: CardAgent;
+  id: string;
+  spend: CardSpend;
+}
+/**
+ * What a task card says about the autonomous agents on one branch.
+ */
+export interface CardAgent {
+  can_override: boolean;
+  has_action: boolean;
+  latest_run: AgentRunInfo | null;
+  reason: AgentReason | null;
+  runs: number;
+  trigger: AgentTrigger | null;
+}
+/**
+ * What a task has cost, over all the spend on record.
+ */
+export interface CardSpend {
+  autonomous_runs: number;
+  autonomous_usd: number;
+  interactive_unpriced_calls: number;
+  interactive_usd: number;
 }
 /**
  * Sent on connect: the current version (a client that last saw another
@@ -539,6 +573,19 @@ export interface UntrackedFailed {
   error: string;
   state: "failed";
 }
+/**
+ * The body of ``POST /api/merge``: land the branch's PR.
+ */
+export interface MergeRequest {
+  id: string;
+}
+/**
+ * What `toolbelt git merge` did.
+ */
+export interface MergeResult {
+  ok: boolean;
+  output: string;
+}
 export interface Snapshot {
   age: number | null;
   branches: Branch[];
@@ -633,6 +680,9 @@ export interface Span {
   tone: Tone;
 }
 export interface SlotDimensions {
+  agent_cost: CatalogDimension | null;
+  agent_run: CatalogDimension | null;
+  agent_status: CatalogDimension | null;
   ancestors: CatalogDimension | null;
   bot_comments: CatalogDimension | null;
   branch: CatalogDimension | null;
@@ -640,6 +690,7 @@ export interface SlotDimensions {
   ci_failures: CatalogDimension | null;
   comments: CatalogDimension | null;
   conflict_commit: CatalogDimension | null;
+  cost: CatalogDimension | null;
   descendants: CatalogDimension | null;
   in_draft: CatalogDimension | null;
   lines: CatalogDimension | null;

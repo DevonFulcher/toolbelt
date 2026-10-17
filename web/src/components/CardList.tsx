@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { groupedLayout, prioritiesLayout, railGuides, stackedLayout, type Section } from "../logic/layout";
 import type { Row } from "../logic/rows";
+import { useCardExtrasPolling } from "../store/cardExtras";
 import { useApp, useAppStore } from "../store/StoreContext";
 import { Card, Stub } from "./Card";
 import { CapControl } from "./CapControl";
@@ -15,6 +16,7 @@ const NO_RAILS: never[] = [];
  */
 export function CardList({ rows }: { rows: Row[] }) {
   const store = useAppStore();
+  useCardExtrasPolling();
   const view = useApp((s) => s.view);
   const collapsed = useApp((s) => s.collapsed);
   const folded = useApp((s) => s.folded);

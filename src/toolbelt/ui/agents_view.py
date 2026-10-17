@@ -24,7 +24,7 @@ def reason_info(reason: Reason) -> api.AgentReason:
     )
 
 
-def _run_info(run: AgentRun, repo_names: dict[int, str]) -> api.AgentRunInfo:
+def run_info(run: AgentRun, repo_names: dict[int, str]) -> api.AgentRunInfo:
     return api.AgentRunInfo(
         run_id=run.run_id,
         id=row_id(run.repo_id, run.branch),
@@ -103,5 +103,5 @@ def build_agents(
             )
             for d in decisions
         ],
-        runs=[_run_info(run, repo_names) for run in runs[:RECENT_RUNS]],
+        runs=[run_info(run, repo_names) for run in runs[:RECENT_RUNS]],
     )

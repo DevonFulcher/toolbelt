@@ -934,6 +934,125 @@
       "title": "BranchClaim",
       "type": "object"
     },
+    "BranchExtras": {
+      "additionalProperties": false,
+      "description": "The parts of a task card that do not come with its PR status.",
+      "properties": {
+        "agent": {
+          "$ref": "#/$defs/CardAgent"
+        },
+        "id": {
+          "type": "string"
+        },
+        "spend": {
+          "$ref": "#/$defs/CardSpend"
+        }
+      },
+      "required": [
+        "id",
+        "agent",
+        "spend"
+      ],
+      "title": "BranchExtras",
+      "type": "object"
+    },
+    "CardAgent": {
+      "additionalProperties": false,
+      "description": "What a task card says about the autonomous agents on one branch.",
+      "properties": {
+        "can_override": {
+          "type": "boolean"
+        },
+        "has_action": {
+          "type": "boolean"
+        },
+        "latest_run": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentRunInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentReason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "runs": {
+          "type": "integer"
+        },
+        "trigger": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentTrigger"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "has_action",
+        "trigger",
+        "reason",
+        "can_override",
+        "latest_run",
+        "runs"
+      ],
+      "title": "CardAgent",
+      "type": "object"
+    },
+    "CardExtras": {
+      "additionalProperties": false,
+      "properties": {
+        "branches": {
+          "items": {
+            "$ref": "#/$defs/BranchExtras"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "branches"
+      ],
+      "title": "CardExtras",
+      "type": "object"
+    },
+    "CardSpend": {
+      "additionalProperties": false,
+      "description": "What a task has cost, over all the spend on record.",
+      "properties": {
+        "autonomous_runs": {
+          "type": "integer"
+        },
+        "autonomous_usd": {
+          "type": "number"
+        },
+        "interactive_unpriced_calls": {
+          "type": "number"
+        },
+        "interactive_usd": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "interactive_usd",
+        "interactive_unpriced_calls",
+        "autonomous_usd",
+        "autonomous_runs"
+      ],
+      "title": "CardSpend",
+      "type": "object"
+    },
     "Catalog": {
       "additionalProperties": false,
       "properties": {
@@ -1931,6 +2050,38 @@
       "title": "MergeChip",
       "type": "object"
     },
+    "MergeRequest": {
+      "additionalProperties": false,
+      "description": "The body of ``POST /api/merge``: land the branch's PR.",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "MergeRequest",
+      "type": "object"
+    },
+    "MergeResult": {
+      "additionalProperties": false,
+      "description": "What `toolbelt git merge` did.",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "output": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ok",
+        "output"
+      ],
+      "title": "MergeResult",
+      "type": "object"
+    },
     "MergeValue": {
       "enum": [
         "conflicts",
@@ -2755,6 +2906,36 @@
     "SlotDimensions": {
       "additionalProperties": false,
       "properties": {
+        "agent_cost": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogDimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "agent_run": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogDimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "agent_status": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogDimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "ancestors": {
           "anyOf": [
             {
@@ -2816,6 +2997,16 @@
           ]
         },
         "conflict_commit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogDimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cost": {
           "anyOf": [
             {
               "$ref": "#/$defs/CatalogDimension"
@@ -3004,6 +3195,10 @@
         "pr_age",
         "timeline",
         "lines",
+        "agent_status",
+        "agent_run",
+        "cost",
+        "agent_cost",
         "repo",
         "branch",
         "task",
@@ -3814,8 +4009,17 @@
     "aggregate": {
       "$ref": "#/$defs/Aggregate"
     },
+    "card_extras": {
+      "$ref": "#/$defs/CardExtras"
+    },
     "event": {
       "$ref": "#/$defs/ServerEvent"
+    },
+    "merge_request": {
+      "$ref": "#/$defs/MergeRequest"
+    },
+    "merge_result": {
+      "$ref": "#/$defs/MergeResult"
     },
     "snapshot": {
       "$ref": "#/$defs/Snapshot"
@@ -3832,6 +4036,9 @@
     "agents",
     "agents_enabled",
     "agents_launching",
+    "card_extras",
+    "merge_request",
+    "merge_result",
     "agent_conversation",
     "agent_start"
   ],

@@ -95,6 +95,7 @@ from toolbelt.ui.aggregate_feed import (
     gh_page,
     read_history,
 )
+from toolbelt.ui.card_extras import build_card_extras
 from toolbelt.ui.claims_feed import (
     CLAIMS_TICK_SECONDS,
     SPAN_MAX_GAP,
@@ -117,6 +118,7 @@ from toolbelt.ui.live_status import (
     StructureWatcher,
     TrackedBranch,
 )
+from toolbelt.ui.merge_pr import MergeOutcome, run_toolbelt_merge
 from toolbelt.ui.pr_fetch import PrSnapshot, fetch_snapshot
 from toolbelt.ui.snapshot import (
     branch_claim,
@@ -351,6 +353,7 @@ def create_app(
     transcripts_dir: Callable[[], Path] = projects_dir,
     spend_interval: float = spend_module.DEFAULT_INTERVAL_SECONDS,
     dispatcher: Dispatcher | None = None,
+    merger: Callable[[Path, str], MergeOutcome] = run_toolbelt_merge,
 ) -> FastAPI:
     """``cwd_root``: the repo `tt ui` was launched from; its checked-out
     branch is marked current, as `tt g tree` does. ``fetch`` looks up a
@@ -681,6 +684,51 @@ def create_app(
                 store.close()
 
         return await asyncio.to_thread(build)
+
+    @app.get("/api/card-extras", response_model=api.CardExtras)
+    async def card_extras() -> api.CardExtras:
+        def build() -> api.CardExtras:
+            store = StackStore(default_db_path())
+            try:
+                return build_card_extras(dispatcher, store, wall_clock())
+            finally:
+                store.close()
+
+        return await asyncio.to_thread(build)
+
+    @app.post("/api/merge", response_model=api.MergeResult)
+    async def merge_branch(body: api.MergeRequest) -> api.MergeResult:
+        repo_part, _, branch = body.id.partition(":")
+        try:
+            repo_id = int(repo_part)
+        except ValueError as error:
+            raise HTTPException(status_code=404, detail="no such branch") from error
+        parents = await asyncio.to_thread(_all_parents, repo_id)
+        if branch not in parents:
+            raise HTTPException(status_code=404, detail="no such branch")
+        status = branch_status(repo_id, parents, branch, wall_clock())
+        if (
+            not isinstance(status, api.LoadedStatus)
+            or status.next.kind != "merge"
+            or status.pr_url is None
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Nothing to merge: the branch's next action is not Merge.",
+            )
+
+        def repo_path() -> Path | None:
+            store = StackStore(default_db_path())
+            try:
+                return next((r.path for r in store.repos() if r.id == repo_id), None)
+            finally:
+                store.close()
+
+        path = await asyncio.to_thread(repo_path)
+        if path is None:
+            raise HTTPException(status_code=404, detail="no such repo")
+        outcome = await asyncio.to_thread(merger, path, status.pr_url)
+        return api.MergeResult(ok=outcome.ok, output=outcome.output)
 
     @app.post("/api/agents/enabled", response_model=api.AgentsEnabled)
     async def set_agents_enabled(body: api.AgentsEnabled) -> api.AgentsEnabled:
