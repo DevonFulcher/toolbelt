@@ -13,3 +13,4 @@ A collection of tools that I use.
 - Any other owner is personal: `--task` is optional, and when given it is stored as usual.
 - No `origin`, or one that is not a github.com URL, keeps the requirement.
 - `IS_PERSONAL=true` waives it everywhere.
+- `tt ui` lists a personal repo only when `IS_PERSONAL=true`; elsewhere it shows work repos alone (a repo with no github.com `origin` counts as work).

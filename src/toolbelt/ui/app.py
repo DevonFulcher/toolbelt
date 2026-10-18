@@ -135,6 +135,7 @@ from toolbelt.ui.pr_fetch import (
 )
 from toolbelt.ui.pr_gate import GithubChangeGate, PrGate
 from toolbelt.ui.pushed_views import PushedViews, conversation_of
+from toolbelt.ui.repo_visibility import visible_repos
 from toolbelt.ui.snapshot import (
     branch_claim,
     build_snapshot,
@@ -203,7 +204,7 @@ def _tracked_branches() -> list[TrackedBranch]:
     try:
         return [
             TrackedBranch(repo_id=repo.id, branch=name, path=repo.path)
-            for repo in store.repos()
+            for repo in visible_repos(store.repos())
             if repo.path.is_dir()
             for name in store.all_parents(repo.id)
         ]
@@ -215,7 +216,10 @@ def _registered_repos() -> list[tuple[int, Path, str | None]]:
     """Every registered repo as ``(id, checkout path, remote URL)``."""
     store = StackStore(default_db_path())
     try:
-        return [(repo.id, repo.path, repo.remote_url) for repo in store.repos()]
+        return [
+            (repo.id, repo.path, repo.remote_url)
+            for repo in visible_repos(store.repos())
+        ]
     finally:
         store.close()
 
@@ -231,7 +235,7 @@ def _tracked_repos() -> list[TrackedRepo]:
                 remote_url=repo.remote_url,
                 branches=frozenset(store.all_parents(repo.id)),
             )
-            for repo in store.repos()
+            for repo in visible_repos(store.repos())
         ]
     finally:
         store.close()
@@ -245,7 +249,7 @@ def _linked_tasks(tracker: TaskTracker | None) -> list[LinkedTask]:
     store = StackStore(default_db_path())
     try:
         tasks = []
-        for repo in store.repos():
+        for repo in visible_repos(store.repos()):
             for name in store.all_parents(repo.id):
                 links = store.get_links(repo.id, name)
                 if links is None or not links.task:
@@ -284,11 +288,11 @@ def _record_claim(observation: ClaimObservation) -> None:
 def _dispatch_tasks() -> list[DispatchTask]:
     store = StackStore(default_db_path())
     try:
-        paths = {repo.id: repo.path for repo in store.repos()}
+        paths = {repo.id: repo.path for repo in visible_repos(store.repos())}
         return [
             DispatchTask(task=task, repo_path=paths[task.repo_id])
             for task in tracked_tasks(store, git_worktrees)
-            if paths[task.repo_id].is_dir()
+            if task.repo_id in paths and paths[task.repo_id].is_dir()
         ]
     finally:
         store.close()

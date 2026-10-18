@@ -48,6 +48,7 @@ from toolbelt.ui import api_models as api
 from toolbelt.ui.github_requests import GithubRequests
 from toolbelt.ui.pr_activity import PrFacts, facts_from_dict, facts_to_dict
 from toolbelt.ui.pr_fetch import timeline_items
+from toolbelt.ui.repo_visibility import visible_repos
 from toolbelt.ui.untracked_prs import (
     RemoteLookup,
     repo_slug,
@@ -224,10 +225,12 @@ class StoredHistory:
 def read_history() -> StoredHistory:
     store = StackStore(default_db_path())
     try:
+        repos = visible_repos(store.repos())
+        ids = {repo.id for repo in repos}
         return StoredHistory(
-            repos=store.repos(),
-            removed=store.removed_branches(),
-            tracked=store.tracked_branch_facts(),
+            repos=repos,
+            removed=[row for row in store.removed_branches() if row.repo_id in ids],
+            tracked=[row for row in store.tracked_branch_facts() if row.repo_id in ids],
             since=store.archive_since(),
         )
     finally:

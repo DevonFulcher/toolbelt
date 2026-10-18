@@ -26,6 +26,7 @@ from toolbelt.ui.conflict_commit import ConflictCommit
 from toolbelt.ui.live_status import Fetched, StatusRefresher
 from toolbelt.ui.next_action import WHO_ORDER, ParentContext, next_action
 from toolbelt.ui.pr_activity import PrFacts, derive_activity, format_age
+from toolbelt.ui.repo_visibility import visible_repos
 from toolbelt.ui.task_feed import TaskFeed
 
 _PR_NUMBER_RE = re.compile(r"/pull/(\d+)")
@@ -371,7 +372,7 @@ def build_snapshot(
         repos: list[api.Repo] = []
         branches: list[api.Branch] = []
         fetched: list[api.FetchedBranch] = []
-        for repo in sorted(store.repos(), key=lambda r: (r.name, r.id)):
+        for repo in sorted(visible_repos(store.repos()), key=lambda r: (r.name, r.id)):
             parents = store.all_parents(repo.id)
             if not parents:
                 continue
