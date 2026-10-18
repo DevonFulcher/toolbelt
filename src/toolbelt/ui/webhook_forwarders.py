@@ -48,6 +48,7 @@ from toolbelt.ui.github_requests import GithubRequests, RateLimited
 from toolbelt.ui.github_webhooks import FORWARDED_EVENTS
 
 DEFAULT_RECONCILE_SECONDS = 60.0
+DEFAULT_RETRY_INITIAL_SECONDS = 5.0
 DEFAULT_RETRY_SECONDS = 60.0
 DEFAULT_READY_SECONDS = 5.0
 _STOP_GRACE_SECONDS = 5.0
@@ -232,6 +233,7 @@ class WebhookForwarders:
         spawn: Spawn = gh_spawn,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         reconcile_seconds: float = DEFAULT_RECONCILE_SECONDS,
+        retry_initial_seconds: float = DEFAULT_RETRY_INITIAL_SECONDS,
         retry_seconds: float = DEFAULT_RETRY_SECONDS,
         ready_seconds: float = DEFAULT_READY_SECONDS,
         hooks: HookApi | None = None,
@@ -254,6 +256,7 @@ class WebhookForwarders:
         self._spawn = spawn
         self._sleep = sleep
         self._reconcile_seconds = reconcile_seconds
+        self._retry_initial_seconds = retry_initial_seconds
         self._retry_seconds = retry_seconds
         self._ready_seconds = ready_seconds
         self._admin: dict[str, bool] = {}
@@ -356,7 +359,11 @@ class WebhookForwarders:
         self._set_problem(slug, None)
 
     async def _forward(self, slug: str) -> None:
-        """Keeps one forwarder process up, restarting it when it exits."""
+        """Keeps one forwarder process up, restarting it when it exits: after
+        ``retry_initial_seconds``, then twice as long each time it fails to come
+        up, to at most ``retry_seconds``; a forwarder that was up starts over
+        from the short wait (a dropped connection, a laptop waking)."""
+        delay = self._retry_initial_seconds
         while True:
             await self._reclaim(slug)
             before = await self._hook_ids(slug)
@@ -369,6 +376,7 @@ class WebhookForwarders:
                 if not exited.done():
                     self._live.add(slug)
                     self._set_problem(slug, None)
+                    delay = self._retry_initial_seconds
                     await self._record_created(slug, before)
                 await exited
                 problem = _problem_of(process)
@@ -394,7 +402,8 @@ class WebhookForwarders:
             # A webhook of ours that was left inactive is gone now: start again
             # at once instead of waiting out the retry delay.
             if not await self._reclaim(slug):
-                await self._sleep(self._retry_seconds)
+                await self._sleep(delay)
+                delay = min(delay * 2, self._retry_seconds)
 
     async def _who_blocks(self, slug: str) -> Problem | None:
         """Says what holds the repo's one webhook when it is not toolbelt's:

@@ -63,6 +63,7 @@ class Setup:
             spawn=self.spawn,
             sleep=self.sleep,
             ready_seconds=5,
+            retry_initial_seconds=7,
             retry_seconds=60,
             **kwargs,
         )
@@ -777,3 +778,66 @@ def test_the_error_is_kept_when_a_long_usage_text_follows_it():
         )
 
     asyncio.run(scenario())
+
+
+class TestRetryDelay:
+    """A forwarder that stops is restarted after a short wait that grows while
+    it keeps failing, and starts over once one has been up."""
+
+    def setup_forwarders(self, up_for_a_while: list[bool]):
+        """Each process it spawns exits at once, or stays up and exits later
+        (``up_for_a_while``, one entry per spawn)."""
+        waits: list[float] = []
+        spawned = []
+
+        async def sleep(seconds: float) -> None:
+            if seconds == 5:  # readiness: only elapses for a process that stays up
+                if up_for_a_while[len(spawned) - 1]:
+                    return
+                await asyncio.sleep(3600)
+            else:
+                waits.append(seconds)
+
+        s = Setup({"o/mine"}, admin={"o/mine"})
+        s.forwarders._sleep = sleep
+        s.forwarders._retry_initial_seconds = 2
+        s.forwarders._retry_seconds = 16
+
+        def on_spawn(slug, process):
+            spawned.append(process)
+            if not up_for_a_while[len(spawned) - 1]:
+                process.exit(1)
+            else:
+                # up, then dropped a moment later
+                asyncio.get_running_loop().call_later(0.01, process.exit, 1)
+
+        s.on_spawn = on_spawn
+        return s, waits, spawned
+
+    def test_the_wait_doubles_while_it_keeps_failing_and_stops_at_the_maximum(self):
+        async def scenario():
+            s, waits, _spawned = self.setup_forwarders([False] * 7)
+            await s.forwarders.reconcile()
+            for _ in range(60):
+                await asyncio.sleep(0)
+            await s.forwarders.stop()
+
+            assert waits[:6] == [2, 4, 8, 16, 16, 16]
+
+        asyncio.run(scenario())
+
+    def test_a_forwarder_that_was_up_starts_over_from_the_short_wait(self):
+        async def scenario():
+            s, waits, _spawned = self.setup_forwarders(
+                [False, False, False, True, False]
+            )
+            await s.forwarders.reconcile()
+            for _ in range(80):
+                await asyncio.sleep(0.001)
+            await s.forwarders.stop()
+
+            # Three quick failures (2, 4, 8), then one that was up and dropped:
+            # the wait after it is back to 2.
+            assert waits[:5] == [2, 4, 8, 2, 4]
+
+        asyncio.run(scenario())
