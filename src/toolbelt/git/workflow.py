@@ -4,6 +4,7 @@ import os
 import re
 import subprocess
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import typer
@@ -190,8 +191,32 @@ def record_branch_pr(branch: str, *, root: Path, forge: Forge) -> None:
 
 
 def git_pr(
-    skip_tests: bool, cwd: Path | None = None, forge: Forge | None = None
+    skip_tests: bool,
+    cwd: Path | None = None,
+    forge: Forge | None = None,
+    *,
+    draft: bool = False,
+    title: str | None = None,
+    body_file: Path | None = None,
+    run_process: Callable[..., subprocess.CompletedProcess[str]] = logged_process.run,
 ) -> None:
+    """Open the branch's PR in the browser, or create it non-interactively.
+
+    Any of ``draft``, ``title`` and ``body_file`` switches from the browser
+    flow (``gh pr view/create --web``) to ``gh pr create`` with those values
+    and prints the PR URL; ``title`` and ``body_file`` are then both required.
+    ``gh`` reads the body from ``body_file``. ``run_process`` starts the ``gh``
+    commands.
+    """
+    non_interactive = draft or title is not None or body_file is not None
+    if non_interactive:
+        if title is None or body_file is None:
+            raise typer.BadParameter(
+                "--draft, --title and --body-file go together: pass --title "
+                "and --body-file to create the PR non-interactively."
+            )
+        if not body_file.is_file():
+            raise typer.BadParameter(f"--body-file {body_file} does not exist.")
     # ``cwd`` targets the branch's worktree: when `git save` starts a new stacked
     # branch it lands in its own worktree, so the PR must be opened from there
     # rather than the (default-branch) directory the command was invoked in.
@@ -199,8 +224,17 @@ def git_pr(
 
     root = cwd or repo_root()
     forge = forge or GhForge(root)
-    view_pr = logged_process.run(["gh", "pr", "view", "--web"], check=False, cwd=cwd)
+    view_pr = run_process(
+        ["gh", "pr", "view", "--json", "url", "--jq", ".url"]
+        if non_interactive
+        else ["gh", "pr", "view", "--web"],
+        check=False,
+        cwd=cwd,
+        **({"stdout": subprocess.PIPE, "text": True} if non_interactive else {}),
+    )
     if view_pr.returncode == 0:
+        if non_interactive:
+            typer.echo(view_pr.stdout.strip())
         # The PR exists: remember which one it is for this branch's task.
         record_branch_pr(current_branch(root), root=root, forge=forge)
         return
@@ -223,7 +257,31 @@ def git_pr(
     # only once it has a PR, so a new branch is first pushed here (after the
     # tests, so a failing run pushes nothing).
     push_if_unpushed(branch, root=root)
-    logged_process.run(
+    if non_interactive:
+        created = run_process(
+            [
+                "gh",
+                "pr",
+                "create",
+                *(["--draft"] if draft else []),
+                "--title",
+                title,
+                "--body-file",
+                str(body_file),
+                "--base",
+                base,
+            ],
+            check=False,
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        if created.returncode:
+            raise typer.Exit(created.returncode)
+        typer.echo(created.stdout.strip())
+        record_branch_pr(branch, root=root, forge=forge)
+        return
+    run_process(
         ["gh", "pr", "create", "--web", "--base", base],
         check=False,
         cwd=cwd,

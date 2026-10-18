@@ -56,6 +56,21 @@ def pr(
     skip_tests: Annotated[
         bool, typer.Option("--skip-tests", help="Skip tests")
     ] = False,
+    draft: Annotated[
+        bool,
+        typer.Option("--draft", help="Create the PR as a draft, without the browser."),
+    ] = False,
+    title: Annotated[
+        str | None,
+        typer.Option("--title", help="PR title; creates the PR without the browser."),
+    ] = None,
+    body_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--body-file",
+            help="File with the PR body; creates the PR without the browser.",
+        ),
+    ] = None,
 ):
     """Open the current branch's PR in the browser, or start creating one.
 
@@ -66,8 +81,14 @@ def pr(
     the browser. If origin does not have the branch yet, pushes it first
     (`git push -u origin <branch>`, not forced) after the tests pass. Does not
     commit; use `save` first.
+
+    Non-interactive (for agents and scripts): --draft, --title and --body-file
+    together run `gh pr create [--draft] --title TITLE --body-file PATH --base
+    BASE` instead of `--web` and print the PR URL (an existing PR's URL is
+    printed instead of opened). --title and --body-file are required then;
+    without any of the three flags the browser flow above is unchanged.
     """
-    git_pr(skip_tests)
+    git_pr(skip_tests, draft=draft, title=title, body_file=body_file)
 
 
 @git_typer.command()
@@ -214,6 +235,21 @@ def send(
             help=("Auto-accept prompts (e.g. auto create a branch)"),
         ),
     ] = False,
+    draft: Annotated[
+        bool,
+        typer.Option("--draft", help="Create the PR as a draft, without the browser."),
+    ] = False,
+    title: Annotated[
+        str | None,
+        typer.Option("--title", help="PR title; creates the PR without the browser."),
+    ] = None,
+    body_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--body-file",
+            help="File with the PR body; creates the PR without the browser.",
+        ),
+    ] = None,
     pathspec: Annotated[
         list[str] | None, typer.Argument(help="Files to stage (defaults to '-A')")
     ] = None,
@@ -226,12 +262,19 @@ def send(
     from the branch's worktree (the new one, if `save` created a branch), does
     what `pr` does: opens the existing PR, or runs unit tests (unless
     --skip-tests), pushes the branch if origin does not have it yet, and opens
-    `gh pr create --web` against the stack parent.
+    `gh pr create --web` against the stack parent. --draft, --title and
+    --body-file create the PR non-interactively instead, exactly as in
+    `pr --help`.
     """
-    """Save changes and create PR"""
     with repo_lock(repo_root()):
         commit_root = git_save(message, no_verify, no_sync, False, pathspec, yes)
-        git_pr(skip_tests, cwd=commit_root)
+        git_pr(
+            skip_tests,
+            cwd=commit_root,
+            draft=draft,
+            title=title,
+            body_file=body_file,
+        )
 
 
 @git_typer.command()
