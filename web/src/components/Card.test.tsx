@@ -32,6 +32,8 @@ const SLOT_LABELS: Record<string, string> = {
   conflict_commit: "Conflict commit",
   lines: "Lines",
   task: "Task",
+  task_title: "Task title",
+  task_status: "Task status",
   session: "Interactive session",
   agent_status: "Autonomous agent",
   agent_run: "Latest agent run",
@@ -272,7 +274,7 @@ describe("a card's labelled slots", () => {
       expect(keys).toEqual([
         ["repo", "branch", "ancestors", "descendants"],
         ["title", "pr", "ci", "review", "comments", "bot_comments", "merge", "conflict_commit", "lines", "pr_age", "in_draft", "review_requested", "ci_failures", "reviewers"],
-        ["next", "task_age", "task"],
+        ["next", "task_age", "task", "task_title", "task_status"],
         ["session", "agent_status", "agent_run", "agent_run_summary"],
         ["cost", "agent_cost"],
       ]);
@@ -291,7 +293,7 @@ describe("a card's labelled slots", () => {
 
     expect(labels(found)).toEqual(SLOT_LABELS);
     for (const key of Object.keys(SLOT_LABELS)) {
-      if (["repo", "branch", "ancestors", "descendants", "task", "session", "task_age", "agent_status", "agent_run", "agent_run_summary", "cost", "agent_cost"].includes(key)) continue;
+      if (["repo", "branch", "ancestors", "descendants", "task", "task_title", "task_status", "session", "task_age", "agent_status", "agent_run", "agent_run_summary", "cost", "agent_cost"].includes(key)) continue;
       expect(found[key].slice(1), key).toEqual(["na", "loading…"]);
     }
   });
@@ -326,7 +328,7 @@ describe("a card's labelled slots", () => {
     }
   });
 
-  test("the task slot shows the tracker's title and status, or why it is unavailable", () => {
+  test("the task, its title and its status are separate fields, or the title says why it is unavailable", () => {
     const withTask = (live: Branch["task_live"]) =>
       branch(1, "devon/a", {
         status: noPr(),
@@ -335,18 +337,31 @@ describe("a card's labelled slots", () => {
         task_live: live,
       });
     const { store } = showCards([withTask({ state: "loading" })]);
-    expect(slotsOf("devon/a").task[2]).toBe("ABC-1");
+    expect(slotsOf("devon/a").task).toEqual(["Task", "ok", "ABC-1"]);
+    expect(slotsOf("devon/a").task_title).toEqual(["Task title", "na", "loading…"]);
+    expect(slotsOf("devon/a").task_status).toEqual(["Task status", "na", "loading…"]);
 
     act(() => {
       store.getState().taskChanged("1:devon/a", { state: "info", title: "Fix it", status: "In Progress" }, 1);
     });
-    expect(slotsOf("devon/a").task[2]).toBe("ABC-1 Fix it In Progress");
+    expect(slotsOf("devon/a").task).toEqual(["Task", "ok", "ABC-1"]);
+    expect(slotsOf("devon/a").task_title).toEqual(["Task title", "ok", "Fix it"]);
+    expect(slotsOf("devon/a").task_status).toEqual(["Task status", "ok", "In Progress"]);
 
     act(() => {
       store.getState().taskChanged("1:devon/a", { state: "unavailable", reason: "JIRA_API_TOKEN not set" }, 2);
     });
+    expect(slotsOf("devon/a").task_title[2]).toBe("details unavailable ⚠");
     expect(screen.getByTitle("JIRA_API_TOKEN not set")).toBeInTheDocument();
+    expect(slotsOf("devon/a").task_status).toEqual(["Task status", "na", "–"]);
     expect(screen.getByRole("link", { name: "ABC-1" })).toHaveAttribute("href", "https://tasks.example/abc-1");
+  });
+
+  test("a branch with no task has nothing in the title and status", () => {
+    showCards([branch(1, "devon/a", { status: noPr() })]);
+
+    expect(slotsOf("devon/a").task_title).toEqual(["Task title", "na", "–"]);
+    expect(slotsOf("devon/a").task_status).toEqual(["Task status", "na", "–"]);
   });
 });
 

@@ -881,6 +881,8 @@ export interface SlotDimensions {
   session: CatalogDimension | null;
   task: CatalogDimension | null;
   task_age: CatalogDimension | null;
+  task_status: CatalogDimension | null;
+  task_title: CatalogDimension | null;
   timeline: CatalogDimension | null;
   title: CatalogDimension | null;
 }

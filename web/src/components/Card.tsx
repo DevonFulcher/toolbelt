@@ -18,7 +18,7 @@ import { useApp, useAppStore } from "../store/StoreContext";
 import { mergeBranch } from "../api/client";
 import { AgentSlots, SpendSlots } from "./CardAgentSlots";
 import { Timeline } from "./Timeline";
-import { Age, CI_TONE, ExternalLink, PR_TONE, Pill, REVIEW_TONE, TaskValue, WHO_TEXT, WHO_TONE } from "./presentation";
+import { Age, CI_TONE, ExternalLink, PR_TONE, Pill, REVIEW_TONE, WHO_TEXT, WHO_TONE } from "./presentation";
 import { useNow, useSecondNow } from "./useNow";
 import { formatAge } from "../logic/format";
 
@@ -363,7 +363,37 @@ export const Card = memo(
             )}
           </Slot>
           <Slot id="task" label="Task" state={branch.task ? "ok" : "gap"}>
-            {branch.task ? <TaskValue link={branch.task} task={task} /> : "no task linked"}
+            {branch.task ? (
+              branch.task.href ? (
+                <ExternalLink href={branch.task.href}>{branch.task.label}</ExternalLink>
+              ) : (
+                branch.task.label
+              )
+            ) : (
+              "no task linked"
+            )}
+          </Slot>
+          <Slot id="task_title" label="Task title" state={task?.state === "info" ? "ok" : "na"}>
+            {task?.state === "info" ? (
+              task.title
+            ) : task?.state === "unavailable" ? (
+              <span className="task-warn" title={task.reason}>
+                details unavailable ⚠
+              </span>
+            ) : branch.task && branch.task_fetchable ? (
+              "loading…"
+            ) : (
+              "–"
+            )}
+          </Slot>
+          <Slot id="task_status" label="Task status" state={task?.state === "info" ? "ok" : "na"}>
+            {task?.state === "info" ? (
+              <span className="pill task-status">{task.status}</span>
+            ) : branch.task && branch.task_fetchable && task?.state !== "unavailable" ? (
+              "loading…"
+            ) : (
+              "–"
+            )}
           </Slot>
         </Group>
         <Group

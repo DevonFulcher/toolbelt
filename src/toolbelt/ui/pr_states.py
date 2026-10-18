@@ -528,6 +528,8 @@ SLOT_STATES: dict[str, str | None] = {
     "repo": None,
     "branch": None,
     "task": None,
+    "task_title": None,
+    "task_status": None,
     "session": None,
     "ancestors": None,
     "descendants": None,

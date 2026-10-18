@@ -3363,6 +3363,26 @@
             }
           ]
         },
+        "task_status": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogDimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "task_title": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogDimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "timeline": {
           "anyOf": [
             {
@@ -3410,6 +3430,8 @@
         "repo",
         "branch",
         "task",
+        "task_title",
+        "task_status",
         "session",
         "ancestors",
         "descendants"

@@ -163,6 +163,8 @@
     "repo": null,
     "branch": null,
     "task": null,
+    "task_title": null,
+    "task_status": null,
     "session": null,
     "ancestors": null,
     "descendants": null

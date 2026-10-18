@@ -188,9 +188,10 @@ a.pill:hover { text-decoration: none; background: color-mix(in srgb, currentColo
 .v-na .slot-value { color: var(--muted); opacity: .8; }
 .v-gap .slot-value { color: var(--fg); font-style: italic;
                      text-decoration: underline dashed var(--amber); text-underline-offset: 3px; }
-.s-branch, .s-next, .s-task, .s-session, .s-reviewers, .s-title,
+.s-branch, .s-next, .s-task, .s-task_title, .s-session, .s-reviewers, .s-title,
 .s-agent_status, .s-agent_run, .s-agent_run_summary, .s-conflict_commit { grid-column: 1 / -1; }
-.s-agent_status .slot-value, .s-agent_run .slot-value, .s-agent_run_summary .slot-value, .s-conflict_commit .slot-value {
+.s-agent_status .slot-value, .s-agent_run .slot-value, .s-agent_run_summary .slot-value, .s-conflict_commit .slot-value,
+.s-task_title .slot-value {
   white-space: normal; overflow: visible; }
 /* The table-row indentation of `.branch` has no meaning inside a card. */
 .s-branch .branch { margin-left: 0; overflow-wrap: anywhere; }
@@ -200,7 +201,6 @@ a.pill:hover { text-decoration: none; background: color-mix(in srgb, currentColo
 .hook-problem { font-size: 10px; font-weight: 600; color: var(--amber); border: 1px solid var(--amber);
                border-radius: 4px; padding: 0 5px; margin-right: 4px; cursor: help; }
 .card-next-who { font-size: 11px; margin-left: 4px; }
-.card .task-title { margin: 0 4px; }
 
 /* Per-card timeline track. Colours come from the catalog's tone tokens. */
 .tone-green { --tone: var(--green); }
