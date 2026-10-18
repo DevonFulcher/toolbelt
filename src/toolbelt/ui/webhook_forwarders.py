@@ -104,18 +104,23 @@ class _ProcessGroup:
     def __init__(self, process: logged_process.AsyncProcess) -> None:
         self._process = process
         self._lines: deque[str] = deque(maxlen=_STDERR_LINES)
+        self._error: str | None = None
         self._drain_task = asyncio.create_task(self._drain())
 
     async def _drain(self) -> None:
         stream = self._process.stderr
         assert stream is not None
-        async for line in stream:
-            self._lines.append(line.decode(errors="replace").rstrip())
+        async for raw in stream:
+            line = raw.decode(errors="replace").rstrip()
+            self._lines.append(line)
+            # The extension prints the usage after an error, which would push
+            # the error out of ``_lines``: keep the first one.
+            if self._error is None and line.startswith("Error:"):
+                self._error = line.removeprefix("Error:").strip()
 
     def last_error(self) -> str | None:
-        for line in self._lines:
-            if line.startswith("Error:"):
-                return line.removeprefix("Error:").strip()
+        if self._error is not None:
+            return self._error
         return next((line for line in reversed(self._lines) if line), None)
 
     @property

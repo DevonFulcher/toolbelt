@@ -747,3 +747,33 @@ class TestForwarderPids:
             assert signals == [(4242, signal.SIGINT), (4242, signal.SIGKILL)]
 
         asyncio.run(scenario())
+
+
+def test_the_error_is_kept_when_a_long_usage_text_follows_it():
+    from toolbelt.ui.webhook_forwarders import _ProcessGroup
+
+    class Process:
+        pid = 1
+        returncode = 1
+        stderr: asyncio.StreamReader
+
+        async def wait(self) -> int:
+            return 1
+
+    async def scenario():
+        process = Process()
+        process.stderr = asyncio.StreamReader()
+        usage = "".join(f"  --flag{n}  usage line {n}\n" for n in range(60))
+        process.stderr.feed_data(
+            f"Error: unable to connect to webhooks server, forwarding stopped\nUsage:\n{usage}".encode()
+        )
+        process.stderr.feed_eof()
+        group = _ProcessGroup(process)  # type: ignore[arg-type]
+        await settle()
+
+        assert (
+            group.last_error()
+            == "unable to connect to webhooks server, forwarding stopped"
+        )
+
+    asyncio.run(scenario())
