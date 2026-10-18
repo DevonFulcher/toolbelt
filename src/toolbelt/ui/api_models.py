@@ -1178,7 +1178,6 @@ class Wire(Model):
     agents: Agents
     agents_enabled: AgentsEnabled
     agents_launching: AgentsLaunching
-    card_extras: CardExtras
     merge_request: MergeRequest
     merge_result: MergeResult
     agent_conversation: AgentConversation

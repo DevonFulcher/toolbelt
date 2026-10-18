@@ -127,7 +127,6 @@ export interface Wire {
   agents_enabled: AgentsEnabled;
   agents_launching: AgentsLaunching;
   aggregate: Aggregate;
-  card_extras: CardExtras;
   event: ServerEvent;
   merge_request: MergeRequest;
   merge_result: MergeResult;
@@ -317,39 +316,6 @@ export interface PrMilestones {
   task_started: string | null;
   title: string;
   url: string;
-}
-export interface CardExtras {
-  agents_decided_at: string | null;
-  branches: BranchExtras[];
-  spend_read_at: string | null;
-}
-/**
- * The parts of a task card that do not come with its PR status.
- */
-export interface BranchExtras {
-  agent: CardAgent;
-  id: string;
-  spend: CardSpend;
-}
-/**
- * What a task card says about the autonomous agents on one branch.
- */
-export interface CardAgent {
-  can_override: boolean;
-  has_action: boolean;
-  latest_run: AgentRunInfo | null;
-  reason: AgentReason | null;
-  runs: number;
-  trigger: AgentTrigger | null;
-}
-/**
- * What a task has cost, over all the spend on record.
- */
-export interface CardSpend {
-  autonomous_runs: number;
-  autonomous_usd: number;
-  interactive_unpriced_calls: number;
-  interactive_usd: number;
 }
 /**
  * Sent on connect: the current version (a client that last saw another
@@ -600,6 +566,39 @@ export interface ExtrasEvent {
   extras: CardExtras;
   type: "extras";
   v: number;
+}
+export interface CardExtras {
+  agents_decided_at: string | null;
+  branches: BranchExtras[];
+  spend_read_at: string | null;
+}
+/**
+ * The parts of a task card that do not come with its PR status.
+ */
+export interface BranchExtras {
+  agent: CardAgent;
+  id: string;
+  spend: CardSpend;
+}
+/**
+ * What a task card says about the autonomous agents on one branch.
+ */
+export interface CardAgent {
+  can_override: boolean;
+  has_action: boolean;
+  latest_run: AgentRunInfo | null;
+  reason: AgentReason | null;
+  runs: number;
+  trigger: AgentTrigger | null;
+}
+/**
+ * What a task has cost, over all the spend on record.
+ */
+export interface CardSpend {
+  autonomous_runs: number;
+  autonomous_usd: number;
+  interactive_unpriced_calls: number;
+  interactive_usd: number;
 }
 /**
  * The autonomous agents' state changed (what the Agents view shows).

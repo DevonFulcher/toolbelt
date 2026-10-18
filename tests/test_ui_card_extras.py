@@ -1,4 +1,4 @@
-"""The task card's agent and spend parts: `/api/card-extras`."""
+"""The task card's agent and spend parts (`build_card_extras`)."""
 
 from datetime import timedelta
 

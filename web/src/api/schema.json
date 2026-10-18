@@ -4264,9 +4264,6 @@
     "aggregate": {
       "$ref": "#/$defs/Aggregate"
     },
-    "card_extras": {
-      "$ref": "#/$defs/CardExtras"
-    },
     "event": {
       "$ref": "#/$defs/ServerEvent"
     },
@@ -4291,7 +4288,6 @@
     "agents",
     "agents_enabled",
     "agents_launching",
-    "card_extras",
     "merge_request",
     "merge_result",
     "agent_conversation",
