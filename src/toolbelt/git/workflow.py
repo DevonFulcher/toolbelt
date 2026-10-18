@@ -215,9 +215,14 @@ def git_pr(
     # which may differ — e.g. `git send` calls this with the freshly created
     # branch's worktree as ``cwd`` without chdir'ing the process into it).
     from toolbelt.git.stack.lineage import get_parent
+    from toolbelt.git.stack.ops import push_if_unpushed
 
     branch = current_branch(root)
     base = get_parent(branch, root=root) or get_default_branch()
+    # `gh pr create` aborts for a branch GitHub cannot see. `sync` pushes a leaf
+    # only once it has a PR, so a new branch is first pushed here (after the
+    # tests, so a failing run pushes nothing).
+    push_if_unpushed(branch, root=root)
     logged_process.run(
         ["gh", "pr", "create", "--web", "--base", base],
         check=False,

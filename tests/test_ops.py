@@ -11,6 +11,7 @@ from toolbelt.git.stack.append import create_stacked_branch
 from toolbelt.git.stack.ops import (
     compress_branch,
     diff_parent_command,
+    push_if_unpushed,
     retarget_open_pr,
     set_branch_parent,
 )
@@ -405,3 +406,31 @@ def test_diff_parent_command_compares_with_origin_when_local_base_diverged(
 
     # sync merges origin/<base> into the branch, so that is what to measure from.
     assert cmd == ["git", "diff", "origin/main...HEAD"]
+
+
+def test_push_if_unpushed_pushes_a_new_branch_with_upstream_once(
+    repo: Path, tmp_path: Path
+):
+    create_stacked_branch("api", root=repo, wt_path=tmp_path / "wt-api")
+    wt = tmp_path / "wt-api"
+    (wt / "api.txt").write_text("x\n")
+    git("add", "-A", cwd=wt)
+    git("commit", "-m", "api", cwd=wt)
+
+    assert push_if_unpushed("devon/api", root=wt) is True
+    assert git("rev-parse", "devon/api", cwd=wt) == git(
+        "rev-parse", "origin/devon/api", cwd=wt
+    )
+    assert (
+        git("rev-parse", "--abbrev-ref", "devon/api@{upstream}", cwd=wt)
+        == "origin/devon/api"
+    )
+
+    # Already on origin: nothing is pushed, even with new local commits.
+    (wt / "more.txt").write_text("y\n")
+    git("add", "-A", cwd=wt)
+    git("commit", "-m", "more", cwd=wt)
+    assert push_if_unpushed("devon/api", root=wt) is False
+    assert git("rev-parse", "devon/api", cwd=wt) != git(
+        "rev-parse", "origin/devon/api", cwd=wt
+    )

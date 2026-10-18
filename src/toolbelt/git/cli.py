@@ -63,7 +63,9 @@ def pr(
     unit tests (unless --skip-tests; repos without configured tests skip this)
     and opens `gh pr create --web` with the base set to the branch's tracked
     stack parent, falling back to the default branch. The PR is finished in
-    the browser. Does not commit or push; use `save` first.
+    the browser. If origin does not have the branch yet, pushes it first
+    (`git push -u origin <branch>`, not forced) after the tests pass. Does not
+    commit; use `save` first.
     """
     git_pr(skip_tests)
 
@@ -223,7 +225,8 @@ def send(
     unless --no-sync), except -m is required and there is no --amend. Then,
     from the branch's worktree (the new one, if `save` created a branch), does
     what `pr` does: opens the existing PR, or runs unit tests (unless
-    --skip-tests) and opens `gh pr create --web` against the stack parent.
+    --skip-tests), pushes the branch if origin does not have it yet, and opens
+    `gh pr create --web` against the stack parent.
     """
     """Save changes and create PR"""
     with repo_lock(repo_root()):

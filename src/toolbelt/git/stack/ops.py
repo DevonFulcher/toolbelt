@@ -39,6 +39,20 @@ def _remote_branch_exists(branch: str, *, root: Path) -> bool:
     return result.returncode == 0
 
 
+def push_if_unpushed(branch: str, *, root: Path) -> bool:
+    """Push ``branch`` to origin (``git push -u``, never forced) if origin has no
+    such branch yet; return whether it pushed.
+
+    ``gh pr create`` aborts for a branch GitHub cannot see, and ``sync`` pushes a
+    leaf branch only once it has an open PR, so a new branch's first push is
+    done here, when its PR is being opened.
+    """
+    if _remote_branch_exists(branch, root=root):
+        return False
+    run(["git", "push", "-u", "origin", branch], cwd=root, exit_on_error=True)
+    return True
+
+
 def _is_ancestor(ancestor: str, descendant: str, *, root: Path) -> bool:
     result = run(
         ["git", "merge-base", "--is-ancestor", ancestor, descendant],
