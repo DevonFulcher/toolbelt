@@ -51,7 +51,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 
 from toolbelt.autonomous_agents.auth import claude_signed_in
@@ -103,8 +103,10 @@ from toolbelt.ui.claims_feed import (
 )
 from toolbelt.ui.client_build import CLIENT_DIST
 from toolbelt.ui.conflict_commit import conflict_for
+from toolbelt.ui.github_webhooks import affected
 from toolbelt.ui.live_status import (
     DEFAULT_CONCURRENCY,
+    DEFAULT_FULL_INTERVAL_SECONDS,
     DEFAULT_GRACE_SECONDS,
     DEFAULT_INTERVAL_SECONDS,
     DEFAULT_SETTLED_INTERVAL_SECONDS,
@@ -118,6 +120,7 @@ from toolbelt.ui.live_status import (
 )
 from toolbelt.ui.merge_pr import MergeOutcome, run_toolbelt_merge
 from toolbelt.ui.pr_fetch import PrSnapshot, fetch_snapshot
+from toolbelt.ui.pr_gate import GithubChangeGate, PrGate
 from toolbelt.ui.pushed_views import PushedViews, conversation_of
 from toolbelt.ui.snapshot import (
     branch_claim,
@@ -139,7 +142,9 @@ from toolbelt.ui.untracked_prs import (
     UntrackedPrFeed,
     gh_search,
     origin_remote,
+    repo_slug,
 )
+from toolbelt.ui.webhook_forwarders import WebhookForwarders
 
 # Sent when no event has gone out for this long, so intermediaries keep the
 # stream open and a dead client is noticed.
@@ -189,6 +194,15 @@ def _tracked_branches() -> list[TrackedBranch]:
             if repo.path.is_dir()
             for name in store.all_parents(repo.id)
         ]
+    finally:
+        store.close()
+
+
+def _registered_repos() -> list[tuple[int, Path, str | None]]:
+    """Every registered repo as ``(id, checkout path, remote URL)``."""
+    store = StackStore(default_db_path())
+    try:
+        return [(repo.id, repo.path, repo.remote_url) for repo in store.repos()]
     finally:
         store.close()
 
@@ -353,6 +367,10 @@ def create_app(
     spend_interval: float = spend_module.DEFAULT_INTERVAL_SECONDS,
     dispatcher: Dispatcher | None = None,
     merger: Callable[[Path, str], MergeOutcome] = run_toolbelt_merge,
+    gate: PrGate | None = None,
+    full_refresh_interval: float = DEFAULT_FULL_INTERVAL_SECONDS,
+    webhook_url: str | None = None,
+    forwarders: WebhookForwarders | None = None,
 ) -> FastAPI:
     """``cwd_root``: the repo `tt ui` was launched from; its checked-out
     branch is marked current, as `tt g tree` does. ``fetch`` looks up a
@@ -368,6 +386,12 @@ def create_app(
     ``client_dist`` is the built web client. ``search_open_prs`` lists the
     user's open PRs (one GitHub call per ``untracked_interval``) and
     ``remote_of`` looks up a checkout's origin: see ``untracked_prs.py``.
+    ``gate`` lets a status poll skip the full lookup of a PR GitHub says is
+    unchanged (see ``pr_gate.py``); without one every poll is a full lookup.
+    ``webhook_url`` is where ``gh webhook forward`` replays GitHub's webhooks
+    to (this server's ``/api/github-webhook``): given, webhooks are forwarded
+    for the repos the user administers (see ``webhook_forwarders.py``);
+    ``forwarders`` replaces that manager (tests).
     ``search_history`` pages through the user's PRs for the aggregate view
     (kept fresh incrementally, see ``AggregateService``) and
     ``stored_history`` reads the
@@ -493,6 +517,28 @@ def create_app(
     runner.on_change = lambda: views.notify("agents", "extras")
     spend.on_ingest = lambda: views.notify("spend", "extras")
 
+    repo_slugs: dict[int, str | None] = {}
+
+    async def slug_of(repo_id: int) -> str | None:
+        """``owner/name`` of a registered repo's GitHub remote."""
+        if repo_id not in repo_slugs:
+            for registered_id, path, remote_url in _registered_repos():
+                repo_slugs[registered_id] = repo_slug(remote_url) or repo_slug(
+                    await remote_of(path)
+                )
+        return repo_slugs.get(repo_id)
+
+    async def forwarded_slugs() -> set[str]:
+        resolved = {await slug_of(repo_id) for repo_id, _, _ in _registered_repos()}
+        return {slug for slug in resolved if slug}
+
+    if forwarders is None and webhook_url is not None:
+        forwarders = WebhookForwarders(slugs=forwarded_slugs, url=webhook_url)
+
+    def webhooks_live(repo_id: int) -> bool:
+        slug = repo_slugs.get(repo_id)
+        return forwarders is not None and slug is not None and forwarders.is_live(slug)
+
     refresher = StatusRefresher(
         branches=_tracked_branches,
         fetch=fetch,
@@ -505,6 +551,9 @@ def create_app(
         tick=tick,
         wall_clock=wall_clock,
         branch_id=row_id,
+        gate=GithubChangeGate(gate, slug_of) if gate is not None else None,
+        full_interval=full_refresh_interval,
+        pushed=webhooks_live,
     )
     task_feed = TaskFeed(
         tasks=lambda: _linked_tasks(tracker()),
@@ -571,6 +620,8 @@ def create_app(
             asyncio.create_task(aggregates.run()),
             asyncio.create_task(views.run()),
         ]
+        if forwarders is not None:
+            tasks.append(asyncio.create_task(forwarders.run()))
         try:
             yield
         finally:
@@ -598,6 +649,7 @@ def create_app(
     app.state.spend_feed = spend
     app.state.dispatcher = dispatcher
     app.state.agent_runner = runner
+    app.state.forwarders = forwarders
     app.state.views = views
 
     @app.get("/assets/{path:path}", include_in_schema=False, response_model=None)
@@ -797,6 +849,22 @@ def create_app(
                 status_code=409, detail=refused.reason.text
             ) from refused
         return {"starting": True}
+
+    @app.post("/api/github-webhook", status_code=204)
+    async def github_webhook(request: Request) -> Response:
+        # A hint only (see github_webhooks.py): refetch the branches it names.
+        hit = affected(request.headers.get("x-github-event", ""), await request.json())
+        if hit is not None:
+            keys = set()
+            for branch in _tracked_branches():
+                if await slug_of(branch.repo_id) != hit.repo:
+                    continue
+                fetched = refresher.get(branch.repo_id, branch.branch)
+                number = fetched.facts.number if fetched and fetched.facts else None
+                if branch.branch in hit.branches or number in hit.numbers:
+                    keys.add(branch.key)
+            refresher.hint(keys)
+        return Response(status_code=204)
 
     @app.get("/api/events")
     async def events() -> StreamingResponse:

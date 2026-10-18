@@ -20,17 +20,25 @@ tick. Cost control:
   ``settled_interval`` for merged/closed PRs, which rarely change), so
   branches drift apart instead of all firing together;
 * at most ``concurrency`` lookups run at once, so a cold start (every branch
-  due at the same moment) is spread over several rounds, not one burst.
+  due at the same moment) is spread over several rounds, not one burst;
+* with a ``gate``, a due branch whose PR GitHub says is unchanged (a free
+  conditional request) reuses its last lookup; the full lookup still runs once
+  ``full_interval`` has passed;
+* a repo whose GitHub webhooks are being forwarded here (``pushed``) is polled
+  only every ``pushed_interval``, as a safety net: ``hint`` refetches a branch
+  at once when a webhook says it changed.
 
 Time and sleeping are injected so tests drive a pass at a time without waiting.
 """
 
 import asyncio
+import contextlib
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Protocol
 
 from toolbelt.git.stack.status import BranchStatus, PrState
 from toolbelt.ui.conflict_commit import ConflictCommit
@@ -42,6 +50,8 @@ StatusFetcher = Callable[[str, Path], Awaitable[PrSnapshot]]
 
 DEFAULT_INTERVAL_SECONDS = 20.0
 DEFAULT_SETTLED_INTERVAL_SECONDS = 300.0
+DEFAULT_FULL_INTERVAL_SECONDS = 120.0
+DEFAULT_PUSHED_INTERVAL_SECONDS = 300.0
 DEFAULT_CONCURRENCY = 4
 DEFAULT_TICK_SECONDS = 2.0
 DEFAULT_GRACE_SECONDS = 5.0
@@ -73,6 +83,18 @@ class Fetched:
     #: When (wall clock) the lookup finished: what a card says its data is as
     #: old as.
     wall_at: datetime | None = None
+    #: When (``clock`` time) the PR was last looked up in full. ``at`` is also
+    #: moved by a poll that found nothing changed and reused the lookup.
+    full_at: float = 0.0
+
+
+class ChangeGate(Protocol):
+    """Answers, cheaply, whether a branch's PR changed since its last lookup
+    (see ``pr_gate.py``)."""
+
+    async def unchanged(self, branch: TrackedBranch, previous: Fetched) -> bool: ...
+
+    async def remember(self, branch: TrackedBranch, fetched: Fetched) -> None: ...
 
 
 def _iso(moment: datetime) -> str:
@@ -170,7 +192,18 @@ class StatusRefresher:
         branch_id: Callable[[int, str], str] = lambda repo_id, name: (
             f"{repo_id}:{name}"
         ),
+        gate: ChangeGate | None = None,
+        full_interval: float = DEFAULT_FULL_INTERVAL_SECONDS,
+        pushed: Callable[[int], bool] = lambda repo_id: False,
+        pushed_interval: float = DEFAULT_PUSHED_INTERVAL_SECONDS,
     ) -> None:
+        self._gate = gate
+        self._full_interval = full_interval
+        self._pushed = pushed
+        self._pushed_interval = pushed_interval
+        #: Branches a webhook said changed: refetched at once, gate skipped.
+        self._hinted: set[tuple[int, str]] = set()
+        self._hinted_wake = asyncio.Event()
         self._wall_clock = wall_clock
         self._branch_id = branch_id
         self._branches = branches
@@ -195,14 +228,25 @@ class StatusRefresher:
             return None
         return self._clock() - self.last_refreshed_at
 
-    def _interval_for(self, fetched: Fetched) -> float:
+    def _interval_for(self, key: tuple[int, str], fetched: Fetched) -> float:
         if fetched.status is not None and fetched.status.pr in _SETTLED_PR_STATES:
             return self._settled_interval
+        if self._pushed(key[0]):
+            return self._pushed_interval
         return self._interval
 
     def _is_due(self, key: tuple[int, str], now: float) -> bool:
         fetched = self._cache.get(key)
-        return fetched is None or fetched.at + self._interval_for(fetched) <= now
+        return (
+            fetched is None
+            or key in self._hinted
+            or fetched.at + self._interval_for(key, fetched) <= now
+        )
+
+    def hint(self, keys: set[tuple[int, str]]) -> None:
+        """Refetch these branches at once (a webhook said they changed)."""
+        self._hinted |= keys
+        self._hinted_wake.set()
 
     async def run_once(self) -> int:
         """Fetch every branch that is due. Returns how many were fetched."""
@@ -234,7 +278,18 @@ class StatusRefresher:
         return len(due)
 
     async def _refresh(self, branch: TrackedBranch) -> tuple[TrackedBranch, Fetched]:
+        previous = self._cache.get(branch.key)
+        hinted = branch.key in self._hinted
+        self._hinted.discard(branch.key)
         async with self._slots:
+            if (
+                previous is not None
+                and not hinted
+                and await self._unchanged(branch, previous)
+            ):
+                reused = replace(previous, at=self._clock(), wall_at=self._wall_clock())
+                self._cache[branch.key] = reused
+                return branch, reused
             try:
                 snapshot: PrSnapshot | None = await self._fetch(
                     branch.branch, branch.path
@@ -244,14 +299,19 @@ class StatusRefresher:
                 # branch's failure (gh missing, bad output) is shown on its
                 # row and retried, and must not stop the others.
                 snapshot = None
-        previous = self._cache.get(branch.key)
-        fetched = Fetched(
-            status=snapshot.status if snapshot else None,
-            at=self._clock(),
-            facts=snapshot.facts if snapshot else None,
-            conflict=snapshot.conflict if snapshot else None,
-            wall_at=self._wall_clock(),
-        )
+            now = self._clock()
+            fetched = Fetched(
+                status=snapshot.status if snapshot else None,
+                at=now,
+                facts=snapshot.facts if snapshot else None,
+                conflict=snapshot.conflict if snapshot else None,
+                wall_at=self._wall_clock(),
+                full_at=now,
+            )
+            if self._gate is not None and snapshot is not None:
+                # Without ETags the next poll simply does the full lookup.
+                with contextlib.suppress(Exception):
+                    await self._gate.remember(branch, fetched)
         self._cache[branch.key] = fetched
         if (
             previous is None
@@ -262,12 +322,27 @@ class StatusRefresher:
             self._on_change(branch, fetched)
         return branch, fetched
 
+    async def _unchanged(self, branch: TrackedBranch, previous: Fetched) -> bool:
+        if (
+            self._gate is None
+            or previous.status is None
+            or self._clock() - previous.full_at >= self._full_interval
+        ):
+            return False
+        try:
+            return await self._gate.unchanged(branch, previous)
+        except Exception:  # noqa: BLE001
+            # The gate only saves a lookup: when it cannot answer, do the lookup.
+            return False
+
     async def _pause(self) -> None:
-        """Sleep one tick, or less when a browser connects meanwhile."""
+        """Sleep one tick, or less when a browser connects or a webhook hints
+        meanwhile."""
         arrival = asyncio.ensure_future(self._hub.wait_for_arrival())
+        hinted = asyncio.ensure_future(self._hinted_wake.wait())
         nap = asyncio.ensure_future(self._sleep(self._tick))
         _, pending = await asyncio.wait(
-            {arrival, nap}, return_when=asyncio.FIRST_COMPLETED
+            {arrival, hinted, nap}, return_when=asyncio.FIRST_COMPLETED
         )
         for task in pending:
             task.cancel()
@@ -279,6 +354,7 @@ class StatusRefresher:
                 # Cleared before the pass: a browser arriving during it makes
                 # the pause below end at once, for a pass of its own.
                 self._hub.clear_arrival()
+                self._hinted_wake.clear()
                 await self.run_once()
                 await self._pause()
 

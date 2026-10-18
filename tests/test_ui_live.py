@@ -9,6 +9,7 @@ TestClient buffers a whole response and an event stream never ends.
 
 import asyncio
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Self
 
@@ -31,6 +32,7 @@ from toolbelt.ui.live_status import (
     StructureWatcher,
     TrackedBranch,
 )
+from toolbelt.ui.pr_activity import PrFacts
 from toolbelt.ui.pr_fetch import PrSnapshot
 
 OPEN = BranchStatus(
@@ -771,3 +773,96 @@ def test_a_change_republishes_every_descendant_not_only_children(tmp_path):
 
     assert next_value(first, "devon/c") == "others"
     assert next_value(second, "devon/c") == "you"
+
+
+def pr_facts(number: int) -> PrFacts:
+    return PrFacts(
+        number=number,
+        title="Add the thing",
+        author="devon",
+        base_ref="main",
+        head_oid="abc",
+        state="OPEN",
+        is_draft=False,
+        created_at=datetime(2026, 10, 1, tzinfo=UTC),
+        merged_at=None,
+        closed_at=None,
+        requested_reviewers=(),
+        commit_rollups=(),
+        items=(),
+    )
+
+
+class TestGithubWebhookEndpoint:
+    """A forwarded webhook is only a hint: it makes the refresher look up the
+    branches it names, and does nothing for anything else."""
+
+    def seed(self, tmp_path: Path):
+        from fastapi.testclient import TestClient
+
+        store = StackStore(default_db_path())
+        path = tmp_path / "api"
+        path.mkdir()
+        repo_id = store.ensure_repo(
+            RepoIdentity(
+                git_common_dir=path / ".git",
+                path=path,
+                remote_url="git@github.com:o/r.git",
+            )
+        )
+        store.set_parent(repo_id, "devon/a", "main")
+        store.set_parent(repo_id, "devon/b", "main")
+        store.close()
+
+        class Facts(Fetcher):
+            async def __call__(self, branch: str, root: Path) -> PrSnapshot:
+                await super().__call__(branch, root)
+                number = {"devon/a": 5, "devon/b": 6}[branch]
+                return PrSnapshot(OPEN, pr_facts(number))
+
+        app = create_app(fetch=Facts(), clock=Clock())
+        asyncio.run(app.state.refresher.run_once())
+        return app, TestClient(app)
+
+    def post(self, client, event: str, payload: dict):
+        return client.post(
+            "/api/github-webhook", json=payload, headers={"X-GitHub-Event": event}
+        )
+
+    def due(self, app) -> int:
+        return asyncio.run(app.state.refresher.run_once())
+
+    def test_a_pull_request_event_refetches_that_branch(self, tmp_path):
+        app, client = self.seed(tmp_path)
+        payload = {
+            "repository": {"full_name": "o/r"},
+            "pull_request": {"number": 5, "head": {"ref": "devon/a"}},
+        }
+
+        response = self.post(client, "pull_request", payload)
+
+        assert response.status_code == 204
+        assert self.due(app) == 1
+
+    def test_a_comment_names_the_pr_by_number(self, tmp_path):
+        app, client = self.seed(tmp_path)
+        payload = {
+            "repository": {"full_name": "O/R"},
+            "issue": {"number": 6, "pull_request": {}},
+        }
+
+        self.post(client, "issue_comment", payload)
+
+        assert self.due(app) == 1
+
+    def test_another_repo_or_a_ping_refetches_nothing(self, tmp_path):
+        app, client = self.seed(tmp_path)
+        other = {
+            "repository": {"full_name": "o/other"},
+            "pull_request": {"number": 5, "head": {"ref": "devon/a"}},
+        }
+
+        assert self.post(client, "pull_request", other).status_code == 204
+        assert self.post(client, "ping", {"zen": "x"}).status_code == 204
+
+        assert self.due(app) == 0
