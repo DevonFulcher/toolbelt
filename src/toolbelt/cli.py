@@ -95,7 +95,13 @@ def spend(
 
 @app.command()
 def upgrade():
-    """Upgrade toolbelt"""
+    """Pull the toolbelt checkout, reinstall it, rebuild the web client and restart the `tt ui` service"""
+    from toolbelt.ui.client_build import WEB_DIR, ClientBuildError, build_client
+    from toolbelt.ui.launch_agent import restart_ui_launch_agent
+
+    logged_process.run(
+        ["git", "-C", str(WEB_DIR.parent), "pull", "--ff-only"], check=True
+    )
     logged_process.run(
         [
             "uv",
@@ -106,8 +112,6 @@ def upgrade():
         ],
         check=True,
     )
-    from toolbelt.ui.client_build import ClientBuildError, build_client
-
     try:
         build_client(force=True, say=typer.echo)
     except ClientBuildError as error:
@@ -115,6 +119,7 @@ def upgrade():
         typer.echo(
             f"toolbelt upgraded, but the web client was not built: {error}", err=True
         )
+    restart_ui_launch_agent(typer.echo)
 
 
 @app.command()
