@@ -157,8 +157,6 @@
     "lines": null,
     "agent_status": null,
     "agent_run": null,
-    "agent_run_when": null,
-    "agent_run_cost": null,
     "agent_run_summary": null,
     "cost": null,
     "agent_cost": null,

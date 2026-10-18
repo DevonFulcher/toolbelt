@@ -5,11 +5,15 @@ its process has stayed up."""
 import asyncio
 import signal
 
-from toolbelt.ui.webhook_forwarders import WebhookForwarders
+from toolbelt.ui.forwarder_ledger import MemoryLedger
+from toolbelt.ui.webhook_forwarders import Hook, WebhookForwarders
 
 
 class FakeProcess:
+    pids = iter(range(1000, 100000))
+
     def __init__(self) -> None:
+        self.pid = next(FakeProcess.pids)
         self.returncode: int | None = None
         self._exited = asyncio.Event()
         self.signals: list[int] = []
@@ -36,7 +40,16 @@ class FakeProcess:
 
 
 class Setup:
-    def __init__(self, slugs: set[str], *, admin: set[str], installed: bool = True):
+    def __init__(
+        self,
+        slugs: set[str],
+        *,
+        admin: set[str],
+        installed: bool = True,
+        **kwargs,
+    ):
+        #: Called with each process just spawned (what the extension does on start).
+        self.on_spawn = None
         self.slugs = slugs
         self.admin = admin
         self.processes: list[tuple[str, str, FakeProcess]] = []
@@ -51,6 +64,7 @@ class Setup:
             sleep=self.sleep,
             ready_seconds=5,
             retry_seconds=60,
+            **kwargs,
         )
         self._installed = installed
 
@@ -66,6 +80,8 @@ class Setup:
     async def spawn(self, slug: str, url: str) -> FakeProcess:
         process = FakeProcess()
         self.processes.append((slug, url, process))
+        if self.on_spawn is not None:
+            self.on_spawn(slug, process)
         return process
 
     async def sleep(self, seconds: float) -> None:
@@ -392,3 +408,342 @@ def test_the_extensions_error_line_is_read_from_its_stderr():
         )
 
     asyncio.run(scenario())
+
+
+class FakeHooks:
+    """GitHub's forwarded webhooks of each repo."""
+
+    def __init__(self) -> None:
+        self.by_slug: dict[str, list[Hook]] = {}
+        self.deleted: list[tuple[str, int]] = []
+        self._next = 100
+
+    def create(self, slug: str, *, active: bool) -> Hook:
+        hook = Hook(id=self._next, active=active)
+        self._next += 1
+        self.by_slug.setdefault(slug, []).append(hook)
+        return hook
+
+    def activate(self, slug: str, hook: Hook, active: bool) -> None:
+        self.by_slug[slug] = [
+            Hook(h.id, active) if h.id == hook.id else h for h in self.by_slug[slug]
+        ]
+
+    async def list(self, slug: str) -> list[Hook]:
+        return list(self.by_slug.get(slug, []))
+
+    async def delete(self, slug: str, hook_id: int) -> None:
+        self.by_slug[slug] = [h for h in self.by_slug.get(slug, []) if h.id != hook_id]
+        self.deleted.append((slug, hook_id))
+
+
+def owned(admin: str = "o/mine"):
+    hooks = FakeHooks()
+    ledger = MemoryLedger()
+    s = Setup({admin}, admin={admin}, hooks=hooks, ledger=ledger)
+    return s, hooks, ledger
+
+
+class TestOwnedHooks:
+    """Only the webhooks toolbelt created are ever cleaned up."""
+
+    def test_the_webhook_of_a_live_forwarder_is_recorded_as_ours(self):
+        async def scenario():
+            s, hooks, ledger = owned()
+            s.on_spawn = lambda slug, process: hooks.create(slug, active=True)
+
+            await s.forwarders.reconcile()
+            await settle()
+
+            assert s.forwarders.is_live("o/mine")
+            assert ledger.hooks("o/mine") == {100}
+            await s.forwarders.stop()
+
+        asyncio.run(scenario())
+
+    def test_a_webhook_left_inactive_by_a_forwarder_that_died_is_deleted_and_the_forwarder_restarts_at_once(
+        self,
+    ):
+        async def scenario():
+            s, hooks, ledger = owned()
+            spawned = []
+
+            def on_spawn(slug, process):
+                spawned.append(process)
+                if len(spawned) == 1:  # the first dies right after creating its webhook
+                    hooks.create(slug, active=False)
+                    process.error = "unable to connect to webhooks server"
+                    process.exit(1)
+                else:
+                    hooks.create(slug, active=True)
+
+            s.on_spawn = on_spawn
+            await s.forwarders.reconcile()
+            await settle()
+
+            assert hooks.deleted == [("o/mine", 100)]
+            assert (
+                len(s.processes) == 2
+            )  # restarted without waiting out the retry delay
+            assert 60 not in s.sleeps
+            assert s.forwarders.is_live("o/mine")
+            assert s.forwarders.problem("o/mine") is None
+            assert ledger.hooks("o/mine") == {101}
+            await s.forwarders.stop()
+
+        asyncio.run(scenario())
+
+    def test_a_webhook_toolbelt_did_not_create_is_never_deleted(self):
+        async def scenario():
+            s, hooks, ledger = owned()
+            hooks.create("o/mine", active=False)  # somebody's, or of unknown origin
+
+            def on_spawn(slug, process):
+                process.error = (
+                    "error creating webhook: Hook already exists on this repository"
+                )
+                process.exit(1)
+
+            s.on_spawn = on_spawn
+            await s.forwarders.reconcile()
+            await settle()
+
+            problem = s.forwarders.problem("o/mine")
+            assert problem is not None and problem.state == "leftover"
+            assert "toolbelt did not create" in problem.text
+            assert hooks.deleted == []
+            assert ledger.hooks("o/mine") == set()
+            await s.forwarders.stop()
+
+        asyncio.run(scenario())
+
+    def test_a_webhook_with_a_forwarder_connected_that_is_not_ours_is_claimed_elsewhere(
+        self,
+    ):
+        async def scenario():
+            s, hooks, ledger = owned()
+            hooks.create("o/mine", active=True)  # somebody else's forwarder, connected
+
+            def on_spawn(slug, process):
+                process.error = (
+                    "error creating webhook: Hook already exists on this repository"
+                )
+                process.exit(1)
+
+            s.on_spawn = on_spawn
+            await s.forwarders.reconcile()
+            await settle()
+
+            problem = s.forwarders.problem("o/mine")
+            assert problem is not None and problem.state == "claimed"
+            assert "not started by toolbelt" in problem.text
+            assert hooks.deleted == []
+            assert ledger.hooks("o/mine") == set()
+            await s.forwarders.stop()
+
+        asyncio.run(scenario())
+
+    def test_a_taken_webhook_whose_holder_is_not_known_is_blocked(self):
+        async def scenario():
+            s = Setup(
+                {"o/mine"}, admin={"o/mine"}
+            )  # no way to read the repo's webhooks
+
+            def on_spawn(slug, process):
+                process.error = (
+                    "error creating webhook: Hook already exists on this repository"
+                )
+                process.exit(1)
+
+            s.on_spawn = on_spawn
+            await s.forwarders.reconcile()
+            await settle()
+
+            problem = s.forwarders.problem("o/mine")
+            assert problem is not None and problem.state == "blocked"
+            await s.forwarders.stop()
+
+        asyncio.run(scenario())
+
+    def test_a_blocked_start_does_not_claim_a_webhook_that_appeared_meanwhile(self):
+        async def scenario():
+            s, hooks, ledger = owned()
+
+            def on_spawn(slug, process):
+                hooks.create(slug, active=False)  # somebody else won the race
+                process.error = (
+                    "error creating webhook: Hook already exists on this repository"
+                )
+                process.exit(1)
+
+            s.on_spawn = on_spawn
+            await s.forwarders.reconcile()
+            await settle()
+
+            assert ledger.hooks("o/mine") == set()
+            assert hooks.deleted == []
+            await s.forwarders.stop()
+
+        asyncio.run(scenario())
+
+    def test_an_active_webhook_is_never_deleted_even_if_it_is_ours(self):
+        async def scenario():
+            s, hooks, ledger = owned()
+            hook = hooks.create("o/mine", active=True)
+            ledger.add_hook("o/mine", hook.id)
+
+            assert await s.forwarders._reclaim("o/mine") is False
+
+            assert hooks.deleted == []
+            assert ledger.hooks("o/mine") == {hook.id}
+
+        asyncio.run(scenario())
+
+    def test_a_recorded_webhook_that_is_gone_is_forgotten(self):
+        async def scenario():
+            s, _hooks, ledger = owned()
+            ledger.add_hook("o/mine", 42)
+
+            assert await s.forwarders._reclaim("o/mine") is False
+
+            assert ledger.hooks("o/mine") == set()
+
+        asyncio.run(scenario())
+
+    def test_nothing_is_deleted_without_a_way_to_list_webhooks(self):
+        async def scenario():
+            ledger = MemoryLedger()
+            ledger.add_hook("o/mine", 5)
+            s = Setup({"o/mine"}, admin={"o/mine"}, ledger=ledger)
+
+            assert await s.forwarders._reclaim("o/mine") is False
+
+        asyncio.run(scenario())
+
+    def test_a_github_error_while_listing_does_not_stop_the_forwarder(self):
+        async def scenario():
+            s, hooks, _ledger = owned()
+
+            async def failing(slug: str):
+                raise RuntimeError("GitHub GET failed: 403")
+
+            hooks.list = failing  # type: ignore[method-assign]
+            await s.forwarders.reconcile()
+            await settle()
+
+            assert len(s.processes) == 1
+            assert s.forwarders.is_live("o/mine")
+            await s.forwarders.stop()
+
+        asyncio.run(scenario())
+
+
+class TestForwarderPids:
+    def test_the_pid_is_recorded_while_it_runs_and_dropped_when_it_ends(self):
+        async def scenario():
+            s, _hooks, ledger = owned()
+            await s.forwarders.reconcile()
+            await settle()
+            process = s.processes[0][2]
+            assert ledger.pids() == {"o/mine": process.pid}
+
+            await s.forwarders.stop()
+
+            assert ledger.pids() == {}
+
+        asyncio.run(scenario())
+
+    def cleanup(self, commands: dict[int, str | None]):
+        ledger = MemoryLedger()
+        ledger.set_pid("o/mine", 4242)
+        signals: list[tuple[int, int]] = []
+
+        async def process_command(pid: int) -> str | None:
+            return commands.get(pid)
+
+        def signal_group(pid: int, sig: int) -> None:
+            signals.append((pid, sig))
+            if sig == signal.SIGINT:
+                commands[pid] = None  # it exits when interrupted
+
+        s = Setup(
+            {"o/mine"},
+            admin={"o/mine"},
+            ledger=ledger,
+            process_command=process_command,
+            signal_group=signal_group,
+        )
+        return s, ledger, signals
+
+    def test_a_forwarder_left_by_a_killed_server_is_stopped_at_the_next_start(self):
+        async def scenario():
+            s, ledger, signals = self.cleanup(
+                {
+                    4242: "/x/gh-webhook forward --repo=o/mine --events=push --url=http://127.0.0.1:8765/x"
+                }
+            )
+
+            await s.forwarders.cleanup_orphans()
+
+            assert signals == [(4242, signal.SIGINT)]
+            assert ledger.pids() == {}
+
+        asyncio.run(scenario())
+
+    def test_a_pid_that_now_belongs_to_something_else_is_left_alone(self):
+        async def scenario():
+            s, ledger, signals = self.cleanup({4242: "/usr/bin/python3 some_script.py"})
+
+            await s.forwarders.cleanup_orphans()
+
+            assert signals == []
+            assert ledger.pids() == {}
+
+        asyncio.run(scenario())
+
+    def test_a_forwarder_for_another_repo_is_left_alone(self):
+        async def scenario():
+            s, _ledger, signals = self.cleanup(
+                {4242: "/x/gh-webhook forward --repo=o/other --events=push"}
+            )
+
+            await s.forwarders.cleanup_orphans()
+
+            assert signals == []
+
+        asyncio.run(scenario())
+
+    def test_a_pid_with_no_process_is_just_dropped(self):
+        async def scenario():
+            s, ledger, signals = self.cleanup({})
+
+            await s.forwarders.cleanup_orphans()
+
+            assert signals == []
+            assert ledger.pids() == {}
+
+        asyncio.run(scenario())
+
+    def test_one_that_ignores_ctrl_c_is_killed(self):
+        async def scenario():
+            commands: dict[int, str | None] = {
+                4242: "/x/gh-webhook forward --repo=o/mine --events=push"
+            }
+            s, _ledger, signals = self.cleanup(commands)
+
+            def stubborn(pid: int, sig: int) -> None:
+                signals.append((pid, sig))
+                if sig == signal.SIGKILL:
+                    commands[pid] = None
+
+            s.forwarders._signal_group = stubborn
+
+            async def quick(seconds: float) -> None:
+                return None
+
+            s.forwarders._sleep = quick
+            await s.forwarders.cleanup_orphans()
+
+            assert signals == [(4242, signal.SIGINT), (4242, signal.SIGKILL)]
+
+        asyncio.run(scenario())

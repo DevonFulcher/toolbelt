@@ -1009,6 +1009,12 @@
             }
           ]
         },
+        "recent_runs": {
+          "items": {
+            "$ref": "#/$defs/AgentRunInfo"
+          },
+          "type": "array"
+        },
         "runs": {
           "type": "integer"
         },
@@ -1029,7 +1035,8 @@
         "reason",
         "can_override",
         "latest_run",
-        "runs"
+        "runs",
+        "recent_runs"
       ],
       "title": "CardAgent",
       "type": "object"
@@ -2913,6 +2920,8 @@
         },
         "state": {
           "enum": [
+            "claimed",
+            "leftover",
             "blocked",
             "failed",
             "not_installed"
@@ -3114,27 +3123,7 @@
             }
           ]
         },
-        "agent_run_cost": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/CatalogDimension"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "agent_run_summary": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/CatalogDimension"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "agent_run_when": {
           "anyOf": [
             {
               "$ref": "#/$defs/CatalogDimension"
@@ -3415,8 +3404,6 @@
         "lines",
         "agent_status",
         "agent_run",
-        "agent_run_when",
-        "agent_run_cost",
         "agent_run_summary",
         "cost",
         "agent_cost",

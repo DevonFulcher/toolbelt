@@ -1,10 +1,10 @@
-// A run's conversation in a large dialog over the page: opened by the
-// "Conversation" button on a card and on the Agents page, closed with its
-// Close button, the Escape key or a click on the dimmed page behind it.
+// A large dialog over the page (an agent run's conversation, a branch's runs):
+// closed with its Close button, the Escape key or a click on the dimmed page
+// behind it.
 import { useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
-export function ConversationDialog({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+export function Dialog({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
   const dialog = useRef<HTMLDivElement>(null);
 
   useEffect(() => {

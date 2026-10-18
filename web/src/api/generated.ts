@@ -590,6 +590,7 @@ export interface CardAgent {
   has_action: boolean;
   latest_run: AgentRunInfo | null;
   reason: AgentReason | null;
+  recent_runs: AgentRunInfo[];
   runs: number;
   trigger: AgentTrigger | null;
 }
@@ -617,7 +618,7 @@ export interface WebhooksEvent {
 export interface RepoWebhook {
   problem: string;
   repo_id: number;
-  state: "blocked" | "failed" | "not_installed";
+  state: "claimed" | "leftover" | "blocked" | "failed" | "not_installed";
 }
 /**
  * The autonomous agents' state changed (what the Agents view shows).
@@ -856,9 +857,7 @@ export interface Span {
 export interface SlotDimensions {
   agent_cost: CatalogDimension | null;
   agent_run: CatalogDimension | null;
-  agent_run_cost: CatalogDimension | null;
   agent_run_summary: CatalogDimension | null;
-  agent_run_when: CatalogDimension | null;
   agent_status: CatalogDimension | null;
   ancestors: CatalogDimension | null;
   bot_comments: CatalogDimension | null;

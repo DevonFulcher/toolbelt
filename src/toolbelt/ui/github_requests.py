@@ -24,6 +24,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Any
 
 import httpx
 
@@ -157,9 +158,13 @@ class GithubRequests:
             changed=response.status_code != 304, etag=response.headers.get("etag")
         )
 
-    async def get_json(self, path: str, *, caller: str) -> dict:
+    async def get_json(self, path: str, *, caller: str) -> Any:
+        """The JSON of a REST GET: an object, or a list for a collection."""
         response = await self._send("GET", f"{API_URL}/{path}", CORE, caller)
         return response.json()
+
+    async def delete(self, path: str, *, caller: str) -> None:
+        await self._send("DELETE", f"{API_URL}/{path}", CORE, caller)
 
     # ---- what it knows ------------------------------------------------------
 

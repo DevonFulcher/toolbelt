@@ -14,6 +14,16 @@ A repo counts as ``live`` once its process has stayed up for ``ready_seconds``
 (it exits at once when it cannot register the webhook). The status refresher
 then polls that repo only as a safety net.
 
+Only what toolbelt itself created is ever cleaned up (``forwarder_ledger.py``).
+A webhook is recorded as toolbelt's when a forwarder of its own was running as
+it appeared (the repo can hold only one) or exited right after creating it.
+When a forwarder dies before its websocket connects, GitHub leaves the webhook
+behind inactive and it blocks the repo; if that webhook is in the ledger it is
+deleted and the forwarder is started again at once, and a webhook that is not
+(somebody else's, or of unknown origin) is left alone and reported as blocking.
+The pid of each forwarder is recorded too, and a forwarder that outlived a
+killed server is stopped at the next start.
+
 A repo the user administers whose webhook is not live has a ``Problem``
 (``problem(slug)``) saying why, from the extension's own error: another
 forwarder or a leftover webhook holds the repo, the forwarder stopped, or the
@@ -33,7 +43,8 @@ from typing import Literal, Protocol
 
 from toolbelt import logged_process
 from toolbelt.logger import logger
-from toolbelt.ui.github_requests import RateLimited
+from toolbelt.ui.forwarder_ledger import Ledger, MemoryLedger
+from toolbelt.ui.github_requests import GithubRequests, RateLimited
 from toolbelt.ui.github_webhooks import FORWARDED_EVENTS
 
 DEFAULT_RECONCILE_SECONDS = 60.0
@@ -43,20 +54,28 @@ _STOP_GRACE_SECONDS = 5.0
 _STDERR_LINES = 20
 
 INSTALL_COMMAND = "gh extension install cli/gh-webhook"
+#: Where GitHub's relay receives the webhooks of every ``cli`` hook.
+RELAY_URL = "https://webhook-forwarder.github.com/hook"
 
 
 @dataclass(frozen=True)
 class Problem:
     """Why an administered repo's webhook is not working."""
 
-    #: ``blocked``: the repo's one forwarded webhook is held by another
-    #: forwarder or left behind; ``failed``: the forwarder stopped or could not
-    #: start; ``not_installed``: the ``gh`` extension is missing.
-    state: Literal["blocked", "failed", "not_installed"]
+    #: The repo's one forwarded webhook is taken: ``claimed``: by a forwarder
+    #: that toolbelt did not start (it is connected now); ``leftover``: by a
+    #: webhook toolbelt did not create, with nothing connected to it;
+    #: ``blocked``: by something not known (the repo's webhooks could not be
+    #: read). ``failed``: the forwarder stopped or could not start;
+    #: ``not_installed``: the ``gh`` extension is missing.
+    state: Literal["claimed", "leftover", "blocked", "failed", "not_installed"]
     text: str
 
 
 class ForwarderProcess(Protocol):
+    @property
+    def pid(self) -> int: ...
+
     @property
     def returncode(self) -> int | None: ...
 
@@ -100,6 +119,10 @@ class _ProcessGroup:
         return next((line for line in reversed(self._lines) if line), None)
 
     @property
+    def pid(self) -> int:
+        return self._process.pid
+
+    @property
     def returncode(self) -> int | None:
         return self._process.returncode
 
@@ -129,6 +152,59 @@ async def gh_spawn(slug: str, url: str) -> ForwarderProcess:
     )
 
 
+@dataclass(frozen=True)
+class Hook:
+    """A forwarded (``cli``) webhook of a repo. ``active`` is true while a
+    forwarder is connected to it."""
+
+    id: int
+    active: bool
+
+
+class HookApi(Protocol):
+    async def list(self, slug: str) -> list[Hook]:
+        """The forwarded webhooks of ``slug``."""
+        ...
+
+    async def delete(self, slug: str, hook_id: int) -> None: ...
+
+
+class GithubHooks:
+    """``HookApi`` over the GitHub client."""
+
+    def __init__(self, requests: GithubRequests) -> None:
+        self._requests = requests
+
+    async def list(self, slug: str) -> list[Hook]:
+        found = await self._requests.get_json(
+            f"repos/{slug}/hooks?per_page=100", caller="webhooks"
+        )
+        return [
+            Hook(id=hook["id"], active=hook["active"])
+            for hook in found
+            if hook["name"] == "cli" and hook["config"].get("url") == RELAY_URL
+        ]
+
+    async def delete(self, slug: str, hook_id: int) -> None:
+        await self._requests.delete(f"repos/{slug}/hooks/{hook_id}", caller="webhooks")
+
+
+async def ps_command(pid: int) -> str | None:
+    """The command line of process ``pid``, or ``None`` when there is none."""
+    process = await logged_process.create_subprocess_exec(
+        "ps",
+        "-p",
+        str(pid),
+        "-o",
+        "command=",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    stdout, _ = await process.communicate()
+    command = stdout.decode().strip()
+    return command or None
+
+
 async def gh_extension_installed() -> bool:
     process = await logged_process.create_subprocess_exec(
         "gh",
@@ -153,9 +229,19 @@ class WebhookForwarders:
         reconcile_seconds: float = DEFAULT_RECONCILE_SECONDS,
         retry_seconds: float = DEFAULT_RETRY_SECONDS,
         ready_seconds: float = DEFAULT_READY_SECONDS,
+        hooks: HookApi | None = None,
+        ledger: Ledger | None = None,
+        process_command: Callable[[int], Awaitable[str | None]] = ps_command,
+        signal_group: Callable[[int, int], None] = os.killpg,
     ) -> None:
         """``slugs`` are the tracked repos (``owner/name``); ``url`` is where
-        webhooks are replayed to."""
+        webhooks are replayed to. ``hooks`` reads and deletes a repo's
+        forwarded webhooks (without it nothing is ever deleted) and ``ledger``
+        records what toolbelt created."""
+        self._hooks = hooks
+        self._ledger: Ledger = ledger or MemoryLedger()
+        self._process_command = process_command
+        self._signal_group = signal_group
         self._slugs = slugs
         self._url = url
         self._installed = installed
@@ -221,7 +307,29 @@ class WebhookForwarders:
             if slug not in self._tasks:
                 self._tasks[slug] = asyncio.create_task(self._forward(slug))
 
+    async def cleanup_orphans(self) -> None:
+        """Stops the forwarders a previous server left running when it was
+        killed. Only a recorded pid whose command line is still a forwarder
+        for that repo is signalled (the pid may belong to something else
+        by now)."""
+        for slug, pid in self._ledger.pids().items():
+            command = await self._process_command(pid)
+            if command is not None and _is_forwarder_of(command, slug):
+                logger.warning(
+                    "stopping the forwarder of %s left by an earlier run", slug
+                )
+                with contextlib.suppress(ProcessLookupError):
+                    self._signal_group(pid, signal.SIGINT)
+                    for _ in range(int(_STOP_GRACE_SECONDS * 10)):
+                        if await self._process_command(pid) is None:
+                            break
+                        await self._sleep(0.1)
+                    else:
+                        self._signal_group(pid, signal.SIGKILL)
+            self._ledger.clear_pid(slug)
+
     async def run(self) -> None:
+        await self.cleanup_orphans()
         try:
             while True:
                 await self.reconcile()
@@ -245,7 +353,10 @@ class WebhookForwarders:
     async def _forward(self, slug: str) -> None:
         """Keeps one forwarder process up, restarting it when it exits."""
         while True:
+            await self._reclaim(slug)
+            before = await self._hook_ids(slug)
             process = await self._spawn(slug, self._url)
+            self._ledger.set_pid(slug, process.pid)
             exited = asyncio.ensure_future(process.wait())
             ready = asyncio.ensure_future(self._sleep(self._ready_seconds))
             try:
@@ -253,8 +364,15 @@ class WebhookForwarders:
                 if not exited.done():
                     self._live.add(slug)
                     self._set_problem(slug, None)
+                    await self._record_created(slug, before)
                 await exited
                 problem = _problem_of(process)
+                if problem.state == "blocked":
+                    problem = await self._who_blocks(slug) or problem
+                else:
+                    # It did not fail because the repo's webhook was taken, so
+                    # one that appeared meanwhile is its own.
+                    await self._record_created(slug, before)
                 self._set_problem(slug, problem)
                 logger.warning(
                     "webhook forwarder for %s exited with %s: %s",
@@ -267,7 +385,95 @@ class WebhookForwarders:
                 exited.cancel()
                 self._live.discard(slug)
                 await _terminate(process)
-            await self._sleep(self._retry_seconds)
+                self._ledger.clear_pid(slug)
+            # A webhook of ours that was left inactive is gone now: start again
+            # at once instead of waiting out the retry delay.
+            if not await self._reclaim(slug):
+                await self._sleep(self._retry_seconds)
+
+    async def _who_blocks(self, slug: str) -> Problem | None:
+        """Says what holds the repo's one webhook when it is not toolbelt's:
+        a forwarder connected to it, or one nothing is connected to."""
+        if self._hooks is None:
+            return None
+        try:
+            found = await self._hooks.list(slug)
+        except RuntimeError:  # rate limited, or GitHub refused: not known
+            return None
+        outside = [hook for hook in found if hook.id not in self._ledger.hooks(slug)]
+        if not outside:
+            return None
+        if any(hook.active for hook in outside):
+            return Problem(
+                "claimed",
+                "Another forwarder, not started by toolbelt, is connected to this "
+                "repo's webhook. GitHub allows one per repo, so toolbelt cannot "
+                "forward it until that stops.",
+            )
+        return Problem(
+            "leftover",
+            "A forwarded webhook that toolbelt did not create is registered on this "
+            "repo with nothing connected to it, so toolbelt cannot forward it. "
+            "Delete it in the repo's webhook settings if it is yours.",
+        )
+
+    async def _hook_ids(self, slug: str) -> set[int] | None:
+        """The ids of the repo's forwarded webhooks (``None``: not known)."""
+        if self._hooks is None:
+            return None
+        try:
+            return {hook.id for hook in await self._hooks.list(slug)}
+        except RuntimeError:  # rate limited, or GitHub refused: not known
+            return None
+
+    async def _record_created(self, slug: str, before: set[int] | None) -> None:
+        """Records the webhooks that appeared since ``before`` as toolbelt's:
+        the repo holds one, and it was made while a forwarder of ours ran."""
+        now = await self._hook_ids(slug)
+        if before is None or now is None:
+            return
+        for hook_id in now - before:
+            self._ledger.add_hook(slug, hook_id)
+
+    async def _reclaim(self, slug: str) -> bool:
+        """Deletes the inactive webhooks of ``slug`` that toolbelt created
+        (nothing else is ever deleted). Returns whether it deleted any."""
+        if self._hooks is None:
+            return False
+        ours = self._ledger.hooks(slug)
+        if not ours:
+            return False
+        try:
+            found = await self._hooks.list(slug)
+        except RuntimeError:  # rate limited, or GitHub refused: leave it be
+            return False
+        for gone in ours - {hook.id for hook in found}:
+            self._ledger.forget_hook(slug, gone)
+        deleted = False
+        for hook in found:
+            if hook.id in ours and not hook.active:
+                try:
+                    await self._hooks.delete(slug, hook.id)
+                except RateLimited:
+                    return deleted
+                except RuntimeError as failure:
+                    logger.warning(
+                        "could not delete the leftover webhook %s of %s: %s",
+                        hook.id,
+                        slug,
+                        failure,
+                    )
+                    continue
+                self._ledger.forget_hook(slug, hook.id)
+                logger.warning(
+                    "deleted toolbelt's leftover webhook %s of %s", hook.id, slug
+                )
+                deleted = True
+        return deleted
+
+
+def _is_forwarder_of(command: str, slug: str) -> bool:
+    return "webhook" in command and "forward" in command and f"--repo={slug}" in command
 
 
 def _problem_of(process: ForwarderProcess) -> Problem:

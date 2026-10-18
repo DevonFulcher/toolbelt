@@ -104,6 +104,7 @@ from toolbelt.ui.claims_feed import (
 )
 from toolbelt.ui.client_build import CLIENT_DIST
 from toolbelt.ui.conflict_commit import conflict_for
+from toolbelt.ui.forwarder_ledger import SettingsLedger
 from toolbelt.ui.github_requests import (
     ConditionalAnswer,
     GithubRequests,
@@ -156,7 +157,7 @@ from toolbelt.ui.untracked_prs import (
     repo_slug,
     search_runner,
 )
-from toolbelt.ui.webhook_forwarders import WebhookForwarders
+from toolbelt.ui.webhook_forwarders import GithubHooks, WebhookForwarders
 
 # Sent when no event has gone out for this long, so intermediaries keep the
 # stream open and a dead client is noticed.
@@ -594,7 +595,11 @@ def create_app(
 
     if forwarders is None and webhook_url is not None:
         forwarders = WebhookForwarders(
-            slugs=forwarded_slugs, url=webhook_url, is_admin=is_admin
+            slugs=forwarded_slugs,
+            url=webhook_url,
+            is_admin=is_admin,
+            hooks=GithubHooks(requests),
+            ledger=SettingsLedger(),
         )
 
     def webhook_problems() -> list[api.RepoWebhook]:

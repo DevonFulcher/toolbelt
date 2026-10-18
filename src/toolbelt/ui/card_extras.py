@@ -11,6 +11,9 @@ from toolbelt.ui import api_models as api
 from toolbelt.ui.agents_view import reason_info, run_info
 from toolbelt.ui.snapshot import row_id
 
+#: How many of a branch's runs a card lists.
+RECENT_RUNS = 50
+
 #: Spend is totalled from the start of the ledger.
 _EPOCH = datetime(2000, 1, 1, tzinfo=UTC)
 
@@ -48,6 +51,9 @@ def build_card_extras(
                     can_override=decision.can_override if decision else False,
                     latest_run=run_info(runs[0], repo_names) if runs else None,
                     runs=len(runs),
+                    recent_runs=[
+                        run_info(run, repo_names) for run in runs[:RECENT_RUNS]
+                    ],
                 ),
                 spend=api.CardSpend(
                     interactive_usd=usage.cost_usd if usage else 0.0,

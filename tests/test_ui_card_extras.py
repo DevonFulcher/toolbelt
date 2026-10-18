@@ -59,6 +59,7 @@ def test_a_branch_an_agent_may_take_says_what_it_would_do_with_no_reason():
     assert branch.id == f"{repo_id}:a"
     assert (branch.agent.has_action, branch.agent.trigger) == (True, "fix_ci")
     assert branch.agent.reason is None and branch.agent.latest_run is None
+    assert branch.agent.recent_runs == []
 
 
 def test_a_held_back_branch_carries_the_reason_and_whether_a_person_can_override_it():
@@ -96,6 +97,9 @@ def test_the_latest_run_and_the_autonomous_cost_come_from_the_run_records():
     assert branch.agent.latest_run is not None
     assert branch.agent.latest_run.cost_usd == 0.03
     assert branch.agent.latest_run.summary == "Re-ran the flaky job."
+    # Every run of the branch, newest first, each with its own cost.
+    assert [run.cost_usd for run in branch.agent.recent_runs] == [0.03, 0.02]
+    assert branch.agent.recent_runs[0] == branch.agent.latest_run
     assert branch.spend.autonomous_usd == 0.05
     assert branch.spend.autonomous_runs == 2
 

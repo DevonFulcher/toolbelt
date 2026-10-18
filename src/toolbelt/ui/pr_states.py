@@ -522,8 +522,6 @@ SLOT_STATES: dict[str, str | None] = {
     "lines": None,
     "agent_status": None,
     "agent_run": None,
-    "agent_run_when": None,
-    "agent_run_cost": None,
     "agent_run_summary": None,
     "cost": None,
     "agent_cost": None,

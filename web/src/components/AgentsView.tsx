@@ -9,7 +9,7 @@ import { formatAbsolute } from "../logic/format";
 import { formatUsd } from "../logic/spendFormat";
 import type { Counts } from "../store/selectors";
 import { useApp, useAppStore } from "../store/StoreContext";
-import { ConversationDialog } from "./ConversationDialog";
+import { Dialog } from "./Dialog";
 import { FilterBar } from "./FilterBar";
 import "./agents.css";
 
@@ -445,9 +445,9 @@ function AgentsBody({ data, reload }: { data: Agents; reload: () => void }) {
         )}
       </section>
       {openRun !== null && (
-        <ConversationDialog title={conversationTitle(data.runs.find((run) => run.run_id === openRun))} onClose={closeConversation}>
+        <Dialog title={conversationTitle(data.runs.find((run) => run.run_id === openRun))} onClose={closeConversation}>
           <Conversation runId={openRun} />
-        </ConversationDialog>
+        </Dialog>
       )}
     </section>
   );

@@ -4,7 +4,6 @@ import type { Branch, BranchClaim, BranchExtras, LoadedStatus } from "../api/gen
 import { branch, catalog, detail, event, noPr, pr, repo, snapshot, DAY, NOW } from "../testing/fixtures";
 import { renderWith } from "../testing/render";
 import { App } from "./App";
-import { when } from "./AgentsView";
 
 // A spy on the pills each card renders: a card that re-renders re-renders
 // its pills, so counting by their text shows which cards re-rendered.
@@ -36,9 +35,7 @@ const SLOT_LABELS: Record<string, string> = {
   session: "Interactive session",
   agent_status: "Autonomous agent",
   agent_run: "Latest agent run",
-  agent_run_when: "Run started",
-  agent_run_cost: "Run cost",
-  agent_run_summary: "Run summary",
+  agent_run_summary: "Latest run summary",
   cost: "Cost",
   agent_cost: "Autonomous agent cost",
   ancestors: "Ancestors",
@@ -276,7 +273,7 @@ describe("a card's labelled slots", () => {
         ["repo", "branch", "ancestors", "descendants"],
         ["title", "pr", "ci", "review", "comments", "bot_comments", "merge", "conflict_commit", "lines", "pr_age", "in_draft", "review_requested", "ci_failures", "reviewers"],
         ["next", "task_age", "task"],
-        ["session", "agent_status", "agent_run", "agent_run_when", "agent_run_cost", "agent_run_summary"],
+        ["session", "agent_status", "agent_run", "agent_run_summary"],
         ["cost", "agent_cost"],
       ]);
       // The timeline is its own box, the last child, not one of the groups.
@@ -294,7 +291,7 @@ describe("a card's labelled slots", () => {
 
     expect(labels(found)).toEqual(SLOT_LABELS);
     for (const key of Object.keys(SLOT_LABELS)) {
-      if (["repo", "branch", "ancestors", "descendants", "task", "session", "task_age", "agent_status", "agent_run", "agent_run_when", "agent_run_cost", "agent_run_summary", "cost", "agent_cost"].includes(key)) continue;
+      if (["repo", "branch", "ancestors", "descendants", "task", "session", "task_age", "agent_status", "agent_run", "agent_run_summary", "cost", "agent_cost"].includes(key)) continue;
       expect(found[key].slice(1), key).toEqual(["na", "loading…"]);
     }
   });
@@ -448,7 +445,16 @@ describe("claims", () => {
 describe("a card's agent and spend slots", () => {
   const extras = (over: Partial<BranchExtras["agent"]> = {}, spend: Partial<BranchExtras["spend"]> = {}): BranchExtras => ({
     id: "1:devon/a",
-    agent: { has_action: true, trigger: "fix_ci", reason: null, can_override: false, latest_run: null, runs: 0, ...over },
+    agent: {
+      has_action: true,
+      trigger: "fix_ci",
+      reason: null,
+      can_override: false,
+      latest_run: null,
+      runs: 0,
+      recent_runs: over.latest_run ? [over.latest_run] : [],
+      ...over,
+    },
     spend: { interactive_usd: 1.5, interactive_unpriced_calls: 0, autonomous_usd: 0.05, autonomous_runs: 2, ...spend },
   });
   const show = (data: BranchExtras | null, status = pr({ pr_number: 8, ci: "failed" })) => {
@@ -470,7 +476,7 @@ describe("a card's agent and spend slots", () => {
 
     expect(found.agent_status[2]).toBe("may fix / re-run ci now Run an agent now");
     expect(found.agent_run).toEqual(["Latest agent run", "na", "no run yet"]);
-    for (const key of ["agent_run_when", "agent_run_cost", "agent_run_summary"]) expect(found[key].slice(1)).toEqual(["na", "–"]);
+    expect(found.agent_run_summary.slice(1)).toEqual(["na", "–"]);
   });
 
   test("a held-back branch says why, and offers a run only when a person may override it", () => {
@@ -511,7 +517,6 @@ describe("a card's agent and spend slots", () => {
 
     expect(found.agent_status[2]).toBe("working Stop");
     expect(found.agent_run[2]).toBe("running Fix / re-run CI");
-    expect(found.agent_run_cost).toEqual(["Run cost", "ok", "$0.0123 · 3 turns"]);
     expect(found.agent_run_summary[2]).toContain("still running");
   });
 
@@ -541,56 +546,69 @@ describe("a card's agent and spend slots", () => {
 
     expect(found.agent_status[2]).toBe("nothing for an agent to do");
     expect(found.agent_run).toEqual(["Latest agent run", "ok", "finished Resolve comments (2 runs in all)"]);
-    // The same time the Agents view shows for the run (local time, so not spelled out here).
-    expect(found.agent_run_when[2]).toBe(when(new Date(NOW - 3600_000).toISOString()));
-    expect(found.agent_run_cost).toEqual(["Run cost", "ok", "$0.0831 · 9 turns"]);
     expect(found.agent_run_summary[2]).toContain("Replied to two Copilot threads.");
     expect(found.cost).toEqual(["Cost", "ok", "$1.50"]);
     expect(found.agent_cost).toEqual(["Autonomous agent cost", "ok", "$0.0500 over 2 runs"]);
   });
 
-  test("the Conversation button opens the run's conversation in a dialog over the page", async () => {
+  test("the Runs button opens a dialog to pick a run and read its cost and conversation", async () => {
+    const said = { r2: "Replied to two Copilot threads.", r1: "Re-ran the flaky job." };
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => ({
-        ok: true,
-        status: 200,
-        json: async () => ({
-          run_id: "r1",
-          running: false,
-          messages: [{ kind: "text", at: "t", text: "Replied to two Copilot threads.", tool: null, is_error: false }],
-        }),
-      })),
+      vi.fn(async (url: string) => {
+        const runId = /runs\/(r\d)\/conversation/.exec(url)?.[1] as keyof typeof said;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            run_id: runId,
+            running: false,
+            messages: [{ kind: "text", at: "t", text: said[runId], tool: null, is_error: false }],
+          }),
+        };
+      }),
     );
     try {
-      const done = extras({
-        has_action: false,
-        trigger: null,
-        latest_run: {
-          run_id: "r1",
-          id: "1:devon/a",
-          repo: "api",
-          branch: "devon/a",
-          trigger: "resolve_comments",
-          model: "claude-haiku-5-5",
-          state: "succeeded",
-          started_at: new Date(NOW - 3600_000).toISOString(),
-          ended_at: new Date(NOW - 3000_000).toISOString(),
-          turns: 9,
-          cost_usd: 0.0831,
-          summary: "Replied to two Copilot threads.",
-          error: null,
-        },
-        runs: 1,
+      const run = (id: string, trigger: "fix_ci" | "resolve_comments", cost: number, turns: number, summary: string) => ({
+        run_id: id,
+        id: "1:devon/a",
+        repo: "api",
+        branch: "devon/a",
+        trigger,
+        model: "claude-haiku-5-5",
+        state: "succeeded" as const,
+        started_at: new Date(NOW - (id === "r2" ? 3600_000 : 7200_000)).toISOString(),
+        ended_at: new Date(NOW - 3000_000).toISOString(),
+        turns,
+        cost_usd: cost,
+        summary,
+        error: null,
       });
-      show(done);
+      const latest = run("r2", "resolve_comments", 0.0831, 9, "Replied to two Copilot threads.");
+      const earlier = run("r1", "fix_ci", 0.0213, 4, "Re-ran the flaky job.");
+      const found = show(extras({ has_action: false, trigger: null, latest_run: latest, recent_runs: [latest, earlier], runs: 2 }));
+      expect(found.agent_run_summary[2]).toContain("Replied to two Copilot threads.");
 
-      act(() => screen.getByRole("button", { name: "Conversation" }).click());
+      act(() => screen.getByRole("button", { name: "Runs" }).click());
 
-      const dialog = await screen.findByRole("dialog", { name: "Conversation: Resolve comments on devon/a" });
-      expect(await within(dialog).findByRole("list", { name: "Conversation" })).toHaveTextContent("Replied to two Copilot threads.");
-      // It is not inside the card: it floats over the page.
+      const dialog = await screen.findByRole("dialog", { name: "Agent runs: devon/a" });
+      // It floats over the page, not inside the card.
       expect(document.querySelector("article")?.contains(dialog)).toBe(false);
+      const list = within(dialog).getByRole("list", { name: "Runs" });
+      expect(within(list).getAllByRole("button")).toHaveLength(2);
+      // The latest run is shown first, with its own fields and conversation.
+      const detail = within(dialog).getByRole("region", { name: "Run" });
+      expect(within(detail).getByText("$0.0831")).toBeInTheDocument();
+      expect(within(detail).getByText("Resolve comments")).toBeInTheDocument();
+      expect(await within(detail).findByText("Replied to two Copilot threads.", { selector: ".agent-message-text" })).toBeInTheDocument();
+
+      act(() => within(list).getAllByRole("button")[1].click());
+
+      expect(within(detail).getByText("$0.0213")).toBeInTheDocument();
+      expect(within(detail).getByText("4")).toBeInTheDocument();
+      expect(within(detail).getByText("Fix / re-run CI")).toBeInTheDocument();
+      expect(await within(detail).findByText("Re-ran the flaky job.", { selector: ".agent-message-text" })).toBeInTheDocument();
+      expect(within(list).getAllByRole("button")[1]).toHaveAttribute("aria-current", "true");
 
       act(() => within(dialog).getByRole("button", { name: "Close" }).click());
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -702,7 +720,7 @@ describe("a repo the user administers whose webhook is not working", () => {
       ]),
     );
 
-    expect(badge()).toHaveTextContent("webhook off");
+    expect(badge()).toHaveTextContent("webhook blocked");
     expect(badge()).toHaveAttribute(
       "title",
       "You administer this repo, but its webhook is not working: GitHub allows one forwarded webhook per repo, and this one is taken.",
@@ -711,6 +729,21 @@ describe("a repo the user administers whose webhook is not working", () => {
     act(() => store.getState().webhooksChanged([]));
 
     expect(badge()).toBeNull();
+  });
+
+  test("says when the webhook is claimed by a forwarder outside toolbelt, and when the forwarder is just off", () => {
+    const { store } = showCards([branch(1, "devon/a", { status: pr({ pr_number: 8 }) })], { search: "?done=1" });
+
+    act(() =>
+      store.getState().webhooksChanged([
+        { repo_id: 1, state: "claimed", problem: "Another forwarder, not started by toolbelt, is connected to this repo's webhook." },
+      ]),
+    );
+    expect(badge()).toHaveTextContent("webhook claimed elsewhere");
+    expect(badge()).toHaveAttribute("title", expect.stringContaining("not started by toolbelt"));
+
+    act(() => store.getState().webhooksChanged([{ repo_id: 1, state: "failed", problem: "Forwarding stopped: x" }]));
+    expect(badge()).toHaveTextContent("webhook off");
   });
 
   test("is not flagged on the cards of another repo", () => {

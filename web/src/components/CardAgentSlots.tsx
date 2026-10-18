@@ -5,8 +5,8 @@ import { useCallback, useState } from "react";
 import { startAgentRun, stopAgentRun } from "../api/client";
 import type { Branch, BranchExtras, SlotDimensions } from "../api/generated";
 import { formatUsd } from "../logic/spendFormat";
-import { Conversation, RUN_TEXT, RUN_TONE, TRIGGER_LABEL, conversationTitle, reasonText, runCost, when } from "./AgentsView";
-import { ConversationDialog } from "./ConversationDialog";
+import { RUN_TEXT, RUN_TONE, TRIGGER_LABEL, reasonText, runCost } from "./AgentsView";
+import { RunsDialog } from "./RunsDialog";
 import { Pill } from "./presentation";
 
 const NO_RUN = <span className="muted">–</span>;
@@ -27,8 +27,8 @@ export function AgentSlots({
 }) {
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
-  const [conversation, setConversation] = useState(false);
-  const closeConversation = useCallback(() => setConversation(false), []);
+  const [runsOpen, setRunsOpen] = useState(false);
+  const closeRuns = useCallback(() => setRunsOpen(false), []);
   const act = (action: () => Promise<void>): void => {
     setBusy(true);
     setProblem(null);
@@ -92,13 +92,7 @@ export function AgentSlots({
           </>
         )}
       </Slot>
-      <Slot id="agent_run_when" label="Run started" state={run ? "ok" : "na"}>
-        {run ? when(run.started_at) : NO_RUN}
-      </Slot>
-      <Slot id="agent_run_cost" label="Run cost" state={run ? "ok" : "na"}>
-        {run ? `${runCost(run.cost_usd)} · ${run.turns} turn${run.turns === 1 ? "" : "s"}` : NO_RUN}
-      </Slot>
-      <Slot id="agent_run_summary" label="Run summary" state={run ? "ok" : "na"}>
+      <Slot id="agent_run_summary" label="Latest run summary" state={run ? "ok" : "na"}>
         {run ? (
           <>
             {run.error ? (
@@ -108,14 +102,10 @@ export function AgentSlots({
             ) : (
               <span className="muted">{run.state === "running" ? "still running" : "no summary"}</span>
             )}{" "}
-            <button type="button" className="agents-toggle" aria-haspopup="dialog" onClick={() => setConversation(true)}>
-              Conversation
+            <button type="button" className="agents-toggle" aria-haspopup="dialog" onClick={() => setRunsOpen(true)}>
+              Runs
             </button>
-            {conversation && (
-              <ConversationDialog title={conversationTitle(run)} onClose={closeConversation}>
-                <Conversation runId={run.run_id} />
-              </ConversationDialog>
-            )}
+            {runsOpen && agent && <RunsDialog branch={run.branch} runs={agent.recent_runs} onClose={closeRuns} />}
           </>
         ) : (
           NO_RUN

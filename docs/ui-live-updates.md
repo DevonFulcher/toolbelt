@@ -59,11 +59,30 @@ deleted by hand.
 Without the extension, or on a repo without admin rights, nothing is forwarded
 and the repo falls back to the two ways below.
 
+**What toolbelt cleans up, and only that.** GitHub's record of a forwarded
+webhook does not say who made it, so `forwarder_ledger.py` writes down (in the
+stack DB's settings) what toolbelt is certain is its own: the ids of webhooks
+that appeared while a forwarder of its own was starting or running (the repo
+holds only one, so it is that forwarder's), and the pid of each forwarder it
+starts. A forwarder that died before connecting leaves its webhook behind
+inactive; if that webhook is in the ledger it is deleted and the forwarder
+starts again at once. A webhook that is not in the ledger (somebody else's, or
+of unknown origin), or that has a forwarder connected, is never deleted. A
+forwarder that outlived a killed server is stopped at the next start, if its
+recorded pid is still a `gh webhook forward` for that repo.
+
 **When a repo you administer has no working webhook, its cards say so**: a
-`webhook off` badge next to the repo name, with the reason on hover. The reason
-is the extension's own error: the repo's one webhook is taken (another person
-forwarding it, or a leftover), the forwarder stopped, or the extension is not
-installed. The badge goes when the forwarder connects.
+badge next to the repo name, with the reason on hover. The reason is the
+extension's own error, and when the repo's one webhook is taken, what holds it:
+- `webhook claimed elsewhere`: a forwarder that toolbelt did not start is
+  connected to it (someone else forwarding the repo);
+- `webhook blocked`: a forwarded webhook that toolbelt did not create is
+  registered with nothing connected to it (delete it in the repo's webhook
+  settings if it is yours), or what holds it could not be read;
+- `webhook off`: the forwarder stopped or could not start, or the extension is
+  not installed.
+
+The badge goes when the forwarder connects.
 
 A webhook is only a hint (`github_webhooks.py`): it names the branches and PR
 numbers it touched, and the status refresher looks those up again at once,

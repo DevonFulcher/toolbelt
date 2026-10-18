@@ -5,6 +5,7 @@ import type {
   HolderState,
   LiveStatus,
   LoadedStatus,
+  RepoWebhook,
   SlotDimensions,
   Tone,
 } from "../api/generated";
@@ -65,12 +66,20 @@ function Group({ id, title, aside, children }: { id: string; title: string; asid
 
 /** A repo the user administers whose GitHub webhook is not working: it is only polled, so its cards are
  * slower to notice changes. Says why on hover. */
+const WEBHOOK_LABEL: Record<RepoWebhook["state"], string> = {
+  claimed: "webhook claimed elsewhere",
+  leftover: "webhook blocked",
+  blocked: "webhook blocked",
+  failed: "webhook off",
+  not_installed: "webhook off",
+};
+
 function WebhookProblem({ repoId }: { repoId: number }) {
   const webhook = useApp((s) => s.webhooks[repoId]);
   if (webhook === undefined) return null;
   return (
     <span className="hook-problem" title={`You administer this repo, but its webhook is not working: ${webhook.problem}`}>
-      webhook off
+      {WEBHOOK_LABEL[webhook.state]}
     </span>
   );
 }

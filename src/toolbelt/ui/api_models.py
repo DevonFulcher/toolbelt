@@ -540,10 +540,12 @@ class RepoWebhook(Model):
     repo is then only polled)."""
 
     repo_id: int
-    #: ``blocked``: the repo's one forwarded webhook is held by another
-    #: forwarder or a leftover; ``failed``: the forwarder stopped or could not
-    #: start; ``not_installed``: the ``gh webhook`` extension is missing.
-    state: Literal["blocked", "failed", "not_installed"]
+    #: The repo's one forwarded webhook is taken: ``claimed``: by a forwarder
+    #: toolbelt did not start (connected now); ``leftover``: by a webhook toolbelt
+    #: did not create with nothing connected to it; ``blocked``: by something
+    #: not known. ``failed``: the forwarder stopped or could not start;
+    #: ``not_installed``: the ``gh webhook`` extension is missing.
+    state: Literal["claimed", "leftover", "blocked", "failed", "not_installed"]
     #: Why, in a sentence.
     problem: str
 
@@ -978,6 +980,9 @@ class CardAgent(Model):
     #: The branch's most recent run, if it has had one.
     latest_run: AgentRunInfo | None
     runs: int
+    #: The branch's runs, newest first (``latest_run`` is the first), at most
+    #: ``card_extras.RECENT_RUNS``.
+    recent_runs: list[AgentRunInfo]
 
 
 class CardSpend(Model):

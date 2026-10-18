@@ -164,8 +164,7 @@ a.pill:hover { text-decoration: none; background: color-mix(in srgb, currentColo
 .card .g-task { --basis: 18rem; flex-grow: 3; }
 .card .g-agent { --basis: 26rem; flex-grow: 5; }
 .card .g-spend { --basis: 14rem; flex-grow: 2; }
-.s-agent_cost .slot-value, .s-cost .slot-value, .s-agent_run_when .slot-value, .s-agent_run_cost .slot-value {
-  white-space: normal; overflow: visible; }
+.s-agent_cost .slot-value, .s-cost .slot-value { white-space: normal; overflow: visible; }
 /* The timeline takes the whole row. It is not a `.group` and `.card .slot`
    sets no flex, so nothing outranks this. */
 .card .g-timeline { flex: 1 0 100%; min-width: 0; }
@@ -398,3 +397,16 @@ main:has(.focus-bar) { --focus-h: 2.6rem; }
               padding: 12px 16px; border-bottom: 1px solid var(--line); }
 .modal-head h2 { margin: 0; font-size: 15px; overflow-wrap: anywhere; }
 .modal-body { flex: 1; overflow: auto; padding: 12px 16px; }
+
+/* The runs dialog: the list of runs beside the selected one. */
+.runs { display: grid; grid-template-columns: minmax(220px, 300px) 1fr; gap: 16px; align-items: start; }
+.runs-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.run-item { display: grid; gap: 2px; width: 100%; text-align: left; padding: 8px 10px; font: inherit; color: var(--fg);
+            background: var(--card); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
+.run-item:hover { border-color: var(--accent); }
+.run-item[aria-current="true"] { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+.run-detail h3 { margin: 16px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.run-facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px 16px; margin: 0 0 10px; }
+.run-fact dt { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.run-fact dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 720px) { .runs { grid-template-columns: 1fr; } }
