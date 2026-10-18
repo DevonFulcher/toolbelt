@@ -1,3 +1,5 @@
+import { agents } from "../testing/agentsFixtures";
+import { spend } from "../testing/spendFixtures";
 import { describe, expect, test } from "vitest";
 import type { LiveStatus, ServerEvent, Snapshot } from "../api/generated";
 import { createAppStore } from "../store/appStore";
@@ -99,6 +101,7 @@ describe("live updates", () => {
     await settle();
     expect(store.getState().statuses["1:a"]).toEqual(loaded);
     expect(store.getState().updatedAt).toBe(5000);
+    expect(store.getState().fetchedAt).toEqual({ "1:a": Date.parse("2026-10-17T12:00:00Z") });
     expect(store.getState().fetchedAt).toEqual({ "1:a": Date.parse("2026-10-17T12:00:00Z") });
     expect(store.getState().version).toBe(2);
   });
@@ -297,4 +300,31 @@ test("a claims event applies each listed branch's claim and status", async () =>
 
   expect(store.getState().statuses["1:a"]).toEqual(claimed);
   expect(store.getState().claims["1:a"].holders[0].state).toBe("idle");
+});
+
+test("the pushed views reach the store: extras, agents, spend and a conversation", async () => {
+  const { store, current } = setup();
+  await settle();
+  current().emit({ type: "hello", v: 0, age: null });
+
+  current().emit({
+    type: "extras",
+    v: 1,
+    extras: { branches: [], agents_decided_at: "2026-10-17T12:00:00Z", spend_read_at: null },
+  });
+  current().emit({ type: "agents", v: 2, agents: agents({ enabled: false }) });
+  current().emit({ type: "spend", v: 3, spend: [spend()] });
+  current().emit({
+    type: "conversation",
+    v: 4,
+    conversation: { run_id: "r1", running: true, messages: [] },
+  });
+  await settle();
+
+  const state = store.getState();
+  expect(state.decidedAt).toBe(Date.parse("2026-10-17T12:00:00Z"));
+  expect(state.agentsView?.enabled).toBe(false);
+  expect(Object.keys(state.spendViews)).toEqual(["7"]);
+  expect(state.conversations["r1"].running).toBe(true);
+  expect(state.version).toBe(4);
 });

@@ -5,7 +5,6 @@ import { useState } from "react";
 import { startAgentRun, stopAgentRun } from "../api/client";
 import type { Branch, BranchExtras, SlotDimensions } from "../api/generated";
 import { formatUsd } from "../logic/spendFormat";
-import { refreshCardExtras } from "../store/cardExtras";
 import { Conversation, RUN_TEXT, RUN_TONE, TRIGGER_LABEL, reasonText, runCost, when } from "./AgentsView";
 import { Pill } from "./presentation";
 
@@ -29,8 +28,8 @@ export function AgentSlots({
   const act = (action: () => Promise<void>): void => {
     setBusy(true);
     setProblem(null);
+    // The server pushes the new state of the card when the run starts or stops.
     action()
-      .then(() => refreshCardExtras())
       .catch((error: unknown) => setProblem(error instanceof Error ? error.message : String(error)))
       .finally(() => setBusy(false));
   };

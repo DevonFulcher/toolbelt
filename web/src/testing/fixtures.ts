@@ -148,6 +148,9 @@ export function snapshot(branches: Branch[], repos: Repo[] = [repo(1, "api")], e
     catalog,
     untracked: { state: "loaded", prs: [], truncated: false, hidden: 0 },
     fetched: [],
+    extras: null,
+    agents: null,
+    spend: [],
     filters: [
       { key: "next", label: "Next", options: [
         { value: "you", label: "Needs me" },

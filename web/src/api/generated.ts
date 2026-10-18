@@ -30,7 +30,17 @@ export type MixState =
 export type Tone = "green" | "red" | "amber" | "gray" | "purple" | "accent";
 export type MixWho = "you" | "ci" | "others";
 export type ServerEvent =
-  HelloEvent | StatusEvent | TaskEvent | ClaimsEvent | StructureEvent | RefreshedEvent | UntrackedEvent;
+  | HelloEvent
+  | StatusEvent
+  | TaskEvent
+  | ClaimsEvent
+  | StructureEvent
+  | RefreshedEvent
+  | UntrackedEvent
+  | ExtrasEvent
+  | AgentsEvent
+  | SpendEvent
+  | ConversationEvent;
 export type LiveStatus = LoadingStatus | FailedStatus | LoadedStatus;
 export type CiState = "none" | "running" | "failed" | "success";
 export type CiResult = "" | "failed" | "success" | "pending";
@@ -584,6 +594,137 @@ export interface UntrackedFailed {
   state: "failed";
 }
 /**
+ * What the task cards show beyond their PR status changed.
+ */
+export interface ExtrasEvent {
+  extras: CardExtras;
+  type: "extras";
+  v: number;
+}
+/**
+ * The autonomous agents' state changed (what the Agents view shows).
+ */
+export interface AgentsEvent {
+  agents: Agents;
+  type: "agents";
+  v: number;
+}
+/**
+ * The spend ledger was read again: the Spend view's data for each of its
+ * windows (a one-, seven- and thirty-day breakdown).
+ */
+export interface SpendEvent {
+  spend: Spend[];
+  type: "spend";
+  v: number;
+}
+export interface Spend {
+  as_of: string;
+  autonomous: AutonomousSpend;
+  breakdown_days: number;
+  by_model: SpendModel[];
+  by_task: SpendTask[];
+  claims_since: string | null;
+  ingested_at: string | null;
+  over_time: SpendOverTime;
+  unpriced_models: UnpricedModel[];
+  windows: SpendWindow[];
+}
+/**
+ * What autonomous agent runs cost: exactly, from each run's own record
+ * (not estimated from transcripts like the interactive figures).
+ */
+export interface AutonomousSpend {
+  by_task: AutonomousTask[];
+  by_trigger: AutonomousTrigger[];
+  windows: AutonomousWindow[];
+}
+export interface AutonomousTask {
+  branch: string;
+  cost_usd: number;
+  repo: string | null;
+  runs: number;
+  task_id: string;
+}
+export interface AutonomousTrigger {
+  cost_usd: number;
+  runs: number;
+  trigger: AgentTrigger;
+}
+export interface AutonomousWindow {
+  cost_usd: number;
+  label: string;
+  runs: number;
+  start: string;
+  tokens: SpendTokens;
+}
+/**
+ * Tokens by kind; ``input`` is the uncached input.
+ */
+export interface SpendTokens {
+  cache_read: number;
+  cache_write_1h: number;
+  cache_write_5m: number;
+  input: number;
+  output: number;
+}
+export interface SpendModel {
+  calls: number;
+  cost_usd: number;
+  model: string;
+  tokens: SpendTokens;
+  unpriced_calls: number;
+}
+/**
+ * Spend attributed to one task through claims. ``task_id`` is ``None``
+ * for the spend no claim covers; ``repo`` and ``branch`` are ``None`` there
+ * and for a task that is no longer known. A call two tasks' claims cover at
+ * once is split evenly, so the figures are fractional.
+ */
+export interface SpendTask {
+  branch: string | null;
+  calls: number;
+  cost_usd: number;
+  repo: string | null;
+  task_id: string | null;
+  tokens: number;
+  unpriced_calls: number;
+}
+export interface SpendOverTime {
+  bucket_hours: number;
+  buckets: SpendBucket[];
+}
+/**
+ * What one stretch of time cost.
+ */
+export interface SpendBucket {
+  fix_ci_usd: number;
+  interactive_usd: number;
+  resolve_comments_usd: number;
+  resolve_conflicts_usd: number;
+  start: string;
+}
+export interface UnpricedModel {
+  calls: number;
+  model: string;
+}
+export interface SpendWindow {
+  calls: number;
+  cost_usd: number;
+  label: string;
+  start: string;
+  tokens: SpendTokens;
+  unpriced_calls: number;
+}
+/**
+ * A run that is working said or did something: its conversation so far.
+ */
+export interface ConversationEvent {
+  conversation: AgentConversation;
+  type: "conversation";
+  v: number;
+}
+/**
  * The body of ``POST /api/merge``: land the branch's PR.
  */
 export interface MergeRequest {
@@ -598,11 +739,14 @@ export interface MergeResult {
 }
 export interface Snapshot {
   age: number | null;
+  agents: Agents | null;
   branches: Branch[];
   catalog: Catalog;
+  extras: CardExtras | null;
   fetched: FetchedBranch[];
   filters: FilterSpec[];
   repos: Repo[];
+  spend: Spend[];
   untracked: UntrackedPrs;
   version: number;
 }
@@ -828,102 +972,4 @@ export interface Repo {
   name: string;
   path: string;
   path_missing: boolean;
-}
-export interface Spend {
-  as_of: string;
-  autonomous: AutonomousSpend;
-  breakdown_days: number;
-  by_model: SpendModel[];
-  by_task: SpendTask[];
-  claims_since: string | null;
-  ingested_at: string | null;
-  over_time: SpendOverTime;
-  unpriced_models: UnpricedModel[];
-  windows: SpendWindow[];
-}
-/**
- * What autonomous agent runs cost: exactly, from each run's own record
- * (not estimated from transcripts like the interactive figures).
- */
-export interface AutonomousSpend {
-  by_task: AutonomousTask[];
-  by_trigger: AutonomousTrigger[];
-  windows: AutonomousWindow[];
-}
-export interface AutonomousTask {
-  branch: string;
-  cost_usd: number;
-  repo: string | null;
-  runs: number;
-  task_id: string;
-}
-export interface AutonomousTrigger {
-  cost_usd: number;
-  runs: number;
-  trigger: AgentTrigger;
-}
-export interface AutonomousWindow {
-  cost_usd: number;
-  label: string;
-  runs: number;
-  start: string;
-  tokens: SpendTokens;
-}
-/**
- * Tokens by kind; ``input`` is the uncached input.
- */
-export interface SpendTokens {
-  cache_read: number;
-  cache_write_1h: number;
-  cache_write_5m: number;
-  input: number;
-  output: number;
-}
-export interface SpendModel {
-  calls: number;
-  cost_usd: number;
-  model: string;
-  tokens: SpendTokens;
-  unpriced_calls: number;
-}
-/**
- * Spend attributed to one task through claims. ``task_id`` is ``None``
- * for the spend no claim covers; ``repo`` and ``branch`` are ``None`` there
- * and for a task that is no longer known. A call two tasks' claims cover at
- * once is split evenly, so the figures are fractional.
- */
-export interface SpendTask {
-  branch: string | null;
-  calls: number;
-  cost_usd: number;
-  repo: string | null;
-  task_id: string | null;
-  tokens: number;
-  unpriced_calls: number;
-}
-export interface SpendOverTime {
-  bucket_hours: number;
-  buckets: SpendBucket[];
-}
-/**
- * What one stretch of time cost.
- */
-export interface SpendBucket {
-  fix_ci_usd: number;
-  interactive_usd: number;
-  resolve_comments_usd: number;
-  resolve_conflicts_usd: number;
-  start: string;
-}
-export interface UnpricedModel {
-  calls: number;
-  model: string;
-}
-export interface SpendWindow {
-  calls: number;
-  cost_usd: number;
-  label: string;
-  start: string;
-  tokens: SpendTokens;
-  unpriced_calls: number;
 }

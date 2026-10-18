@@ -1,7 +1,6 @@
 import { act, screen, within } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
 import type { Branch, BranchClaim, BranchExtras, LoadedStatus } from "../api/generated";
-import { useCardExtras } from "../store/cardExtras";
 import { branch, catalog, detail, event, noPr, pr, repo, snapshot, DAY, NOW } from "../testing/fixtures";
 import { renderWith } from "../testing/render";
 import { App } from "./App";
@@ -449,8 +448,10 @@ describe("a card's agent and spend slots", () => {
     spend: { interactive_usd: 1.5, interactive_unpriced_calls: 0, autonomous_usd: 0.05, autonomous_runs: 2, ...spend },
   });
   const show = (data: BranchExtras | null, status = pr({ pr_number: 8, ci: "failed" })) => {
-    useCardExtras.getState().set(data ? [data] : []);
-    showCards([branch(1, "devon/a", { status, agent: { label: "Open session", href: "claude://x" } })]);
+    const { store } = showCards([branch(1, "devon/a", { status, agent: { label: "Open session", href: "claude://x" } })]);
+    if (data) {
+      act(() => store.getState().extrasChanged({ branches: [data], agents_decided_at: null, spend_read_at: null }));
+    }
     return slotsOf("devon/a");
   };
 
@@ -631,9 +632,14 @@ describe("a card whose next action is Merge", () => {
 
 describe("a card says how old its data is", () => {
   const fresh = (ageMs: number | null, status = pr({ pr_number: 8 })) => {
-    useCardExtras.getState().set([], { decidedAt: NOW - 3_000, spendReadAt: NOW - 45_000 });
-    return showCards([branch(1, "devon/a", { status })], { search: "?done=1" })
-      .store.getState()
+    const { store } = showCards([branch(1, "devon/a", { status })], { search: "?done=1" });
+    store.getState().extrasChanged({
+      branches: [],
+      agents_decided_at: new Date(NOW - 3_000).toISOString(),
+      spend_read_at: new Date(NOW - 45_000).toISOString(),
+    });
+    store
+      .getState()
       .refreshed(1, ageMs === null ? [] : [{ branch_id: "1:devon/a", fetched_at: new Date(NOW - ageMs).toISOString() }]);
   };
   const pill = (group: string): HTMLElement =>

@@ -142,6 +142,8 @@ class SpendFeed:
         self._sleep = sleep
         #: When the last pass over the transcripts ended (None: none yet).
         self.ingested_at: datetime | None = None
+        #: Called after each pass over the transcripts.
+        self.on_ingest: Callable[[], None] | None = None
 
     def ingest(self) -> None:
         """One pass over the transcripts (blocking)."""
@@ -164,4 +166,6 @@ class SpendFeed:
     async def run(self) -> None:
         while True:
             await asyncio.to_thread(self.ingest)
+            if self.on_ingest is not None:
+                self.on_ingest()
             await self._sleep(self._interval)

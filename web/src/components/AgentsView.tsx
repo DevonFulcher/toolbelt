@@ -1,19 +1,16 @@
 // The agents view: what toolbelt's autonomous agents are on, which tasks one
 // may take next, which it may not and why, the limits they run under, and
-// their recent runs. Polled every few seconds while the page is visible.
-import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+// their recent runs. The server pushes it whenever it changes; the page asks for
+// it once only when it has not been pushed yet, and again after its own actions.
+import { Fragment, useCallback, useEffect, useState, type ReactNode } from "react";
 import { fetchAgentConversation, fetchAgents, setAgentsEnabled, setAgentsLaunching, startAgentRun, stopAgentRun } from "../api/client";
-import type { Tone, AgentConversation, AgentDecision, AgentMessage, AgentReason, AgentRunInfo, AgentTrigger, Agents } from "../api/generated";
+import type { Tone, AgentDecision, AgentMessage, AgentReason, AgentRunInfo, AgentTrigger, Agents } from "../api/generated";
 import { formatAbsolute } from "../logic/format";
 import { formatUsd } from "../logic/spendFormat";
 import type { Counts } from "../store/selectors";
+import { useApp, useAppStore } from "../store/StoreContext";
 import { FilterBar } from "./FilterBar";
 import "./agents.css";
-
-/** How often the page asks again while it is visible. */
-export const REFRESH_MS = 10_000;
-/** How often an open conversation of a working run asks again. */
-export const CONVERSATION_REFRESH_MS = 3_000;
 
 type Load = { state: "ready"; data: Agents } | { state: "error"; message: string };
 
@@ -43,26 +40,24 @@ export const RUN_TEXT: Record<AgentRunInfo["state"], string> = {
   abandoned: "abandoned",
 };
 
+/** The agents' state: what the server last pushed, else (once) what it says
+ * when asked. ``reload`` asks again, after an action of the user's own. */
 export function useAgents(fetchImpl: typeof fetch = fetch): { load: Load | null; reload: () => void } {
-  const [load, setLoad] = useState<Load | null>(null);
-  const latest = useRef(0);
+  const store = useAppStore();
+  const pushed = useApp((s) => s.agentsView);
+  const [error, setError] = useState<string | null>(null);
   const reload = useCallback(() => {
-    const id = ++latest.current;
     fetchAgents(fetchImpl)
       .then((data) => {
-        if (id === latest.current) setLoad({ state: "ready", data });
+        setError(null);
+        store.getState().agentsChanged(data);
       })
-      .catch((error: unknown) => {
-        if (id === latest.current) setLoad({ state: "error", message: error instanceof Error ? error.message : String(error) });
-      });
-  }, [fetchImpl]);
+      .catch((failure: unknown) => setError(failure instanceof Error ? failure.message : String(failure)));
+  }, [fetchImpl, store]);
   useEffect(() => {
-    reload();
-    const timer = window.setInterval(() => {
-      if (!document.hidden) reload();
-    }, REFRESH_MS);
-    return () => window.clearInterval(timer);
-  }, [reload]);
+    if (store.getState().agentsView === null) reload();
+  }, [reload, store]);
+  const load: Load | null = pushed !== null ? { state: "ready", data: pushed } : error !== null ? { state: "error", message: error } : null;
   return { load, reload };
 }
 
@@ -134,33 +129,29 @@ function Message({ message }: { message: AgentMessage }) {
 /** A run's conversation: what it was asked, what it said, each tool it ran and
  * the output. Asked again every few seconds while the run is working. */
 export function Conversation({ runId, fetchImpl = fetch }: { runId: string; fetchImpl?: typeof fetch }) {
-  const [load, setLoad] = useState<{ state: "ready"; data: AgentConversation } | { state: "error"; message: string } | null>(null);
+  const store = useAppStore();
+  const pushed = useApp((s) => s.conversations[runId]);
+  const [error, setError] = useState<string | null>(null);
+  const missing = pushed === undefined;
+  // What the server has pushed (a working run's, as it grows) is shown; asked
+  // for once when there is none (a run that has ended, or the page opened).
   useEffect(() => {
-    let stopped = false;
-    let timer: number | undefined;
-    const read = (): void => {
-      fetchAgentConversation(runId, fetchImpl)
-        .then((data) => {
-          if (stopped) return;
-          setLoad({ state: "ready", data });
-          if (data.running) timer = window.setTimeout(read, CONVERSATION_REFRESH_MS);
-        })
-        .catch((error: unknown) => {
-          if (!stopped) setLoad({ state: "error", message: error instanceof Error ? error.message : String(error) });
-        });
-    };
-    read();
-    return () => {
-      stopped = true;
-      window.clearTimeout(timer);
-    };
-  }, [runId, fetchImpl]);
-  if (load === null) return <p className="agents-empty">Loading the conversation…</p>;
-  if (load.state === "error") return <p className="agents-empty error">{`Could not load the conversation: ${load.message}`}</p>;
-  if (load.data.messages.length === 0) return <p className="agents-empty">Nothing has been said yet.</p>;
+    if (!missing) return;
+    fetchAgentConversation(runId, fetchImpl)
+      .then((data) => store.getState().conversationChanged(data))
+      .catch((failure: unknown) => setError(failure instanceof Error ? failure.message : String(failure)));
+  }, [runId, fetchImpl, missing, store]);
+  if (pushed === undefined) {
+    return error === null ? (
+      <p className="agents-empty">Loading the conversation…</p>
+    ) : (
+      <p className="agents-empty error">{`Could not load the conversation: ${error}`}</p>
+    );
+  }
+  if (pushed.messages.length === 0) return <p className="agents-empty">Nothing has been said yet.</p>;
   return (
     <ol className="agent-conversation" aria-label="Conversation">
-      {load.data.messages.map((message, index) => (
+      {pushed.messages.map((message, index) => (
         <Message key={index} message={message} />
       ))}
     </ol>

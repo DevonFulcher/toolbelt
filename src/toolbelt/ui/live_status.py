@@ -302,6 +302,8 @@ class StructureWatcher:
         self._sleep = sleep
         self._tick = tick
         self._seen: int | None = None
+        #: Called when it publishes ``structure``.
+        self.on_change: Callable[[], None] | None = None
 
     def check(self) -> bool:
         """Compare with the last check; the first only takes the baseline."""
@@ -313,6 +315,8 @@ class StructureWatcher:
             return False
         self._seen = current
         self._hub.publish("structure", {})
+        if self.on_change is not None:
+            self.on_change()
         return True
 
     async def run(self) -> None:

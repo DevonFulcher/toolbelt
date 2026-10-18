@@ -356,6 +356,9 @@ def build_snapshot(
     now: datetime,
     version: int,
     claims: ClaimLookup = NO_CLAIMS,
+    extras: api.CardExtras | None = None,
+    agents: api.Agents | None = None,
+    spend: list[api.Spend] | None = None,
 ) -> api.Snapshot:
     """Every repo with tracked branches, and all their branches: repos in
     name order, each repo's branches depth-first."""
@@ -449,6 +452,9 @@ def build_snapshot(
             filters=filters(),
             untracked=untracked,
             fetched=fetched,
+            extras=extras,
+            agents=agents,
+            spend=spend or [],
         )
     finally:
         store.close()

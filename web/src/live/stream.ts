@@ -9,7 +9,9 @@
 //   claims     who holds a claim on some branches changed (with their
 //              re-derived status: "With an agent" decides the next action)
 //   structure  the stack DB changed: re-fetch the snapshot
-//   refreshed  a polling pass finished ("updated Ns ago")
+//   refreshed  a polling pass finished (which branches it looked up, and when)
+//   extras / agents / spend / conversation  what the cards, the Agents and
+//              Spend views and a working run's conversation show changed
 //   untracked  the open PRs toolbelt does not track changed
 //
 // The stream is only open while the page is being looked at (see
@@ -33,7 +35,19 @@ export interface EventSourceLike {
   close(): void;
 }
 
-const EVENT_TYPES = ["hello", "status", "task", "claims", "structure", "refreshed", "untracked"] as const;
+const EVENT_TYPES = [
+  "hello",
+  "status",
+  "task",
+  "claims",
+  "structure",
+  "refreshed",
+  "untracked",
+  "extras",
+  "agents",
+  "spend",
+  "conversation",
+] as const;
 const CLOSED = 2; // EventSource.CLOSED
 
 export interface LiveDeps {
@@ -92,6 +106,18 @@ export function startLiveUpdates(deps: LiveDeps): LiveUpdates {
         return undefined;
       case "untracked":
         state.untrackedChanged(event.untracked, event.v);
+        return undefined;
+      case "extras":
+        state.extrasChanged(event.extras, event.v);
+        return undefined;
+      case "agents":
+        state.agentsChanged(event.agents, event.v);
+        return undefined;
+      case "spend":
+        state.spendChanged(event.spend, event.v);
+        return undefined;
+      case "conversation":
+        state.conversationChanged(event.conversation, event.v);
         return undefined;
       case "structure":
         return loadSnapshot();

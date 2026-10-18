@@ -162,6 +162,8 @@ class Dispatcher:
         self._launch = launch
         self._launching = launching
         self._launching_now = False
+        #: Called at the end of every pass, once the decisions are current.
+        self.on_tick: Callable[[], None] | None = None
         #: Latest PR snapshot per branch and when (``clock``) it was fetched.
         self._snapshots: dict[tuple[int, str], tuple[float, PrSnapshot]] = {}
         self._auth: tuple[float, bool] | None = None
@@ -234,6 +236,8 @@ class Dispatcher:
             self.decisions = {}
             self.blockers = global_blockers(world)
             self.ticked_at = now
+            if self.on_tick is not None:
+                self.on_tick()
             return
         tasks = await asyncio.to_thread(self._tasks)
         await self._refresh(tasks)
@@ -247,6 +251,8 @@ class Dispatcher:
                 if decision.may_start:
                     await self._launch(decision)
                     break
+        if self.on_tick is not None:
+            self.on_tick()
 
     def _decide_all(
         self, tasks: list[DispatchTask], world: World

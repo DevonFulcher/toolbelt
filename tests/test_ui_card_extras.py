@@ -2,7 +2,6 @@
 
 from datetime import timedelta
 
-from fastapi.testclient import TestClient
 from test_dispatcher import NOW, PrSnapshot, holder, rig, status
 from test_token_spend import call, claim
 
@@ -12,8 +11,6 @@ from toolbelt.git.stack.store import (
     TokenCounts,
     default_db_path,
 )
-from toolbelt.ui import api_models as api
-from toolbelt.ui.app import create_app
 from toolbelt.ui.card_extras import build_card_extras
 
 
@@ -132,17 +129,3 @@ def test_the_extras_say_when_the_agents_last_decided_and_spend_was_last_read():
     assert (before.agents_decided_at, before.spend_read_at) == (None, None)
     assert after.agents_decided_at == NOW.isoformat()
     assert after.spend_read_at == (NOW - timedelta(seconds=40)).isoformat()
-
-
-def test_the_endpoint_serves_the_same_extras():
-    r = rig(a=PrSnapshot(status(), None))
-    r.tick()
-    store, repo_id, _ = tracked_store()
-    store.close()
-    app = create_app(
-        tracker=lambda: None, wall_clock=lambda: NOW, dispatcher=r.dispatcher
-    )
-
-    body = api.CardExtras.model_validate(TestClient(app).get("/api/card-extras").json())
-
-    assert [b.id for b in body.branches] == [f"{repo_id}:a"]

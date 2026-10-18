@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { Spend } from "../api/generated";
 import { branch, noPr, NOW, snapshot } from "../testing/fixtures";
@@ -204,5 +204,33 @@ describe("the spend view", () => {
     expect(within(legend).queryByText("Interactive sessions")).not.toBeInTheDocument();
     expect(within(legend).getByText("Resolve conflicts")).toBeInTheDocument();
     expect(chart.querySelectorAll("rect.agg-bar").length).toBe(2 + 1 + 1);
+  });
+
+  test("uses the spend the server pushed without asking, shows each push, and never polls", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const fetchMock = serve(spend());
+      const { store } = renderWith(
+        <App clock={() => NOW} />,
+        snapshot([branch(1, "devon/a", { status: noPr() })], undefined, { spend: [spend()] }),
+        { search: "?view=spend" },
+      );
+      await screen.findByText("$61.67");
+
+      const pushed = spend();
+      act(() =>
+        store.getState().spendChanged([
+          { ...pushed, windows: pushed.windows.map((w) => (w.label === "Last 24 hours" ? { ...w, cost_usd: 70.5 } : w)) },
+        ]),
+      );
+      expect(screen.getByText("$70.50")).toBeInTheDocument();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(180_000);
+      });
+
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

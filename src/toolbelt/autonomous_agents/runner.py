@@ -107,6 +107,8 @@ class AgentRunner:
         self._heartbeat_seconds = heartbeat_seconds
         #: The runs working now, by run id.
         self.running: dict[str, asyncio.Task[None]] = {}
+        #: Called when a run starts and when it ends.
+        self.on_change: Callable[[], None] | None = None
 
     def _store(self) -> StackStore:
         return StackStore(self._db_path())
@@ -159,6 +161,8 @@ class AgentRunner:
         task = asyncio.create_task(self._run(run_id, decision, session_id))
         self.running[run_id] = task
         task.add_done_callback(lambda _t: self.running.pop(run_id, None))
+        if self.on_change is not None:
+            self.on_change()
         return run_id
 
     def stop(self, run_id: str) -> bool:
@@ -213,6 +217,8 @@ class AgentRunner:
             heartbeat.cancel()
             claim.end(self._wall_clock())
             self._finish(run_id, state, error, result, spend, session_id)
+            if self.on_change is not None:
+                self.on_change()
 
     @staticmethod
     def _classify(result: Any) -> tuple[str, str | None]:

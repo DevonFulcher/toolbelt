@@ -516,6 +516,29 @@
       "title": "AgentsEnabled",
       "type": "object"
     },
+    "AgentsEvent": {
+      "additionalProperties": false,
+      "description": "The autonomous agents' state changed (what the Agents view shows).",
+      "properties": {
+        "agents": {
+          "$ref": "#/$defs/Agents"
+        },
+        "type": {
+          "const": "agents",
+          "type": "string"
+        },
+        "v": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "v",
+        "agents"
+      ],
+      "title": "AgentsEvent",
+      "type": "object"
+    },
     "AgentsLaunching": {
       "additionalProperties": false,
       "description": "The body of ``POST /api/agents/launching``.",
@@ -1568,6 +1591,29 @@
       "title": "ConflictInfo",
       "type": "object"
     },
+    "ConversationEvent": {
+      "additionalProperties": false,
+      "description": "A run that is working said or did something: its conversation so far.",
+      "properties": {
+        "conversation": {
+          "$ref": "#/$defs/AgentConversation"
+        },
+        "type": {
+          "const": "conversation",
+          "type": "string"
+        },
+        "v": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "v",
+        "conversation"
+      ],
+      "title": "ConversationEvent",
+      "type": "object"
+    },
     "DraftCatalogState": {
       "additionalProperties": false,
       "properties": {
@@ -1723,6 +1769,29 @@
         "absent"
       ],
       "title": "EventRep",
+      "type": "object"
+    },
+    "ExtrasEvent": {
+      "additionalProperties": false,
+      "description": "What the task cards show beyond their PR status changed.",
+      "properties": {
+        "extras": {
+          "$ref": "#/$defs/CardExtras"
+        },
+        "type": {
+          "const": "extras",
+          "type": "string"
+        },
+        "v": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "v",
+        "extras"
+      ],
+      "title": "ExtrasEvent",
       "type": "object"
     },
     "FailedStatus": {
@@ -2923,9 +2992,13 @@
     "ServerEvent": {
       "discriminator": {
         "mapping": {
+          "agents": "#/$defs/AgentsEvent",
           "claims": "#/$defs/ClaimsEvent",
+          "conversation": "#/$defs/ConversationEvent",
+          "extras": "#/$defs/ExtrasEvent",
           "hello": "#/$defs/HelloEvent",
           "refreshed": "#/$defs/RefreshedEvent",
+          "spend": "#/$defs/SpendEvent",
           "status": "#/$defs/StatusEvent",
           "structure": "#/$defs/StructureEvent",
           "task": "#/$defs/TaskEvent",
@@ -2954,6 +3027,18 @@
         },
         {
           "$ref": "#/$defs/UntrackedEvent"
+        },
+        {
+          "$ref": "#/$defs/ExtrasEvent"
+        },
+        {
+          "$ref": "#/$defs/AgentsEvent"
+        },
+        {
+          "$ref": "#/$defs/SpendEvent"
+        },
+        {
+          "$ref": "#/$defs/ConversationEvent"
         }
       ]
     },
@@ -3276,6 +3361,16 @@
             }
           ]
         },
+        "agents": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Agents"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "branches": {
           "items": {
             "$ref": "#/$defs/Branch"
@@ -3284,6 +3379,16 @@
         },
         "catalog": {
           "$ref": "#/$defs/Catalog"
+        },
+        "extras": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CardExtras"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "fetched": {
           "items": {
@@ -3303,6 +3408,12 @@
           },
           "type": "array"
         },
+        "spend": {
+          "items": {
+            "$ref": "#/$defs/Spend"
+          },
+          "type": "array"
+        },
         "untracked": {
           "$ref": "#/$defs/UntrackedPrs"
         },
@@ -3318,7 +3429,10 @@
         "catalog",
         "filters",
         "untracked",
-        "fetched"
+        "fetched",
+        "extras",
+        "agents",
+        "spend"
       ],
       "title": "Snapshot",
       "type": "object"
@@ -3447,6 +3561,32 @@
         "fix_ci_usd"
       ],
       "title": "SpendBucket",
+      "type": "object"
+    },
+    "SpendEvent": {
+      "additionalProperties": false,
+      "description": "The spend ledger was read again: the Spend view's data for each of its\nwindows (a one-, seven- and thirty-day breakdown).",
+      "properties": {
+        "spend": {
+          "items": {
+            "$ref": "#/$defs/Spend"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "spend",
+          "type": "string"
+        },
+        "v": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "v",
+        "spend"
+      ],
+      "title": "SpendEvent",
       "type": "object"
     },
     "SpendModel": {

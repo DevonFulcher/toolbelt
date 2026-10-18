@@ -8,7 +8,12 @@
 // patch re-renders only that branch's card.
 import { createStore, type StoreApi } from "zustand/vanilla";
 import type {
+  AgentConversation,
+  Agents,
+  BranchExtras,
+  CardExtras,
   FetchedBranch,
+  Spend,
   Branch,
   BranchClaim,
   Catalog,
@@ -63,6 +68,19 @@ export interface AppState {
   tasks: Record<string, TaskLive>;
   /** When (ms) each branch's PR status was last looked up on GitHub. */
   fetchedAt: Record<string, number>;
+  /** What the cards show beyond the PR status (the agents' view of each
+   * branch and what each task has cost), pushed by the server. */
+  extras: Record<string, BranchExtras>;
+  /** When (ms) the agents last decided every task and spend was last read:
+   * how old the Agent and Spend boxes' data is. */
+  decidedAt: number | null;
+  spendReadAt: number | null;
+  /** The Agents view's data, pushed (``null`` until the server has worked it out). */
+  agentsView: Agents | null;
+  /** The Spend view's data by window (days), pushed. */
+  spendViews: Record<number, Spend>;
+  /** The conversation of each run that was opened or is working, by run id. */
+  conversations: Record<string, AgentConversation>;
   catalog: Catalog | null;
   filters: FilterSpec[];
   /** Open PRs of the user's that are not tracked branches (links only). */
@@ -92,6 +110,10 @@ export interface AppState {
   /** A polling pass finished; ``fetched`` are the branches it looked up. */
   refreshed(v: number, fetched: FetchedBranch[]): void;
   untrackedChanged(untracked: UntrackedPrs, v: number): void;
+  extrasChanged(extras: CardExtras, v?: number): void;
+  agentsChanged(agents: Agents, v?: number): void;
+  spendChanged(spend: Spend[], v?: number): void;
+  conversationChanged(conversation: AgentConversation, v?: number): void;
   hello(v: number, ageSeconds: number | null): void;
   setConnection(state: ConnectionState): void;
   /** Replaces the view state (the URL follows). */
@@ -109,6 +131,18 @@ export interface AppState {
 }
 
 const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
+
+/** The store's parts of a ``CardExtras`` payload. */
+function extrasState(extras: CardExtras): Pick<AppState, "extras" | "decidedAt" | "spendReadAt"> {
+  return {
+    extras: Object.fromEntries(extras.branches.map((branch) => [branch.id, branch])),
+    decidedAt: extras.agents_decided_at ? Date.parse(extras.agents_decided_at) : null,
+    spendReadAt: extras.spend_read_at ? Date.parse(extras.spend_read_at) : null,
+  };
+}
+
+const spendByWindow = (spend: Spend[]): Record<number, Spend> =>
+  Object.fromEntries(spend.map((s) => [s.breakdown_days, s]));
 
 /** `next` with every value that equals the one in `prev` replaced by it. */
 function share<T>(prev: Record<string, T>, next: Record<string, T>): Record<string, T> {
@@ -152,6 +186,12 @@ export function createAppStore(init: StoreInit = {}): AppStore {
     claims: {},
     tasks: {},
     fetchedAt: {},
+    extras: {},
+    decidedAt: null,
+    spendReadAt: null,
+    agentsView: null,
+    spendViews: {},
+    conversations: {},
     catalog: null,
     filters: [],
     untracked: { state: "loading" },
@@ -193,6 +233,12 @@ export function createAppStore(init: StoreInit = {}): AppStore {
         tasks: share(prev.tasks, tasks),
         claims: share(prev.claims, claims),
         fetchedAt: Object.fromEntries(snapshot.fetched.map((f) => [f.branch_id, Date.parse(f.fetched_at)])),
+        ...(snapshot.extras ? extrasState(snapshot.extras) : {}),
+        agentsView: snapshot.agents ?? prev.agentsView,
+        // A conversation that was still working may have moved on (or ended)
+        // while events were missed: it is asked for again when it is shown.
+        conversations: Object.fromEntries(Object.entries(prev.conversations).filter(([, c]) => !c.running)),
+        spendViews: snapshot.spend.length > 0 ? spendByWindow(snapshot.spend) : prev.spendViews,
         catalog: prev.catalog && same(prev.catalog, snapshot.catalog) ? prev.catalog : snapshot.catalog,
         filters: same(prev.filters, snapshot.filters) ? prev.filters : snapshot.filters,
         untracked: same(prev.untracked, snapshot.untracked) ? prev.untracked : snapshot.untracked,
@@ -248,6 +294,36 @@ export function createAppStore(init: StoreInit = {}): AppStore {
       const fetchedAt = { ...state.fetchedAt };
       for (const f of fetched) fetchedAt[f.branch_id] = Date.parse(f.fetched_at);
       set({ version: v, updatedAt: clock(), fetchedAt });
+    },
+
+    extrasChanged(extras, v) {
+      const state = get();
+      if (v !== undefined && state.version !== null && v <= state.version) return;
+      set({ ...(v === undefined ? {} : { version: v }), ...extrasState(extras) });
+    },
+
+    agentsChanged(agents, v) {
+      const state = get();
+      if (v !== undefined && state.version !== null && v <= state.version) return;
+      set({ ...(v === undefined ? {} : { version: v }), agentsView: agents });
+    },
+
+    spendChanged(spend, v) {
+      const state = get();
+      if (v !== undefined && state.version !== null && v <= state.version) return;
+      set({
+        ...(v === undefined ? {} : { version: v }),
+        spendViews: { ...state.spendViews, ...spendByWindow(spend) },
+      });
+    },
+
+    conversationChanged(conversation, v) {
+      const state = get();
+      if (v !== undefined && state.version !== null && v <= state.version) return;
+      set({
+        ...(v === undefined ? {} : { version: v }),
+        conversations: { ...state.conversations, [conversation.run_id]: conversation },
+      });
     },
 
     untrackedChanged(untracked, v) {

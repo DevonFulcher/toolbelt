@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { AgentConversation, Agents } from "../api/generated";
 import { agents } from "../testing/agentsFixtures";
@@ -297,5 +297,76 @@ describe("the agents view", () => {
     show();
 
     expect(await screen.findByText(/Tasks last decided .*every few seconds/)).toBeInTheDocument();
+  });
+
+  test("uses what the server pushed without asking, shows each push, and never polls", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { fetchMock } = serve(agents());
+      const { store } = renderWith(
+        <App clock={() => NOW} />,
+        snapshot([branch(1, "devon/a", { status: noPr() })], undefined, { agents: agents() }),
+        { search: "?view=agents" },
+      );
+      await screen.findByRole("heading", { name: /Autonomous agents are on/ });
+
+      act(() => store.getState().agentsChanged(agents({ enabled: false, decisions: [] })));
+      expect(screen.getByRole("heading", { name: /Autonomous agents are off/ })).toBeInTheDocument();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(120_000);
+      });
+
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("asks once when nothing was pushed, then does not ask again", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { fetchMock } = serve(agents());
+      show();
+      await screen.findByRole("heading", { name: /Autonomous agents are on/ });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(120_000);
+      });
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("a working run's conversation is asked for when opened, then grows with what is pushed", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const running = agents().runs[0];
+      const conversation = (texts: string[]) => ({
+        run_id: "r1",
+        running: true,
+        messages: texts.map((text) => ({ kind: "text" as const, at: "t", text, tool: null, is_error: false })),
+      });
+      const { fetchMock } = serve(agents({ runs: [{ ...running, state: "running", ended_at: null, summary: null }] }), {
+        conversation: conversation(["first"]),
+      });
+      const { store } = show();
+      const table = await screen.findByRole("region", { name: "Recent runs" });
+
+      fireEvent.click(within(table).getByRole("button", { name: "Conversation" }));
+      expect(await within(table).findByText("first")).toBeInTheDocument();
+      const asked = () => fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/conversation")).length;
+      const askedAfterOpening = asked();
+      act(() => store.getState().conversationChanged(conversation(["first", "second"])));
+      expect(within(table).getByText("second")).toBeInTheDocument();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+
+      expect(asked()).toBe(askedAfterOpening);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

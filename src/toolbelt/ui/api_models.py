@@ -558,6 +558,12 @@ class Snapshot(Model):
     #: yet is left out). Cards say how old their data is by it; ``refreshed``
     #: events keep it current.
     fetched: list[FetchedBranch]
+    #: What the cards, the Agents view and the Spend view show, as last worked
+    #: out (``None``/empty until the server has done it once); events keep them
+    #: current.
+    extras: CardExtras | None
+    agents: Agents | None
+    spend: list[Spend]
 
 
 # ---- the aggregate view (see aggregate.py) --------------------------------------
@@ -1083,6 +1089,39 @@ class RefreshedEvent(Model):
     fetched: list[FetchedBranch]
 
 
+class ExtrasEvent(Model):
+    """What the task cards show beyond their PR status changed."""
+
+    type: Literal["extras"]
+    v: int
+    extras: CardExtras
+
+
+class AgentsEvent(Model):
+    """The autonomous agents' state changed (what the Agents view shows)."""
+
+    type: Literal["agents"]
+    v: int
+    agents: Agents
+
+
+class SpendEvent(Model):
+    """The spend ledger was read again: the Spend view's data for each of its
+    windows (a one-, seven- and thirty-day breakdown)."""
+
+    type: Literal["spend"]
+    v: int
+    spend: list[Spend]
+
+
+class ConversationEvent(Model):
+    """A run that is working said or did something: its conversation so far."""
+
+    type: Literal["conversation"]
+    v: int
+    conversation: AgentConversation
+
+
 class UntrackedEvent(Model):
     """The list of open PRs that toolbelt does not track changed."""
 
@@ -1115,9 +1154,17 @@ type ServerEvent = Annotated[
     | ClaimsEvent
     | StructureEvent
     | RefreshedEvent
-    | UntrackedEvent,
+    | UntrackedEvent
+    | ExtrasEvent
+    | AgentsEvent
+    | SpendEvent
+    | ConversationEvent,
     Field(discriminator="type"),
 ]
+
+
+# ``Snapshot`` names models defined after it.
+Snapshot.model_rebuild()
 
 
 class Wire(Model):

@@ -56,7 +56,6 @@ from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 
 from toolbelt.autonomous_agents.auth import claude_signed_in
 from toolbelt.autonomous_agents.branch_state import inspect_branch
-from toolbelt.autonomous_agents.conversation import find_transcript, read_conversation
 from toolbelt.autonomous_agents.dispatcher import (
     Dispatcher,
     DispatchTask,
@@ -95,7 +94,6 @@ from toolbelt.ui.aggregate_feed import (
     gh_page,
     read_history,
 )
-from toolbelt.ui.card_extras import build_card_extras
 from toolbelt.ui.claims_feed import (
     CLAIMS_TICK_SECONDS,
     SPAN_MAX_GAP,
@@ -120,6 +118,7 @@ from toolbelt.ui.live_status import (
 )
 from toolbelt.ui.merge_pr import MergeOutcome, run_toolbelt_merge
 from toolbelt.ui.pr_fetch import PrSnapshot, fetch_snapshot
+from toolbelt.ui.pushed_views import PushedViews, conversation_of
 from toolbelt.ui.snapshot import (
     branch_claim,
     build_snapshot,
@@ -479,6 +478,21 @@ def create_app(
             launching=_agents_launching,
         )
 
+    views = PushedViews(
+        hub=hub,
+        dispatcher=dispatcher,
+        runner=runner,
+        spend=spend,
+        db_path=default_db_path,
+        projects=transcripts_dir,
+        enabled=_agents_enabled,
+        launching=_agents_launching,
+        wall_clock=wall_clock,
+    )
+    dispatcher.on_tick = lambda: views.notify("agents", "extras")
+    runner.on_change = lambda: views.notify("agents", "extras")
+    spend.on_ingest = lambda: views.notify("spend", "extras")
+
     refresher = StatusRefresher(
         branches=_tracked_branches,
         fetch=fetch,
@@ -538,6 +552,9 @@ def create_app(
     watcher = StructureWatcher(
         version=db_version or held_data_version, hub=hub, tick=tick
     )
+    # Tracked branches, runs and settings live in the stack DB: when it
+    # changes, what the cards and the Agents view show may have too.
+    watcher.on_change = lambda: views.notify("agents", "extras")
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -552,6 +569,7 @@ def create_app(
             asyncio.create_task(untracked_feed.run()),
             asyncio.create_task(watcher.run()),
             asyncio.create_task(aggregates.run()),
+            asyncio.create_task(views.run()),
         ]
         try:
             yield
@@ -580,6 +598,7 @@ def create_app(
     app.state.spend_feed = spend
     app.state.dispatcher = dispatcher
     app.state.agent_runner = runner
+    app.state.views = views
 
     @app.get("/assets/{path:path}", include_in_schema=False, response_model=None)
     def asset(path: str) -> FileResponse:
@@ -638,6 +657,9 @@ def create_app(
             now=wall_clock(),
             version=version,
             claims=claims,
+            extras=views.extras,
+            agents=views.agents,
+            spend=views.spend,
         )
 
     @app.get("/api/aggregate", response_model=api.Aggregate)
@@ -687,19 +709,6 @@ def create_app(
 
         return await asyncio.to_thread(build)
 
-    @app.get("/api/card-extras", response_model=api.CardExtras)
-    async def card_extras() -> api.CardExtras:
-        def build() -> api.CardExtras:
-            store = StackStore(default_db_path())
-            try:
-                return build_card_extras(
-                    dispatcher, store, wall_clock(), spend.ingested_at
-                )
-            finally:
-                store.close()
-
-        return await asyncio.to_thread(build)
-
     @app.post("/api/merge", response_model=api.MergeResult)
     async def merge_branch(body: api.MergeRequest) -> api.MergeResult:
         repo_part, _, branch = body.id.partition(":")
@@ -739,6 +748,7 @@ def create_app(
         await asyncio.to_thread(
             _write_setting, AGENTS_ENABLED_SETTING, "true" if body.enabled else "false"
         )
+        views.notify("agents")
         return body
 
     @app.post("/api/agents/launching", response_model=api.AgentsLaunching)
@@ -750,6 +760,7 @@ def create_app(
             AGENTS_LAUNCH_SETTING,
             "true" if body.launching else "false",
         )
+        views.notify("agents")
         return body
 
     @app.post("/api/agents/runs/{run_id}/stop")
@@ -762,36 +773,15 @@ def create_app(
         "/api/agents/runs/{run_id}/conversation", response_model=api.AgentConversation
     )
     async def agent_conversation(run_id: str) -> api.AgentConversation:
-        def read() -> api.AgentConversation:
-            store = StackStore(default_db_path())
-            try:
-                run = next((r for r in store.agent_runs() if r.run_id == run_id), None)
-            finally:
-                store.close()
-            if run is None:
-                raise HTTPException(status_code=404, detail="no such run")
-            transcript = (
-                find_transcript(run.session_id, projects_dir())
-                if run.session_id
-                else None
-            )
-            entries = read_conversation(transcript) if transcript else []
-            return api.AgentConversation(
-                run_id=run_id,
-                running=run.state == "running",
-                messages=[
-                    api.AgentMessage(
-                        kind=e.kind,
-                        at=e.at,
-                        text=e.text,
-                        tool=e.tool,
-                        is_error=e.is_error,
-                    )
-                    for e in entries
-                ],
-            )
-
-        return await asyncio.to_thread(read)
+        conversation = await asyncio.to_thread(
+            conversation_of,
+            run_id,
+            db_path=default_db_path(),
+            projects=transcripts_dir(),
+        )
+        if conversation is None:
+            raise HTTPException(status_code=404, detail="no such run")
+        return conversation
 
     @app.post("/api/agents/start")
     async def start_agent_run(body: api.AgentStart) -> dict[str, bool]:

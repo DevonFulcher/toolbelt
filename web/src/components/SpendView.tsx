@@ -1,8 +1,8 @@
 // The spend view: what Claude Code on this machine has cost, by window, by
-// model and by task. Fetches `/api/spend` when opened, when the window
-// changes, and every minute while the page is visible (the server reads the
-// session transcripts about that often).
-import { useEffect, useRef, useState } from "react";
+// model and by task. The server pushes it each time it has read the session
+// transcripts (about once a minute); the page asks for a window only when it
+// has not been pushed.
+import { useEffect, useState } from "react";
 import { fetchSpend } from "../api/client";
 import type { Spend, SpendTokens } from "../api/generated";
 import { TRIGGER_LABEL } from "./AgentsView";
@@ -10,46 +10,32 @@ import { formatAbsolute } from "../logic/format";
 import { browserTimeZone } from "../logic/localTime";
 import { formatTokens, formatUsd } from "../logic/spendFormat";
 import type { Counts } from "../store/selectors";
-import { useApp } from "../store/StoreContext";
+import { useApp, useAppStore } from "../store/StoreContext";
 import { StackedBarsChart, withHatches } from "./AggregateCharts";
 import { FilterBar } from "./FilterBar";
 import "./spend.css";
-
-/** How often the page asks again while it is visible. */
-export const REFRESH_MS = 60_000;
 
 type Load =
   | { days: number; state: "ready"; data: Spend }
   | { days: number; state: "error"; message: string };
 
-/** The spend for `days`, or `null` while it is first being fetched. */
+/** The spend for `days`: what the server last pushed, else (once) what it
+ * says when asked. `null` while it is first being fetched. */
 export function useSpend(days: number, fetchImpl: typeof fetch = fetch): Load | null {
-  const [load, setLoad] = useState<Load | null>(null);
-  const latest = useRef(0);
+  const store = useAppStore();
+  const pushed = useApp((s) => s.spendViews[days]);
+  const [error, setError] = useState<{ days: number; message: string } | null>(null);
+  const missing = pushed === undefined;
   useEffect(() => {
-    let alive = true;
-    const run = (): void => {
-      const id = ++latest.current;
-      fetchSpend(days, fetchImpl)
-        .then((data) => {
-          if (alive && id === latest.current) setLoad({ days, state: "ready", data });
-        })
-        .catch((error: unknown) => {
-          if (alive && id === latest.current) {
-            setLoad({ days, state: "error", message: error instanceof Error ? error.message : String(error) });
-          }
-        });
-    };
-    run();
-    const timer = window.setInterval(() => {
-      if (!document.hidden) run();
-    }, REFRESH_MS);
-    return () => {
-      alive = false;
-      window.clearInterval(timer);
-    };
-  }, [days, fetchImpl]);
-  return load;
+    if (!missing) return;
+    fetchSpend(days, fetchImpl)
+      .then((data) => store.getState().spendChanged([data]))
+      .catch((failure: unknown) =>
+        setError({ days, message: failure instanceof Error ? failure.message : String(failure) }),
+      );
+  }, [days, fetchImpl, missing, store]);
+  if (pushed !== undefined) return { days, state: "ready", data: pushed };
+  return error !== null && error.days === days ? { days, state: "error", message: error.message } : null;
 }
 
 /** Runs cost cents or less: four digits under a dollar. */
