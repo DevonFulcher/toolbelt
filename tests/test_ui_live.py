@@ -34,6 +34,7 @@ from toolbelt.ui.live_status import (
 )
 from toolbelt.ui.pr_activity import PrFacts
 from toolbelt.ui.pr_fetch import PrSnapshot
+from toolbelt.ui.webhook_forwarders import Problem
 
 OPEN = BranchStatus(
     pr=PrState.OPEN,
@@ -945,3 +946,74 @@ class TestStartup:
             "callers": {},
             "webhooks": {"received": 0, "hinted": 0},
         }
+
+
+class TestWebhookProblems:
+    """An administered repo whose webhook is not working is in the snapshot
+    and is announced when it changes."""
+
+    class Forwarders:
+        def __init__(self) -> None:
+            self.problems: dict[str, Problem] = {}
+            self.on_change = None
+
+        def problem(self, slug: str) -> Problem | None:
+            return self.problems.get(slug)
+
+        def is_live(self, slug: str) -> bool:
+            return False
+
+    def seed(self, tmp_path: Path):
+        store = StackStore(default_db_path())
+        path = tmp_path / "api"
+        path.mkdir()
+        repo_id = store.ensure_repo(
+            RepoIdentity(
+                git_common_dir=path / ".git",
+                path=path,
+                remote_url="git@github.com:o/r.git",
+            )
+        )
+        store.set_parent(repo_id, "devon/a", "main")
+        store.close()
+        return repo_id
+
+    def test_the_snapshot_lists_the_repos_with_a_problem(self, tmp_path):
+        from fastapi.testclient import TestClient
+
+        repo_id = self.seed(tmp_path)
+        forwarders = self.Forwarders()
+        forwarders.problems["o/r"] = Problem("blocked", "The webhook is taken.")
+        app = create_app(fetch=Fetcher(), forwarders=forwarders)  # type: ignore[arg-type]
+
+        snapshot = TestClient(app).get("/api/snapshot").json()
+
+        assert snapshot["webhooks"] == [
+            {"repo_id": repo_id, "state": "blocked", "problem": "The webhook is taken."}
+        ]
+
+    def test_a_repo_without_a_problem_is_not_listed(self, tmp_path):
+        from fastapi.testclient import TestClient
+
+        self.seed(tmp_path)
+        app = create_app(fetch=Fetcher(), forwarders=self.Forwarders())  # type: ignore[arg-type]
+
+        assert TestClient(app).get("/api/snapshot").json()["webhooks"] == []
+
+    def test_a_change_is_published_to_the_connected_pages(self, tmp_path):
+        repo_id = self.seed(tmp_path)
+        forwarders = self.Forwarders()
+        app = create_app(fetch=Fetcher(), forwarders=forwarders)  # type: ignore[arg-type]
+
+        async def scenario():
+            queue = app.state.hub.subscribe()
+            forwarders.problems["o/r"] = Problem("failed", "Forwarding stopped: x")
+            forwarders.on_change()  # type: ignore[misc]
+            return queue.get_nowait()
+
+        name, data = run(scenario())
+
+        assert name == "webhooks"
+        assert data["webhooks"] == [
+            {"repo_id": repo_id, "state": "failed", "problem": "Forwarding stopped: x"}
+        ]

@@ -597,6 +597,32 @@ def create_app(
             slugs=forwarded_slugs, url=webhook_url, is_admin=is_admin
         )
 
+    def webhook_problems() -> list[api.RepoWebhook]:
+        """The repos the user administers whose webhook is not working."""
+        if forwarders is None:
+            return []
+        problems = []
+        for repo_id, _, remote_url in _registered_repos():
+            slug = repo_slugs.get(repo_id) or repo_slug(remote_url)
+            problem = forwarders.problem(slug) if slug else None
+            if problem is not None:
+                problems.append(
+                    api.RepoWebhook(
+                        repo_id=repo_id, state=problem.state, problem=problem.text
+                    )
+                )
+        return problems
+
+    if forwarders is not None:
+        forwarders.on_change = lambda: hub.publish(
+            "webhooks",
+            {
+                "webhooks": [
+                    problem.model_dump(mode="json") for problem in webhook_problems()
+                ]
+            },
+        )
+
     def webhooks_live(repo_id: int) -> bool:
         slug = repo_slugs.get(repo_id)
         return forwarders is not None and slug is not None and forwarders.is_live(slug)
@@ -779,6 +805,7 @@ def create_app(
             extras=views.extras,
             agents=views.agents,
             spend=views.spend,
+            webhooks=webhook_problems(),
         )
 
     @app.get("/api/aggregate", response_model=api.Aggregate)

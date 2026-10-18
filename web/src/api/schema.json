@@ -2901,6 +2901,33 @@
       "title": "Repo",
       "type": "object"
     },
+    "RepoWebhook": {
+      "additionalProperties": false,
+      "description": "A repo the user administers whose GitHub webhook is not working (the\nrepo is then only polled).",
+      "properties": {
+        "problem": {
+          "type": "string"
+        },
+        "repo_id": {
+          "type": "integer"
+        },
+        "state": {
+          "enum": [
+            "blocked",
+            "failed",
+            "not_installed"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo_id",
+        "state",
+        "problem"
+      ],
+      "title": "RepoWebhook",
+      "type": "object"
+    },
     "ReviewCatalogState": {
       "additionalProperties": false,
       "properties": {
@@ -3020,7 +3047,8 @@
           "status": "#/$defs/StatusEvent",
           "structure": "#/$defs/StructureEvent",
           "task": "#/$defs/TaskEvent",
-          "untracked": "#/$defs/UntrackedEvent"
+          "untracked": "#/$defs/UntrackedEvent",
+          "webhooks": "#/$defs/WebhooksEvent"
         },
         "propertyName": "type"
       },
@@ -3050,6 +3078,9 @@
           "$ref": "#/$defs/ExtrasEvent"
         },
         {
+          "$ref": "#/$defs/WebhooksEvent"
+        },
+        {
           "$ref": "#/$defs/AgentsEvent"
         },
         {
@@ -3074,6 +3105,36 @@
           ]
         },
         "agent_run": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogDimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "agent_run_cost": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogDimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "agent_run_summary": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogDimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "agent_run_when": {
           "anyOf": [
             {
               "$ref": "#/$defs/CatalogDimension"
@@ -3354,6 +3415,9 @@
         "lines",
         "agent_status",
         "agent_run",
+        "agent_run_when",
+        "agent_run_cost",
+        "agent_run_summary",
         "cost",
         "agent_cost",
         "repo",
@@ -3437,6 +3501,12 @@
         },
         "version": {
           "type": "integer"
+        },
+        "webhooks": {
+          "items": {
+            "$ref": "#/$defs/RepoWebhook"
+          },
+          "type": "array"
         }
       },
       "required": [
@@ -3450,7 +3520,8 @@
         "fetched",
         "extras",
         "agents",
-        "spend"
+        "spend",
+        "webhooks"
       ],
       "title": "Snapshot",
       "type": "object"
@@ -4226,6 +4297,32 @@
           "$ref": "#/$defs/UntrackedFailed"
         }
       ]
+    },
+    "WebhooksEvent": {
+      "additionalProperties": false,
+      "description": "Which administered repos have a webhook that is not working changed.",
+      "properties": {
+        "type": {
+          "const": "webhooks",
+          "type": "string"
+        },
+        "v": {
+          "type": "integer"
+        },
+        "webhooks": {
+          "items": {
+            "$ref": "#/$defs/RepoWebhook"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "type",
+        "v",
+        "webhooks"
+      ],
+      "title": "WebhooksEvent",
+      "type": "object"
     },
     "Who": {
       "enum": [

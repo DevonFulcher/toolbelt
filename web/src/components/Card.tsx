@@ -63,6 +63,18 @@ function Group({ id, title, aside, children }: { id: string; title: string; asid
   );
 }
 
+/** A repo the user administers whose GitHub webhook is not working: it is only polled, so its cards are
+ * slower to notice changes. Says why on hover. */
+function WebhookProblem({ repoId }: { repoId: number }) {
+  const webhook = useApp((s) => s.webhooks[repoId]);
+  if (webhook === undefined) return null;
+  return (
+    <span className="hook-problem" title={`You administer this repo, but its webhook is not working: ${webhook.problem}`}>
+      webhook off
+    </span>
+  );
+}
+
 /** How old a box's data is, in seconds ("updated 12s ago", counting up), amber once it is older than
  * ``staleAfter`` seconds. ``at`` is when it was last read (ms), if ever. */
 function Freshness({
@@ -232,6 +244,7 @@ export const Card = memo(
             <span className="repo-chip" title={repo.path}>
               {repo.name}
             </span>
+            <WebhookProblem repoId={repo.id} />
           </Slot>
           <Slot id="branch" label="Branch">
             <span className={`branch${branch.current ? " current" : ""}`}>{branch.name}</span>
@@ -267,6 +280,7 @@ export const Card = memo(
             <span className="repo-chip" title={repo.path}>
               {repo.name}
             </span>
+            <WebhookProblem repoId={repo.id} />
           </Slot>
           <Slot id="branch" label="Branch">
             <span className={`branch${branch.current ? " current" : ""}`}>{branch.name}</span>{" "}

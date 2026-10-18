@@ -45,12 +45,25 @@ It needs admin rights on the repo and the GitHub CLI extension:
 gh extension install cli/gh-webhook
 ```
 
-While `tt ui` serves, `webhook_forwarders.py` keeps one forwarder running for
-each tracked repo where `permissions.admin` is true (checked once per repo per
-server start), in its own process group, and restarts it when it exits.
-Stopping the server ends each with Ctrl-C and GitHub removes the webhook.
+GitHub allows one forwarded webhook per repo, whoever makes it ("only one
+person can use webhook forwarding at a time for each repository and
+organization"). While `tt ui` serves, `webhook_forwarders.py` keeps one
+forwarder running for each tracked repo where `permissions.admin` is true
+(checked once per repo per server start), in its own process group, and
+restarts it when it exits. The extension creates the webhook inactive and
+activates it once its websocket connects; GitHub removes it when the websocket
+closes. A forwarder that dies before connecting leaves an inactive `cli`
+webhook behind, which blocks that repo ("Hook already exists") until it is
+deleted by hand.
+
 Without the extension, or on a repo without admin rights, nothing is forwarded
 and the repo falls back to the two ways below.
+
+**When a repo you administer has no working webhook, its cards say so**: a
+`webhook off` badge next to the repo name, with the reason on hover. The reason
+is the extension's own error: the repo's one webhook is taken (another person
+forwarding it, or a leftover), the forwarder stopped, or the extension is not
+installed. The badge goes when the forwarder connects.
 
 A webhook is only a hint (`github_webhooks.py`): it names the branches and PR
 numbers it touched, and the status refresher looks those up again at once,

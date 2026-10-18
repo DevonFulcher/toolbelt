@@ -38,6 +38,7 @@ export type ServerEvent =
   | RefreshedEvent
   | UntrackedEvent
   | ExtrasEvent
+  | WebhooksEvent
   | AgentsEvent
   | SpendEvent
   | ConversationEvent;
@@ -602,6 +603,23 @@ export interface CardSpend {
   interactive_usd: number;
 }
 /**
+ * Which administered repos have a webhook that is not working changed.
+ */
+export interface WebhooksEvent {
+  type: "webhooks";
+  v: number;
+  webhooks: RepoWebhook[];
+}
+/**
+ * A repo the user administers whose GitHub webhook is not working (the
+ * repo is then only polled).
+ */
+export interface RepoWebhook {
+  problem: string;
+  repo_id: number;
+  state: "blocked" | "failed" | "not_installed";
+}
+/**
  * The autonomous agents' state changed (what the Agents view shows).
  */
 export interface AgentsEvent {
@@ -749,6 +767,7 @@ export interface Snapshot {
   spend: Spend[];
   untracked: UntrackedPrs;
   version: number;
+  webhooks: RepoWebhook[];
 }
 export interface Branch {
   agent: Link | null;
@@ -837,6 +856,9 @@ export interface Span {
 export interface SlotDimensions {
   agent_cost: CatalogDimension | null;
   agent_run: CatalogDimension | null;
+  agent_run_cost: CatalogDimension | null;
+  agent_run_summary: CatalogDimension | null;
+  agent_run_when: CatalogDimension | null;
   agent_status: CatalogDimension | null;
   ancestors: CatalogDimension | null;
   bot_comments: CatalogDimension | null;

@@ -535,6 +535,19 @@ type UntrackedPrs = Annotated[
 ]
 
 
+class RepoWebhook(Model):
+    """A repo the user administers whose GitHub webhook is not working (the
+    repo is then only polled)."""
+
+    repo_id: int
+    #: ``blocked``: the repo's one forwarded webhook is held by another
+    #: forwarder or a leftover; ``failed``: the forwarder stopped or could not
+    #: start; ``not_installed``: the ``gh webhook`` extension is missing.
+    state: Literal["blocked", "failed", "not_installed"]
+    #: Why, in a sentence.
+    problem: str
+
+
 class FetchedBranch(Model):
     branch_id: str
     #: ISO time its PR status was last looked up successfully (what the card
@@ -569,6 +582,8 @@ class Snapshot(Model):
     extras: CardExtras | None
     agents: Agents | None
     spend: list[Spend]
+    #: Repos the user administers whose webhook is not working.
+    webhooks: list[RepoWebhook]
 
 
 # ---- the aggregate view (see aggregate.py) --------------------------------------
@@ -1102,6 +1117,14 @@ class ExtrasEvent(Model):
     extras: CardExtras
 
 
+class WebhooksEvent(Model):
+    """Which administered repos have a webhook that is not working changed."""
+
+    type: Literal["webhooks"]
+    v: int
+    webhooks: list[RepoWebhook]
+
+
 class AgentsEvent(Model):
     """The autonomous agents' state changed (what the Agents view shows)."""
 
@@ -1161,6 +1184,7 @@ type ServerEvent = Annotated[
     | RefreshedEvent
     | UntrackedEvent
     | ExtrasEvent
+    | WebhooksEvent
     | AgentsEvent
     | SpendEvent
     | ConversationEvent,

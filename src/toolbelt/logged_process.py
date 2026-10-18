@@ -121,6 +121,10 @@ class AsyncProcess:
     def returncode(self) -> int | None:
         return self._process.returncode
 
+    @property
+    def stderr(self) -> asyncio.StreamReader | None:
+        return self._process.stderr
+
     async def communicate(self, input: bytes | None = None) -> tuple[bytes, bytes]:
         result = await self._process.communicate(input)
         self._log_exit()

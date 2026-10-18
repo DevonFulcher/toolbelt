@@ -2,13 +2,14 @@
 // may take next, which it may not and why, the limits they run under, and
 // their recent runs. The server pushes it whenever it changes; the page asks for
 // it once only when it has not been pushed yet, and again after its own actions.
-import { Fragment, useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { fetchAgentConversation, fetchAgents, setAgentsEnabled, setAgentsLaunching, startAgentRun, stopAgentRun } from "../api/client";
 import type { Tone, AgentDecision, AgentMessage, AgentReason, AgentRunInfo, AgentTrigger, Agents } from "../api/generated";
 import { formatAbsolute } from "../logic/format";
 import { formatUsd } from "../logic/spendFormat";
 import type { Counts } from "../store/selectors";
 import { useApp, useAppStore } from "../store/StoreContext";
+import { ConversationDialog } from "./ConversationDialog";
 import { FilterBar } from "./FilterBar";
 import "./agents.css";
 
@@ -158,10 +159,15 @@ export function Conversation({ runId, fetchImpl = fetch }: { runId: string; fetc
   );
 }
 
-function ConversationToggle({ runId, open, onToggle }: { runId: string; open: boolean; onToggle: (runId: string) => void }) {
+/** The title of a run's conversation dialog. */
+export function conversationTitle(run: AgentRunInfo | undefined): string {
+  return run ? `Conversation: ${TRIGGER_LABEL[run.trigger]} on ${run.branch}` : "Conversation";
+}
+
+function ConversationButton({ runId, onOpen }: { runId: string; onOpen: (runId: string) => void }) {
   return (
-    <button type="button" className="agents-toggle" aria-expanded={open} onClick={() => onToggle(runId)}>
-      {open ? "Hide conversation" : "Conversation"}
+    <button type="button" className="agents-toggle" aria-haspopup="dialog" onClick={() => onOpen(runId)}>
+      Conversation
     </button>
   );
 }
@@ -172,16 +178,14 @@ function AgentCard({
   onStop,
   onStart,
   launching,
-  openRun,
-  onToggleConversation,
+  onOpenConversation,
 }: {
   decision: AgentDecision;
   runs: AgentRunInfo[];
   onStop: (runId: string) => void;
   onStart: (id: string) => void;
   launching: boolean;
-  openRun: string | null;
-  onToggleConversation: (runId: string) => void;
+  onOpenConversation: (runId: string) => void;
 }) {
   return (
     <div className="card agent-card" data-branch={decision.branch}>
@@ -238,8 +242,7 @@ function AgentCard({
                     Stop
                   </button>
                 )}
-                <ConversationToggle runId={run.run_id} open={openRun === run.run_id} onToggle={onToggleConversation} />
-                {openRun === run.run_id && <Conversation runId={run.run_id} />}
+                <ConversationButton runId={run.run_id} onOpen={onOpenConversation} />
               </li>
             ))}
           </ul>
@@ -275,7 +278,7 @@ function AgentsBody({ data, reload }: { data: Agents; reload: () => void }) {
   const stop = (runId: string): void => act(() => stopAgentRun(runId));
   const start = (id: string): void => act(() => startAgentRun(id));
   const [openRun, setOpenRun] = useState<string | null>(null);
-  const toggleConversation = (runId: string): void => setOpenRun((open) => (open === runId ? null : runId));
+  const closeConversation = useCallback(() => setOpenRun(null), []);
   const { limits, spend } = data;
   const working = data.decisions.filter((d) => d.reason?.code === "working");
   const ready = data.decisions.filter((d) => d.reason === null);
@@ -366,8 +369,7 @@ function AgentsBody({ data, reload }: { data: Agents; reload: () => void }) {
                     onStop={stop}
                     onStart={start}
                     launching={data.launching}
-                    openRun={openRun}
-                    onToggleConversation={toggleConversation}
+                    onOpenConversation={setOpenRun}
                   />
                 ))}
               </div>
@@ -380,7 +382,7 @@ function AgentsBody({ data, reload }: { data: Agents; reload: () => void }) {
             ) : (
               <div className="agents-cards">
                 {ready.map((decision) => (
-                  <AgentCard key={decision.id} decision={decision} runs={runsFor(decision.id)} onStop={stop} onStart={start} launching={data.launching} openRun={openRun} onToggleConversation={toggleConversation} />
+                  <AgentCard key={decision.id} decision={decision} runs={runsFor(decision.id)} onStop={stop} onStart={start} launching={data.launching} onOpenConversation={setOpenRun} />
                 ))}
               </div>
             )}
@@ -392,7 +394,7 @@ function AgentsBody({ data, reload }: { data: Agents; reload: () => void }) {
             ) : (
               <div className="agents-cards">
                 {held.map((decision) => (
-                  <AgentCard key={decision.id} decision={decision} runs={runsFor(decision.id)} onStop={stop} onStart={start} launching={data.launching} openRun={openRun} onToggleConversation={toggleConversation} />
+                  <AgentCard key={decision.id} decision={decision} runs={runsFor(decision.id)} onStop={stop} onStart={start} launching={data.launching} onOpenConversation={setOpenRun} />
                 ))}
               </div>
             )}
@@ -418,8 +420,7 @@ function AgentsBody({ data, reload }: { data: Agents; reload: () => void }) {
             </thead>
             <tbody>
               {data.runs.map((run) => (
-                <Fragment key={run.run_id}>
-                <tr>
+                <tr key={run.run_id}>
                   <td>{`${run.repo}: ${run.branch}`}</td>
                   <td>{TRIGGER_LABEL[run.trigger]}</td>
                   <td>{when(run.started_at)}</td>
@@ -435,22 +436,19 @@ function AgentsBody({ data, reload }: { data: Agents; reload: () => void }) {
                         Stop
                       </button>
                     )}
-                    <ConversationToggle runId={run.run_id} open={openRun === run.run_id} onToggle={toggleConversation} />
+                    <ConversationButton runId={run.run_id} onOpen={setOpenRun} />
                   </td>
                 </tr>
-                {openRun === run.run_id && (
-                  <tr>
-                    <td colSpan={7}>
-                      <Conversation runId={run.run_id} />
-                    </td>
-                  </tr>
-                )}
-                </Fragment>
               ))}
             </tbody>
           </table>
         )}
       </section>
+      {openRun !== null && (
+        <ConversationDialog title={conversationTitle(data.runs.find((run) => run.run_id === openRun))} onClose={closeConversation}>
+          <Conversation runId={openRun} />
+        </ConversationDialog>
+      )}
     </section>
   );
 }

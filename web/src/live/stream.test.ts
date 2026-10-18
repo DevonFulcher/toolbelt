@@ -302,7 +302,7 @@ test("a claims event applies each listed branch's claim and status", async () =>
   expect(store.getState().claims["1:a"].holders[0].state).toBe("idle");
 });
 
-test("the pushed views reach the store: extras, agents, spend and a conversation", async () => {
+test("the pushed views reach the store: extras, agents, spend, webhooks and a conversation", async () => {
   const { store, current } = setup();
   await settle();
   current().emit({ type: "hello", v: 0, age: null });
@@ -315,8 +315,13 @@ test("the pushed views reach the store: extras, agents, spend and a conversation
   current().emit({ type: "agents", v: 2, agents: agents({ enabled: false }) });
   current().emit({ type: "spend", v: 3, spend: [spend()] });
   current().emit({
-    type: "conversation",
+    type: "webhooks",
     v: 4,
+    webhooks: [{ repo_id: 1, state: "blocked", problem: "The webhook is taken." }],
+  });
+  current().emit({
+    type: "conversation",
+    v: 5,
     conversation: { run_id: "r1", running: true, messages: [] },
   });
   await settle();
@@ -325,6 +330,7 @@ test("the pushed views reach the store: extras, agents, spend and a conversation
   expect(state.decidedAt).toBe(Date.parse("2026-10-17T12:00:00Z"));
   expect(state.agentsView?.enabled).toBe(false);
   expect(Object.keys(state.spendViews)).toEqual(["7"]);
+  expect(state.webhooks[1]?.state).toBe("blocked");
   expect(state.conversations["r1"].running).toBe(true);
-  expect(state.version).toBe(4);
+  expect(state.version).toBe(5);
 });

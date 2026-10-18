@@ -41,3 +41,5 @@
 .agent-message-tool_result .agent-message-text { color: var(--muted); max-height: 160px; overflow: auto; }
 .agent-message-prompt .agent-message-text { color: var(--muted); font-style: italic; }
 .agent-message-error .agent-message-label, .agent-message-error .agent-message-text { color: var(--red); }
+/* In the dialog the conversation fills it and the dialog scrolls, not the list. */
+.modal-body .agent-conversation { max-height: none; margin: 0; padding: 0; border: 0; background: none; overflow: visible; }

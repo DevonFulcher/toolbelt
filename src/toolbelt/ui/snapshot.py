@@ -359,6 +359,7 @@ def build_snapshot(
     extras: api.CardExtras | None = None,
     agents: api.Agents | None = None,
     spend: list[api.Spend] | None = None,
+    webhooks: list[api.RepoWebhook] | None = None,
 ) -> api.Snapshot:
     """Every repo with tracked branches, and all their branches: repos in
     name order, each repo's branches depth-first."""
@@ -460,6 +461,7 @@ def build_snapshot(
             extras=extras,
             agents=agents,
             spend=spend or [],
+            webhooks=webhooks or [],
         )
     finally:
         store.close()

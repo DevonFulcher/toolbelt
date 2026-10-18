@@ -220,7 +220,7 @@ describe("the agents view", () => {
     expect(await screen.findByText("That did not work: A person or an agent session holds this task.")).toBeInTheDocument();
   });
 
-  test("a run's conversation opens under it and shows what the agent said and ran", async () => {
+  test("a run's conversation opens in a dialog and shows what the agent said and ran", async () => {
     const conversation: AgentConversation = {
       run_id: "r1",
       running: false,
@@ -237,15 +237,38 @@ describe("the agents view", () => {
     const table = await screen.findByRole("region", { name: "Recent runs" });
     fireEvent.click(within(table).getByRole("button", { name: "Conversation" }));
 
-    const log = await within(table).findByRole("list", { name: "Conversation" });
+    const dialog = await screen.findByRole("dialog", { name: "Conversation: Resolve comments on devon/c" });
+    const log = await within(dialog).findByRole("list", { name: "Conversation" });
     expect(within(log).getByText("Looking at the failing check.")).toBeInTheDocument();
     expect(within(log).getByText("gh pr checks 1")).toBeInTheDocument();
     expect(within(log).getByText("Bash")).toBeInTheDocument();
     expect(within(log).getByText("lint failed")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith("/api/agents/runs/r1/conversation", expect.anything());
 
-    fireEvent.click(within(table).getByRole("button", { name: "Hide conversation" }));
     expect(within(table).queryByRole("list", { name: "Conversation" })).not.toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  test("the conversation dialog also closes with Escape and a click on the page behind it", async () => {
+    serve(agents(), { conversation: { run_id: "r1", running: false, messages: [] } });
+    show();
+    const open = async () => {
+      const table = await screen.findByRole("region", { name: "Recent runs" });
+      fireEvent.click(within(table).getByRole("button", { name: "Conversation" }));
+      return screen.findByRole("dialog");
+    };
+
+    const first = await open();
+    fireEvent.mouseDown(first); // a click inside the dialog keeps it open
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    const second = await open();
+    fireEvent.mouseDown(second.parentElement as HTMLElement); // the dimmed page behind
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   test("a conversation with nothing yet says so", async () => {
@@ -255,7 +278,7 @@ describe("the agents view", () => {
     const table = await screen.findByRole("region", { name: "Recent runs" });
     fireEvent.click(within(table).getByRole("button", { name: "Conversation" }));
 
-    expect(await within(table).findByText("Nothing has been said yet.")).toBeInTheDocument();
+    expect(await within(await screen.findByRole("dialog")).findByText("Nothing has been said yet.")).toBeInTheDocument();
   });
 
   test("with Start runs on, a task nothing holds back is taken by an agent without a button", async () => {
@@ -355,16 +378,18 @@ describe("the agents view", () => {
       const table = await screen.findByRole("region", { name: "Recent runs" });
 
       fireEvent.click(within(table).getByRole("button", { name: "Conversation" }));
-      expect(await within(table).findByText("first")).toBeInTheDocument();
+      const dialog = await screen.findByRole("dialog");
+      expect(await within(dialog).findByText("first")).toBeInTheDocument();
       const asked = () => fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/conversation")).length;
       const askedAfterOpening = asked();
       act(() => store.getState().conversationChanged(conversation(["first", "second"])));
-      expect(within(table).getByText("second")).toBeInTheDocument();
+      expect(within(dialog).getByText("second")).toBeInTheDocument();
       await act(async () => {
         await vi.advanceTimersByTimeAsync(60_000);
       });
 
       expect(asked()).toBe(askedAfterOpening);
+      expect(askedAfterOpening).toBe(1); // one dialog, one request
     } finally {
       vi.useRealTimers();
     }

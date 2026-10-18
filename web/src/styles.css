@@ -164,7 +164,8 @@ a.pill:hover { text-decoration: none; background: color-mix(in srgb, currentColo
 .card .g-task { --basis: 18rem; flex-grow: 3; }
 .card .g-agent { --basis: 26rem; flex-grow: 5; }
 .card .g-spend { --basis: 14rem; flex-grow: 2; }
-.s-agent_cost .slot-value, .s-cost .slot-value { white-space: normal; overflow: visible; }
+.s-agent_cost .slot-value, .s-cost .slot-value, .s-agent_run_when .slot-value, .s-agent_run_cost .slot-value {
+  white-space: normal; overflow: visible; }
 /* The timeline takes the whole row. It is not a `.group` and `.card .slot`
    sets no flex, so nothing outranks this. */
 .card .g-timeline { flex: 1 0 100%; min-width: 0; }
@@ -189,14 +190,16 @@ a.pill:hover { text-decoration: none; background: color-mix(in srgb, currentColo
 .v-gap .slot-value { color: var(--fg); font-style: italic;
                      text-decoration: underline dashed var(--amber); text-underline-offset: 3px; }
 .s-branch, .s-next, .s-task, .s-session, .s-reviewers, .s-title,
-.s-agent_status, .s-agent_run, .s-conflict_commit { grid-column: 1 / -1; }
-.s-agent_status .slot-value, .s-agent_run .slot-value, .s-conflict_commit .slot-value {
+.s-agent_status, .s-agent_run, .s-agent_run_summary, .s-conflict_commit { grid-column: 1 / -1; }
+.s-agent_status .slot-value, .s-agent_run .slot-value, .s-agent_run_summary .slot-value, .s-conflict_commit .slot-value {
   white-space: normal; overflow: visible; }
 /* The table-row indentation of `.branch` has no meaning inside a card. */
 .s-branch .branch { margin-left: 0; overflow-wrap: anywhere; }
 .s-title .slot-value { color: var(--fg); }
 .repo-chip { font-size: 11px; color: var(--muted); border: 1px solid var(--line);
              border-radius: 4px; padding: 0 6px; margin-right: 4px; }
+.hook-problem { font-size: 10px; font-weight: 600; color: var(--amber); border: 1px solid var(--amber);
+               border-radius: 4px; padding: 0 5px; margin-right: 4px; cursor: help; }
 .card-next-who { font-size: 11px; margin-left: 4px; }
 .card .task-title { margin: 0 4px; }
 
@@ -384,3 +387,14 @@ main:has(.focus-bar) { --focus-h: 2.6rem; }
 .merge-button:disabled { opacity: .6; cursor: progress; }
 .merge-error { margin: 4px 0 0; max-height: 10rem; overflow: auto; white-space: pre-wrap; font-size: 11px;
                color: var(--red); }
+
+/* A large dialog over the page (the conversation of an agent run). */
+.modal-backdrop { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center;
+                  justify-content: center; padding: 4vh 4vw; background: rgba(0, 0, 0, .55); }
+.modal { display: flex; flex-direction: column; width: min(1100px, 100%); height: 100%;
+         background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 10px;
+         box-shadow: 0 12px 48px rgba(0, 0, 0, .4); outline: none; }
+.modal-head { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+              padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.modal-head h2 { margin: 0; font-size: 15px; overflow-wrap: anywhere; }
+.modal-body { flex: 1; overflow: auto; padding: 12px 16px; }

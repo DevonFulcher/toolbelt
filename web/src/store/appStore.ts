@@ -13,6 +13,7 @@ import type {
   BranchExtras,
   CardExtras,
   FetchedBranch,
+  RepoWebhook,
   Spend,
   Branch,
   BranchClaim,
@@ -68,6 +69,8 @@ export interface AppState {
   tasks: Record<string, TaskLive>;
   /** When (ms) each branch's PR status was last looked up on GitHub. */
   fetchedAt: Record<string, number>;
+  /** The repos (by id) the user administers whose GitHub webhook is not working. */
+  webhooks: Record<number, RepoWebhook>;
   /** Why a branch's latest lookup failed (what its card shows is then the last good one). */
   fetchError: Record<string, string>;
   /** What the cards show beyond the PR status (the agents' view of each
@@ -115,6 +118,7 @@ export interface AppState {
   extrasChanged(extras: CardExtras, v?: number): void;
   agentsChanged(agents: Agents, v?: number): void;
   spendChanged(spend: Spend[], v?: number): void;
+  webhooksChanged(webhooks: RepoWebhook[], v?: number): void;
   conversationChanged(conversation: AgentConversation, v?: number): void;
   hello(v: number, ageSeconds: number | null): void;
   setConnection(state: ConnectionState): void;
@@ -153,6 +157,9 @@ function extrasState(extras: CardExtras): Pick<AppState, "extras" | "decidedAt" 
     spendReadAt: extras.spend_read_at ? Date.parse(extras.spend_read_at) : null,
   };
 }
+
+const webhooksByRepo = (webhooks: RepoWebhook[]): Record<number, RepoWebhook> =>
+  Object.fromEntries(webhooks.map((webhook) => [webhook.repo_id, webhook]));
 
 const spendByWindow = (spend: Spend[]): Record<number, Spend> =>
   Object.fromEntries(spend.map((s) => [s.breakdown_days, s]));
@@ -200,6 +207,7 @@ export function createAppStore(init: StoreInit = {}): AppStore {
     tasks: {},
     fetchedAt: {},
     fetchError: {},
+    webhooks: {},
     extras: {},
     decidedAt: null,
     spendReadAt: null,
@@ -247,6 +255,7 @@ export function createAppStore(init: StoreInit = {}): AppStore {
         tasks: share(prev.tasks, tasks),
         claims: share(prev.claims, claims),
         ...fetchedState(snapshot.fetched),
+        webhooks: webhooksByRepo(snapshot.webhooks),
         ...(snapshot.extras ? extrasState(snapshot.extras) : {}),
         agentsView: snapshot.agents ?? prev.agentsView,
         // A conversation that was still working may have moved on (or ended)
@@ -325,6 +334,12 @@ export function createAppStore(init: StoreInit = {}): AppStore {
       const state = get();
       if (v !== undefined && state.version !== null && v <= state.version) return;
       set({ ...(v === undefined ? {} : { version: v }), agentsView: agents });
+    },
+
+    webhooksChanged(webhooks, v) {
+      const state = get();
+      if (v !== undefined && state.version !== null && v <= state.version) return;
+      set({ ...(v === undefined ? {} : { version: v }), webhooks: webhooksByRepo(webhooks) });
     },
 
     spendChanged(spend, v) {

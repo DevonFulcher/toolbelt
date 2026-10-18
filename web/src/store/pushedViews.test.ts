@@ -90,3 +90,27 @@ describe("the views the server pushes", () => {
     expect(Object.keys(store.getState().conversations)).toEqual(["finished"]);
   });
 });
+
+describe("the repos whose webhook is not working", () => {
+  const blocked = { repo_id: 1, state: "blocked", problem: "The webhook is taken." } as const;
+
+  test("come with the snapshot and are replaced by each event", () => {
+    const store = createAppStore();
+    store.getState().applySnapshot(snapshot([branch(1, "devon/a")], undefined, { webhooks: [blocked] }));
+    expect(store.getState().webhooks).toEqual({ 1: blocked });
+
+    store.getState().webhooksChanged([], 5);
+
+    expect(store.getState().webhooks).toEqual({});
+    expect(store.getState().version).toBe(5);
+  });
+
+  test("an event older than the snapshot is ignored", () => {
+    const store = createAppStore();
+    store.getState().applySnapshot(snapshot([branch(1, "devon/a")], undefined, { version: 9 }));
+
+    store.getState().webhooksChanged([blocked], 4);
+
+    expect(store.getState().webhooks).toEqual({});
+  });
+});

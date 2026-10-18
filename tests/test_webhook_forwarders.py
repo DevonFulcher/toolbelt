@@ -13,6 +13,10 @@ class FakeProcess:
         self.returncode: int | None = None
         self._exited = asyncio.Event()
         self.signals: list[int] = []
+        self.error: str | None = None
+
+    def last_error(self) -> str | None:
+        return self.error
 
     async def wait(self) -> int:
         await self._exited.wait()
@@ -161,7 +165,7 @@ def test_nothing_runs_when_the_extension_is_not_installed():
     async def scenario():
         s = Setup({"o/mine"}, admin={"o/mine"}, installed=False)
 
-        await s.forwarders.run()
+        await s.forwarders.reconcile()
 
         assert s.processes == []
 
@@ -206,5 +210,185 @@ def test_a_rate_limit_while_checking_admin_rights_asks_again_at_the_next_reconci
 
         assert [slug for slug, _, _ in s.processes] == ["o/mine"]
         await s.forwarders.stop()
+
+    asyncio.run(scenario())
+
+
+class TestProblems:
+    """An administered repo whose webhook is not working says why."""
+
+    def seen(self, s: Setup) -> list[str | None]:
+        changes: list[str | None] = []
+        s.forwarders.on_change = lambda: changes.append(
+            p.state if (p := s.forwarders.problem("o/mine")) else None
+        )
+        return changes
+
+    def test_a_repo_whose_webhook_is_taken_is_blocked(self):
+        async def scenario():
+            s = Setup({"o/mine"}, admin={"o/mine"})
+            changes = self.seen(s)
+
+            async def sleep(seconds: float) -> None:
+                await s.release_sleep.wait()
+
+            s.forwarders._sleep = sleep
+            await s.forwarders.reconcile()
+            await settle()
+            process = s.processes[0][2]
+            process.error = (
+                "error creating webhook: HTTP 422: Validation Failed "
+                "(https://api.github.com/repos/o/mine/hooks): "
+                "Hook already exists on this repository"
+            )
+            process.exit(1)
+            await settle()
+
+            problem = s.forwarders.problem("o/mine")
+            assert problem is not None and problem.state == "blocked"
+            assert "one forwarded webhook per repo" in problem.text
+            assert changes == ["blocked"]
+            await s.forwarders.stop()
+
+        asyncio.run(scenario())
+
+    def test_any_other_exit_is_a_failure_with_the_extensions_own_message(self):
+        async def scenario():
+            s = Setup({"o/mine"}, admin={"o/mine"})
+
+            async def sleep(seconds: float) -> None:
+                await s.release_sleep.wait()
+
+            s.forwarders._sleep = sleep
+            await s.forwarders.reconcile()
+            await settle()
+            _, _, process = s.processes[0]
+            process.error = "unable to connect to webhooks server, forwarding stopped"
+            process.exit(1)
+            await settle()
+
+            problem = s.forwarders.problem("o/mine")
+            assert problem is not None and problem.state == "failed"
+            assert problem.text == (
+                "Forwarding stopped: unable to connect to webhooks server, forwarding stopped"
+            )
+            await s.forwarders.stop()
+
+        asyncio.run(scenario())
+
+    def test_an_exit_without_a_message_still_says_something(self):
+        async def scenario():
+            s = Setup({"o/mine"}, admin={"o/mine"})
+
+            async def sleep(seconds: float) -> None:
+                await s.release_sleep.wait()
+
+            s.forwarders._sleep = sleep
+            await s.forwarders.reconcile()
+            await settle()
+            s.processes[0][2].exit(3)
+            await settle()
+
+            problem = s.forwarders.problem("o/mine")
+            assert problem is not None
+            assert problem.text == "The forwarder exited (code 3) without saying why."
+            await s.forwarders.stop()
+
+        asyncio.run(scenario())
+
+    def test_the_problem_clears_once_the_webhook_is_live(self):
+        async def scenario():
+            s = Setup({"o/mine"}, admin={"o/mine"})
+            changes = self.seen(s)
+            state = {"retry": False}
+
+            async def sleep(seconds: float) -> None:
+                if seconds == 5 and not state["retry"]:
+                    await asyncio.sleep(3600)  # not up long enough yet
+                if seconds == 5:
+                    return  # the second process stays up
+                await s.release_sleep.wait()
+
+            s.forwarders._sleep = sleep
+            await s.forwarders.reconcile()
+            await settle()
+            first = s.processes[0][2]
+            first.error = "Hook already exists on this repository"
+            first.exit(1)
+            await settle()
+            assert s.forwarders.problem("o/mine") is not None
+
+            state["retry"] = True
+            s.release_sleep.set()
+            await settle()
+
+            assert s.forwarders.is_live("o/mine")
+            assert s.forwarders.problem("o/mine") is None
+            assert changes == ["blocked", None]
+            await s.forwarders.stop()
+
+        asyncio.run(scenario())
+
+    def test_a_missing_extension_is_a_problem_for_the_repos_the_user_administers(self):
+        async def scenario():
+            s = Setup({"o/mine", "o/theirs"}, admin={"o/mine"}, installed=False)
+
+            await s.forwarders.reconcile()
+
+            problem = s.forwarders.problem("o/mine")
+            assert problem is not None and problem.state == "not_installed"
+            assert "gh extension install cli/gh-webhook" in problem.text
+            assert s.forwarders.problem("o/theirs") is None  # not administered
+
+            s._installed = True  # installed meanwhile
+            await s.forwarders.reconcile()
+            await settle()
+
+            assert s.forwarders.problem("o/mine") is None
+            assert [slug for slug, _, _ in s.processes] == ["o/mine"]
+            await s.forwarders.stop()
+
+        asyncio.run(scenario())
+
+    def test_a_repo_no_longer_tracked_has_no_problem(self):
+        async def scenario():
+            s = Setup({"o/mine"}, admin={"o/mine"}, installed=False)
+            await s.forwarders.reconcile()
+            assert s.forwarders.problem("o/mine") is not None
+
+            s.slugs = set()
+            await s.forwarders.reconcile()
+
+            assert s.forwarders.problem("o/mine") is None
+
+        asyncio.run(scenario())
+
+
+def test_the_extensions_error_line_is_read_from_its_stderr():
+    from toolbelt.ui.webhook_forwarders import _ProcessGroup
+
+    class Process:
+        pid = 1
+        returncode = 1
+        stderr: asyncio.StreamReader
+
+        async def wait(self) -> int:
+            return 1
+
+    async def scenario():
+        process = Process()
+        process.stderr = asyncio.StreamReader()
+        process.stderr.feed_data(
+            b"Forwarding Webhook events from GitHub...\n"
+            b"Error: error creating webhook: Hook already exists on this repository\n"
+            b"Usage:\n  forward --events=<types>\n"
+        )
+        process.stderr.feed_eof()
+        group = _ProcessGroup(process)  # type: ignore[arg-type]
+        await settle()
+
+        assert group.last_error() == (
+            "error creating webhook: Hook already exists on this repository"
+        )
 
     asyncio.run(scenario())
