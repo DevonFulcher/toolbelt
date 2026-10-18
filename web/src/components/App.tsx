@@ -11,7 +11,7 @@ import { SpendPage } from "./SpendView";
 import { TableView } from "./TableView";
 import { TooltipProvider } from "./Tooltip";
 import { UntrackedCallout } from "./UntrackedCallout";
-import { NowContext } from "./useNow";
+import { ClockContext, NowContext } from "./useNow";
 
 /** How often ages and timeline tracks are re-drawn between server updates. */
 const CLOCK_MS = 30_000;
@@ -23,6 +23,7 @@ export function App({ clock = Date.now }: { clock?: () => number }) {
     return () => window.clearInterval(timer);
   }, [clock]);
   return (
+    <ClockContext.Provider value={clock}>
     <NowContext.Provider value={now}>
       <TooltipProvider>
         <header>
@@ -34,6 +35,7 @@ export function App({ clock = Date.now }: { clock?: () => number }) {
         </main>
       </TooltipProvider>
     </NowContext.Provider>
+    </ClockContext.Provider>
   );
 }
 

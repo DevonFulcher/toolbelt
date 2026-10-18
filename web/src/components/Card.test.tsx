@@ -631,7 +631,7 @@ describe("a card whose next action is Merge", () => {
 
 describe("a card says how old its data is", () => {
   const fresh = (ageMs: number | null, status = pr({ pr_number: 8 })) => {
-    useCardExtras.getState().set([], NOW - 3_000);
+    useCardExtras.getState().set([], { decidedAt: NOW - 3_000, spendReadAt: NOW - 45_000 });
     return showCards([branch(1, "devon/a", { status })], { search: "?done=1" })
       .store.getState()
       .refreshed(1, ageMs === null ? [] : [{ branch_id: "1:devon/a", fetched_at: new Date(NOW - ageMs).toISOString() }]);
@@ -639,18 +639,20 @@ describe("a card says how old its data is", () => {
   const pill = (group: string): HTMLElement =>
     document.querySelector(`article[data-id="1:devon/a"] .g-${group} .fresh`) as HTMLElement;
 
-  test("the PR box says when the PR was last looked up, and the agent and spend boxes when theirs were read", () => {
+  test("each box counts the seconds since its own data was read", () => {
     act(() => fresh(40_000));
 
     expect(pill("pr")).toHaveTextContent("updated 40s ago");
     expect(pill("pr")).not.toHaveClass("stale");
-    expect(pill("agent")).toHaveTextContent("updated just now");
-    expect(pill("spend")).toHaveTextContent("updated just now");
+    // The Agent box is as old as the agents' last decision, the Spend box as the
+    // last read of the transcripts: not as old as the page's last request.
+    expect(pill("agent")).toHaveTextContent("updated 3s ago");
+    expect(pill("spend")).toHaveTextContent("updated 45s ago");
   });
 
   test("it goes amber when the lookup is overdue, and says so before the first one", () => {
     act(() => fresh(5 * 60_000));
-    expect(pill("pr")).toHaveTextContent("updated 5m ago");
+    expect(pill("pr")).toHaveTextContent("updated 300s ago");
     expect(pill("pr")).toHaveClass("stale");
   });
 

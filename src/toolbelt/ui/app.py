@@ -692,7 +692,9 @@ def create_app(
         def build() -> api.CardExtras:
             store = StackStore(default_db_path())
             try:
-                return build_card_extras(dispatcher, store, wall_clock())
+                return build_card_extras(
+                    dispatcher, store, wall_clock(), spend.ingested_at
+                )
             finally:
                 store.close()
 

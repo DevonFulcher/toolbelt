@@ -149,8 +149,8 @@ describe("lead time over time", () => {
     expect(weekdays.summary.median).toBe(16 * HOUR);
   });
 
-  test("the bars group by day for 4 weeks, by week up to 26 and by two weeks beyond; per-merge events remain available", () => {
-    expect([4, 12, 26, 52].map(bucketDays)).toEqual([1, 7, 7, 14]);
+  test("the bars group by day up to 12 weeks, by week at 26 and by two weeks beyond; per-merge events remain available", () => {
+    expect([4, 12, 26, 52].map(bucketDays)).toEqual([1, 1, 7, 14]);
     const sameDay = [
       pr(1, { task_started: "2026-10-08T10:00:00Z", ended: "2026-10-08T12:00:00Z" }),
       pr(2, { task_started: "2026-10-08T11:00:00Z", ended: "2026-10-08T13:00:00Z" }),

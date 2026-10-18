@@ -309,7 +309,9 @@ export interface PrMilestones {
   url: string;
 }
 export interface CardExtras {
+  agents_decided_at: string | null;
   branches: BranchExtras[];
+  spend_read_at: string | null;
 }
 /**
  * The parts of a task card that do not come with its PR status.

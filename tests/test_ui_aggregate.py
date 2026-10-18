@@ -25,9 +25,11 @@ from toolbelt.ui import pr_activity as act
 from toolbelt.ui import pr_states
 from toolbelt.ui.aggregate import PrRecord, TaskFact
 from toolbelt.ui.aggregate_feed import (
+    OPEN_SWEEP_INTERVAL,
     AggregateService,
     StoredHistory,
     parse_page,
+    parse_pr,
 )
 from toolbelt.ui.app import create_app
 from toolbelt.ui.pr_activity import PrFacts, TimelineItem
@@ -1015,6 +1017,14 @@ class FakeGitHub:
             if "T" not in since:
                 since += "T00:00:00Z"
             found = [n for n in found if n["updatedAt"] >= since]
+        between = re.search(r"updated:(\d{4}-\d\d-\d\d)\.\.(\d{4}-\d\d-\d\d)", search)
+        if between:
+            low, high = between.groups()
+            found = [
+                n
+                for n in found
+                if f"{low}T00:00:00Z" <= n["updatedAt"] <= f"{high}T23:59:59Z"
+            ]
         found.sort(key=lambda n: n["updatedAt"], reverse=True)
         start = int(after or 0)
         chunk = found[start : start + self.page_size]
@@ -1046,7 +1056,7 @@ def test_the_first_request_pages_through_the_whole_window_and_dedupes():
     assert [len(r) for r in github.returned] == [2, 1, 2, 1]  # 2 searches, 2 pages
 
 
-def test_a_later_request_re_fetches_only_open_and_recently_updated_prs():
+def test_a_later_request_re_fetches_only_what_github_says_changed():
     old_merged = pr_node(
         1,
         "2026-09-20T09:00:00Z",
@@ -1072,12 +1082,33 @@ def test_a_later_request_re_fetches_only_open_and_recently_updated_prs():
 
     result = asyncio.run(svc.get(12))
 
-    # The open PRs (2, 3) and what changed since the newest one held (4).
-    assert sorted(n for returned in github.returned for n in returned) == [2, 3, 4]
-    assert result.refreshed == 3
+    # Only what changed since the newest one held (4): the open PRs were all
+    # fetched a moment ago, so they are not fetched again.
+    assert github.returned == [[4]]
+    assert result.refreshed == 1
     assert len(result.prs) == 4
-    updated_query = next(c for c in github.calls if "is:open" not in c)
-    assert "updated:>=2026-10-08T10:55:00Z" in updated_query  # newest - 5 min
+    # newest - 5 min
+    assert github.calls == [
+        "is:pr author:@me archived:false updated:>=2026-10-08T10:55:00Z sort:updated-desc"
+    ]
+
+
+def test_every_open_pr_is_fetched_again_once_the_sweep_interval_has_passed():
+    github = FakeGitHub(
+        pr_node(1, "2026-10-01T09:00:00Z"),
+        pr_node(2, "2026-10-07T09:00:00Z"),
+    )
+    clock = [NOW]
+    svc = service(github, wall_clock=lambda: clock[0])
+    asyncio.run(svc.get(12))
+    github.calls.clear()
+    github.returned.clear()
+    clock[0] = NOW + OPEN_SWEEP_INTERVAL
+
+    asyncio.run(svc.get(12))
+
+    assert sorted(n for returned in github.returned for n in returned) == [1, 2, 2]
+    assert any("is:open" in call for call in github.calls)
 
 
 def test_a_cached_request_does_not_wait_for_github_refresh():
@@ -1102,7 +1133,7 @@ def test_background_warms_twelve_weeks_without_fetching_fifty_two():
         try:
             while svc._cache is None:
                 await asyncio.sleep(0)
-            assert svc._cache.weeks == 12
+            assert svc._cache.covered_from.date().isoformat() == "2026-07-19"
         finally:
             running.cancel()
             await asyncio.gather(running, return_exceptions=True)
@@ -1116,7 +1147,8 @@ def test_a_changed_pr_replaces_its_cached_record_and_deletions_are_dropped():
         pr_node(1, "2026-10-06T09:00:00Z"),
         pr_node(2, "2026-10-06T10:00:00Z"),
     )
-    svc = service(github)
+    clock = [NOW]
+    svc = service(github, wall_clock=lambda: clock[0])
     first = asyncio.run(svc.get(12))
     assert [m.state for m in first.prs] == ["OPEN", "OPEN"]
 
@@ -1129,6 +1161,8 @@ def test_a_changed_pr_replaces_its_cached_record_and_deletions_are_dropped():
         )
     )
     github.drop(2)  # deleted / transferred away
+    # An open PR that GitHub no longer reports is only noticed by a sweep.
+    clock[0] = NOW + OPEN_SWEEP_INTERVAL
     result = asyncio.run(svc.get(12))
 
     assert [(m.number, m.state) for m in result.prs] == [(1, "MERGED")]  # 2 is gone
@@ -1151,44 +1185,163 @@ def test_a_closed_pr_that_is_reopened_is_open_again():
     reopened = asyncio.run(svc.get(12))
 
     assert [m.state for m in reopened.prs] == ["OPEN"]
-    assert github.returned[-2] == [1]  # found by the open search
+    assert github.returned[-1] == [1]  # found by the updated search
 
 
 def test_every_answer_is_as_fresh_as_its_request():
     github = FakeGitHub(pr_node(1, "2026-10-06T09:00:00Z"))
-    times = iter(
-        [
-            datetime(2026, 10, 8, 12, 0, tzinfo=UTC),
-            datetime(2026, 10, 8, 12, 0, tzinfo=UTC),
-            datetime(2026, 10, 8, 12, 0, 5, tzinfo=UTC),
-            datetime(2026, 10, 8, 12, 0, 5, tzinfo=UTC),
-        ]
-    )
-    svc = service(github, wall_clock=lambda: next(times))
+    clock = [datetime(2026, 10, 8, 12, 0, tzinfo=UTC)]
+    svc = service(github, wall_clock=lambda: clock[0])
 
     first = asyncio.run(svc.get(12))
+    clock[0] = datetime(2026, 10, 8, 12, 0, 5, tzinfo=UTC)
     second = asyncio.run(svc.get(12))
 
     assert (first.fetched_at, second.fetched_at) == (
         "2026-10-08T12:00:00Z",
         "2026-10-08T12:00:05Z",
     )
-    assert len(github.calls) == 4  # the second request asked GitHub again
+    assert len(github.calls) == 3  # the second request asked GitHub again, for changes
 
 
-def test_a_wider_window_than_the_cached_one_is_fetched_whole_and_a_narrower_is_served():
-    github = FakeGitHub(pr_node(1, "2026-10-06T09:00:00Z"))
+def test_a_wider_window_fetches_only_the_older_part_and_a_narrower_one_is_served():
+    github = FakeGitHub(
+        pr_node(1, "2026-10-06T09:00:00Z"),
+        pr_node(
+            2, "2026-05-02T09:00:00Z", state="MERGED", merged_at="2026-05-02T09:00:00Z"
+        ),
+    )
     svc = service(github)
 
     asyncio.run(svc.get(4))
+    github.calls.clear()
+    github.returned.clear()
     wide = asyncio.run(svc.get(26))
+
+    # Only PRs updated before the stored part, which began 4 weeks (+1 day) back.
+    assert len(github.calls) == 1
+    assert re.search(r"updated:2026-04-\d\d\.\.2026-09-13", github.calls[0])
+    assert github.returned == [[2]]
+    assert sorted(m.number for m in wide.prs) == [1, 2]
     github.calls.clear()
     narrow = asyncio.run(svc.get(4))
 
     assert wide.weeks == 26 and narrow.weeks == 4
     # The narrow one asks for changes only: no whole-window query.
-    assert not any("updated:>=2026-0" in c and "T" not in c for c in github.calls)
-    assert len(github.calls) == 2
+    assert (
+        len(github.calls) == 1 and "updated:>=2026-10-06T08:55:00Z" in github.calls[0]
+    )
+
+
+def test_each_pr_is_stored_once_whatever_windows_asked_for_it():
+    github = FakeGitHub(
+        pr_node(1, "2026-10-06T09:00:00Z"),
+        pr_node(
+            2, "2026-05-02T09:00:00Z", state="MERGED", merged_at="2026-05-02T09:00:00Z"
+        ),
+    )
+    svc = service(github)
+
+    for weeks in (4, 12, 26, 52, 4):
+        asyncio.run(svc.get(weeks))
+
+    store = StackStore(default_db_path())
+    try:
+        rows = store.aggregate_prs()
+        sync = store.aggregate_sync()
+    finally:
+        store.close()
+    assert sorted((r.repo, r.number) for r in rows) == [("o/api", 1), ("o/api", 2)]
+    assert sync is not None and sync.covered_from < datetime(2025, 10, 14, tzinfo=UTC)
+
+
+def test_a_restart_reads_the_stored_history_and_asks_github_only_for_changes():
+    github = FakeGitHub(
+        pr_node(1, "2026-10-06T09:00:00Z"),
+        pr_node(2, "2026-10-07T09:00:00Z"),
+    )
+    first = asyncio.run(service(github).get(12))
+    github.calls.clear()
+    github.returned.clear()
+
+    restarted = service(github)
+    served = asyncio.run(restarted.get(12, refresh=False))
+
+    assert github.calls == []  # served from the DB, as of the first fetch
+    assert sorted(m.number for m in served.prs) == [1, 2]
+    assert served.fetched_at == first.fetched_at
+
+    github.put(
+        pr_node(
+            2, "2026-10-08T10:00:00Z", state="MERGED", merged_at="2026-10-08T10:00:00Z"
+        )
+    )
+    refreshed = asyncio.run(restarted.get(12))
+
+    # Not the whole window again, and not the open PRs: what changed.
+    assert github.returned == [[2]]
+    assert sorted((m.number, m.state) for m in refreshed.prs) == [
+        (1, "OPEN"),
+        (2, "MERGED"),
+    ]
+
+
+def test_stored_history_survives_the_json_round_trip_with_its_timeline():
+    from toolbelt.ui.aggregate_feed import record_from_json, record_to_json
+
+    record = parse_pr(
+        {
+            **pr_node(
+                7,
+                "2026-10-06T09:00:00Z",
+                state="MERGED",
+                merged_at="2026-10-06T12:00:00Z",
+                node_id="PR_7",
+            ),
+            "timelineItems": {
+                "nodes": [
+                    {
+                        "__typename": "ReviewRequestedEvent",
+                        "createdAt": "2026-10-06T10:00:00Z",
+                        "actor": {"login": "me"},
+                        "requestedReviewer": {"__typename": "User", "login": "sam"},
+                    },
+                    {
+                        "__typename": "MergedEvent",
+                        "createdAt": "2026-10-06T12:00:00Z",
+                        "actor": {"login": "me"},
+                    },
+                    {
+                        "__typename": "BaseRefChangedEvent",
+                        "createdAt": "2026-10-06T11:00:00Z",
+                        "previousRefName": "devon/a",
+                        "currentRefName": "main",
+                    },
+                ]
+            },
+        }
+    )
+
+    assert record_from_json(record_to_json(record)) == record
+
+
+def test_history_written_by_another_schema_is_dropped_and_fetched_again():
+    github = FakeGitHub(pr_node(1, "2026-10-06T09:00:00Z"))
+    asyncio.run(service(github).get(12))
+    store = StackStore(default_db_path())
+    try:
+        sync = store.aggregate_sync()
+        assert sync is not None
+        store.save_aggregate(
+            changed=[], removed=[], sync=replace(sync, schema=sync.schema + 1)
+        )
+    finally:
+        store.close()
+    github.calls.clear()
+
+    asyncio.run(service(github).get(12))
+
+    assert any("updated:>=2026-07-19" in call for call in github.calls)  # whole window
 
 
 def test_the_updated_search_is_paged_too():

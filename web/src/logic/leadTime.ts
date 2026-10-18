@@ -119,10 +119,10 @@ export interface LeadTimeSeries {
   merged: number;
 }
 
-/** The bucket the lead time bars group merged PRs by: a day for the shortest
- * window, a week up to 26 weeks, two weeks beyond (about 26 groups at most). */
+/** The bucket the lead time bars group merged PRs by: a day up to 12 weeks, a
+ * week at 26 weeks, two weeks beyond (about 26 groups at most). */
 export function bucketDays(weeks: number): number {
-  return weeks <= 4 ? 1 : weeks <= 26 ? 7 : 14;
+  return weeks <= 12 ? 1 : weeks <= 26 ? 7 : 14;
 }
 
 /**

@@ -19,7 +19,7 @@ import { useCardExtras } from "../store/cardExtras";
 import { AgentSlots, SpendSlots } from "./CardAgentSlots";
 import { Timeline } from "./Timeline";
 import { Age, CI_TONE, ExternalLink, PR_TONE, Pill, REVIEW_TONE, TaskValue, WHO_TEXT, WHO_TONE } from "./presentation";
-import { useNow } from "./useNow";
+import { useNow, useSecondNow } from "./useNow";
 import { formatAge } from "../logic/format";
 
 /** Every labelled slot of a card; the catalog says which dimension each shows. */
@@ -64,13 +64,10 @@ function Group({ id, title, aside, children }: { id: string; title: string; asid
   );
 }
 
-const shortAgo = (seconds: number): string =>
-  seconds < 60 ? `${Math.floor(seconds)}s` : seconds < 3600 ? `${Math.floor(seconds / 60)}m` : `${Math.floor(seconds / 3600)}h`;
-
-/** How old a box's data is ("updated 12s ago"), amber once it is older than
+/** How old a box's data is, in seconds ("updated 12s ago", counting up), amber once it is older than
  * ``staleAfter`` seconds. ``at`` is when it was last read (ms), if ever. */
 function Freshness({ at, staleAfter, title }: { at: number | null | undefined; staleAfter: number; title: string }) {
-  const now = useNow();
+  const now = useSecondNow();
   if (at === null || at === undefined) {
     return (
       <span className="fresh" title={title}>
@@ -81,7 +78,7 @@ function Freshness({ at, staleAfter, title }: { at: number | null | undefined; s
   const seconds = Math.max((now - at) / 1000, 0);
   return (
     <span className={`fresh${seconds > staleAfter ? " stale" : ""}`} title={title}>
-      {seconds < 5 ? "updated just now" : `updated ${shortAgo(seconds)} ago`}
+      {`updated ${Math.floor(seconds)}s ago`}
     </span>
   );
 }
@@ -171,7 +168,8 @@ export const Card = memo(
     const task = useApp((s) => s.tasks[id]) ?? null;
     const claim = useApp((s) => s.claims[id]) ?? NO_CLAIM;
     const extras = useCardExtras((s) => s.byId[id]);
-    const extrasAt = useCardExtras((s) => s.updatedAt);
+    const decidedAt = useCardExtras((s) => s.decidedAt);
+    const spendReadAt = useCardExtras((s) => s.spendReadAt);
     const fetchedAt = useApp((s) => s.fetchedAt[id]);
     const catalog = useApp((s) => s.catalog);
     const flashed = useFlashOnChange(status);
@@ -334,9 +332,9 @@ export const Card = memo(
           title="Agent"
           aside={
             <Freshness
-              at={extrasAt}
+              at={decidedAt}
               staleAfter={60}
-              title="When the agent, run and spend data was last read from toolbelt. It is read every 10 seconds while this page is visible."
+              title="When the autonomous agents last decided what to do with every task (every few seconds). Runs are read from toolbelt every 10 seconds while this page is visible."
             />
           }
         >
@@ -347,9 +345,9 @@ export const Card = memo(
           title="Spend"
           aside={
             <Freshness
-              at={extrasAt}
-              staleAfter={60}
-              title="When this was last read from toolbelt. Interactive spend is read from session transcripts about once a minute."
+              at={spendReadAt}
+              staleAfter={180}
+              title="When the session transcripts were last read for spend (about once a minute). Autonomous cost is each run's own, as of the last read of toolbelt (every 10 seconds)."
             />
           }
         >

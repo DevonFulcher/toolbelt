@@ -12,16 +12,20 @@ export const EXTRAS_REFRESH_MS = 10_000;
 
 interface CardExtrasState {
   byId: Record<string, BranchExtras>;
-  /** When (ms) they were last read from the server; null before the first time. */
-  updatedAt: number | null;
-  set(branches: BranchExtras[], at?: number): void;
+  /** When (ms) the agents last decided every task, and spend was last read
+   * from the session transcripts: how old the Agent and Spend boxes' data is
+   * (not when this page asked); null before the first time. */
+  decidedAt: number | null;
+  spendReadAt: number | null;
+  set(branches: BranchExtras[], times?: { decidedAt: number | null; spendReadAt: number | null }): void;
 }
 
 export const useCardExtras = create<CardExtrasState>((set) => ({
   byId: {},
-  updatedAt: null,
-  set: (branches, at = Date.now()) =>
-    set({ byId: Object.fromEntries(branches.map((branch) => [branch.id, branch])), updatedAt: at }),
+  decidedAt: null,
+  spendReadAt: null,
+  set: (branches, times = { decidedAt: null, spendReadAt: null }) =>
+    set({ byId: Object.fromEntries(branches.map((branch) => [branch.id, branch])), ...times }),
 }));
 
 const isExtras = (value: unknown): value is BranchExtras =>
@@ -30,8 +34,13 @@ const isExtras = (value: unknown): value is BranchExtras =>
 /** Ask for the extras now. A response that is not extras (or no response) is ignored. */
 export async function refreshCardExtras(fetchImpl: typeof fetch = fetch): Promise<void> {
   try {
-    const { branches } = await fetchCardExtras(fetchImpl);
-    if (Array.isArray(branches) && branches.every(isExtras)) useCardExtras.getState().set(branches);
+    const { branches, agents_decided_at: decided, spend_read_at: spend } = await fetchCardExtras(fetchImpl);
+    if (Array.isArray(branches) && branches.every(isExtras)) {
+      useCardExtras.getState().set(branches, {
+        decidedAt: decided ? Date.parse(decided) : null,
+        spendReadAt: spend ? Date.parse(spend) : null,
+      });
+    }
   } catch {
     // Cards show their agent and spend slots as unavailable until it works.
   }

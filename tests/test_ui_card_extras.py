@@ -121,6 +121,19 @@ def test_interactive_cost_is_what_claims_attribute_to_the_task_over_all_time():
     assert branch.spend.autonomous_usd == 0.0
 
 
+def test_the_extras_say_when_the_agents_last_decided_and_spend_was_last_read():
+    r = rig(a=PrSnapshot(status(), None))
+    store, _, _ = tracked_store()
+
+    before = build_card_extras(r.dispatcher, store, NOW)
+    r.tick()
+    after = build_card_extras(r.dispatcher, store, NOW, NOW - timedelta(seconds=40))
+
+    assert (before.agents_decided_at, before.spend_read_at) == (None, None)
+    assert after.agents_decided_at == NOW.isoformat()
+    assert after.spend_read_at == (NOW - timedelta(seconds=40)).isoformat()
+
+
 def test_the_endpoint_serves_the_same_extras():
     r = rig(a=PrSnapshot(status(), None))
     r.tick()

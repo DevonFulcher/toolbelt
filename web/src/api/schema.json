@@ -1014,15 +1014,37 @@
     "CardExtras": {
       "additionalProperties": false,
       "properties": {
+        "agents_decided_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "branches": {
           "items": {
             "$ref": "#/$defs/BranchExtras"
           },
           "type": "array"
+        },
+        "spend_read_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
-        "branches"
+        "branches",
+        "agents_decided_at",
+        "spend_read_at"
       ],
       "title": "CardExtras",
       "type": "object"

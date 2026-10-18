@@ -253,7 +253,67 @@ _MIGRATIONS: list[tuple[str, ...]] = [
         # runtime state, as opposed to the configuration file.
         "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
     ),
+    (
+        # The GitHub PR history behind the aggregate view (see
+        # ``ui.aggregate_feed``): each of the user's PRs once, whatever window
+        # asks for it, as the JSON the view rebuilds it from. ``updated_at`` is
+        # GitHub's, to ask only what changed since. ``aggregate_sync`` is one
+        # row: how far back PRs have been fetched (``covered_from``), when the
+        # last fetch finished, what it found, and when every open PR was last
+        # swept. ``schema`` is the JSON's version: a different one means the
+        # rows are rebuilt from GitHub.
+        """
+        CREATE TABLE aggregate_prs (
+            repo TEXT NOT NULL,
+            number INTEGER NOT NULL,
+            updated_at TEXT,
+            record TEXT NOT NULL,
+            PRIMARY KEY (repo, number)
+        )
+        """,
+        "CREATE INDEX aggregate_prs_by_update ON aggregate_prs (updated_at)",
+        """
+        CREATE TABLE aggregate_sync (
+            covered_from TEXT NOT NULL,
+            fetched_at TEXT NOT NULL,
+            refreshed INTEGER NOT NULL,
+            truncated INTEGER NOT NULL,
+            hidden INTEGER NOT NULL,
+            open_swept_at TEXT,
+            schema INTEGER NOT NULL
+        )
+        """,
+    ),
 ]
+
+
+@dataclass(frozen=True)
+class AggregatePrRow:
+    """One PR of the aggregate history: its key, GitHub's ``updatedAt`` and the
+    JSON the view rebuilds it from."""
+
+    repo: str
+    number: int
+    updated_at: datetime | None
+    record: str
+
+
+@dataclass(frozen=True)
+class AggregateSync:
+    """What the stored aggregate history covers."""
+
+    #: PRs updated on or after this have been fetched.
+    covered_from: datetime
+    #: When the last fetch finished, and how many PRs it asked for.
+    fetched_at: datetime
+    refreshed: int
+    #: The first fetch was cut short, or hid organizations.
+    truncated: bool
+    hidden: int
+    #: When every open PR was last re-fetched.
+    open_swept_at: datetime | None
+    #: The version of the rows' JSON.
+    schema: int
 
 
 @dataclass(frozen=True)
@@ -1189,6 +1249,81 @@ class StackStore:
             )
             for r in rows
         ]
+
+    def aggregate_prs(self) -> list[AggregatePrRow]:
+        rows = self._conn.execute(
+            "SELECT repo, number, updated_at, record FROM aggregate_prs"
+        )
+        return [
+            AggregatePrRow(
+                repo=r["repo"],
+                number=r["number"],
+                updated_at=_optional_time(r["updated_at"]),
+                record=r["record"],
+            )
+            for r in rows
+        ]
+
+    def aggregate_sync(self) -> AggregateSync | None:
+        row = self._conn.execute("SELECT * FROM aggregate_sync").fetchone()
+        if row is None:
+            return None
+        return AggregateSync(
+            covered_from=datetime.fromisoformat(row["covered_from"]),
+            fetched_at=datetime.fromisoformat(row["fetched_at"]),
+            refreshed=row["refreshed"],
+            truncated=bool(row["truncated"]),
+            hidden=row["hidden"],
+            open_swept_at=_optional_time(row["open_swept_at"]),
+            schema=row["schema"],
+        )
+
+    def save_aggregate(
+        self,
+        *,
+        changed: list[AggregatePrRow],
+        removed: list[tuple[str, int]],
+        sync: AggregateSync,
+    ) -> None:
+        """Store ``changed`` PRs (new or replaced), drop ``removed`` ones and
+        record what is covered now, all at once."""
+        with self._write() as conn:
+            conn.executemany(
+                "INSERT INTO aggregate_prs (repo, number, updated_at, record) "
+                "VALUES (?, ?, ?, ?) ON CONFLICT (repo, number) DO UPDATE SET "
+                "updated_at = excluded.updated_at, record = excluded.record",
+                [
+                    (
+                        row.repo,
+                        row.number,
+                        _iso(row.updated_at) if row.updated_at else None,
+                        row.record,
+                    )
+                    for row in changed
+                ],
+            )
+            conn.executemany(
+                "DELETE FROM aggregate_prs WHERE repo = ? AND number = ?", removed
+            )
+            conn.execute("DELETE FROM aggregate_sync")
+            conn.execute(
+                "INSERT INTO aggregate_sync (covered_from, fetched_at, refreshed, "
+                "truncated, hidden, open_swept_at, schema) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    _iso(sync.covered_from),
+                    _iso(sync.fetched_at),
+                    sync.refreshed,
+                    int(sync.truncated),
+                    sync.hidden,
+                    _iso(sync.open_swept_at) if sync.open_swept_at else None,
+                    sync.schema,
+                ),
+            )
+
+    def clear_aggregate(self) -> None:
+        with self._write() as conn:
+            conn.execute("DELETE FROM aggregate_prs")
+            conn.execute("DELETE FROM aggregate_sync")
 
     def get_setting(self, key: str, default: str) -> str:
         row = self._conn.execute(

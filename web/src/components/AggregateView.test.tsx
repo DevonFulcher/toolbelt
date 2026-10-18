@@ -391,11 +391,11 @@ describe("the aggregate view", () => {
     expect(row("Review requested to first review")).toMatch(/^Review requested to first review3123h/);
     // The bar chart has an accessible summary naming the mode and the bucket.
     expect(within(lead).getByRole("img").getAttribute("aria-label")).toMatch(
-      /^Lead time \(All time\), Jul 20 to Oct 8, median per week by merge date:/,
+      /^Lead time \(All time\), Jul 20 to Oct 8, median per day by merge date:/,
     );
   });
 
-  test("lead times are grouped bars, one bar per step in each week, not points and lines", async () => {
+  test("lead times are grouped bars, one bar per step in each day, not points and lines", async () => {
     serve(aggregate());
     show();
     const lead = await screen.findByRole("region", { name: "Lead time over time (All time)" });
@@ -403,7 +403,7 @@ describe("the aggregate view", () => {
     expect(lead.querySelectorAll("g.agg-col rect.agg-bar").length).toBeGreaterThan(0);
     expect(lead.querySelectorAll("path.agg-line")).toHaveLength(0);
     expect(lead.querySelectorAll("circle.agg-dot")).toHaveLength(0);
-    expect(lead).toHaveTextContent("Each group of bars is the PRs that merged in one week");
+    expect(lead).toHaveTextContent("Each group of bars is the PRs that merged in one day");
     expect(within(lead).queryByRole("checkbox", { name: /p75 to p90/ })).not.toBeInTheDocument();
   });
 

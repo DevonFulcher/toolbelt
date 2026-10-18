@@ -1,4 +1,4 @@
-"""Where the aggregate view's inputs come from, and their cache.
+"""Where the aggregate view's inputs come from, and where they are kept.
 
 ``GET /api/aggregate`` needs two kinds of history:
 
@@ -6,13 +6,16 @@
   plus every PR still open (a quiet open PR is in flight for the whole window
   but was not "updated"), each with the timeline items the card timeline
   uses. Paginated GraphQL searches (``author:@me``, archived repos left out).
-  The PRs are kept in memory keyed by ``(repo, number)`` with GitHub's
-  ``updatedAt``. A background loop refreshes the open PRs and whatever was
-  updated since the newest one held (see ``AggregateService``). A larger
-  cached window serves a smaller one. A page
-  that fails after the first, or an organization the token is not authorized
-  for, yields a partial result that is flagged, as the untracked-PR callout
-  does.
+  Each PR is stored once in the stack DB (``aggregate_prs``), whichever window
+  asks for it: the windows are cut from that one copy when the view is
+  computed. ``aggregate_sync`` says how far back PRs have been fetched. A
+  restart reads the DB and asks GitHub only what changed since the newest PR
+  held; a wider window than any asked for before fetches only the older part.
+  Every open PR is re-fetched every ``OPEN_SWEEP_INTERVAL`` (to notice one that
+  disappeared), the rest only when GitHub says it was updated. A page that
+  fails after the first, or an organization the token is not authorized for,
+  yields a partial result that is flagged, as the untracked-PR callout does.
+  The in-memory copy is a cache of the DB.
 * **The stack DB**: tracked and archived branches (``removed_branches``),
   which date each task's start. They are read on every request (cheap, local)
   and joined to PRs by the PR identity the CLI recorded for the task (node id,
@@ -24,11 +27,15 @@ injected, so tests drive it with canned payloads.
 """
 
 import asyncio
+import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from toolbelt.git.stack.store import (
+    AggregatePrRow,
+    AggregateSync,
     RemovedBranch,
     RepoRecord,
     StackStore,
@@ -38,7 +45,7 @@ from toolbelt.git.stack.store import (
 from toolbelt.logger import logger
 from toolbelt.ui import aggregate
 from toolbelt.ui import api_models as api
-from toolbelt.ui.pr_activity import PrFacts
+from toolbelt.ui.pr_activity import PrFacts, TimelineItem
 from toolbelt.ui.pr_fetch import timeline_items
 from toolbelt.ui.untracked_prs import (
     RemoteLookup,
@@ -46,6 +53,11 @@ from toolbelt.ui.untracked_prs import (
     run_search_graphql,
 )
 
+#: The version of a stored PR's JSON (``record_to_json``): rows of another
+#: version are dropped and fetched again.
+RECORD_SCHEMA = 1
+#: How often every open PR is fetched again, not only those updated.
+OPEN_SWEEP_INTERVAL = timedelta(hours=6)
 #: Subtracted from the newest ``updatedAt`` held when asking GitHub what
 #: changed since (clock skew, and a search index that lags a little).
 UPDATED_MARGIN = timedelta(minutes=5)
@@ -253,17 +265,124 @@ async def task_facts(
 
 @dataclass
 class _Cache:
-    """The PRs fetched so far, by ``(repo, number)``, for the widest window
-    asked for."""
+    """The stored PRs, by ``(repo, number)``, kept in memory (the DB is the
+    copy that lasts)."""
 
-    weeks: int
     records: dict[tuple[str, int], aggregate.PrRecord]
-    #: The first (full) fetch was cut short, or hid some organizations: older
-    #: PRs missing from it are never fetched by the incremental ones.
+    #: PRs updated on or after this have been fetched.
+    covered_from: datetime
+    #: The first fetch was cut short, or hid some organizations: older PRs
+    #: missing from it are never fetched by the incremental ones.
     truncated: bool
     hidden: int
     fetched_at: datetime
     refreshed: int
+    #: When every open PR was last fetched again (``None``: never).
+    open_swept_at: datetime | None
+
+
+def _iso_or_none(value: datetime | None) -> str | None:
+    return value.isoformat() if value else None
+
+
+def _parse_or_none(value: str | None) -> datetime | None:
+    return datetime.fromisoformat(value) if value else None
+
+
+def record_to_json(record: aggregate.PrRecord) -> str:
+    """A PR as the JSON ``record_from_json`` rebuilds it from."""
+    facts = record.facts
+    return json.dumps(
+        {
+            "repo": record.repo,
+            "head_branch": record.head_branch,
+            "review_now": record.review_now,
+            "base_changes": [
+                [when.isoformat(), previous, current]
+                for when, previous, current in record.base_changes
+            ],
+            "node_id": record.node_id,
+            "updated_at": _iso_or_none(record.updated_at),
+            "url": record.url,
+            "facts": {
+                "number": facts.number,
+                "title": facts.title,
+                "author": facts.author,
+                "base_ref": facts.base_ref,
+                "head_oid": facts.head_oid,
+                "state": facts.state,
+                "is_draft": facts.is_draft,
+                "created_at": facts.created_at.isoformat(),
+                "merged_at": _iso_or_none(facts.merged_at),
+                "closed_at": _iso_or_none(facts.closed_at),
+                "requested_reviewers": list(facts.requested_reviewers),
+                "commit_rollups": [list(r) for r in facts.commit_rollups],
+                "additions": facts.additions,
+                "deletions": facts.deletions,
+                "items": [
+                    {
+                        "time": item.time.isoformat(),
+                        "kind": item.kind,
+                        "actor": item.actor,
+                        "detail": item.detail,
+                        "subject": item.subject,
+                        "oid": item.oid,
+                        "ci": item.ci,
+                        "ci_done": _iso_or_none(item.ci_done),
+                    }
+                    for item in facts.items
+                ],
+            },
+        },
+        separators=(",", ":"),
+    )
+
+
+def record_from_json(text: str) -> aggregate.PrRecord:
+    data = json.loads(text)
+    f = data["facts"]
+    facts = PrFacts(
+        number=f["number"],
+        title=f["title"],
+        author=f["author"],
+        base_ref=f["base_ref"],
+        head_oid=f["head_oid"],
+        state=f["state"],
+        is_draft=f["is_draft"],
+        created_at=datetime.fromisoformat(f["created_at"]),
+        merged_at=_parse_or_none(f["merged_at"]),
+        closed_at=_parse_or_none(f["closed_at"]),
+        requested_reviewers=tuple(f["requested_reviewers"]),
+        commit_rollups=tuple((oid, state) for oid, state in f["commit_rollups"]),
+        items=tuple(
+            TimelineItem(
+                time=datetime.fromisoformat(item["time"]),
+                kind=item["kind"],
+                actor=item["actor"],
+                detail=item["detail"],
+                subject=item["subject"],
+                oid=item["oid"],
+                ci=item["ci"],
+                ci_done=_parse_or_none(item["ci_done"]),
+            )
+            for item in f["items"]
+        ),
+        additions=f["additions"],
+        deletions=f["deletions"],
+    )
+    return aggregate.PrRecord(
+        repo=data["repo"],
+        head_branch=data["head_branch"],
+        facts=facts,
+        review_now=data["review_now"],
+        base_changes=tuple(
+            (datetime.fromisoformat(when), previous, current)
+            for when, previous, current in data["base_changes"]
+        ),
+        node_id=data["node_id"],
+        updated_at=_parse_or_none(data["updated_at"]),
+        url=data["url"],
+    )
 
 
 def _find_repo(repos: list[RepoRecord], wanted: str) -> RepoRecord:
@@ -283,15 +402,15 @@ def _key(record: aggregate.PrRecord) -> tuple[str, int]:
 
 
 class AggregateService:
-    """Serves the aggregate view from PRs kept in memory.
+    """Serves the aggregate view from the PRs stored in the stack DB.
 
-    The first refresh (or one for a wider window than any before) pages
-    through the whole window. Every later refresh asks GitHub for (a) all PRs
-    that are open now and (b) those updated since the newest ``updatedAt``
-    held (less a small margin), and merges them by key: so only PRs that
-    changed are queried again, a PR that was closed, merged, reopened or
-    commented on is replaced at each refresh.
-    The cache is not persisted: the background loop warms it after a restart.
+    The first request on an empty DB pages through the whole window. After
+    that a restart loads what is stored and a refresh asks GitHub only for (a)
+    the PRs updated since the newest ``updatedAt`` held (less a small margin)
+    and (b), every ``OPEN_SWEEP_INTERVAL``, all the PRs open now. A window
+    wider than any asked for before fetches only the part older than what is
+    stored. Fetched PRs are merged by key and written back, so each PR is
+    stored once for every window.
     """
 
     def __init__(
@@ -302,6 +421,7 @@ class AggregateService:
         remote_of: RemoteLookup,
         finished: Callable[[int, str], bool],
         wall_clock: Callable[[], datetime],
+        db_path: Callable[[], Path] = default_db_path,
         max_pages: int = MAX_PAGES,
         margin: timedelta = UPDATED_MARGIN,
     ) -> None:
@@ -310,10 +430,70 @@ class AggregateService:
         self._remote_of = remote_of
         self._finished = finished
         self._wall_clock = wall_clock
+        self._db_path = db_path
         self._max_pages = max_pages
         self._margin = margin
         self._cache: _Cache | None = None
         self._lock = asyncio.Lock()
+
+    def _load(self) -> _Cache | None:
+        """The stored history (blocking), or ``None`` when there is none or
+        it was written by another version."""
+        store = StackStore(self._db_path())
+        try:
+            sync = store.aggregate_sync()
+            if sync is None:
+                return None
+            if sync.schema != RECORD_SCHEMA:
+                store.clear_aggregate()
+                return None
+            records = {}
+            for row in store.aggregate_prs():
+                record = record_from_json(row.record)
+                records[_key(record)] = record
+        finally:
+            store.close()
+        return _Cache(
+            records=records,
+            covered_from=sync.covered_from,
+            truncated=sync.truncated,
+            hidden=sync.hidden,
+            fetched_at=sync.fetched_at,
+            refreshed=sync.refreshed,
+            open_swept_at=sync.open_swept_at,
+        )
+
+    def _save(
+        self,
+        cache: _Cache,
+        changed: list[aggregate.PrRecord],
+        removed: list[tuple[str, int]],
+    ) -> None:
+        store = StackStore(self._db_path())
+        try:
+            store.save_aggregate(
+                changed=[
+                    AggregatePrRow(
+                        repo=record.repo,
+                        number=record.facts.number,
+                        updated_at=record.updated_at,
+                        record=record_to_json(record),
+                    )
+                    for record in changed
+                ],
+                removed=removed,
+                sync=AggregateSync(
+                    covered_from=cache.covered_from,
+                    fetched_at=cache.fetched_at,
+                    refreshed=cache.refreshed,
+                    truncated=cache.truncated,
+                    hidden=cache.hidden,
+                    open_swept_at=cache.open_swept_at,
+                    schema=RECORD_SCHEMA,
+                ),
+            )
+        finally:
+            store.close()
 
     async def _pages(self, query: str) -> tuple[list[aggregate.PrRecord], bool, int]:
         records: list[aggregate.PrRecord] = []
@@ -333,8 +513,9 @@ class AggregateService:
                 return records, False, hidden
         return records, True, hidden
 
-    async def _first_fetch(self, weeks: int, now: datetime) -> tuple[_Cache, int]:
-        start = aggregate.window_start(now, weeks) - timedelta(days=1)
+    async def _first_fetch(
+        self, start: datetime, now: datetime
+    ) -> tuple[_Cache, list[aggregate.PrRecord]]:
         updated = (
             f"is:pr author:@me archived:false updated:>={start:%Y-%m-%d} "
             "sort:updated-desc"
@@ -348,35 +529,76 @@ class AggregateService:
             hidden = max(hidden, errors)
             for record in records:
                 by_id[_key(record)] = record
-        return _Cache(weeks, by_id, truncated, hidden, now, len(by_id)), len(by_id)
+        cache = _Cache(
+            records=by_id,
+            covered_from=start,
+            truncated=truncated,
+            hidden=hidden,
+            fetched_at=now,
+            refreshed=len(by_id),
+            open_swept_at=now,
+        )
+        return cache, list(by_id.values())
 
-    async def _refresh(self, cache: _Cache, since: datetime) -> tuple[int, bool, int]:
-        """Re-fetches the open PRs and those updated since ``since``, merging
-        them into ``cache``. Returns ``(PRs refreshed, cut short, hidden)``."""
-        open_now, open_cut, open_hidden = await self._pages(OPEN_NOW)
+    async def _fetch_older(
+        self, cache: _Cache, start: datetime, now: datetime
+    ) -> list[aggregate.PrRecord]:
+        """Fetches the PRs updated between ``start`` and what is stored, for a
+        window wider than any before."""
+        found, cut, hidden = await self._pages(
+            "is:pr author:@me archived:false "
+            f"updated:{start:%Y-%m-%d}..{cache.covered_from:%Y-%m-%d} "
+            "sort:updated-desc"
+        )
+        cache.records.update({_key(record): record for record in found})
+        cache.covered_from = start
+        cache.truncated = cache.truncated or cut
+        cache.hidden = max(cache.hidden, hidden)
+        cache.fetched_at = now
+        cache.refreshed = len(found)
+        return found
+
+    async def _refresh(
+        self, cache: _Cache, since: datetime, now: datetime
+    ) -> tuple[list[aggregate.PrRecord], list[tuple[str, int]]]:
+        """Fetches the PRs updated since ``since`` (and every open one, when
+        that has not been done for ``OPEN_SWEEP_INTERVAL``) and merges them
+        into ``cache``. Returns what was fetched and what has gone."""
         changed, cut, hidden = await self._pages(
             "is:pr author:@me archived:false "
             f"updated:>={since:%Y-%m-%dT%H:%M:%SZ} sort:updated-desc"
         )
+        sweep = (
+            cache.open_swept_at is None
+            or now - cache.open_swept_at >= OPEN_SWEEP_INTERVAL
+        )
+        open_now: list[aggregate.PrRecord] = []
+        open_cut = False
+        if sweep:
+            open_now, open_cut, open_hidden = await self._pages(OPEN_NOW)
+            hidden = max(hidden, open_hidden)
         fresh = {_key(r): r for r in [*changed, *open_now]}
         cache.records.update(fresh)
-        if not open_cut:
+        removed: list[tuple[str, int]] = []
+        if sweep and not open_cut:
+            cache.open_swept_at = now
             # An open PR that is neither open now nor was updated has gone
             # (deleted, or transferred out of reach): do not keep showing it.
             for key, record in list(cache.records.items()):
                 if record.facts.state == "OPEN" and key not in fresh:
                     del cache.records[key]
-        return len(fresh), open_cut or cut, max(open_hidden, hidden)
+                    removed.append(key)
+        cache.truncated = cache.truncated or cut or open_cut
+        cache.hidden = max(cache.hidden, hidden)
+        cache.fetched_at = now
+        cache.refreshed = len(fresh)
+        return list(fresh.values()), removed
 
     async def run(self, interval: float = 900.0) -> None:
         """Warm 12 weeks, then refresh the widest window requested."""
         while True:
             try:
-                await self.get(
-                    max(
-                        aggregate.DEFAULT_WEEKS, self._cache.weeks if self._cache else 0
-                    )
-                )
+                await self.get(aggregate.DEFAULT_WEEKS)
             except Exception:  # noqa: BLE001
                 logger.exception("Could not refresh aggregate history")
             await asyncio.sleep(interval)
@@ -389,43 +611,53 @@ class AggregateService:
         Raises ``LookupError`` for a repo that is not known."""
         history = self._history()
         chosen = _find_repo(history.repos, repo) if repo else None
+        start = aggregate.window_start(self._wall_clock(), weeks) - timedelta(days=1)
         ready = self._cache
-        if not refresh and ready is not None and ready.weeks >= weeks:
+        if ready is None:
+            ready = await asyncio.to_thread(self._load)
+            if self._cache is None:
+                self._cache = ready
+        if not refresh and ready is not None and ready.covered_from <= start:
             # A background GitHub request may be in flight. Its cache update
             # is synchronous, so this snapshot never waits on network I/O.
-            prs = list(ready.records.values())
-            truncated, hidden = ready.truncated, ready.hidden
-            fetched_at, refreshed = ready.fetched_at, ready.refreshed
+            cache = ready
         else:
             async with self._lock:
                 now = self._wall_clock()
-                cache = self._cache
+                held = self._cache
+                if held is None:
+                    held = self._cache = await asyncio.to_thread(self._load)
                 newest = (
                     max(
                         (
                             r.updated_at
-                            for r in cache.records.values()
+                            for r in held.records.values()
                             if r.updated_at is not None
                         ),
                         default=None,
                     )
-                    if cache is not None
+                    if held is not None
                     else None
                 )
-                if cache is None or cache.weeks < weeks or (refresh and newest is None):
-                    cache, refreshed = await self._first_fetch(weeks, now)
-                    self._cache = cache
+                changed: list[aggregate.PrRecord]
+                removed: list[tuple[str, int]] = []
+                if held is None or (refresh and newest is None):
+                    cache, changed = await self._first_fetch(start, now)
+                elif start < held.covered_from:
+                    cache = held
+                    changed = await self._fetch_older(cache, start, now)
                 elif refresh and newest is not None:
-                    refreshed, cut, errors = await self._refresh(
-                        cache, newest - self._margin
+                    cache = held
+                    changed, removed = await self._refresh(
+                        cache, newest - self._margin, now
                     )
-                    cache.truncated = cache.truncated or cut
-                    cache.hidden = max(cache.hidden, errors)
-                    cache.fetched_at = now
-                    cache.refreshed = refreshed
-                truncated, hidden = cache.truncated, cache.hidden
-                prs = list(cache.records.values())
-                fetched_at, refreshed = cache.fetched_at, cache.refreshed
+                else:
+                    cache = held
+                    changed = []
+                if changed or removed:
+                    await asyncio.to_thread(self._save, cache, changed, removed)
+                self._cache = cache
+        prs = list(cache.records.values())
         facts = await task_facts(history, self._remote_of, self._finished)
         if chosen is not None:
             slug = repo_slug(chosen.remote_url) or repo_slug(
@@ -440,9 +672,9 @@ class AggregateService:
             now=self._wall_clock(),
             weeks=weeks,
             archive_since=history.since,
-            fetched_at=fetched_at,
-            refreshed=refreshed,
-            truncated=truncated,
-            hidden=hidden,
+            fetched_at=cache.fetched_at,
+            refreshed=cache.refreshed,
+            truncated=cache.truncated,
+            hidden=cache.hidden,
             repo=chosen.name if chosen else None,
         )

@@ -16,7 +16,10 @@ _EPOCH = datetime(2000, 1, 1, tzinfo=UTC)
 
 
 def build_card_extras(
-    dispatcher: Dispatcher, store: StackStore, now: datetime
+    dispatcher: Dispatcher,
+    store: StackStore,
+    now: datetime,
+    spend_read_at: datetime | None = None,
 ) -> api.CardExtras:
     repo_names = {repo.id: repo.name for repo in store.repos()}
     runs_by_branch: dict[tuple[int, str], list[AgentRun]] = {}
@@ -54,4 +57,10 @@ def build_card_extras(
                 ),
             )
         )
-    return api.CardExtras(branches=branches)
+    return api.CardExtras(
+        branches=branches,
+        agents_decided_at=dispatcher.ticked_at.isoformat()
+        if dispatcher.ticked_at
+        else None,
+        spend_read_at=spend_read_at.isoformat() if spend_read_at else None,
+    )

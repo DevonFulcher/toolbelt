@@ -977,6 +977,10 @@ class BranchExtras(Model):
 
 class CardExtras(Model):
     branches: list[BranchExtras]
+    #: When the autonomous agents last decided every task (``None``: not yet).
+    agents_decided_at: str | None
+    #: When the session transcripts were last read for spend (``None``: not yet).
+    spend_read_at: str | None
 
 
 class MergeRequest(Model):
