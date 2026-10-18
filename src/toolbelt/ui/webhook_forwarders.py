@@ -18,7 +18,6 @@ Process start and the permission lookup are seams so tests inject fakes.
 
 import asyncio
 import contextlib
-import json
 import os
 import signal
 from collections.abc import Awaitable, Callable
@@ -26,6 +25,7 @@ from typing import Protocol
 
 from toolbelt import logged_process
 from toolbelt.logger import logger
+from toolbelt.ui.github_requests import RateLimited
 from toolbelt.ui.github_webhooks import FORWARDED_EVENTS
 
 DEFAULT_RECONCILE_SECONDS = 60.0
@@ -100,20 +100,6 @@ async def gh_extension_installed() -> bool:
     return await process.wait() == 0
 
 
-async def gh_is_admin(slug: str) -> bool:
-    process = await logged_process.create_subprocess_exec(
-        "gh",
-        "api",
-        f"repos/{slug}",
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL,
-    )
-    stdout, _ = await process.communicate()
-    if process.returncode != 0:
-        return False
-    return bool(json.loads(stdout).get("permissions", {}).get("admin"))
-
-
 class WebhookForwarders:
     def __init__(
         self,
@@ -121,7 +107,7 @@ class WebhookForwarders:
         slugs: Callable[[], Awaitable[set[str]]],
         url: str,
         installed: Callable[[], Awaitable[bool]] = gh_extension_installed,
-        is_admin: AdminCheck = gh_is_admin,
+        is_admin: AdminCheck,
         spawn: Spawn = gh_spawn,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         reconcile_seconds: float = DEFAULT_RECONCILE_SECONDS,
@@ -151,11 +137,14 @@ class WebhookForwarders:
         stops those of repos no longer tracked."""
         wanted = await self._slugs()
         for slug in wanted - self._admin.keys():
-            self._admin[slug] = await self._is_admin(slug)
+            try:
+                self._admin[slug] = await self._is_admin(slug)
+            except RateLimited:
+                break  # asked again at the next reconcile
         for slug in set(self._tasks) - wanted:
             await self._stop(slug)
         for slug in wanted:
-            if self._admin[slug] and slug not in self._tasks:
+            if self._admin.get(slug) and slug not in self._tasks:
                 self._tasks[slug] = asyncio.create_task(self._forward(slug))
 
     async def run(self) -> None:

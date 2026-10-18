@@ -1,7 +1,7 @@
 """The UI's one-call-per-poll PR lookup.
 
 ``fetch_snapshot`` asks GitHub for everything the UI shows about a branch's PR
-in a single ``gh api graphql`` call: the same state `tt g tree` prints (parsed
+in a single GraphQL call: the same state `tt g tree` prints (parsed
 by ``status.parse_status``, so the two cannot disagree on what "CI failed"
 means) plus the review threads, and the timeline and per-commit CI that the
 ages and event feed are derived from (``pr_activity``). That replaces the two
@@ -9,20 +9,18 @@ calls (``gh pr view`` and a review-threads query) a status lookup costs `tt g
 tree`; `tt g tree` itself is unchanged.
 
 The PR is found by head branch name within the checkout's own repository
-(``gh`` fills ``{owner}``/``{repo}`` from the checkout), newest first, so a
+(the owner and name of the checkout's GitHub remote), newest first, so a
 branch whose earlier PR was closed shows the current attempt.
 
 The call is a seam (``GraphqlRunner``) so tests inject canned responses.
 """
 
 import asyncio
-import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from toolbelt import logged_process
 from toolbelt.git.stack.status import (
     MERGEABLE_RETRIES,
     MERGEABLE_RETRY_DELAY_SECONDS,
@@ -34,6 +32,7 @@ from toolbelt.git.stack.status import (
 )
 from toolbelt.ui import pr_activity
 from toolbelt.ui.conflict_commit import ConflictCommit
+from toolbelt.ui.github_requests import GithubRequests
 from toolbelt.ui.pr_activity import PrFacts, TimelineItem
 
 # How many of the PR's most recent commits / timeline entries are looked at.
@@ -118,29 +117,24 @@ class PrSnapshot:
 NO_SNAPSHOT = PrSnapshot(status=NO_PR, facts=None)
 
 
-async def gh_graphql(branch: str, root: Path) -> dict:
-    process = await logged_process.create_subprocess_exec(
-        "gh",
-        "api",
-        "graphql",
-        "-f",
-        f"query={PR_QUERY}",
-        "-F",
-        "owner={owner}",
-        "-F",
-        "repo={repo}",
-        "-f",
-        f"branch={branch}",
-        cwd=root,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await process.communicate()
-    if process.returncode != 0:
-        # Unlike `gh pr view`, a GraphQL lookup of "no PR" succeeds, so a
-        # failure here is a real one (auth, network): show it, don't hide it.
-        raise RuntimeError(f"gh api graphql failed: {stderr.decode().strip()}")
-    return json.loads(stdout)
+def graphql_runner(
+    requests: GithubRequests, slug_of: Callable[[Path], Awaitable[str | None]]
+) -> GraphqlRunner:
+    """The PR lookup over ``requests``: the repository is the checkout's
+    GitHub remote (``slug_of`` gives its ``owner/name``)."""
+
+    async def run(branch: str, root: Path) -> dict:
+        slug = await slug_of(root)
+        if slug is None:
+            raise RuntimeError(f"{root} has no GitHub remote")
+        owner, repo = slug.split("/", 1)
+        return await requests.graphql(
+            PR_QUERY,
+            {"owner": owner, "repo": repo, "branch": branch},
+            caller="status",
+        )
+
+    return run
 
 
 def _parse_time(value: str) -> datetime:
@@ -369,7 +363,7 @@ async def fetch_snapshot(
     branch: str,
     root: Path,
     *,
-    graphql: GraphqlRunner = gh_graphql,
+    graphql: GraphqlRunner,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> PrSnapshot:
     """One snapshot of ``branch``'s PR. GitHub reports ``mergeable: UNKNOWN``

@@ -68,6 +68,8 @@ export interface AppState {
   tasks: Record<string, TaskLive>;
   /** When (ms) each branch's PR status was last looked up on GitHub. */
   fetchedAt: Record<string, number>;
+  /** Why a branch's latest lookup failed (what its card shows is then the last good one). */
+  fetchError: Record<string, string>;
   /** What the cards show beyond the PR status (the agents' view of each
    * branch and what each task has cost), pushed by the server. */
   extras: Record<string, BranchExtras>;
@@ -132,6 +134,17 @@ export interface AppState {
 
 const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
 
+/** The store's parts of the snapshot's lookup times and errors. */
+function fetchedState(fetched: FetchedBranch[]): Pick<AppState, "fetchedAt" | "fetchError"> {
+  const fetchedAt: Record<string, number> = {};
+  const fetchError: Record<string, string> = {};
+  for (const f of fetched) {
+    if (f.fetched_at !== null) fetchedAt[f.branch_id] = Date.parse(f.fetched_at);
+    if (f.error !== null) fetchError[f.branch_id] = f.error;
+  }
+  return { fetchedAt, fetchError };
+}
+
 /** The store's parts of a ``CardExtras`` payload. */
 function extrasState(extras: CardExtras): Pick<AppState, "extras" | "decidedAt" | "spendReadAt"> {
   return {
@@ -186,6 +199,7 @@ export function createAppStore(init: StoreInit = {}): AppStore {
     claims: {},
     tasks: {},
     fetchedAt: {},
+    fetchError: {},
     extras: {},
     decidedAt: null,
     spendReadAt: null,
@@ -232,7 +246,7 @@ export function createAppStore(init: StoreInit = {}): AppStore {
         statuses: share(prev.statuses, statuses),
         tasks: share(prev.tasks, tasks),
         claims: share(prev.claims, claims),
-        fetchedAt: Object.fromEntries(snapshot.fetched.map((f) => [f.branch_id, Date.parse(f.fetched_at)])),
+        ...fetchedState(snapshot.fetched),
         ...(snapshot.extras ? extrasState(snapshot.extras) : {}),
         agentsView: snapshot.agents ?? prev.agentsView,
         // A conversation that was still working may have moved on (or ended)
@@ -292,8 +306,13 @@ export function createAppStore(init: StoreInit = {}): AppStore {
       const state = get();
       if (state.version !== null && v <= state.version) return;
       const fetchedAt = { ...state.fetchedAt };
-      for (const f of fetched) fetchedAt[f.branch_id] = Date.parse(f.fetched_at);
-      set({ version: v, updatedAt: clock(), fetchedAt });
+      const fetchError = { ...state.fetchError };
+      for (const f of fetched) {
+        if (f.fetched_at !== null) fetchedAt[f.branch_id] = Date.parse(f.fetched_at);
+        if (f.error === null) delete fetchError[f.branch_id];
+        else fetchError[f.branch_id] = f.error;
+      }
+      set({ version: v, updatedAt: clock(), fetchedAt, fetchError });
     },
 
     extrasChanged(extras, v) {

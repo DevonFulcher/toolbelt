@@ -21,56 +21,18 @@ The request is a seam (``ConditionalGet``) so tests inject canned answers.
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 
-from toolbelt import logged_process
+from toolbelt.ui.github_requests import ConditionalAnswer
 from toolbelt.ui.live_status import Fetched, TrackedBranch
-
-
-@dataclass(frozen=True)
-class ConditionalAnswer:
-    """GitHub's answer to a conditional GET: ``changed`` is ``False`` for a
-    304; ``etag`` is the resource's current ETag."""
-
-    changed: bool
-    etag: str | None
-
 
 #: (REST path, the ETag last seen or ``None``) -> GitHub's answer.
 ConditionalGet = Callable[[str, str | None], Awaitable[ConditionalAnswer]]
 
 
-async def gh_conditional_get(path: str, etag: str | None) -> ConditionalAnswer:
-    command = ["gh", "api", "--include", path]
-    if etag:
-        command += ["-H", f"If-None-Match: {etag}"]
-    process = await logged_process.create_subprocess_exec(
-        *command,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await process.communicate()
-    head = stdout.decode().split("\r\n\r\n", 1)[0].split("\n\n", 1)[0]
-    status_line, *headers = head.splitlines() or [""]
-    # `gh api` exits 1 for a 304 as it does for an error, but still prints the
-    # response head.
-    if process.returncode != 0 and status_line.split()[1:2] != ["304"]:
-        raise RuntimeError(f"gh api {path} failed: {stderr.decode().strip()}")
-    new_etag = next(
-        (
-            line.split(":", 1)[1].strip()
-            for line in headers
-            if line.lower().startswith("etag:")
-        ),
-        None,
-    )
-    return ConditionalAnswer(changed=status_line.split()[1] != "304", etag=new_etag)
-
-
 class PrGate:
     """Remembers the ETags of the resources behind each PR."""
 
-    def __init__(self, get: ConditionalGet = gh_conditional_get) -> None:
+    def __init__(self, get: ConditionalGet) -> None:
         self._get = get
         self._etags: dict[str, str] = {}
 
@@ -105,6 +67,19 @@ class PrGate:
             )
         )
 
+    def export(self, slug: str, number: int, head_oid: str) -> dict[str, str]:
+        """The ETags held for the PR (to be saved, see ``restore``)."""
+        return {
+            path: self._etags[path]
+            for path in self._paths(slug, number, head_oid)
+            if path in self._etags
+        }
+
+    def restore(self, etags: dict[str, str]) -> None:
+        """Takes back ETags saved by ``export``, so a restarted server can ask
+        GitHub whether the PR changed since it was saved."""
+        self._etags.update(etags)
+
     async def _ask(self, path: str, etag: str | None) -> bool:
         """Whether ``path`` changed; its new ETag is stored."""
         answer = await self._get(path, etag)
@@ -136,3 +111,13 @@ class GithubChangeGate:
         slug = await self._slug_of(branch.repo_id)
         if facts is not None and slug is not None:
             await self._gate.remember(slug, facts.number, facts.head_oid)
+
+    async def export(self, branch: TrackedBranch, fetched: Fetched) -> dict[str, str]:
+        facts = fetched.facts
+        slug = await self._slug_of(branch.repo_id)
+        if facts is None or slug is None:
+            return {}
+        return self._gate.export(slug, facts.number, facts.head_oid)
+
+    def restore(self, etags: dict[str, str]) -> None:
+        self._gate.restore(etags)

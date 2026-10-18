@@ -640,7 +640,7 @@ describe("a card says how old its data is", () => {
     });
     store
       .getState()
-      .refreshed(1, ageMs === null ? [] : [{ branch_id: "1:devon/a", fetched_at: new Date(NOW - ageMs).toISOString() }]);
+      .refreshed(1, ageMs === null ? [] : [{ branch_id: "1:devon/a", fetched_at: new Date(NOW - ageMs).toISOString(), error: null }]);
   };
   const pill = (group: string): HTMLElement =>
     document.querySelector(`article[data-id="1:devon/a"] .g-${group} .fresh`) as HTMLElement;
@@ -660,6 +660,39 @@ describe("a card says how old its data is", () => {
     act(() => fresh(5 * 60_000));
     expect(pill("pr")).toHaveTextContent("updated 300s ago");
     expect(pill("pr")).toHaveClass("stale");
+  });
+
+  test("a failed lookup keeps the last good data, with its age and why it failed", () => {
+    const { store } = showCards([branch(1, "devon/a", { status: pr({ pr_number: 8 }) })], { search: "?done=1" });
+    act(() =>
+      store.getState().refreshed(1, [
+        {
+          branch_id: "1:devon/a",
+          fetched_at: new Date(NOW - 600_000).toISOString(),
+          error: "GitHub graphql rate limit exceeded",
+        },
+      ]),
+    );
+
+    expect(pill("pr")).toHaveTextContent("updated 600s ago (GitHub graphql rate limit exceeded)");
+    expect(pill("pr")).toHaveClass("stale");
+    expect(pill("pr")).toHaveAttribute("title", expect.stringContaining("Latest attempt failed"));
+
+    act(() =>
+      store.getState().refreshed(2, [{ branch_id: "1:devon/a", fetched_at: new Date(NOW).toISOString(), error: null }]),
+    );
+
+    expect(pill("pr")).toHaveTextContent("updated 0s ago");
+    expect(pill("pr")).not.toHaveClass("stale");
+  });
+
+  test("a branch that was never looked up says why", () => {
+    const { store } = showCards([branch(1, "devon/a", { status: { load: "failed" } })], { search: "?done=1" });
+    act(() =>
+      store.getState().refreshed(1, [{ branch_id: "1:devon/a", fetched_at: null, error: "RuntimeError: gh missing" }]),
+    );
+
+    expect(pill("pr")).toHaveTextContent("not read yet (RuntimeError: gh missing)");
   });
 
   test("a PR that is merged is looked up rarely, so it is not overdue for minutes", () => {

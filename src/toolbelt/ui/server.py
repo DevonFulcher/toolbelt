@@ -10,7 +10,7 @@ import typer
 import uvicorn
 
 from toolbelt.ui.app import create_app
-from toolbelt.ui.pr_gate import PrGate
+from toolbelt.ui.lookup_cache import LookupCache
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
@@ -29,7 +29,8 @@ def serve(*, port: int, cwd_root: Path | None) -> None:
     config = uvicorn.Config(
         create_app(
             cwd_root,
-            gate=PrGate(),
+            change_gate=True,
+            lookup_cache=LookupCache(),
             webhook_url=f"http://{HOST}:{bound_port}/api/github-webhook",
         ),
         log_level="warning",

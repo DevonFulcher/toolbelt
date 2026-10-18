@@ -57,6 +57,7 @@ from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from toolbelt.autonomous_agents.auth import claude_signed_in
 from toolbelt.autonomous_agents.branch_state import inspect_branch
 from toolbelt.autonomous_agents.dispatcher import (
+    DEFAULT_POLL_INTERVAL_SECONDS,
     Dispatcher,
     DispatchTask,
     OverrideRefused,
@@ -91,7 +92,7 @@ from toolbelt.ui.aggregate_feed import (
     AggregateService,
     PageRunner,
     StoredHistory,
-    gh_page,
+    page_runner,
     read_history,
 )
 from toolbelt.ui.claims_feed import (
@@ -103,6 +104,11 @@ from toolbelt.ui.claims_feed import (
 )
 from toolbelt.ui.client_build import CLIENT_DIST
 from toolbelt.ui.conflict_commit import conflict_for
+from toolbelt.ui.github_requests import (
+    ConditionalAnswer,
+    GithubRequests,
+    RateLimited,
+)
 from toolbelt.ui.github_webhooks import affected
 from toolbelt.ui.live_status import (
     DEFAULT_CONCURRENCY,
@@ -118,8 +124,14 @@ from toolbelt.ui.live_status import (
     StructureWatcher,
     TrackedBranch,
 )
+from toolbelt.ui.lookup_cache import LookupCache
 from toolbelt.ui.merge_pr import MergeOutcome, run_toolbelt_merge
-from toolbelt.ui.pr_fetch import PrSnapshot, fetch_snapshot
+from toolbelt.ui.pr_fetch import (
+    GraphqlRunner,
+    PrSnapshot,
+    fetch_snapshot,
+    graphql_runner,
+)
 from toolbelt.ui.pr_gate import GithubChangeGate, PrGate
 from toolbelt.ui.pushed_views import PushedViews, conversation_of
 from toolbelt.ui.snapshot import (
@@ -140,9 +152,9 @@ from toolbelt.ui.untracked_prs import (
     SearchRunner,
     TrackedRepo,
     UntrackedPrFeed,
-    gh_search,
     origin_remote,
     repo_slug,
+    search_runner,
 )
 from toolbelt.ui.webhook_forwarders import WebhookForwarders
 
@@ -151,8 +163,8 @@ from toolbelt.ui.webhook_forwarders import WebhookForwarders
 _KEEPALIVE_SECONDS = 15.0
 
 
-async def fetch_status(branch: str, root: Path) -> PrSnapshot:
-    snapshot = await fetch_snapshot(branch, root)
+async def fetch_status(branch: str, root: Path, graphql: GraphqlRunner) -> PrSnapshot:
+    snapshot = await fetch_snapshot(branch, root, graphql=graphql)
     facts = snapshot.facts
     conflict = await asyncio.to_thread(
         conflict_for,
@@ -341,7 +353,7 @@ def _sse(event: str, data: dict) -> str:
 def create_app(
     cwd_root: Path | None = None,
     *,
-    fetch: StatusFetcher = fetch_status,
+    fetch: StatusFetcher | None = None,
     tracker: Callable[[], TaskTracker | None] = task_tracker,
     task_ttl_seconds: float = 60.0,
     clock: Callable[[], float] = time.monotonic,
@@ -354,10 +366,10 @@ def create_app(
     db_version: Callable[[], int] | None = None,
     keepalive_seconds: float = _KEEPALIVE_SECONDS,
     client_dist: Path = CLIENT_DIST,
-    search_open_prs: SearchRunner = gh_search,
+    search_open_prs: SearchRunner | None = None,
     remote_of: RemoteLookup = origin_remote,
     untracked_interval: float = DEFAULT_UNTRACKED_INTERVAL_SECONDS,
-    search_history: PageRunner = gh_page,
+    search_history: PageRunner | None = None,
     stored_history: Callable[[], StoredHistory] = read_history,
     claims_dir: Callable[[], Path] = _claims_dir,
     claim_tasks: Callable[[], list[TrackedTask]] = _claim_tasks,
@@ -367,7 +379,9 @@ def create_app(
     spend_interval: float = spend_module.DEFAULT_INTERVAL_SECONDS,
     dispatcher: Dispatcher | None = None,
     merger: Callable[[Path, str], MergeOutcome] = run_toolbelt_merge,
-    gate: PrGate | None = None,
+    github: GithubRequests | None = None,
+    change_gate: bool = False,
+    lookup_cache: LookupCache | None = None,
     full_refresh_interval: float = DEFAULT_FULL_INTERVAL_SECONDS,
     webhook_url: str | None = None,
     forwarders: WebhookForwarders | None = None,
@@ -386,8 +400,12 @@ def create_app(
     ``client_dist`` is the built web client. ``search_open_prs`` lists the
     user's open PRs (one GitHub call per ``untracked_interval``) and
     ``remote_of`` looks up a checkout's origin: see ``untracked_prs.py``.
-    ``gate`` lets a status poll skip the full lookup of a PR GitHub says is
-    unchanged (see ``pr_gate.py``); without one every poll is a full lookup.
+    ``github`` is the client every GitHub request goes through (default: one
+    over the signed-in ``gh``'s token, see ``github_requests.py``).
+    ``change_gate`` lets a status poll skip the full lookup of a PR GitHub says
+    is unchanged (see ``pr_gate.py``); without it every poll is a full lookup.
+    ``lookup_cache`` keeps each branch's last good lookup across restarts (see
+    ``lookup_cache.py``); without it they are only in memory.
     ``webhook_url`` is where ``gh webhook forward`` replays GitHub's webhooks
     to (this server's ``/api/github-webhook``): given, webhooks are forwarded
     for the repos the user administers (see ``webhook_forwarders.py``);
@@ -478,16 +496,69 @@ def create_app(
     )
 
     limits = load_limits(default_config_path())
+    requests = github or GithubRequests(clock=clock, wall_clock=wall_clock)
+    repo_slugs: dict[int, str | None] = {}
+
+    async def slug_of(repo_id: int) -> str | None:
+        """``owner/name`` of a registered repo's GitHub remote."""
+        if repo_id not in repo_slugs:
+            for registered_id, path, remote_url in _registered_repos():
+                repo_slugs[registered_id] = repo_slug(remote_url) or repo_slug(
+                    await remote_of(path)
+                )
+        return repo_slugs.get(repo_id)
+
+    async def slug_of_path(path: Path) -> str | None:
+        for repo_id, repo_path, _ in _registered_repos():
+            if repo_path == path:
+                return await slug_of(repo_id)
+        return repo_slug(await remote_of(path))
+
+    async def is_admin(slug: str) -> bool:
+        try:
+            repo = await requests.get_json(f"repos/{slug}", caller="admin")
+        except RateLimited:
+            raise
+        except RuntimeError:
+            return False  # a repo the token cannot see is not one to forward
+        return bool(repo.get("permissions", {}).get("admin"))
+
+    async def conditional_get(path: str, etag: str | None) -> ConditionalAnswer:
+        return await requests.conditional_get(path, etag, caller="gate")
+
+    if fetch is None:
+        pr_graphql = graphql_runner(requests, slug_of_path)
+
+        async def fetch_with_runner(branch: str, root: Path) -> PrSnapshot:
+            return await fetch_status(branch, root, pr_graphql)
+
+        fetch = fetch_with_runner
+    search_open_prs = search_open_prs or search_runner(requests)
+    search_history = search_history or page_runner(requests)
+
     runner = AgentRunner(
         db_path=default_db_path,
         claims_dir=claims_dir,
         limits=limits,
         wall_clock=wall_clock,
     )
+
+    async def shared_lookup(branch: str, root: Path) -> PrSnapshot:
+        # The agents read PRs through the status refresher, so a task is looked
+        # up once however many ask: with the same gate, saved lookups and
+        # rate-limit handling, and no second cache of GitHub's answers.
+        for repo_id, repo_path, _ in _registered_repos():
+            if repo_path == root:
+                return await refresher.snapshot(
+                    TrackedBranch(repo_id=repo_id, branch=branch, path=root),
+                    max_age=DEFAULT_POLL_INTERVAL_SECONDS,
+                )
+        raise LookupError(f"{root} is not a registered repo")
+
     if dispatcher is None:
         dispatcher = Dispatcher(
             tasks=_dispatch_tasks,
-            fetch=fetch,
+            fetch=shared_lookup,
             holders=claims.holders,
             inspect=lambda item: inspect_branch(
                 item.repo_path, item.task.branch, item.task.worktree
@@ -517,23 +588,14 @@ def create_app(
     runner.on_change = lambda: views.notify("agents", "extras")
     spend.on_ingest = lambda: views.notify("spend", "extras")
 
-    repo_slugs: dict[int, str | None] = {}
-
-    async def slug_of(repo_id: int) -> str | None:
-        """``owner/name`` of a registered repo's GitHub remote."""
-        if repo_id not in repo_slugs:
-            for registered_id, path, remote_url in _registered_repos():
-                repo_slugs[registered_id] = repo_slug(remote_url) or repo_slug(
-                    await remote_of(path)
-                )
-        return repo_slugs.get(repo_id)
-
     async def forwarded_slugs() -> set[str]:
         resolved = {await slug_of(repo_id) for repo_id, _, _ in _registered_repos()}
         return {slug for slug in resolved if slug}
 
     if forwarders is None and webhook_url is not None:
-        forwarders = WebhookForwarders(slugs=forwarded_slugs, url=webhook_url)
+        forwarders = WebhookForwarders(
+            slugs=forwarded_slugs, url=webhook_url, is_admin=is_admin
+        )
 
     def webhooks_live(repo_id: int) -> bool:
         slug = repo_slugs.get(repo_id)
@@ -551,7 +613,10 @@ def create_app(
         tick=tick,
         wall_clock=wall_clock,
         branch_id=row_id,
-        gate=GithubChangeGate(gate, slug_of) if gate is not None else None,
+        gate=(
+            GithubChangeGate(PrGate(conditional_get), slug_of) if change_gate else None
+        ),
+        persist=lookup_cache,
         full_interval=full_refresh_interval,
         pushed=webhooks_live,
     )
@@ -609,6 +674,7 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         watcher.check()  # baseline: only later writes are changes
         _abandon_agent_runs(wall_clock())
+        await refresher.restore()
         tasks = [
             asyncio.create_task(refresher.run()),
             asyncio.create_task(task_feed.run()),
@@ -650,6 +716,7 @@ def create_app(
     app.state.dispatcher = dispatcher
     app.state.agent_runner = runner
     app.state.forwarders = forwarders
+    app.state.github = requests
     app.state.views = views
 
     @app.get("/assets/{path:path}", include_in_schema=False, response_model=None)
@@ -850,10 +917,21 @@ def create_app(
             ) from refused
         return {"starting": True}
 
+    # Webhooks received since the server started, by event, and how many of
+    # them named a tracked branch.
+    webhook_counts = {"received": 0, "hinted": 0}
+
+    @app.get("/api/github-requests")
+    async def github_requests() -> dict:
+        """Each GitHub budget as last reported, and the requests each caller
+        has made since the server started."""
+        return {**requests.usage(), "webhooks": webhook_counts}
+
     @app.post("/api/github-webhook", status_code=204)
     async def github_webhook(request: Request) -> Response:
         # A hint only (see github_webhooks.py): refetch the branches it names.
         hit = affected(request.headers.get("x-github-event", ""), await request.json())
+        webhook_counts["received"] += 1
         if hit is not None:
             keys = set()
             for branch in _tracked_branches():
@@ -863,6 +941,7 @@ def create_app(
                 number = fetched.facts.number if fetched and fetched.facts else None
                 if branch.branch in hit.branches or number in hit.numbers:
                     keys.add(branch.key)
+            webhook_counts["hinted"] += len(keys)
             refresher.hint(keys)
         return Response(status_code=204)
 

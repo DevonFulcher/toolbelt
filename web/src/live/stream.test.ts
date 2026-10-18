@@ -97,7 +97,7 @@ describe("live updates", () => {
 
     env.time = 5000;
     current().emit({ type: "status", v: 1, branch_id: "1:a", status: loaded });
-    current().emit({ type: "refreshed", v: 2, fetched: [{ branch_id: "1:a", fetched_at: "2026-10-17T12:00:00Z" }] });
+    current().emit({ type: "refreshed", v: 2, fetched: [{ branch_id: "1:a", fetched_at: "2026-10-17T12:00:00Z", error: null }] });
     await settle();
     expect(store.getState().statuses["1:a"]).toEqual(loaded);
     expect(store.getState().updatedAt).toBe(5000);

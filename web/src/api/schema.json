@@ -1815,13 +1815,31 @@
         "branch_id": {
           "type": "string"
         },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "fetched_at": {
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
         "branch_id",
-        "fetched_at"
+        "fetched_at",
+        "error"
       ],
       "title": "FetchedBranch",
       "type": "object"

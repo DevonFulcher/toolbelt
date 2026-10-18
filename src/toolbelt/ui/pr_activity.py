@@ -297,3 +297,78 @@ def format_age(age: timedelta) -> str:
     if seconds < 14 * 86400:
         return f"{seconds // 86400}d"
     return f"{seconds // (7 * 86400)}w"
+
+
+def _iso_or_none(value: datetime | None) -> str | None:
+    return value.isoformat() if value else None
+
+
+def _parse_or_none(value: str | None) -> datetime | None:
+    return datetime.fromisoformat(value) if value else None
+
+
+def facts_to_dict(facts: PrFacts) -> dict:
+    """A PR's facts as the JSON-ready dict ``facts_from_dict`` rebuilds them
+    from (stored with the aggregate history and with each branch's last
+    lookup)."""
+    return {
+        "number": facts.number,
+        "title": facts.title,
+        "author": facts.author,
+        "base_ref": facts.base_ref,
+        "head_oid": facts.head_oid,
+        "state": facts.state,
+        "is_draft": facts.is_draft,
+        "created_at": facts.created_at.isoformat(),
+        "merged_at": _iso_or_none(facts.merged_at),
+        "closed_at": _iso_or_none(facts.closed_at),
+        "requested_reviewers": list(facts.requested_reviewers),
+        "commit_rollups": [list(r) for r in facts.commit_rollups],
+        "additions": facts.additions,
+        "deletions": facts.deletions,
+        "items": [
+            {
+                "time": item.time.isoformat(),
+                "kind": item.kind,
+                "actor": item.actor,
+                "detail": item.detail,
+                "subject": item.subject,
+                "oid": item.oid,
+                "ci": item.ci,
+                "ci_done": _iso_or_none(item.ci_done),
+            }
+            for item in facts.items
+        ],
+    }
+
+
+def facts_from_dict(f: dict) -> PrFacts:
+    return PrFacts(
+        number=f["number"],
+        title=f["title"],
+        author=f["author"],
+        base_ref=f["base_ref"],
+        head_oid=f["head_oid"],
+        state=f["state"],
+        is_draft=f["is_draft"],
+        created_at=datetime.fromisoformat(f["created_at"]),
+        merged_at=_parse_or_none(f["merged_at"]),
+        closed_at=_parse_or_none(f["closed_at"]),
+        requested_reviewers=tuple(f["requested_reviewers"]),
+        commit_rollups=tuple((oid, state) for oid, state in f["commit_rollups"]),
+        items=tuple(
+            TimelineItem(
+                time=datetime.fromisoformat(item["time"]),
+                kind=item["kind"],
+                actor=item["actor"],
+                detail=item["detail"],
+                subject=item["subject"],
+                oid=item["oid"],
+                ci=item["ci"],
+                ci_done=_parse_or_none(item["ci_done"]),
+            )
+            for item in f["items"]
+        ),
+        additions=f["additions"],
+        deletions=f["deletions"],
+    )

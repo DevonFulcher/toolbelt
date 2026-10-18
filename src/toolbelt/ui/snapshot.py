@@ -398,11 +398,16 @@ def build_snapshot(
                 )
                 parent = parents.get(name)
                 looked_up = refresher.get(repo.id, name)
-                if looked_up is not None and looked_up.wall_at is not None:
+                if looked_up is not None and (
+                    looked_up.wall_at is not None or looked_up.error is not None
+                ):
                     fetched.append(
                         api.FetchedBranch(
                             branch_id=row_id(repo.id, name),
-                            fetched_at=_iso(looked_up.wall_at),
+                            fetched_at=(
+                                _iso(looked_up.wall_at) if looked_up.wall_at else None
+                            ),
+                            error=looked_up.error,
                         )
                     )
                 fetchable = owner is not None and bool(links and links.task)

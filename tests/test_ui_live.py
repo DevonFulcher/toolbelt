@@ -99,6 +99,7 @@ class Setup:
             clock=self.clock,
             interval=20,
             settled_interval=300,
+            no_pr_interval=20,
             **kwargs,
         )
 
@@ -236,16 +237,16 @@ class TestStatusRefresher:
         first, second = run(scenario())
 
         assert first[1]["fetched"] == [
-            {"branch_id": "1:a", "fetched_at": "2026-10-17T12:00:00Z"},
-            {"branch_id": "1:b", "fetched_at": "2026-10-17T12:00:00Z"},
+            {"branch_id": "1:a", "fetched_at": "2026-10-17T12:00:00Z", "error": None},
+            {"branch_id": "1:b", "fetched_at": "2026-10-17T12:00:00Z", "error": None},
         ]
         assert second[1]["fetched"] == [
-            {"branch_id": "1:a", "fetched_at": "2026-10-17T12:00:20Z"},
-            {"branch_id": "1:b", "fetched_at": "2026-10-17T12:00:20Z"},
+            {"branch_id": "1:a", "fetched_at": "2026-10-17T12:00:20Z", "error": None},
+            {"branch_id": "1:b", "fetched_at": "2026-10-17T12:00:20Z", "error": None},
         ]
         assert s.changed_branches() == ["a", "b"]
 
-    def test_a_failed_lookup_is_left_out_of_what_was_looked_up(self):
+    def test_a_failed_lookup_is_reported_with_its_error_and_no_time(self):
         s = Setup(["bad", "good"])
         s.fetcher.failing = {"bad"}
         s.fetcher.statuses["good"] = OPEN
@@ -257,7 +258,19 @@ class TestStatusRefresher:
 
         event = run(scenario())
 
-        assert [f["branch_id"] for f in event[1]["fetched"]] == ["1:good"]
+        assert event[1]["fetched"] == [
+            {
+                "branch_id": "1:bad",
+                "fetched_at": None,
+                "error": "FileNotFoundError: gh",
+            },
+            {
+                "branch_id": "1:good",
+                "fetched_at": event[1]["fetched"][1]["fetched_at"],
+                "error": None,
+            },
+        ]
+        assert event[1]["fetched"][1]["fetched_at"] is not None
 
     def test_polls_only_while_a_browser_is_connected(self):
         async def scenario():
@@ -866,3 +879,69 @@ class TestGithubWebhookEndpoint:
         assert self.post(client, "ping", {"zen": "x"}).status_code == 204
 
         assert self.due(app) == 0
+
+
+class TestStartup:
+    """A restarted server shows the lookups it saved, without asking GitHub."""
+
+    def test_the_snapshot_has_the_saved_status_with_its_age(self, tmp_path):
+        from fastapi.testclient import TestClient
+
+        from toolbelt.ui.lookup_cache import LookupCache, SavedLookup
+
+        store = StackStore(default_db_path())
+        path = tmp_path / "api"
+        path.mkdir()
+        repo_id = store.ensure_repo(
+            RepoIdentity(git_common_dir=path / ".git", path=path, remote_url=None)
+        )
+        store.set_parent(repo_id, "devon/a", "main")
+        store.close()
+        when = datetime(2026, 10, 18, 12, 0, tzinfo=UTC)
+        LookupCache().save(
+            repo_id,
+            "devon/a",
+            SavedLookup(
+                status=OPEN,
+                facts=pr_facts(5),
+                conflict=None,
+                fetched_at=when,
+                full_at=when,
+                etags={},
+            ),
+        )
+
+        async def refuse(branch: str, root: Path) -> PrSnapshot:
+            raise AssertionError("GitHub must not be asked")
+
+        app = create_app(
+            fetch=refuse,
+            lookup_cache=LookupCache(),
+            wall_clock=lambda: when,
+        )
+        with TestClient(app) as client:
+            snapshot = client.get("/api/snapshot").json()
+
+        (branch,) = snapshot["branches"]
+        assert branch["status"]["load"] == "loaded"
+        assert branch["status"]["pr_number"] == 5
+        assert snapshot["fetched"] == [
+            {
+                "branch_id": f"{repo_id}:devon/a",
+                "fetched_at": "2026-10-18T12:00:00Z",
+                "error": None,
+            }
+        ]
+
+    def test_the_github_budget_is_readable(self, tmp_path):
+        from fastapi.testclient import TestClient
+
+        app = create_app(fetch=Fetcher())
+
+        usage = TestClient(app).get("/api/github-requests").json()
+
+        assert usage == {
+            "budgets": {},
+            "callers": {},
+            "webhooks": {"received": 0, "hinted": 0},
+        }

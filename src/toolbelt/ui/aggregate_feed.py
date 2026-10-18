@@ -45,12 +45,12 @@ from toolbelt.git.stack.store import (
 from toolbelt.logger import logger
 from toolbelt.ui import aggregate
 from toolbelt.ui import api_models as api
-from toolbelt.ui.pr_activity import PrFacts, TimelineItem
+from toolbelt.ui.github_requests import GithubRequests
+from toolbelt.ui.pr_activity import PrFacts, facts_from_dict, facts_to_dict
 from toolbelt.ui.pr_fetch import timeline_items
 from toolbelt.ui.untracked_prs import (
     RemoteLookup,
     repo_slug,
-    run_search_graphql,
 )
 
 #: The version of a stored PR's JSON (``record_to_json``): rows of another
@@ -126,9 +126,18 @@ query($search: String!, $after: String) {{
 PageRunner = Callable[[str, str | None], Awaitable[dict]]
 
 
-async def gh_page(search: str, after: str | None) -> dict:
-    variables = {"after": after} if after else {}
-    return await run_search_graphql(PR_QUERY, search, **variables)
+def page_runner(requests: GithubRequests) -> PageRunner:
+    """The history search over ``requests``."""
+
+    async def run(search: str, after: str | None) -> dict:
+        variables = {"search": search}
+        if after:
+            variables["after"] = after
+        return await requests.graphql(
+            PR_QUERY, variables, caller="aggregate", partial="search"
+        )
+
+    return run
 
 
 def _time(value: str) -> datetime:
@@ -304,35 +313,7 @@ def record_to_json(record: aggregate.PrRecord) -> str:
             "node_id": record.node_id,
             "updated_at": _iso_or_none(record.updated_at),
             "url": record.url,
-            "facts": {
-                "number": facts.number,
-                "title": facts.title,
-                "author": facts.author,
-                "base_ref": facts.base_ref,
-                "head_oid": facts.head_oid,
-                "state": facts.state,
-                "is_draft": facts.is_draft,
-                "created_at": facts.created_at.isoformat(),
-                "merged_at": _iso_or_none(facts.merged_at),
-                "closed_at": _iso_or_none(facts.closed_at),
-                "requested_reviewers": list(facts.requested_reviewers),
-                "commit_rollups": [list(r) for r in facts.commit_rollups],
-                "additions": facts.additions,
-                "deletions": facts.deletions,
-                "items": [
-                    {
-                        "time": item.time.isoformat(),
-                        "kind": item.kind,
-                        "actor": item.actor,
-                        "detail": item.detail,
-                        "subject": item.subject,
-                        "oid": item.oid,
-                        "ci": item.ci,
-                        "ci_done": _iso_or_none(item.ci_done),
-                    }
-                    for item in facts.items
-                ],
-            },
+            "facts": facts_to_dict(facts),
         },
         separators=(",", ":"),
     )
@@ -340,36 +321,7 @@ def record_to_json(record: aggregate.PrRecord) -> str:
 
 def record_from_json(text: str) -> aggregate.PrRecord:
     data = json.loads(text)
-    f = data["facts"]
-    facts = PrFacts(
-        number=f["number"],
-        title=f["title"],
-        author=f["author"],
-        base_ref=f["base_ref"],
-        head_oid=f["head_oid"],
-        state=f["state"],
-        is_draft=f["is_draft"],
-        created_at=datetime.fromisoformat(f["created_at"]),
-        merged_at=_parse_or_none(f["merged_at"]),
-        closed_at=_parse_or_none(f["closed_at"]),
-        requested_reviewers=tuple(f["requested_reviewers"]),
-        commit_rollups=tuple((oid, state) for oid, state in f["commit_rollups"]),
-        items=tuple(
-            TimelineItem(
-                time=datetime.fromisoformat(item["time"]),
-                kind=item["kind"],
-                actor=item["actor"],
-                detail=item["detail"],
-                subject=item["subject"],
-                oid=item["oid"],
-                ci=item["ci"],
-                ci_done=_parse_or_none(item["ci_done"]),
-            )
-            for item in f["items"]
-        ),
-        additions=f["additions"],
-        deletions=f["deletions"],
-    )
+    facts = facts_from_dict(data["facts"])
     return aggregate.PrRecord(
         repo=data["repo"],
         head_branch=data["head_branch"],

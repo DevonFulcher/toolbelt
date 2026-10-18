@@ -524,7 +524,8 @@ export interface RefreshedEvent {
 }
 export interface FetchedBranch {
   branch_id: string;
-  fetched_at: string;
+  error: string | null;
+  fetched_at: string | null;
 }
 /**
  * The list of open PRs that toolbelt does not track changed.

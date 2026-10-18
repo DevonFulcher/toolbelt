@@ -10,12 +10,11 @@ fork's PR, a repo that is not registered). Refreshing is slow (every few
 minutes, ``UntrackedPrFeed``) and, like the status polling, only while a
 browser is watching.
 
-The ``gh`` call and the lookup of a checkout's remote are injected, so tests
+The GitHub search and the lookup of a checkout's remote are injected, so tests
 drive everything with canned payloads.
 """
 
 import asyncio
-import json
 import re
 import time
 from collections.abc import Awaitable, Callable
@@ -25,6 +24,7 @@ from pathlib import Path
 
 from toolbelt import logged_process
 from toolbelt.ui import api_models as api
+from toolbelt.ui.github_requests import GithubRequests
 from toolbelt.ui.live_status import DEFAULT_TICK_SECONDS, EventHub
 
 DEFAULT_INTERVAL_SECONDS = 180.0
@@ -53,39 +53,15 @@ SearchRunner = Callable[[], Awaitable[dict]]
 RemoteLookup = Callable[[Path], Awaitable[str | None]]
 
 
-async def run_search_graphql(query: str, search: str, **variables: str) -> dict:
-    """``gh api graphql`` for a search query, with its ``$search`` (and any
-    other string) variables. A search across organizations answers what it may
-    and reports the rest as errors (a SAML-protected organization the token is
-    not authorized for), which makes `gh` exit non-zero with partial data:
-    that is still a result. No data at all is a failure."""
-    fields: list[str] = []
-    for name, value in {"search": search, **variables}.items():
-        fields += ["-f", f"{name}={value}"]
-    process = await logged_process.create_subprocess_exec(
-        "gh",
-        "api",
-        "graphql",
-        "-f",
-        f"query={query}",
-        *fields,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await process.communicate()
-    if process.returncode != 0:
-        try:
-            body = json.loads(stdout)
-        except json.JSONDecodeError:
-            body = {}
-        if not (body.get("data") or {}).get("search"):
-            raise RuntimeError(f"gh api graphql failed: {stderr.decode().strip()}")
-        return body
-    return json.loads(stdout)
+def search_runner(requests: GithubRequests) -> SearchRunner:
+    """The open-PR search over ``requests``."""
 
+    async def run() -> dict:
+        return await requests.graphql(
+            PR_QUERY, {"search": SEARCH_QUERY}, caller="untracked", partial="search"
+        )
 
-async def gh_search() -> dict:
-    return await run_search_graphql(PR_QUERY, SEARCH_QUERY)
+    return run
 
 
 async def origin_remote(path: Path) -> str | None:

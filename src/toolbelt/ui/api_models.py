@@ -537,8 +537,13 @@ type UntrackedPrs = Annotated[
 
 class FetchedBranch(Model):
     branch_id: str
-    #: ISO time its PR status was looked up.
-    fetched_at: str
+    #: ISO time its PR status was last looked up successfully (what the card
+    #: shows may come from a lookup saved before a restart); ``None`` when it
+    #: never has been.
+    fetched_at: str | None
+    #: Why the latest lookup failed (the status shown is then the last good
+    #: one, as old as ``fetched_at``); ``None`` when it succeeded.
+    error: str | None
 
 
 class Snapshot(Model):

@@ -5,23 +5,23 @@ polled less often)."""
 
 import asyncio
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
-from toolbelt import logged_process
 from toolbelt.git.stack.status import BranchStatus, CiState, PrState, ReviewState
-from toolbelt.ui import pr_gate
+from toolbelt.ui.github_requests import ConditionalAnswer, RateLimited
 from toolbelt.ui.live_status import (
     EventHub,
     Fetched,
     StatusRefresher,
     TrackedBranch,
 )
+from toolbelt.ui.lookup_cache import SavedLookup
 from toolbelt.ui.pr_activity import PrFacts
 from toolbelt.ui.pr_fetch import PrSnapshot
-from toolbelt.ui.pr_gate import ConditionalAnswer, GithubChangeGate, PrGate
+from toolbelt.ui.pr_gate import GithubChangeGate, PrGate
 
 OPEN = BranchStatus(
     pr=PrState.OPEN,
@@ -110,59 +110,6 @@ class TestPrGate:
 
         assert github.asked == []
         assert run(gate.unchanged("o/r", 5, "abc")) is True
-
-
-class TestGhConditionalGet:
-    def answer(self, monkeypatch, output: str, code: int = 0, expect_args=None):
-        class Process:
-            returncode = code
-
-            async def communicate(self):
-                return output.encode(), b"boom"
-
-        async def create(*args, **kwargs):
-            if expect_args is not None:
-                expect_args.extend(args)
-            return Process()
-
-        monkeypatch.setattr(logged_process, "create_subprocess_exec", create)
-
-    def test_a_200_carries_the_new_etag(self, monkeypatch):
-        self.answer(
-            monkeypatch,
-            'HTTP/2.0 200 OK\r\nEtag: "abc"\r\nContent-Type: x\r\n\r\n{"a": 1}',
-        )
-
-        got = run(pr_gate.gh_conditional_get(PULL, None))
-
-        assert got == ConditionalAnswer(changed=True, etag='"abc"')
-
-    def test_a_304_is_unchanged_and_sends_the_etag_it_was_given(self, monkeypatch):
-        args: list[str] = []
-        # `gh api` exits 1 for a 304.
-        self.answer(
-            monkeypatch,
-            'HTTP/2.0 304 Not Modified\nEtag: "abc"\nDate: x\n\n',
-            code=1,
-            expect_args=args,
-        )
-
-        got = run(pr_gate.gh_conditional_get(PULL, '"abc"'))
-
-        assert got == ConditionalAnswer(changed=False, etag='"abc"')
-        assert args[-2:] == ["-H", 'If-None-Match: "abc"']
-
-    def test_a_failing_call_raises(self, monkeypatch):
-        self.answer(monkeypatch, "HTTP/2.0 404 Not Found\n\n", code=1)
-
-        with pytest.raises(RuntimeError, match="boom"):
-            run(pr_gate.gh_conditional_get(PULL, None))
-
-    def test_a_call_that_printed_nothing_raises(self, monkeypatch):
-        self.answer(monkeypatch, "", code=1)
-
-        with pytest.raises(RuntimeError, match="boom"):
-            run(pr_gate.gh_conditional_get(PULL, None))
 
 
 class Clock:
@@ -269,7 +216,7 @@ class TestRefresherWithGate:
 
         s.refresher._fetch = no_pr
         s.pass_after(0)
-        s.pass_after(20)
+        s.pass_after(60)  # a branch without a PR is looked up every 60 s
 
         assert s.lookups == 2
         assert s.github.asked == []
@@ -319,3 +266,238 @@ class TestRefresherWithGate:
             await asyncio.wait_for(pause, 1)
 
         run(scenario())
+
+
+class TestEtagsAcrossRestarts:
+    def test_exported_etags_let_a_new_gate_say_unchanged_straight_away(self):
+        github = FakeGitHub()
+        first = PrGate(github)
+        run(first.unchanged("o/r", 5, "abc"))
+        saved = first.export("o/r", 5, "abc")
+        assert sorted(saved) == sorted([PULL, CHECKS, STATUS])
+
+        restarted = PrGate(github)
+        restarted.restore(saved)
+
+        assert run(restarted.unchanged("o/r", 5, "abc")) is True
+
+    def test_exporting_what_was_never_seen_gives_nothing(self):
+        assert PrGate(FakeGitHub()).export("o/r", 5, "abc") == {}
+
+
+class FakePersistence:
+    """Keeps lookups in a dict, as the stack DB does."""
+
+    def __init__(self) -> None:
+        self.rows: dict[tuple[int, str], SavedLookup] = {}
+
+    def load(self):
+        return dict(self.rows)
+
+    def save(self, repo_id, branch, saved):
+        self.rows[(repo_id, branch)] = saved
+
+    def delete(self, repo_id, branch):
+        self.rows.pop((repo_id, branch), None)
+
+
+class WallClock:
+    def __init__(self, clock: Clock) -> None:
+        self.clock = clock
+        self.start = datetime(2026, 10, 18, 12, 0, tzinfo=UTC)
+
+    def __call__(self) -> datetime:
+        return self.start + timedelta(seconds=self.clock.now - 1000)
+
+
+class Flaky(Setup):
+    """A setup whose lookups can fail, with saved lookups and a wall clock."""
+
+    def __init__(self, **kwargs) -> None:
+        self.failure: Exception | None = None
+        self.persistence = FakePersistence()
+        self.wall = WallClock(Clock())
+        super().__init__(persist=self.persistence, jitter=lambda: 0.5, **kwargs)
+        self.clock = self.wall.clock
+        self.refresher._clock = self.clock
+        self.refresher._wall_clock = self.wall
+
+    async def fetch(self, branch: str, root: Path) -> PrSnapshot:
+        if self.failure is not None:
+            raise self.failure
+        return await super().fetch(branch, root)
+
+
+class TestLastGoodLookup:
+    def test_a_failed_lookup_keeps_the_last_good_one_with_its_age_and_the_error(self):
+        s = Flaky()
+        s.pass_after(0)
+        s.failure = RateLimited("graphql", 60)
+        s.github.change(PULL)  # so the gate cannot vouch for the old lookup
+
+        s.pass_after(20)
+
+        cached = s.refresher.get(1, "devon/a")
+        assert cached is not None
+        assert cached.status == OPEN and cached.facts == FACTS
+        assert cached.error == "GitHub graphql rate limit exceeded"
+        assert cached.wall_at == s.wall.start  # the age of the good lookup
+        assert len(s.changes) == 1  # the card still shows the same status
+
+    def test_the_error_is_cleared_by_the_next_good_lookup(self):
+        s = Flaky()
+        s.pass_after(0)
+        s.failure = RuntimeError("boom")
+        s.github.change(PULL)
+        s.pass_after(20)
+        s.failure = None
+
+        s.pass_after(20)
+
+        cached = s.refresher.get(1, "devon/a")
+        assert cached is not None and cached.error is None
+        assert cached.wall_at == s.wall.start + timedelta(seconds=40)
+
+    def test_a_branch_never_looked_up_has_no_status_but_has_the_error(self):
+        s = Flaky()
+        s.failure = RuntimeError("boom")
+
+        s.pass_after(0)
+
+        cached = s.refresher.get(1, "devon/a")
+        assert cached is not None
+        assert cached.status is None and cached.wall_at is None
+        assert cached.error == "RuntimeError: boom"
+
+    def test_the_refreshed_event_carries_each_error(self):
+        s = Flaky()
+        events: list[dict] = []
+        s.refresher._hub.publish = lambda event, data: events.append(data)  # type: ignore[method-assign]
+        s.pass_after(0)
+        s.failure = RuntimeError("boom")
+        s.github.change(PULL)
+
+        s.pass_after(20)
+
+        assert events[-1]["fetched"] == [
+            {
+                "branch_id": "1:devon/a",
+                "fetched_at": "2026-10-18T12:00:00Z",
+                "error": "RuntimeError: boom",
+            }
+        ]
+
+
+class TestSavedLookups:
+    def test_a_full_lookup_is_saved_with_its_etags(self):
+        s = Flaky()
+
+        s.pass_after(0)
+
+        saved = s.persistence.rows[(1, "devon/a")]
+        assert saved.status == OPEN and saved.facts == FACTS
+        assert sorted(saved.etags) == sorted([PULL, CHECKS, STATUS])
+        assert saved.fetched_at == saved.full_at == s.wall.start
+
+    def test_a_poll_that_reused_the_lookup_does_not_rewrite_it(self):
+        s = Flaky()
+        s.pass_after(0)
+        saved = s.persistence.rows[(1, "devon/a")]
+
+        s.pass_after(20)
+
+        assert s.persistence.rows[(1, "devon/a")] is saved
+
+    def test_a_restarted_server_shows_the_saved_lookup_and_verifies_it_for_free(self):
+        old = Flaky()
+        old.pass_after(0)
+        fresh = Flaky()
+        fresh.github = old.github
+        fresh.refresher._gate = GithubChangeGate(PrGate(old.github), fresh.slug_of)
+        fresh.persistence.rows = dict(old.persistence.rows)
+        fresh.clock.now = 1000 + 100  # the server was down for 100 s
+        run(fresh.refresher.restore())
+
+        cached = fresh.refresher.get(1, "devon/a")
+        assert cached is not None
+        assert cached.status == OPEN
+        assert cached.wall_at == old.wall.start  # as old as it really is
+
+        fresh.lookups = 0
+        run(fresh.refresher.run_once())
+
+        assert fresh.lookups == 0  # the ETags said nothing changed
+
+    def test_overdue_full_lookups_after_a_restart_are_spread_over_the_interval(self):
+        old = Flaky()
+        old.pass_after(0)
+        fresh = Flaky()
+        fresh.persistence.rows = dict(old.persistence.rows)
+        fresh.clock.now = 1000 + 100_000  # down for a day
+
+        run(fresh.refresher.restore())
+
+        cached = fresh.refresher.get(1, "devon/a")
+        assert cached is not None
+        # jitter 0.5: half the 120 s interval ago, so due in 60 s, not now.
+        assert fresh.clock.now - cached.full_at == 60
+
+    def test_a_branch_no_longer_tracked_is_dropped_from_the_saved_lookups(self):
+        s = Flaky()
+        s.pass_after(0)
+        s.refresher._branches = list
+
+        run(s.refresher.run_once())
+
+        assert s.persistence.rows == {}
+
+
+class TestSharedSnapshot:
+    """The autonomous agents read PRs through the refresher."""
+
+    def branch(self) -> TrackedBranch:
+        return TrackedBranch(1, "devon/a", Path("/repo"))
+
+    def test_a_lookup_younger_than_max_age_is_reused(self):
+        s = Flaky()
+        s.pass_after(0)
+        s.lookups = 0
+        asked = len(s.github.asked)
+
+        snapshot = run(s.refresher.snapshot(self.branch(), max_age=300))
+
+        assert snapshot == PrSnapshot(OPEN, FACTS)
+        assert s.lookups == 0
+        assert len(s.github.asked) == asked  # no gate traffic either
+
+    def test_an_older_one_is_checked_through_the_gate_first(self):
+        s = Flaky()
+        s.pass_after(0)
+        s.clock.now += 100  # older than max_age, within the full interval
+        s.lookups = 0
+        asked = len(s.github.asked)
+
+        snapshot = run(s.refresher.snapshot(self.branch(), max_age=60))
+
+        assert snapshot.status == OPEN
+        assert s.lookups == 0  # the gate said nothing changed
+        assert len(s.github.asked) == asked + 3
+
+    def test_a_branch_never_looked_up_is_looked_up_and_kept(self):
+        s = Flaky()
+
+        run(s.refresher.snapshot(self.branch(), max_age=300))
+
+        assert s.lookups == 1
+        assert s.refresher.get(1, "devon/a") is not None
+        assert (1, "devon/a") in s.persistence.rows
+
+    def test_it_raises_when_the_latest_lookup_failed(self):
+        s = Flaky()
+        s.pass_after(0)
+        s.failure = RateLimited("graphql", 60)
+        s.github.change(PULL)
+        s.clock.now += 400
+
+        with pytest.raises(RuntimeError, match="rate limit"):
+            run(s.refresher.snapshot(self.branch(), max_age=300))

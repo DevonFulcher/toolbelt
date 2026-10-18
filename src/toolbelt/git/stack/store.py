@@ -284,6 +284,26 @@ _MIGRATIONS: list[tuple[str, ...]] = [
         )
         """,
     ),
+    (
+        # The last good GitHub lookup of each tracked branch's PR (see
+        # ``ui.lookup_cache``), so the UI still shows what it last knew after a
+        # restart, or while GitHub refuses requests. ``fetched_at`` is when
+        # GitHub was last asked and ``full_at`` when the full lookup last ran
+        # (the two differ while a gate says nothing changed). ``record`` is
+        # the JSON (status, PR facts, conflict commit, ETags) and ``schema``
+        # its version: a different one means the row is ignored.
+        """
+        CREATE TABLE pr_lookups (
+            repo_id INTEGER NOT NULL,
+            branch TEXT NOT NULL,
+            fetched_at TEXT NOT NULL,
+            full_at TEXT NOT NULL,
+            record TEXT NOT NULL,
+            schema INTEGER NOT NULL,
+            PRIMARY KEY (repo_id, branch)
+        )
+        """,
+    ),
 ]
 
 
@@ -313,6 +333,18 @@ class AggregateSync:
     #: When every open PR was last re-fetched.
     open_swept_at: datetime | None
     #: The version of the rows' JSON.
+    schema: int
+
+
+@dataclass(frozen=True)
+class PrLookupRow:
+    """The last good lookup of one tracked branch's PR."""
+
+    repo_id: int
+    branch: str
+    fetched_at: datetime
+    full_at: datetime
+    record: str
     schema: int
 
 
@@ -1318,6 +1350,45 @@ class StackStore:
                     _iso(sync.open_swept_at) if sync.open_swept_at else None,
                     sync.schema,
                 ),
+            )
+
+    def pr_lookups(self) -> list[PrLookupRow]:
+        rows = self._conn.execute("SELECT * FROM pr_lookups")
+        return [
+            PrLookupRow(
+                repo_id=r["repo_id"],
+                branch=r["branch"],
+                fetched_at=datetime.fromisoformat(r["fetched_at"]),
+                full_at=datetime.fromisoformat(r["full_at"]),
+                record=r["record"],
+                schema=r["schema"],
+            )
+            for r in rows
+        ]
+
+    def save_pr_lookup(self, row: PrLookupRow) -> None:
+        with self._write() as conn:
+            conn.execute(
+                "INSERT INTO pr_lookups (repo_id, branch, fetched_at, full_at, "
+                "record, schema) VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT (repo_id, branch) DO UPDATE SET "
+                "fetched_at = excluded.fetched_at, full_at = excluded.full_at, "
+                "record = excluded.record, schema = excluded.schema",
+                (
+                    row.repo_id,
+                    row.branch,
+                    _iso(row.fetched_at),
+                    _iso(row.full_at),
+                    row.record,
+                    row.schema,
+                ),
+            )
+
+    def delete_pr_lookup(self, repo_id: int, branch: str) -> None:
+        with self._write() as conn:
+            conn.execute(
+                "DELETE FROM pr_lookups WHERE repo_id = ? AND branch = ?",
+                (repo_id, branch),
             )
 
     def clear_aggregate(self) -> None:

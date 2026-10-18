@@ -181,3 +181,30 @@ def test_stopping_the_manager_stops_every_forwarder():
         assert process.signals == [signal.SIGINT]
 
     asyncio.run(scenario())
+
+
+def test_a_rate_limit_while_checking_admin_rights_asks_again_at_the_next_reconcile():
+    from toolbelt.ui.github_requests import RateLimited
+
+    async def scenario():
+        s = Setup({"o/mine"}, admin={"o/mine"})
+        limited = [True]
+
+        async def is_admin(slug: str) -> bool:
+            if limited[0]:
+                raise RateLimited("core", 60)
+            return True
+
+        s.forwarders._is_admin = is_admin
+        await s.forwarders.reconcile()
+        await settle()
+        assert s.processes == []
+
+        limited[0] = False
+        await s.forwarders.reconcile()
+        await settle()
+
+        assert [slug for slug, _, _ in s.processes] == ["o/mine"]
+        await s.forwarders.stop()
+
+    asyncio.run(scenario())

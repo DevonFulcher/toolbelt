@@ -65,19 +65,34 @@ function Group({ id, title, aside, children }: { id: string; title: string; asid
 
 /** How old a box's data is, in seconds ("updated 12s ago", counting up), amber once it is older than
  * ``staleAfter`` seconds. ``at`` is when it was last read (ms), if ever. */
-function Freshness({ at, staleAfter, title }: { at: number | null | undefined; staleAfter: number; title: string }) {
+function Freshness({
+  at,
+  staleAfter,
+  title,
+  error,
+}: {
+  at: number | null | undefined;
+  staleAfter: number;
+  title: string;
+  /** Why the latest read failed: the data is then as old as ``at``, and the box says so. */
+  error?: string;
+}) {
   const now = useSecondNow();
   if (at === null || at === undefined) {
     return (
-      <span className="fresh" title={title}>
-        not read yet
+      <span className={`fresh${error ? " stale" : ""}`} title={error ? `${title} Latest attempt failed: ${error}.` : title}>
+        {error ? `not read yet (${error})` : "not read yet"}
       </span>
     );
   }
   const seconds = Math.max((now - at) / 1000, 0);
   return (
-    <span className={`fresh${seconds > staleAfter ? " stale" : ""}`} title={title}>
+    <span
+      className={`fresh${seconds > staleAfter || error ? " stale" : ""}`}
+      title={error ? `${title} Latest attempt failed: ${error}.` : title}
+    >
       {`updated ${Math.floor(seconds)}s ago`}
+      {error ? ` (${error})` : ""}
     </span>
   );
 }
@@ -170,6 +185,7 @@ export const Card = memo(
     const decidedAt = useApp((s) => s.decidedAt);
     const spendReadAt = useApp((s) => s.spendReadAt);
     const fetchedAt = useApp((s) => s.fetchedAt[id]);
+    const fetchError = useApp((s) => s.fetchError[id]);
     const catalog = useApp((s) => s.catalog);
     const flashed = useFlashOnChange(status);
     const now = useNow();
@@ -296,9 +312,10 @@ export const Card = memo(
           aside={
             <Freshness
               at={fetchedAt}
+              error={fetchError}
               // Merged and closed PRs are looked up every 5 minutes, the rest every 20 seconds.
               staleAfter={taskDone || (status.load === "loaded" && status.pr === "closed") ? 900 : 90}
-              title="When this PR's status was last looked up on GitHub. It is looked up about every 20 seconds while this page is open (every 5 minutes for merged and closed PRs)."
+              title="When this PR's status was last looked up on GitHub. It is checked about every 20 seconds while this page is open (every 5 minutes for merged and closed PRs, and for repos whose webhooks are forwarded here). The status shown is kept across restarts."
             />
           }
         >
@@ -333,7 +350,7 @@ export const Card = memo(
             <Freshness
               at={decidedAt}
               staleAfter={60}
-              title="When the autonomous agents last decided what to do with every task (every few seconds). Runs are read from toolbelt every 10 seconds while this page is visible."
+              title="When the autonomous agents last decided what to do with every task (every few seconds). The server pushes each change here."
             />
           }
         >
@@ -346,7 +363,7 @@ export const Card = memo(
             <Freshness
               at={spendReadAt}
               staleAfter={180}
-              title="When the session transcripts were last read for spend (about once a minute). Autonomous cost is each run's own, as of the last read of toolbelt (every 10 seconds)."
+              title="When the session transcripts were last read for spend (about once a minute). The server pushes each change here."
             />
           }
         >
