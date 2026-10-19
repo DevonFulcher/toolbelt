@@ -41,6 +41,14 @@ def _isolate_git_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _show_every_repo_in_the_ui(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run as on a personal machine, so the UI shows the throwaway repos whose
+    remotes (``o/r``) are outside the employer orgs, whatever the developer's own
+    ``IS_PERSONAL`` is. ``test_ui_repo_visibility`` passes its own ``env``."""
+    monkeypatch.setenv("IS_PERSONAL", "true")
+
+
+@pytest.fixture(autouse=True)
 def _isolate_state_dir(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
