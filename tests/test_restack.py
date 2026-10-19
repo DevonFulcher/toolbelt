@@ -107,8 +107,12 @@ def test_cascading_lands_in_one_pass(repo: Path, tmp_path: Path):
     assert diff.splitlines() == ["leaf.txt"]
 
 
-def test_sync_on_untracked_branch_errors(repo: Path, tmp_path: Path):
-    # main is not part of any tracked stack
+def test_sync_on_untracked_branch_errors(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    # main is not part of any tracked stack, and this is a work repo (its remote
+    # is not GitHub), whose default branch sync never pushes.
+    monkeypatch.delenv("IS_PERSONAL", raising=False)
     with pytest.raises(typer.Exit):
         sync_stack(root=repo, forge=FakeForge())
 

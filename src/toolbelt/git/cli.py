@@ -200,8 +200,11 @@ def save(
 
     After committing, runs `sync` (see `sync --help`), which pushes every
     branch in the stack and removes branches whose PRs have landed. That is
-    the only push: with --no-sync nothing is pushed. If the branch is not in a
-    tracked stack, the commit is kept but the sync step fails.
+    the only push: with --no-sync nothing is pushed. A new branch (none on
+    origin) is published with upstream tracking. A branch that is not in a
+    tracked stack is pushed only in a personal repo (see `sync --help`), or
+    published if origin lacks it; otherwise (e.g. a work repo's main) the
+    commit is kept and not pushed, and the sync step fails.
 
     On the default branch of a repo in $CURRENT_ORG, it instead offers (-y
     accepts) to start a new stacked branch devon/<message> (spaces become _):
@@ -450,11 +453,17 @@ def sync():
 
     For each branch: merges its parent (origin/<base> for the top branch),
     then origin/<branch>, then pushes (`git push -u`): always for a branch
-    with children; for a leaf only when it has an open PR and something new
-    (own commits, a conflicting PR, or a tree that differs from origin's). A
-    leaf with no open PR is never pushed to a new remote branch (only
-    `git pr` does that), but one origin already has that is strictly ahead
-    of it is fast-forwarded, never forced. If a branch's PR has
+    with children or one origin does not have yet (a new branch is published
+    with upstream tracking); for other leaves only when they have an open PR
+    and something new (own commits, a conflicting PR, or a tree that differs
+    from origin's), or are strictly ahead of origin (fast-forward, never
+    forced). A branch that is not in a tracked stack is handled alone: a
+    branch origin lacks is published, except the default branch of a work
+    repo; in a personal repo (GitHub owner outside tasks.employer_orgs, or
+    IS_PERSONAL=true) it is also fast-forward pushed, `main` included, and a
+    branch that diverged from origin is not pushed (stops with an error).
+    A work repo's default branch, and its other untracked branches origin
+    already has, are never pushed. If a branch's PR has
     merged on GitHub, its children are instead rebased onto the nearest
     unmerged ancestor, reparented onto it, and force-pushed
     (--force-with-lease). A child whose parent was rewritten (restacked,

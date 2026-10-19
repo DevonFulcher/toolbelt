@@ -10,11 +10,14 @@ from pathlib import Path
 
 import typer
 
+from toolbelt.git.branches import DEFAULT_BRANCH_NAMES
 from toolbelt.git.exec import run
+from toolbelt.git.repo_pull import default_config_path
 from toolbelt.git.stack.forge import Forge
 from toolbelt.git.stack.lineage import all_parents, get_parent, set_parent
 from toolbelt.git.worktrees import current_branch
 from toolbelt.logger import logger
+from toolbelt.tasks.requirement import task_required
 
 _ATTRIBUTION_TRAILER = "Co-Authored-By"
 
@@ -78,6 +81,43 @@ def push_if_fast_forward(branch: str, *, root: Path) -> bool:
         return False
     run(["git", "push", "-u", "origin", branch], cwd=root, exit_on_error=True)
     logger.info(f"Pushed '{branch}' (fast-forward of origin).")
+    return True
+
+
+def publish_untracked_branch(branch: str, *, root: Path) -> bool:
+    """Push ``branch``, which is not part of a tracked stack, if toolbelt should;
+    return whether it handled the branch (False: the caller reports it as
+    untracked).
+
+    A branch origin lacks is published with upstream tracking (``git push -u``),
+    except a work repo's default branch. A branch origin has is fast-forwarded
+    in a personal repo only (see ``toolbelt.tasks.requirement.task_required``):
+    work repos' default branches are never pushed from here. Never forced: a
+    branch that diverged from origin is left alone and the run stops.
+    """
+    personal = not task_required(root, default_config_path())
+    if not _remote_branch_exists(branch, root=root):
+        if not personal and branch in DEFAULT_BRANCH_NAMES:
+            return False
+        run(["git", "push", "-u", "origin", branch], cwd=root, exit_on_error=True)
+        logger.info(f"Published '{branch}' to origin.")
+        return True
+    if not personal:
+        return False
+    remote = f"origin/{branch}"
+    if _rev_parse(branch, root=root) == _rev_parse(remote, root=root):
+        logger.info(f"'{branch}' is up to date with origin.")
+    elif _is_ancestor(remote, branch, root=root):
+        run(["git", "push", "-u", "origin", branch], cwd=root, exit_on_error=True)
+        logger.info(f"Pushed '{branch}' (fast-forward of origin).")
+    elif _is_ancestor(branch, remote, root=root):
+        logger.info(f"'{branch}' is behind {remote}; nothing to push.")
+    else:
+        logger.error(
+            f"'{branch}' has diverged from {remote}; not pushing (toolbelt never "
+            f"forces). Merge or rebase {remote} into it, then push again."
+        )
+        raise typer.Exit(1)
     return True
 
 

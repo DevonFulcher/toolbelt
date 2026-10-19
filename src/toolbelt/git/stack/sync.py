@@ -35,6 +35,7 @@ from toolbelt.git.stack.ops import (
     has_unpushed_real_work,
     is_fast_forward_ahead_of_remote,
     past_tips,
+    publish_untracked_branch,
     tree_differs_from_remote,
 )
 from toolbelt.git.stack.store import PrCandidate
@@ -349,6 +350,8 @@ def sync_stack(
     parents = all_parents(root=root)
     tracked = set(parents.keys())
     if branch not in tracked:
+        if publish_untracked_branch(branch, root=root):
+            return
         logger.error(
             f"'{branch}' is not part of a tracked stack. Start one with "
             "`git append <name>`."
@@ -484,6 +487,9 @@ def sync_stack(
             # look ahead afterwards; only a branch already ahead of origin
             # on its own qualifies.
             ahead_of_remote = is_fast_forward_ahead_of_remote(child, root=worktree)
+            # origin has never seen it: publish it (with upstream tracking)
+            # whatever its PR state, since there is nothing to compare to.
+            unpublished = not _remote_branch_exists(child, root=root)
 
             # Integrate the parent (base from the remote) and reconcile the
             # branch with its own remote so a diverged push won't be rejected.
@@ -517,15 +523,16 @@ def sync_stack(
             # not seen (otherwise the PR and its CI stay stale relative to
             # the parent). A no-op sync leaves the tree equal to origin's, so
             # it pushes nothing and re-triggers no CI or review. Open PR or
-            # not, a branch origin already has that is strictly ahead of it is
-            # fast-forwarded (never a new remote branch, never forced), so
-            # origin does not lag a branch others build on.
+            # not, a branch origin does not have yet is published, and one it
+            # has that is strictly ahead of it is fast-forwarded (never
+            # forced), so origin does not lag a branch others build on.
             has_children = any(
                 parent == child and other not in landed
                 for other, parent in parents.items()
             )
             if (
                 has_children
+                or unpublished
                 or ahead_of_remote
                 or child in has_open_pr
                 and (

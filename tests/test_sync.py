@@ -136,20 +136,22 @@ def test_sync_keeps_the_parent_an_ancestor_so_the_pr_diff_stays_clean(
         assert own_diff == ["own.txt"]
 
 
-def test_sync_does_not_push_a_leaf_with_no_pr(repo: Path, tmp_path: Path):
+def test_sync_does_not_push_a_published_leaf_with_no_pr(repo: Path, tmp_path: Path):
     api_wt, tests_wt = _build_stack(repo, tmp_path)
     (tests_wt / "own.txt").write_text("own work\n")
     git("add", "-A", cwd=tests_wt)
     git("commit", "-m", "own work", cwd=tests_wt)
+    git("push", "-u", "origin", "devon/api_tests", cwd=tests_wt)
+    published = git("rev-parse", "origin/devon/api_tests", cwd=tests_wt)
     (api_wt / "api.txt").write_text("api change\n")
     git("add", "-A", cwd=api_wt)
     git("commit", "-m", "api work", cwd=api_wt)
 
     sync_stack(root=tests_wt, forge=FakeForge(no_pr=["devon/api_tests"]))
 
-    # Merged locally, but never pushed, since nothing has a PR to watch it yet.
-    remote_refs = git("ls-remote", "--heads", "origin", cwd=repo)
-    assert "devon/api_tests" not in remote_refs
+    # Merged locally, but not pushed again, since nothing has a PR to watch it.
+    assert git("rev-parse", "origin/devon/api_tests", cwd=tests_wt) == published
+    assert git("rev-parse", "HEAD", cwd=tests_wt) != published
 
 
 def test_sync_does_not_repush_when_nothing_new_since_last_push(
@@ -233,22 +235,23 @@ def test_sync_does_not_push_a_leaf_when_the_parent_had_nothing_new(
 
 
 def test_sync_pushes_once_new_work_and_a_pr_both_show_up(repo: Path, tmp_path: Path):
-    """Quiet syncs (no PR yet) accumulate merges locally with no push; once
-    there's both a PR to watch it *and* new work of your own, the next sync
-    pushes everything accumulated so far in one go."""
+    """A quiet sync (no PR yet) of a published leaf accumulates merges locally
+    with no push; once there's both a PR to watch it *and* new work of your own,
+    the next sync pushes everything accumulated so far in one go."""
     api_wt, tests_wt = _build_stack(repo, tmp_path)
     (tests_wt / "own.txt").write_text("own work\n")
     git("add", "-A", cwd=tests_wt)
     git("commit", "-m", "own work", cwd=tests_wt)
+    git("push", "-u", "origin", "devon/api_tests", cwd=tests_wt)
+    published = git("rev-parse", "origin/devon/api_tests", cwd=tests_wt)
 
-    for i in range(2):
+    for i in range(1):
         (api_wt / f"api{i}.txt").write_text(f"{i}\n")
         git("add", "-A", cwd=api_wt)
         git("commit", "-m", f"api work {i}", cwd=api_wt)
         sync_stack(root=tests_wt, forge=FakeForge(no_pr=["devon/api_tests"]))
 
-    remote_refs = git("ls-remote", "--heads", "origin", cwd=repo)
-    assert "devon/api_tests" not in remote_refs
+    assert git("rev-parse", "origin/devon/api_tests", cwd=tests_wt) == published
 
     (tests_wt / "mine.txt").write_text("mine\n")
     git("add", "-A", cwd=tests_wt)
@@ -261,7 +264,6 @@ def test_sync_pushes_once_new_work_and_a_pr_both_show_up(repo: Path, tmp_path: P
         "rev-parse", "HEAD", cwd=tests_wt
     )
     assert (tests_wt / "api0.txt").read_text() == "0\n"
-    assert (tests_wt / "api1.txt").read_text() == "1\n"
     assert (tests_wt / "mine.txt").read_text() == "mine\n"
 
 
@@ -369,9 +371,7 @@ def test_sync_fast_forwards_a_published_leaf_that_has_no_pr(repo: Path, tmp_path
     assert git("ls-remote", "origin", "devon/api_tests", cwd=repo).startswith(new_tip)
 
 
-def test_sync_does_not_create_a_remote_branch_for_a_leaf_with_no_pr(
-    repo: Path, tmp_path: Path
-):
+def test_sync_publishes_a_new_leaf_even_with_no_pr(repo: Path, tmp_path: Path):
     _, tests_wt = _build_stack(repo, tmp_path)
     (tests_wt / "own.txt").write_text("own work\n")
     git("add", "-A", cwd=tests_wt)
@@ -379,7 +379,7 @@ def test_sync_does_not_create_a_remote_branch_for_a_leaf_with_no_pr(
 
     sync_stack(root=tests_wt, forge=FakeForge(no_pr=["devon/api_tests"]))
 
-    assert "devon/api_tests" not in git("ls-remote", "--heads", "origin", cwd=repo)
+    assert "devon/api_tests" in git("ls-remote", "--heads", "origin", cwd=repo)
 
 
 def test_sync_does_not_force_push_a_leaf_that_diverged_from_origin(
