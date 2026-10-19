@@ -320,6 +320,149 @@ def _last_parent_tip_in(child: str, parent: str, *, worktree: Path) -> str | Non
     return fork.stdout.strip() if fork.returncode == 0 else None
 
 
+def _worktree_is_clean(worktree: Path) -> bool:
+    """True if ``worktree`` has no staged or unstaged change to tracked files."""
+    return not run(
+        ["git", "status", "--porcelain", "--untracked-files=no"],
+        cwd=worktree,
+        capture_output=True,
+    ).stdout.strip()
+
+
+def _adopt_remote_restack(child: str, *, worktree: Path, base: str, onto: str) -> bool:
+    """Take over ``origin/<child>`` when it is already the restacked ``child``.
+
+    GitHub restacks the open PRs above a PR it merges (rebasing their branches
+    on the remote), so ``origin/<child>`` can hold a rewritten copy of the
+    child that local never had. When that copy contains ``onto`` and its tree is
+    what merging ``onto`` into the child over snapshots (three-way, with
+    ``base`` as the merge base) produces, nothing is lost by moving the local
+    branch to it: its work is on the remote already, and replaying the child's
+    own commits would only force-push a second copy over it. Needs a clean
+    worktree. The previous local tip stays in the reflog.
+    """
+    remote = f"origin/{child}"
+    if (
+        not _remote_branch_exists(child, root=worktree)
+        or _is_ancestor(remote, child, worktree=worktree)
+        or not _is_ancestor(onto, remote, worktree=worktree)
+        or not _worktree_is_clean(worktree)
+    ):
+        return False
+    merged = run(
+        [
+            "git",
+            "merge-tree",
+            "--write-tree",
+            f"--merge-base={base}",
+            child,
+            onto,
+        ],
+        cwd=worktree,
+        check=False,
+        capture_output=True,
+    )
+    if merged.returncode != 0:
+        return False
+    remote_tree = run(
+        ["git", "rev-parse", f"{remote}^{{tree}}"], cwd=worktree, capture_output=True
+    ).stdout.strip()
+    if remote_tree != merged.stdout.split()[0]:
+        return False
+    run(["git", "reset", "--hard", remote], cwd=worktree, exit_on_error=True)
+    logger.info(
+        f"'{child}' was already restacked on origin (by GitHub or another "
+        f"checkout) with the content a restack here would give; moved to {remote}."
+    )
+    return True
+
+
+def _remote_has_foreign_commits(child: str, *, worktree: Path) -> bool:
+    """True if ``origin/<child>`` is not part of ``child``'s history: it is not
+    an ancestor of ``child`` and ``child`` never pointed at it (per its reflog).
+
+    That is a remote rewritten or extended by someone else (GitHub restacking
+    after a parent merged, another checkout), as opposed to a remote left behind
+    by the user rewriting the branch locally; force-pushing over it would
+    destroy commits this checkout has never seen.
+    """
+    if not _remote_branch_exists(child, root=worktree):
+        return False
+    remote = f"origin/{child}"
+    if _is_ancestor(remote, child, worktree=worktree):
+        return False
+    remote_tip = run(
+        ["git", "rev-parse", remote], cwd=worktree, capture_output=True
+    ).stdout.strip()
+    return remote_tip not in past_tips(child, root=worktree)
+
+
+def _refuse_replay_over_foreign_remote(
+    child: str, *, worktree: Path, onto: str
+) -> None:
+    """Stop, before changing anything, if replaying ``child`` would force-push
+    over commits on ``origin/<child>`` that this checkout never had."""
+    if not _remote_has_foreign_commits(child, worktree=worktree):
+        return
+    local, remote = (
+        sha[:8]
+        for sha in run(
+            ["git", "rev-parse", child, f"origin/{child}"],
+            cwd=worktree,
+            capture_output=True,
+        ).stdout.split()
+    )
+    logger.error(
+        f"Not restacking '{child}' onto '{onto}' in {worktree}: origin/{child} "
+        f"({remote}) holds commits '{child}' ({local}) has never had, and its "
+        "content is not what a restack here would produce, so replaying and "
+        "force-pushing would overwrite them. Nothing was changed: the branch is "
+        f"at {local} and origin/{child} at {remote}. Compare them "
+        f"(`git diff {child} origin/{child}`), then merge origin/{child} into "
+        f"'{child}' or reset '{child}' to it, and re-run `git sync`."
+    )
+    raise typer.Exit(1)
+
+
+def _force_push_replay(child: str, *, worktree: Path) -> None:
+    """Force-push the replayed ``child``, leased to the remote tip the replay
+    started from; if origin moved since, say what state that leaves."""
+    lease = run(
+        ["git", "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{child}"],
+        cwd=worktree,
+        check=False,
+        capture_output=True,
+    ).stdout.strip()
+    run(["git", "fetch", "origin", child], cwd=worktree, check=False)
+    now = run(
+        ["git", "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{child}"],
+        cwd=worktree,
+        check=False,
+        capture_output=True,
+    ).stdout.strip()
+    if now != lease:
+        logger.error(
+            f"origin/{child} moved while '{child}' was being restacked "
+            f"({lease[:8] or 'none'} -> {now[:8]}). '{child}' is replayed "
+            f"locally in {worktree} but NOT pushed; origin/{child} is untouched "
+            f"at {now[:8]}. Inspect `git diff {child} origin/{child}`, merge or "
+            "reset as appropriate, then re-run `git sync`."
+        )
+        raise typer.Exit(1)
+    pushed = run(
+        ["git", "push", f"--force-with-lease={child}:{lease}", "origin", child],
+        cwd=worktree,
+        check=False,
+    )
+    if pushed.returncode != 0:
+        logger.error(
+            f"Force-push of '{child}' was rejected. '{child}' is replayed locally "
+            f"in {worktree} but NOT pushed; origin/{child} is unchanged. Inspect "
+            f"`git diff {child} origin/{child}`, then re-run `git sync`."
+        )
+        raise typer.Exit(1)
+
+
 def _merge_landed_parent(child: str, *, worktree: Path, parent: str, onto: str) -> bool:
     """Bring ``child`` up to date with the base its landed ``parent`` was
     squashed into, by merging ``onto`` in, without rewriting any history.
@@ -340,12 +483,14 @@ def _merge_landed_parent(child: str, *, worktree: Path, parent: str, onto: str) 
     """
     if _is_ancestor(onto, child, worktree=worktree):
         return True
+    base = _last_parent_tip_in(child, parent, worktree=worktree)
+    if base is None:
+        return False
+    if _adopt_remote_restack(child, worktree=worktree, base=base, onto=onto):
+        return True
     if _remote_branch_exists(child, root=worktree) and not _is_ancestor(
         f"origin/{child}", child, worktree=worktree
     ):
-        return False
-    base = _last_parent_tip_in(child, parent, worktree=worktree)
-    if base is None:
         return False
     tree = run(
         [
@@ -534,6 +679,8 @@ def sync_stack(
                     )
                 continue
 
+            if not resuming:
+                _refuse_replay_over_foreign_remote(child, worktree=worktree, onto=base)
             if not _restack(
                 child,
                 worktree=worktree,
@@ -550,15 +697,19 @@ def sync_stack(
                 raise typer.Exit(1)
 
             set_parent(child, base, root=root)
-            run(
-                ["git", "push", "--force-with-lease", "origin", child],
-                cwd=worktree,
-                exit_on_error=True,
-            )
+            _force_push_replay(child, worktree=worktree)
         elif resuming or rewritten_from is not None:
             # The parent was rewritten: replay the child's own commits onto it
             # rather than merging its new commits into the old copies. Also
             # resumes a replay that stopped on a conflict.
+            if rewritten_from is not None and _adopt_remote_restack(
+                child, worktree=worktree, base=rewritten_from, onto=direct_parent
+            ):
+                continue
+            if not resuming:
+                _refuse_replay_over_foreign_remote(
+                    child, worktree=worktree, onto=direct_parent
+                )
             if not _restack(
                 child,
                 worktree=worktree,
@@ -572,11 +723,7 @@ def sync_stack(
                     "`git add`, then re-run `git sync`."
                 )
                 raise typer.Exit(1)
-            run(
-                ["git", "push", "--force-with-lease", "origin", child],
-                cwd=worktree,
-                exit_on_error=True,
-            )
+            _force_push_replay(child, worktree=worktree)
         else:
             # Conclude a prior conflicted merge the user has since resolved
             # (symmetric with the rebase --continue resume path).

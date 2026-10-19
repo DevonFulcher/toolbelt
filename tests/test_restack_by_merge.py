@@ -249,3 +249,86 @@ def test_restacking_twice_changes_nothing(repo: Path, tmp_path: Path):
     assert {n: _tip(f"devon/{n}", repo) for n in "bc"} == tips
     assert {n: _tip(f"origin/devon/{n}", repo) for n in "bc"} == remote_tips
     assert git("status", "--porcelain", cwd=wts["c"]) == ""
+
+
+def _github_restacks(
+    repo: Path, tmp_path: Path, git_remote: Path, branches: list[tuple[str, str]]
+) -> dict[str, str]:
+    """What GitHub does when it squash-merges the bottom PR of a stack: rebase
+    each open PR's branch on the remote, onto its new base (``(branch, old
+    parent)`` pairs, bottom first). Returns the new remote tips."""
+    clone = tmp_path / "github"
+    git("clone", "-q", str(git_remote), str(clone), cwd=tmp_path)
+    git("config", "user.email", "gh@example.com", cwd=clone)
+    git("config", "user.name", "GitHub", cwd=clone)
+    new_base = "origin/main"
+    tips = {}
+    for branch, old_parent in branches:
+        git("checkout", "-q", "-B", branch, f"origin/{branch}", cwd=clone)
+        git("rebase", "-q", "--onto", new_base, f"origin/{old_parent}", cwd=clone)
+        git("push", "-q", "--force", "origin", branch, cwd=clone)
+        tips[branch] = _tip("HEAD", clone)
+        new_base = branch
+    return tips
+
+
+def test_children_github_already_restacked_are_adopted_not_force_pushed(
+    repo: Path, tmp_path: Path, git_remote: Path
+):
+    """Merging the bottom PR of a GitHub stack makes GitHub rebase the open PRs
+    above it on the remote before toolbelt runs: origin/<child> holds a rewritten
+    copy local never had. Sync takes it over (same content) and pushes nothing,
+    rather than replaying the child and force-pushing over GitHub's copy."""
+    wts = _chain(repo, tmp_path)
+    old_trees = {n: _tree(f"devon/{n}", repo) for n in "bc"}
+    _land_on_main(repo, {"a.txt": "a\n"}, "squash a")
+    theirs = _github_restacks(
+        repo,
+        tmp_path,
+        git_remote,
+        [("devon/b", "devon/a"), ("devon/c", "devon/b")],
+    )
+    pushes_before = git("ls-remote", "--heads", "origin", cwd=repo)
+
+    sync_stack(root=repo, forge=FakeForge(merged={"devon/a"}), branch="devon/a")
+
+    assert lineage.get_parent("devon/b", root=repo) == "main"
+    assert lineage.get_parent("devon/c", root=repo) == "devon/b"
+    for name in "bc":
+        branch = f"devon/{name}"
+        assert _tip(branch, repo) == theirs[branch]
+        assert _tree(branch, repo) == old_trees[name]
+    # origin was never written to, by a force or otherwise
+    assert git("ls-remote", "--heads", "origin", cwd=repo) == pushes_before
+    assert git("diff", "--name-only", "main", "devon/b", cwd=repo) == "b.txt"
+    assert not wts["a"].exists()
+
+
+def test_a_remote_with_commits_local_never_had_stops_the_replay_untouched(
+    repo: Path, tmp_path: Path, git_remote: Path
+):
+    """If origin/<child> was rewritten by someone else and is not what a restack
+    here would give, sync stops before touching the branch, instead of replaying
+    and force-pushing over it (or failing at the push)."""
+    wts = _chain(repo, tmp_path)
+    _land_on_main(repo, {"a.txt": "a\n"}, "squash a")
+    _github_restacks(repo, tmp_path, git_remote, [("devon/b", "devon/a")])
+    clone = tmp_path / "github"
+    _commit(clone, "extra.txt", "from someone else\n", "someone else's work")
+    git("push", "-q", "origin", "devon/b", cwd=clone)
+    git("fetch", "-q", "origin", cwd=repo)
+    local_b = _tip("devon/b", repo)
+    remote_b = _tip("origin/devon/b", repo)
+    assert remote_b != local_b
+
+    with pytest.raises(typer.Exit):
+        sync_stack(
+            root=repo,
+            forge=FakeForge(merged={"devon/a"}),
+            branch="devon/a",
+        )
+
+    assert _tip("devon/b", repo) == local_b
+    assert _tip("origin/devon/b", repo) == remote_b
+    assert git("status", "--porcelain", cwd=wts["b"]) == ""
+    assert lineage.get_parent("devon/b", root=repo) == "devon/a"
