@@ -11,6 +11,7 @@ from toolbelt.git.stack.append import create_stacked_branch
 from toolbelt.git.stack.ops import (
     compress_branch,
     diff_parent_command,
+    push_if_fast_forward,
     push_if_unpushed,
     retarget_open_pr,
     set_branch_parent,
@@ -433,4 +434,23 @@ def test_push_if_unpushed_pushes_a_new_branch_with_upstream_once(
     assert push_if_unpushed("devon/api", root=wt) is False
     assert git("rev-parse", "devon/api", cwd=wt) != git(
         "rev-parse", "origin/devon/api", cwd=wt
+    )
+
+
+def test_push_if_fast_forward_only_pushes_a_published_branch_that_is_ahead(
+    repo: Path, tmp_path: Path
+):
+    git("checkout", "-b", "feat", cwd=repo)
+    assert not push_if_fast_forward("feat", root=repo)  # not on origin: never created
+    assert "feat" not in git("ls-remote", "--heads", "origin", cwd=repo)
+
+    git("push", "-u", "origin", "feat", cwd=repo)
+    assert not push_if_fast_forward("feat", root=repo)  # up to date
+
+    (repo / "f.txt").write_text("f\n")
+    git("add", "-A", cwd=repo)
+    git("commit", "-m", "f", cwd=repo)
+    assert push_if_fast_forward("feat", root=repo)
+    assert git("rev-parse", "origin/feat", cwd=repo) == git(
+        "rev-parse", "HEAD", cwd=repo
     )

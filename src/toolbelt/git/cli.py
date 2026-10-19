@@ -449,7 +449,12 @@ def sync():
     branch), and every branch in the stack needs its own worktree.
 
     For each branch: merges its parent (origin/<base> for the top branch),
-    then origin/<branch>, then runs `git push -u`. If a branch's PR has
+    then origin/<branch>, then pushes (`git push -u`): always for a branch
+    with children; for a leaf only when it has an open PR and something new
+    (own commits, a conflicting PR, or a tree that differs from origin's). A
+    leaf with no open PR is never pushed to a new remote branch (only
+    `git pr` does that), but one origin already has that is strictly ahead
+    of it is fast-forwarded, never forced. If a branch's PR has
     merged on GitHub, its children are instead rebased onto the nearest
     unmerged ancestor, reparented onto it, and force-pushed
     (--force-with-lease). A child whose parent was rewritten (restacked,

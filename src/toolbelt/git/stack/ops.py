@@ -53,6 +53,34 @@ def push_if_unpushed(branch: str, *, root: Path) -> bool:
     return True
 
 
+def is_fast_forward_ahead_of_remote(branch: str, *, root: Path) -> bool:
+    """True if ``origin/<branch>`` exists and ``branch`` is strictly ahead of it.
+
+    Only a fast-forward push can follow, so pushing never rewrites origin and
+    never creates a remote branch: ``sync`` and ``set-parent`` use it to bring an
+    already-published branch up to date even when it has no open PR (a PR about
+    to be opened or retargeted onto it would otherwise show a wrong diff). A
+    branch origin lacks, one that diverged from origin, and one equal to origin
+    are all false.
+    """
+    if not _remote_branch_exists(branch, root=root):
+        return False
+    remote = f"origin/{branch}"
+    return _rev_parse(branch, root=root) != _rev_parse(
+        remote, root=root
+    ) and _is_ancestor(remote, branch, root=root)
+
+
+def push_if_fast_forward(branch: str, *, root: Path) -> bool:
+    """Push ``branch`` to origin (never forced) if it is a fast-forward ahead of
+    the existing ``origin/<branch>``; return whether it pushed."""
+    if not is_fast_forward_ahead_of_remote(branch, root=root):
+        return False
+    run(["git", "push", "-u", "origin", branch], cwd=root, exit_on_error=True)
+    logger.info(f"Pushed '{branch}' (fast-forward of origin).")
+    return True
+
+
 def _is_ancestor(ancestor: str, descendant: str, *, root: Path) -> bool:
     result = run(
         ["git", "merge-base", "--is-ancestor", ancestor, descendant],

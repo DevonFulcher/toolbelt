@@ -29,6 +29,7 @@ from toolbelt.git.stack.gh_stack import GhStackedPrs
 from toolbelt.git.stack.ops import (
     compress_branch,
     diff_parent_command,
+    push_if_fast_forward,
     retarget_open_pr,
     set_branch_parent,
 )
@@ -191,7 +192,8 @@ def set_parent(
 
     Updates only the tracked parent (checking the branch exists and no cycle
     forms), then runs `sync` (see `sync --help`), which merges the new parent
-    in and pushes. It merges rather than rebases, so commits inherited from
+    in and pushes. The new parent is also fast-forward pushed if origin already
+    has it and it is ahead (never a new remote branch). It merges rather than rebases, so commits inherited from
     the old parent stay on the branch. Future `pr`/`send` target the new
     parent; an open PR on the branch is retargeted onto the new parent.
     """
@@ -200,6 +202,9 @@ def set_parent(
     with repo_lock(root):
         branch = set_branch_parent(root=root, new_parent=new_parent)
         sync_stack(root=root, forge=forge, stacked_prs=GhStackedPrs())
+        # An untracked new parent is not part of the synced stack; keep an
+        # already-published one current so the retargeted PR diffs cleanly.
+        push_if_fast_forward(new_parent, root=root)
         retarget_open_pr(branch, new_parent, forge=forge)
 
 

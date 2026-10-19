@@ -33,6 +33,7 @@ from toolbelt.git.stack.lineage import (
 )
 from toolbelt.git.stack.ops import (
     has_unpushed_real_work,
+    is_fast_forward_ahead_of_remote,
     past_tips,
     tree_differs_from_remote,
 )
@@ -478,6 +479,12 @@ def sync_stack(
                     raise typer.Exit(1)
                 run(["git", "commit", "--no-edit"], cwd=worktree, exit_on_error=True)
 
+            # Judged before the merges below: a branch that diverged from
+            # origin is reconciled by merging origin in, which would make it
+            # look ahead afterwards; only a branch already ahead of origin
+            # on its own qualifies.
+            ahead_of_remote = is_fast_forward_ahead_of_remote(child, root=worktree)
+
             # Integrate the parent (base from the remote) and reconcile the
             # branch with its own remote so a diverged push won't be rejected.
             # The base (e.g. main) has no lineage entry; pull it from origin.
@@ -509,13 +516,17 @@ def sync_stack(
             # origin's because the merge absorbed parent changes the PR has
             # not seen (otherwise the PR and its CI stay stale relative to
             # the parent). A no-op sync leaves the tree equal to origin's, so
-            # it pushes nothing and re-triggers no CI or review.
+            # it pushes nothing and re-triggers no CI or review. Open PR or
+            # not, a branch origin already has that is strictly ahead of it is
+            # fast-forwarded (never a new remote branch, never forced), so
+            # origin does not lag a branch others build on.
             has_children = any(
                 parent == child and other not in landed
                 for other, parent in parents.items()
             )
             if (
                 has_children
+                or ahead_of_remote
                 or child in has_open_pr
                 and (
                     child in has_conflicts

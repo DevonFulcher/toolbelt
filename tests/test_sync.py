@@ -340,3 +340,82 @@ def test_merge_conflict_logs_the_merged_ref_and_files(
     assert f"Conflict merging 'devon/api' (tip {api_tip} \"api files\")." in caplog.text
     assert "Conflicted files: f00.txt, f01.txt," in caplog.text
     assert "f09.txt and 2 more." in caplog.text
+
+
+def _publish_leaf_then_advance_locally(
+    repo: Path, tmp_path: Path
+) -> tuple[Path, str, str]:
+    """devon/api_tests is on origin with one commit, then gets a newer local
+    commit; returns its worktree, the old (origin) tip and the new local tip."""
+    _, tests_wt = _build_stack(repo, tmp_path)
+    (tests_wt / "own.txt").write_text("own work\n")
+    git("add", "-A", cwd=tests_wt)
+    git("commit", "-m", "own work", cwd=tests_wt)
+    sync_stack(root=tests_wt, forge=FakeForge())  # first push, PR is open
+    old_tip = git("rev-parse", "HEAD", cwd=tests_wt)
+    (tests_wt / "newer.txt").write_text("newer\n")
+    git("add", "-A", cwd=tests_wt)
+    git("commit", "-m", "newer work", cwd=tests_wt)
+    return tests_wt, old_tip, git("rev-parse", "HEAD", cwd=tests_wt)
+
+
+def test_sync_fast_forwards_a_published_leaf_that_has_no_pr(repo: Path, tmp_path: Path):
+    tests_wt, old_tip, new_tip = _publish_leaf_then_advance_locally(repo, tmp_path)
+    assert git("rev-parse", "origin/devon/api_tests", cwd=tests_wt) == old_tip
+
+    sync_stack(root=tests_wt, forge=FakeForge(no_pr=["devon/api_tests"]))
+
+    assert git("rev-parse", "origin/devon/api_tests", cwd=tests_wt) == new_tip
+    assert git("ls-remote", "origin", "devon/api_tests", cwd=repo).startswith(new_tip)
+
+
+def test_sync_does_not_create_a_remote_branch_for_a_leaf_with_no_pr(
+    repo: Path, tmp_path: Path
+):
+    _, tests_wt = _build_stack(repo, tmp_path)
+    (tests_wt / "own.txt").write_text("own work\n")
+    git("add", "-A", cwd=tests_wt)
+    git("commit", "-m", "own work", cwd=tests_wt)
+
+    sync_stack(root=tests_wt, forge=FakeForge(no_pr=["devon/api_tests"]))
+
+    assert "devon/api_tests" not in git("ls-remote", "--heads", "origin", cwd=repo)
+
+
+def test_sync_does_not_force_push_a_leaf_that_diverged_from_origin(
+    repo: Path, tmp_path: Path
+):
+    tests_wt, _, _ = _publish_leaf_then_advance_locally(repo, tmp_path)
+    # Someone else moves origin/devon/api_tests to a commit local lacks.
+    other = tmp_path / "other"
+    subprocess.run(
+        ["git", "clone", str(tmp_path / "origin.git"), str(other)],
+        check=True,
+        capture_output=True,
+    )
+    git("config", "user.email", "o@example.com", cwd=other)
+    git("config", "user.name", "Other", cwd=other)
+    git("checkout", "devon/api_tests", cwd=other)
+    (other / "theirs.txt").write_text("theirs\n")
+    git("add", "-A", cwd=other)
+    git("commit", "-m", "their work", cwd=other)
+    git("push", "origin", "devon/api_tests", cwd=other)
+    theirs = git("rev-parse", "HEAD", cwd=other)
+
+    sync_stack(root=tests_wt, forge=FakeForge(no_pr=["devon/api_tests"]))
+
+    # Local reconciled by merging origin in, but origin was left untouched.
+    assert git("ls-remote", "origin", "devon/api_tests", cwd=repo).startswith(theirs)
+    assert (tests_wt / "theirs.txt").exists()
+
+
+def test_sync_does_not_push_a_published_leaf_that_is_up_to_date(
+    repo: Path, tmp_path: Path
+):
+    tests_wt, _, _ = _publish_leaf_then_advance_locally(repo, tmp_path)
+    git("push", "origin", "devon/api_tests", cwd=tests_wt)
+    before = git("ls-remote", "origin", cwd=repo)
+
+    sync_stack(root=tests_wt, forge=FakeForge(no_pr=["devon/api_tests"]))
+
+    assert git("ls-remote", "origin", cwd=repo) == before
