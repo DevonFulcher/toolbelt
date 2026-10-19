@@ -9,6 +9,7 @@ import type {
   SlotDimensions,
   Tone,
 } from "../api/generated";
+import { sessionLink } from "../logic/claimSession";
 import type { RailSegment } from "../logic/layout";
 import { stackViewRoot } from "../logic/focus";
 import { serializeState } from "../logic/viewState";
@@ -407,7 +408,7 @@ export const Card = memo(
             />
           }
         >
-          <AgentSlots extras={extras} branchId={id} session={branch.agent} Slot={Slot} />
+          <AgentSlots extras={extras} branchId={id} session={sessionLink(claim, branch.agent)} Slot={Slot} />
         </Group>
         <Group
           id="spend"
