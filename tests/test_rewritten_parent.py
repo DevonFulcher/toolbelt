@@ -63,7 +63,7 @@ def test_a_child_is_rebased_onto_a_parent_that_was_amended(repo: Path, tmp_path:
     )
 
 
-def test_a_grandchild_follows_a_parent_restacked_after_its_own_parent_landed(
+def test_a_grandchild_follows_a_parent_merged_after_its_own_parent_landed(
     repo: Path, tmp_path: Path
 ):
     api_wt = tmp_path / "wt-api"
@@ -83,10 +83,14 @@ def test_a_grandchild_follows_a_parent_restacked_after_its_own_parent_landed(
 
     sync_stack(root=leaf_wt, forge=FakeForge(merged={"devon/api"}))
 
-    assert _own_commits("devon/mid", "main", repo) == ["mid"]
-    assert _own_commits("devon/leaf", "devon/mid", repo) == ["leaf"]
-    assert _merges("devon/leaf", "main", repo) == []
+    # mid and leaf each gain a merge commit (no replay): leaf follows mid's
+    # merge as a plain merge, and nothing is rewritten.
+    assert git("log", "-1", "--format=%s", "devon/mid", cwd=repo) == (
+        "Merge origin/main into devon/mid"
+    )
+    assert git("merge-base", "--is-ancestor", "devon/mid", "devon/leaf", cwd=repo) == ""
     assert (leaf_wt / "api.txt").read_text() == "a\nmid\nleaf\n"
+    assert git("diff", "--name-only", "main", "devon/leaf", cwd=repo) == "api.txt"
     assert git("rev-parse", "devon/leaf", cwd=repo) == git(
         "rev-parse", "origin/devon/leaf", cwd=repo
     )

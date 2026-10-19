@@ -2,8 +2,13 @@
 
 Day-to-day this merges (not rebases) root -> leaf: no force-push, and a conflict
 is resolved with a single ``git commit`` + re-run (idempotent). When a parent's
-PR has merged, its children are rebased onto the grandparent instead
-("restack-on-land") and the landed branch is cleaned up. A child whose parent
+PR has merged, its children get the base it landed on merged in and are
+reparented onto the grandparent ("restack-on-land"), and the landed branch is
+cleaned up. That merge is computed over snapshots (the child's tree, the base's
+tree and the parent's last tip the child contains), so it rewrites no history
+and is only pushed as a fast-forward. Only when it conflicts, or the child's
+remote has diverged from the child, are the child's own commits replayed onto
+the base instead (and force-pushed). A child whose parent
 was rewritten (restacked, or squashed) still holds the old copies of the
 parent's commits, so merging the parent would conflict with itself: the child's
 own commits are replayed onto the parent instead. These are the only places we
@@ -299,6 +304,90 @@ def _is_ancestor(ancestor: str, descendant: str, *, worktree: Path) -> bool:
     )
 
 
+def _last_parent_tip_in(child: str, parent: str, *, worktree: Path) -> str | None:
+    """The newest commit ``parent`` has pointed at (per its reflog) that ``child``
+    contains: the tip ``child`` was last based on. Falls back to the fork point
+    of ``child`` and ``parent``; None when they share no history."""
+    for tip in past_tips(parent, root=worktree):
+        if _is_ancestor(tip, child, worktree=worktree):
+            return tip
+    fork = run(
+        ["git", "merge-base", child, parent],
+        cwd=worktree,
+        check=False,
+        capture_output=True,
+    )
+    return fork.stdout.strip() if fork.returncode == 0 else None
+
+
+def _merge_landed_parent(child: str, *, worktree: Path, parent: str, onto: str) -> bool:
+    """Bring ``child`` up to date with the base its landed ``parent`` was
+    squashed into, by merging ``onto`` in, without rewriting any history.
+
+    The merge is three-way over snapshots with ``parent``'s last tip that
+    ``child`` contains as the base, so what the child already has of the
+    parent's work is not applied twice. The merge commit has ``child``'s tip as
+    first parent and ``onto`` as second, so it only ever fast-forwards the
+    child's remote and keeps conflict resolutions that live in the child's
+    merge commits (a replay of the child's non-merge commits drops those).
+    Does nothing if ``child`` already contains ``onto``.
+
+    Returns True once ``child`` contains ``onto``. False means the caller must
+    restack the old way (replay and force-push): the merge conflicts (``onto``
+    changed what the child changed), the child's remote is not an ancestor of
+    the child (the push would need a force), or the worktree cannot be fast
+    forwarded.
+    """
+    if _is_ancestor(onto, child, worktree=worktree):
+        return True
+    if _remote_branch_exists(child, root=worktree) and not _is_ancestor(
+        f"origin/{child}", child, worktree=worktree
+    ):
+        return False
+    base = _last_parent_tip_in(child, parent, worktree=worktree)
+    if base is None:
+        return False
+    tree = run(
+        [
+            "git",
+            "merge-tree",
+            "--write-tree",
+            f"--merge-base={base}",
+            child,
+            onto,
+        ],
+        cwd=worktree,
+        check=False,
+        capture_output=True,
+    )
+    if tree.returncode != 0:
+        return False
+    merged = run(
+        [
+            "git",
+            "commit-tree",
+            tree.stdout.split()[0],
+            "-p",
+            child,
+            "-p",
+            onto,
+            "-m",
+            f"Merge {onto} into {child}",
+        ],
+        cwd=worktree,
+        capture_output=True,
+    ).stdout.strip()
+    return (
+        run(
+            ["git", "merge", "--ff-only", merged],
+            cwd=worktree,
+            check=False,
+            capture_output=True,
+        ).returncode
+        == 0
+    )
+
+
 def _rewritten_parent_tip(child: str, parent: str, *, worktree: Path) -> str | None:
     """The old tip of ``parent`` that ``child`` still builds on, when ``parent``
     has been rewritten since: the commit after which ``child``'s own commits begin.
@@ -425,6 +514,25 @@ def sync_stack(
             # (already on the base via their squashes). Handles N stacked lands.
             base = surviving_base(child)
             onto = base if base in tracked else f"origin/{base}"
+
+            if (
+                not resuming
+                and not _merge_in_progress(worktree)
+                and _merge_landed_parent(
+                    child, worktree=worktree, parent=direct_parent, onto=onto
+                )
+            ):
+                # Merged, not replayed: the push is a fast-forward.
+                set_parent(child, base, root=root)
+                if not _remote_branch_exists(
+                    child, root=root
+                ) or is_fast_forward_ahead_of_remote(child, root=worktree):
+                    run(
+                        ["git", "push", "-u", "origin", child],
+                        cwd=worktree,
+                        exit_on_error=True,
+                    )
+                continue
 
             if not _restack(
                 child,

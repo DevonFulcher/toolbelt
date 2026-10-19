@@ -105,8 +105,13 @@ def merge(
     every open PR below it in the stack.
 
     Then runs `sync` rooted at the merged branch's own worktree, so it works
-    from any directory. That sync rebases the merged branch's children onto
-    the next unmerged ancestor and force-pushes them, then force-removes the
+    from any directory. That sync merges the base the branch landed on into
+    each child (a merge commit computed over snapshots, with the squash
+    commit as its second parent) and reparents it onto the next unmerged
+    ancestor; the push is a plain fast-forward, never forced. A child whose
+    changes overlap what landed, or whose remote has diverged, is instead
+    replayed onto the base and force-pushed, stopping on a conflict like
+    `sync`. Then it force-removes the
     merged branch's worktree (discarding any uncommitted changes there) and
     deletes its local branch and stack entry. If the branch has no worktree,
     only `branch-clean` runs.
@@ -464,9 +469,18 @@ def sync():
     branch that diverged from origin is not pushed (stops with an error).
     A work repo's default branch, and its other untracked branches origin
     already has, are never pushed. If a branch's PR has
-    merged on GitHub, its children are instead rebased onto the nearest
-    unmerged ancestor, reparented onto it, and force-pushed
-    (--force-with-lease). A child whose parent was rewritten (restacked,
+    merged on GitHub, the base it landed on (the nearest unmerged ancestor, or
+    origin/<base>) is merged into each child and the child is reparented onto
+    it. The merge is computed over snapshots (the child's tree, the base's
+    tree, and the landed branch's last tip the child contains), so it keeps
+    conflict resolutions made in the child's merge commits and rewrites no
+    history; the merge commit has the child's tip and the base as parents and
+    is pushed as a plain fast-forward, never forced. Nothing happens if the
+    child already contains the base. When that merge conflicts (the base
+    changed what the child changed), or the child's remote is not an ancestor
+    of it, the child's own commits are instead replayed onto the base with
+    `git rebase --onto` and force-pushed (--force-with-lease), stopping on a
+    conflict. A child whose parent was rewritten (restacked,
     amended or squashed) holds old copies of the parent's commits, so its
     own commits are replayed onto the parent the same way instead of merging. The merged branch's worktree is then force-removed
     (discarding any uncommitted changes there), and its local branch and
