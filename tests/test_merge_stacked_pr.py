@@ -1,4 +1,4 @@
-"""`git_merge` refuses PRs in a GitHub stack and points at the unlink command.
+"""`git_merge` refuses PRs in a GitHub stack and tells the user to unstack it in GitHub.
 
 `gh` and the stack sync are faked: the regular `gh pr merge` fails the way
 GitHub rejects stacked PRs.
@@ -69,7 +69,7 @@ def _install(monkeypatch: pytest.MonkeyPatch, gh: Gh, worktree: Path) -> None:
     monkeypatch.setattr(workflow, "ensure_not_inside_worktree", lambda *a, **k: None)
 
 
-def test_stacked_pr_is_refused_with_the_unlink_command(
+def test_stacked_pr_is_refused_with_the_unstack_command(
     monkeypatch: pytest.MonkeyPatch, worktree: Path, caplog: pytest.LogCaptureFixture
 ):
     gh = Gh(merge_stderr=STACKED_ERROR, api_responses=[])
@@ -78,7 +78,7 @@ def test_stacked_pr_is_refused_with_the_unlink_command(
     with pytest.raises(typer.Exit):
         workflow.git_merge("7")
 
-    assert "toolbelt git unlink-github-stack 7" in caplog.text
+    assert "gh stack unstack <stack-number>" in caplog.text
     assert gh.api_calls == []
     assert gh.synced == []
 

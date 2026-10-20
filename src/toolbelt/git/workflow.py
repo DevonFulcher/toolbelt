@@ -130,7 +130,8 @@ def git_merge(pr: str) -> None:
         logger.error(
             f"PR {viewed['number']} is part of a GitHub stack, which GitHub only "
             "merges through its asynchronous API (rewriting the children's "
-            f"branches). Unlink it first: toolbelt git unlink-github-stack {pr}"
+            "branches). Unlink the stack in GitHub first: "
+            "gh stack unstack <stack-number>"
         )
         raise typer.Exit(1)
     if merged.returncode:
