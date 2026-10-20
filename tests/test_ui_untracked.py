@@ -23,7 +23,10 @@ from toolbelt.ui.untracked_prs import (
     repo_slug,
     tracked_pairs,
     untracked,
+    visible_prs,
 )
+
+NO_CONFIG = Path("/nonexistent/config.yaml")
 
 
 def node(
@@ -51,6 +54,50 @@ def payload(*nodes: dict, count: int | None = None) -> dict:
     return {
         "data": {"search": {"issueCount": count or len(nodes), "nodes": [*nodes, {}]}}
     }
+
+
+class TestVisiblePrs:
+    """Personal-repo PRs follow the same rule as registered repos."""
+
+    def prs(self, *repos: str) -> list[OpenPr]:
+        return parse_search(
+            payload(*(node(i, repo) for i, repo in enumerate(repos, 1)))
+        ).prs
+
+    def test_a_work_machine_hides_prs_owned_outside_the_employer_orgs(self):
+        prs = self.prs("dbt-labs/api", "DevonFulcher/personal")
+
+        shown = visible_prs(prs, env={}, config_file=NO_CONFIG)
+
+        assert [pr.repo for pr in shown] == ["dbt-labs/api"]
+
+    def test_a_personal_machine_shows_every_pr(self):
+        prs = self.prs("dbt-labs/api", "DevonFulcher/personal")
+
+        shown = visible_prs(prs, env={"IS_PERSONAL": "true"}, config_file=NO_CONFIG)
+
+        assert shown == prs
+
+    def test_employer_orgs_come_from_the_config_file(self, tmp_path):
+        config = tmp_path / "config.yaml"
+        config.write_text("tasks:\n  employer_orgs: [DevonFulcher]\n")
+        prs = self.prs("dbt-labs/api", "DevonFulcher/personal")
+
+        shown = visible_prs(prs, env={}, config_file=config)
+
+        assert [pr.repo for pr in shown] == ["DevonFulcher/personal"]
+
+    def test_the_feed_applies_the_rule_to_the_search(self):
+        feed, _, _ = make_feed(
+            payload(node(1, "dbt-labs/api"), node(2, "DevonFulcher/personal")),
+            visible=lambda prs: [pr for pr in prs if pr.repo == "dbt-labs/api"],
+        )
+
+        asyncio.run(feed.run_once())
+
+        listed = feed.get()
+        assert isinstance(listed, api_models.UntrackedLoaded)
+        assert [p.repo for p in listed.prs] == ["dbt-labs/api"]
 
 
 class TestRepoSlug:

@@ -10,14 +10,18 @@ fork's PR, a repo that is not registered). Refreshing is slow (every few
 minutes, ``UntrackedPrFeed``) and, like the status polling, only while a
 browser is watching.
 
+PRs in repos owned outside the employer orgs are left out on a machine that is
+not personal, as for registered repos (see ``repo_visibility.py``).
+
 The GitHub search and the lookup of a checkout's remote are injected, so tests
 drive everything with canned payloads.
 """
 
 import asyncio
+import os
 import re
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -26,6 +30,7 @@ from toolbelt import logged_process
 from toolbelt.ui import api_models as api
 from toolbelt.ui.github_requests import GithubRequests
 from toolbelt.ui.live_status import DEFAULT_TICK_SECONDS, EventHub
+from toolbelt.ui.repo_visibility import visible_by_owner
 
 DEFAULT_INTERVAL_SECONDS = 180.0
 
@@ -100,6 +105,21 @@ class OpenPr:
     is_draft: bool
     head_branch: str
     archived: bool
+
+
+def visible_prs(
+    prs: list[OpenPr],
+    *,
+    env: Mapping[str, str] = os.environ,
+    config_file: Path | None = None,
+) -> list[OpenPr]:
+    """``prs`` shown on this machine: personal-repo PRs only on a personal one."""
+    return visible_by_owner(
+        prs,
+        lambda pr: pr.repo.split("/")[0].lower(),
+        env=env,
+        config_file=config_file,
+    )
 
 
 @dataclass(frozen=True)
@@ -183,6 +203,7 @@ class UntrackedPrFeed:
         search: SearchRunner,
         hub: EventHub,
         remote_of: RemoteLookup = origin_remote,
+        visible: Callable[[list[OpenPr]], list[OpenPr]] = visible_prs,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         interval: float = DEFAULT_INTERVAL_SECONDS,
@@ -192,6 +213,7 @@ class UntrackedPrFeed:
         self._search = search
         self._hub = hub
         self._remote_of = remote_of
+        self._visible = visible
         self._clock = clock
         self._sleep = sleep
         self._interval = interval
@@ -226,7 +248,7 @@ class UntrackedPrFeed:
                     created_at=pr.created_at.isoformat().replace("+00:00", "Z"),
                     is_draft=pr.is_draft,
                 )
-                for pr in untracked(found.prs, pairs)
+                for pr in untracked(self._visible(found.prs), pairs)
             ],
         )
 
