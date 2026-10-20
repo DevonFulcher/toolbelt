@@ -44,9 +44,10 @@ State and lifetime:
   claims kept.
 - `blocked` on a permission prompt or input dialog: ttl 1800. The next tool
   result puts it back to `working`.
-- Claims are turn-scoped: every turn starts with an empty list.
-- A subagent gets its own file, released when it stops (and all subagent files
-  are released when the main turn ends).
+- The main holder's claims are turn-scoped: every turn starts with an empty list.
+- A subagent gets its own file, live from SubagentStart until it stops (or the
+  session ends), also while the main turn is over; one with no hook event for
+  2 hours is released.
 - Before each write the mod reads `claims/revoked/<holder>.json` (written by
   `tt`) and drops any claim touched at or before its revocation time.
 - The status line shows `claimed: N` while working and something is claimed.

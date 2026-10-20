@@ -15,6 +15,8 @@ type Holder = {
   agentId: string | null
   state: HolderState
   startedAt: number
+  // last hook event seen for this holder; a subagent quiet for SUBAGENT_QUIET_MS is dropped
+  lastActiveAt: number
   cwd: string | null
   claims: Map<string, Claim>
   isDirty: boolean
@@ -28,6 +30,11 @@ type Config = {
 
 const TTL_SECONDS: Record<HolderState, number> = { working: 180, idle: 1800, blocked: 1800 }
 const HEARTBEAT_MS = 30_000
+// A subagent's claim lives from SubagentStart to SubagentStop. If SubagentStop never
+// arrives (the subagent was killed) while the Claude process lives, the heartbeat
+// would keep the claim fresh forever, so a subagent with no hook event for this long
+// is released. Its next event claims again.
+const SUBAGENT_QUIET_MS = 2 * 60 * 60 * 1000
 const MAX_REFS_PER_CALL = 50
 const MAX_REF_LENGTH = 200
 const TASK_CLAIM_TOOL = 'mcp__toolbelt-claims__task_claim'
@@ -97,6 +104,7 @@ const holderFor = (agentId: string | undefined): Holder => {
       agentId: agentId ?? null,
       state: 'working',
       startedAt: now(),
+      lastActiveAt: now(),
       cwd: null,
       claims: new Map(),
       isDirty: true,
@@ -157,6 +165,7 @@ const touch = ($: EngineInterface, agentId: string | undefined, kind: ClaimKind,
   const key = `${kind}:${value}`
   const isNew = !holder.claims.has(key)
   holder.claims.set(key, { kind, value, touchedAt: now() })
+  holder.lastActiveAt = now()
   if (holder.state === 'working' && timer === null) startTimer($)
   if (isNew) {
     holder.isDirty = true
@@ -293,12 +302,20 @@ const startTimer = ($: EngineInterface): void => {
     void (async () => {
       try {
         await ensureSession($)
+        await releaseQuietSubagents($)
         await writeAll($, holder => holder.state === 'working')
+        stopTimerIfIdle()
       } catch (error) {
         debug($, `heartbeat failed: ${String(error)}`)
       }
     })()
   })
+}
+
+const releaseQuietSubagents = async ($: EngineInterface): Promise<void> => {
+  for (const [key, holder] of [...holders]) {
+    if (key !== MAIN && now() - holder.lastActiveAt > SUBAGENT_QUIET_MS) await release($, key)
+  }
 }
 
 const release = async ($: EngineInterface, agentId: string): Promise<void> => {
@@ -324,6 +341,7 @@ const setState = ($: EngineInterface, agentId: string | undefined, state: Holder
 
 const resume = ($: EngineInterface, agentId: string | undefined): void => {
   const holder = holders.get(agentId ?? MAIN)
+  if (holder !== undefined) holder.lastActiveAt = now()
   if (holder !== undefined && holder.state === 'blocked') setState($, agentId, 'working')
 }
 
@@ -377,11 +395,12 @@ export const register: Register = on => {
   })
 
   on('turn.complete', async ($, e, next) => {
-    // a subagent's own turns carry agentId; only the main loop's end is ours
+    // a subagent's own turns carry agentId; only the main loop's end is ours. Subagent
+    // holders are not touched: a background subagent keeps working after the main turn
+    // ends, so its claim lives until SubagentStop or session end.
     if (e.agentId === undefined) {
       try {
         await ensureSession($)
-        for (const key of [...holders.keys()]) if (key !== MAIN) await release($, key)
         const main = holders.get(MAIN)
         if (main !== undefined) {
           main.state = 'idle'
@@ -421,6 +440,7 @@ export const register: Register = on => {
     try {
       const holder = holderFor(e.agent_id)
       holder.state = 'working'
+      holder.lastActiveAt = now()
       holder.isDirty = true
       startTimer($)
       scheduleFlush($)

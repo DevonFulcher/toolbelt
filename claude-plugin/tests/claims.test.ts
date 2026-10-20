@@ -541,6 +541,71 @@ describe('subagents and the claim tool', () => {
     expect(w.files.get(`${CLAIMS}/${SESSION}.ag_1.json`)).toMatchObject({ ttl_seconds: 0, claims: [] })
   })
 
+  test('a main turn end leaves a running subagent claimed and heartbeating', async ($, on) => {
+    const w = world(on)
+    await startTurn($, w)
+    await $.classic.SubagentStart({ agent_id: 'ag/1', agent_type: 'general-purpose' } as never)
+    await $.tool.call(EDIT('/g/wt/repo/sub/f.ts', 'ag/1'))
+    await w.clock.settle()
+    const subPath = `${CLAIMS}/${SESSION}.ag_1.json`
+    await endTurn($, w)
+    expect(mainDoc(w)).toMatchObject({ state: 'idle' })
+    expect(w.files.get(subPath)).toMatchObject({ state: 'working', ttl_seconds: 180 })
+    expect(claimed(w.files.get(subPath) as Doc)).toEqual(['/g/wt/repo/sub'])
+
+    const before = Date.parse((w.files.get(subPath) as Doc).updated_at)
+    await w.clock.advance(60_000)
+    expect(Date.parse((w.files.get(subPath) as Doc).updated_at)).toBeGreaterThan(before)
+    expect(w.files.get(subPath)).toMatchObject({ ttl_seconds: 180 })
+
+    await $.turn.start({ text: 'again', turnId: 't2' })
+    await w.clock.settle()
+    expect(claimed(w.files.get(subPath) as Doc)).toEqual(['/g/wt/repo/sub'])
+
+    await $.classic.SubagentStop({ agent_id: 'ag/1', agent_type: 'general-purpose', stop_hook_active: false } as never)
+    await w.clock.settle()
+    expect(w.files.get(subPath)).toMatchObject({ ttl_seconds: 0, claims: [] })
+  })
+
+  test('a subagent that stops inside the main turn is released, and the heartbeat stops after the turn', async ($, on) => {
+    const w = world(on)
+    await startTurn($, w)
+    await $.classic.SubagentStart({ agent_id: 'ag/1', agent_type: 'general-purpose' } as never)
+    await $.classic.SubagentStop({ agent_id: 'ag/1', agent_type: 'general-purpose', stop_hook_active: false } as never)
+    await endTurn($, w)
+    expect(w.files.get(`${CLAIMS}/${SESSION}.ag_1.json`)).toMatchObject({ ttl_seconds: 0 })
+    const count = w.writes.length
+    await w.clock.advance(120_000)
+    expect(w.writes.length).toBe(count)
+  })
+
+  test('session end releases every subagent', async ($, on) => {
+    const w = world(on)
+    await startTurn($, w)
+    await $.classic.SubagentStart({ agent_id: 'ag/1', agent_type: 'general-purpose' } as never)
+    await $.tool.call(EDIT('/g/wt/repo/sub/f.ts', 'ag/1'))
+    await w.clock.settle()
+    await endTurn($, w)
+    await $.session.end({ reason: 'clear', sessionId: SESSION, resume: { id: SESSION } } as never)
+    expect(w.files.get(`${CLAIMS}/${SESSION}.ag_1.json`)).toMatchObject({ ttl_seconds: 0, claims: [] })
+  })
+
+  test('a subagent that never stops is released after 2 hours without events, an active one is not', async ($, on) => {
+    const w = world(on)
+    await startTurn($, w)
+    await $.classic.SubagentStart({ agent_id: 'quiet', agent_type: 'general-purpose' } as never)
+    await $.classic.SubagentStart({ agent_id: 'busy', agent_type: 'general-purpose' } as never)
+    await endTurn($, w)
+    for (let i = 0; i < 3; i += 1) {
+      await w.clock.advance(30 * 60_000)
+      await $.classic.PostToolUse({ agent_id: 'busy', tool_name: 'Bash', tool_input: {}, tool_response: {}, tool_use_id: 'u' } as never)
+    }
+    expect(w.files.get(`${CLAIMS}/${SESSION}.quiet.json`)).toMatchObject({ state: 'working', ttl_seconds: 180 })
+    await w.clock.advance(31 * 60_000)
+    expect(w.files.get(`${CLAIMS}/${SESSION}.quiet.json`)).toMatchObject({ ttl_seconds: 0, claims: [] })
+    expect(w.files.get(`${CLAIMS}/${SESSION}.busy.json`)).toMatchObject({ state: 'working', ttl_seconds: 180 })
+  })
+
   test('task_claim adds ref claims and the status shows the distinct count', async ($, on) => {
     const w = world(on)
     await startTurn($, w)

@@ -54,8 +54,11 @@ file name without `.json` (a file that disagrees is ignored).
   the agent's turn ended and it waits for the user; `blocked` = it waits on a
   permission prompt/question. idle/blocked live holders do NOT change the
   task's status; the UI shows a chip ("agent idle" / "agent blocked on you")
-  with the session link. Claims are TURN-SCOPED: at a new turn the writer
-  starts with an empty claims list.
+  with the session link. The main holder's claims are TURN-SCOPED: at a new main
+  turn the writer starts with an empty claims list. A subagent holder's claims
+  live from SubagentStart to SubagentStop (or session end), independent of the
+  main turn: a background subagent keeps working, and keeps its claims and
+  heartbeat, after the main turn ends.
 - **Writes** were specified as atomic (a temp file in the same directory,
   then rename), but the plugin's mod API only has a plain overwrite: see
   "Amendments" below. Readers tolerate empty/unreadable/partial/unknown-version
@@ -110,7 +113,11 @@ The plugin's mod API has no delete, rename or atomic write, so:
    is. A worktree claim that resolves to nothing stays ignored (listed by
    `--verbose`).
 6. Subagent holders are named `<session>.<agent_id>`, and are released (a
-   ttl-0 rewrite) when the subagent stops or the main turn ends.
+   ttl-0 rewrite) when the subagent stops or the session ends, not when the
+   main turn ends. While a subagent works its file is heartbeated like the main
+   one. If it never stops (killed) while the Claude process lives, it is
+   released after 2 hours without any hook event for it; if the process dies,
+   the file expires by its ttl.
 
 ### Details this implementation fixes (clarifications of v1)
 
