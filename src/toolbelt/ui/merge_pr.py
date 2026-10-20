@@ -1,6 +1,6 @@
 """Lands a PR from the page by running `toolbelt git merge`, exactly as typing
-it would: squash-merge on GitHub (or through GitHub's async merge for a stacked
-PR), then sync the stack the merged branch belonged to."""
+it would: squash-merge on GitHub, then sync the stack the merged branch belonged
+to."""
 
 import shutil
 import sys

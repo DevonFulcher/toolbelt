@@ -1,7 +1,7 @@
-"""`git_merge` falls back to GitHub's async merge API for PRs in a GitHub stack.
+"""`git_merge` refuses PRs in a GitHub stack and points at the unlink command.
 
 `gh` and the stack sync are faked: the regular `gh pr merge` fails the way
-GitHub rejects stacked PRs, and the `gh api` calls return scripted responses.
+GitHub rejects stacked PRs.
 """
 
 import json
@@ -67,66 +67,19 @@ def _install(monkeypatch: pytest.MonkeyPatch, gh: Gh, worktree: Path) -> None:
     )
     monkeypatch.setattr(workflow, "main_worktree", lambda root: worktree.parent)
     monkeypatch.setattr(workflow, "ensure_not_inside_worktree", lambda *a, **k: None)
-    monkeypatch.setattr(workflow.time, "sleep", lambda seconds: None)
 
 
-def test_stacked_pr_is_merged_through_the_async_api_then_synced(
-    monkeypatch: pytest.MonkeyPatch, worktree: Path
+def test_stacked_pr_is_refused_with_the_unlink_command(
+    monkeypatch: pytest.MonkeyPatch, worktree: Path, caplog: pytest.LogCaptureFixture
 ):
-    gh = Gh(
-        merge_stderr=STACKED_ERROR,
-        api_responses=[
-            {"status": "pending", "details": {"uuid": "abc"}},
-            {"status": "pending", "details": {"uuid": "abc"}},
-            {"status": "merged", "details": {"sha": "deadbeef"}},
-        ],
-    )
-    _install(monkeypatch, gh, worktree)
-
-    workflow.git_merge("7")
-
-    assert gh.api_calls[0] == [
-        "gh",
-        "api",
-        "-X",
-        "PUT",
-        "repos/{owner}/{repo}/pulls/7/merge-async",
-        "-f",
-        "merge_method=squash",
-    ]
-    assert (
-        gh.api_calls[1:]
-        == [["gh", "api", "repos/{owner}/{repo}/pulls/7/merge-async/abc"]] * 2
-    )
-    assert gh.synced == [(worktree.parent, "feature")]
-
-
-def test_failed_async_merge_exits_without_syncing(
-    monkeypatch: pytest.MonkeyPatch, worktree: Path
-):
-    gh = Gh(
-        merge_stderr=STACKED_ERROR,
-        api_responses=[{"status": "failed", "details": {"message": "checks"}}],
-    )
+    gh = Gh(merge_stderr=STACKED_ERROR, api_responses=[])
     _install(monkeypatch, gh, worktree)
 
     with pytest.raises(typer.Exit):
         workflow.git_merge("7")
 
-    assert gh.synced == []
-
-
-def test_queued_async_merge_does_not_sync(
-    monkeypatch: pytest.MonkeyPatch, worktree: Path
-):
-    gh = Gh(
-        merge_stderr=STACKED_ERROR,
-        api_responses=[{"status": "enqueued", "details": {"message": "queued"}}],
-    )
-    _install(monkeypatch, gh, worktree)
-
-    workflow.git_merge("7")
-
+    assert "toolbelt git unlink-github-stack 7" in caplog.text
+    assert gh.api_calls == []
     assert gh.synced == []
 
 

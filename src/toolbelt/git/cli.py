@@ -15,6 +15,7 @@ from toolbelt.git.repo import get_current_repo_root_path
 from toolbelt.git.repo_lock import repo_lock
 from toolbelt.git.stack.cli import stack_typer
 from toolbelt.git.stack.forge import GhForge
+from toolbelt.git.stack.gh_stack import unlink_github_stack
 from toolbelt.git.workflow import (
     git_branch_clean,
     git_merge,
@@ -101,8 +102,8 @@ def merge(
     """Squash-merge a PR on GitHub, then sync the stack it belongs to.
 
     Runs `gh pr merge --squash PR`. A PR that is part of a GitHub stack is
-    merged through GitHub's asynchronous merge API instead, which also merges
-    every open PR below it in the stack.
+    refused (GitHub only merges those asynchronously); run
+    `unlink-github-stack PR` first.
 
     Then runs `sync` rooted at the merged branch's own worktree, so it works
     from any directory. That sync merges the base the branch landed on into
@@ -118,6 +119,24 @@ def merge(
     """
     with repo_lock(repo_root()):
         git_merge(pr)
+
+
+@git_typer.command(name="unlink-github-stack")
+def unlink_github_stack_command(
+    pr: Annotated[
+        str,
+        typer.Argument(help="PR number, URL, or branch in the GitHub stack."),
+    ],
+):
+    """Remove the GitHub stack a PR is in (`gh stack unstack`).
+
+    toolbelt no longer links stacks on GitHub, but older runs did, and a PR in
+    a GitHub stack cannot be squash-merged by `merge`. This dissolves the
+    whole stack's grouping on GitHub for every PR in it; PRs, branches and
+    bases are left as they are. Does nothing if the PR is not in a stack.
+    Never runs automatically.
+    """
+    unlink_github_stack(pr)
 
 
 @git_typer.command(name="branch-clean")

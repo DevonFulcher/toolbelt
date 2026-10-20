@@ -25,7 +25,6 @@ from toolbelt.git.repo_pull import default_config_path
 from toolbelt.git.stack import lineage
 from toolbelt.git.stack.append import create_stacked_branch
 from toolbelt.git.stack.forge import GhForge
-from toolbelt.git.stack.gh_stack import GhStackedPrs
 from toolbelt.git.stack.ops import (
     compress_branch,
     diff_parent_command,
@@ -201,7 +200,7 @@ def set_parent(
     forge = GhForge(root)
     with repo_lock(root):
         branch = set_branch_parent(root=root, new_parent=new_parent)
-        sync_stack(root=root, forge=forge, stacked_prs=GhStackedPrs())
+        sync_stack(root=root, forge=forge)
         # An untracked new parent is not part of the synced stack; keep an
         # already-published one current so the retargeted PR diffs cleanly.
         push_if_fast_forward(new_parent, root=root)

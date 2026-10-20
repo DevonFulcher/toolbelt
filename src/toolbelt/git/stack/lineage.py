@@ -14,7 +14,6 @@ import functools
 import re
 from collections import defaultdict
 from collections.abc import Iterator
-from datetime import datetime
 from pathlib import Path
 
 from toolbelt import logged_process
@@ -24,7 +23,6 @@ from toolbelt.git.stack.store import (
     Parents,
     PrCandidate,
     PrLink,
-    PublishedChain,
     RepoIdentity,
     RepoRecord,
     StackStore,
@@ -198,30 +196,6 @@ def remove_parent(branch: str, *, root: Path, landed: bool = False) -> None:
     facts are archived; ``landed`` records that its PR was merged."""
     with _repo_store(root) as (store, repo_id):
         store.remove_branch(repo_id, branch, landed=landed)
-
-
-def get_gh_stack_unsupported_at(*, root: Path) -> datetime | None:
-    """When `gh stack` was last found unavailable for this repo, if ever."""
-    with _repo_store(root) as (store, repo_id):
-        return store.gh_stack_unsupported_at(repo_id)
-
-
-def set_gh_stack_unsupported_at(at: datetime | None, *, root: Path) -> None:
-    with _repo_store(root) as (store, repo_id):
-        store.set_gh_stack_unsupported_at(repo_id, at)
-
-
-def get_published_chain(bottom: str, *, root: Path) -> PublishedChain | None:
-    """The chain last linked on GitHub starting at ``bottom``, if any."""
-    with _repo_store(root) as (store, repo_id):
-        return store.get_published_chain(repo_id, bottom)
-
-
-def set_published_chain(
-    bottom: str, chain_hash: str, branches: list[str], at: datetime, *, root: Path
-) -> None:
-    with _repo_store(root) as (store, repo_id):
-        store.set_published_chain(repo_id, bottom, chain_hash, branches, at)
 
 
 def all_parents(*, root: Path) -> Parents:
