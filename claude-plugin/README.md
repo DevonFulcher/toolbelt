@@ -46,8 +46,8 @@ State and lifetime:
   result puts it back to `working`.
 - The main holder's claims are turn-scoped: every turn starts with an empty list.
 - A subagent gets its own file, live from SubagentStart until it stops (or the
-  session ends), also while the main turn is over; one with no hook event for
-  2 hours is released.
+  session ends), also while the main turn is over. If SubagentStop never comes,
+  the claim ends when the Claude process dies (see below), or at session end.
 - Before each write the mod reads `claims/revoked/<holder>.json` (written by
   `tt`) and drops any claim touched at or before its revocation time.
 - The status line shows `claimed: N` while working and something is claimed.
@@ -82,7 +82,11 @@ Leftover claim files expire by themselves.
 
 ## When the process is killed
 
-Nothing runs at a kill, so the file stays. It expires at `updated_at +
+Nothing runs at a kill, so the file stays. Every file records the Claude
+process (`pid` and `process_started_at`, looked up once at load with `sh` and
+`ps`); `tt` on the same machine sees that the process is gone, or its pid was
+reused, and treats the holder as dead at once. Where the mod could not
+determine them it omits both fields, and the file expires at `updated_at +
 ttl_seconds` (180 s if it died mid-turn, up to 1800 s if idle). Nothing needs
 recovering: claims are turn-scoped.
 

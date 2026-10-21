@@ -40,6 +40,8 @@ file name without `.json` (a file that disagrees is ignored).
   "started_at": "2026-10-12T20:00:00Z",
   "updated_at": "2026-10-12T20:00:30Z",
   "ttl_seconds": 180,
+  "pid": 41234,                   // optional, with process_started_at: the writer's process
+  "process_started_at": "2026-10-12T19:58:02Z",
   "claims": [
     {"kind": "worktree", "path": "/Users/devon/git/wt/toolbelt/my-branch", "touched_at": "2026-10-12T20:00:10Z"},
     {"kind": "ref", "ref": "PLAT-412", "touched_at": "2026-10-12T20:00:12Z"}
@@ -47,9 +49,31 @@ file name without `.json` (a file that disagrees is ignored).
 }
 ```
 
-- **Live** iff `now < updated_at + ttl_seconds`. The writer picks the ttl:
-  working 180 (heartbeat every 30s), idle 1800, blocked 1800. Expired files
-  are ignored by readers and deleted by `tt task gc`.
+- **Live** iff `now < updated_at + ttl_seconds` and, when the file has `pid`
+  and `process_started_at`, that process still exists with that start time
+  (see "Writer process" below). The writer picks the ttl: working 180
+  (heartbeat every 30s), idle 1800, blocked 1800. Expired files, and files
+  whose writer process is gone, are ignored by readers and deleted by
+  `tt task gc`.
+- **Writer process** (optional fields `pid`, an integer >= 1, and
+  `process_started_at`, an ISO timestamp, written together or not at all).
+  They record the process that writes the file (the Claude process, for the
+  plugin) so a reader can tell that the writer died without waiting for the
+  ttl. The start time is what defeats pid reuse: a pid that exists but
+  started at another time (more than 2 s apart) is a different process, so
+  the holder is dead. A reader checks this on the local machine only: claim
+  files are local, and a pid means nothing on another host. macOS and Linux
+  only (`kill -0` and `ps -o lstart=`); Windows is not supported. If the
+  check cannot be made (no `ps`, a pid it may not probe) the holder is live
+  by its ttl. Files without the fields (`human.*` files written by `tt`,
+  older plugin versions, a plugin that could not determine its process) are
+  live by their ttl alone, exactly as before. A holder whose process is gone
+  is handled like an expired one: ignored, listed by `tt task status
+  --verbose` ("its process is gone"), and deleted by `tt task gc` and by
+  `tt ui` (at once rather than after the 10 s grace: a dead writer cannot
+  heartbeat). The check is not a substitute for SubagentStop: a subagent
+  orphaned inside a live Claude process keeps its holder alive until its
+  SubagentStop or the session ends.
 - **Semantics.** `working` live claims make the task "With an agent". `idle` =
   the agent's turn ended and it waits for the user; `blocked` = it waits on a
   permission prompt/question. idle/blocked live holders do NOT change the
@@ -104,7 +128,7 @@ The plugin's mod API has no delete, rename or atomic write, so:
    `claude://claude.ai/epitaxy/<that id>`.
 4. **Machine-readable schema**: `claude-plugin/schema/claim.schema.json`
    (`additionalProperties: false` at the top level and on claims,
-   `ttl_seconds >= 0`). `tests/test_task_claims.py` validates files produced
+   `ttl_seconds >= 0`, optional `pid` and `process_started_at`). `tests/test_task_claims.py` validates files produced
    by the test helpers, and `tt`'s own `human.*` files (apart from `kind`),
    against a copy of it (`tests/claim_schema/`).
 5. Agent worktrees made by the Claude harness under
@@ -115,9 +139,10 @@ The plugin's mod API has no delete, rename or atomic write, so:
 6. Subagent holders are named `<session>.<agent_id>`, and are released (a
    ttl-0 rewrite) when the subagent stops or the session ends, not when the
    main turn ends. While a subagent works its file is heartbeated like the main
-   one. If it never stops (killed) while the Claude process lives, it is
-   released after 2 hours without any hook event for it; if the process dies,
-   the file expires by its ttl.
+   one. There is no quiet timeout: a subagent that never stops while the
+   Claude process lives stays claimed until the session ends. If the process
+   dies, readers see it by the file's `pid` and `process_started_at` at once
+   (or, for a file without them, the file expires by its ttl).
 
 ### Details this implementation fixes (clarifications of v1)
 
@@ -138,7 +163,8 @@ These are not new fields; they pin down what the contract left open.
   heartbeats) is *stale*: still live by its ttl (so still "With an agent"),
   flagged in `tt task status`, and revocable without `--force`.
 - **Unknown extra fields** in a v1 file are ignored (so a writer may add
-  fields without a version bump); an unknown `version` is unreadable.
+  fields without a version bump, as `pid` and `process_started_at` were
+  added); an unknown `version` is unreadable.
 - **A human holder counts as a holder**: a live `working` `human.*` claim
   also makes the task "With an agent" (it is how an agent without the plugin
   is marked).
@@ -181,7 +207,7 @@ not. `release` exits 1 when it released nothing or refused something.
   the Next filter has the value; a rolled-up stacked card counts them.
 - **Live**: while `tt ui` runs, with or without a browser (unlike the GitHub
   polling, which waits for one), the server re-reads the directory about once
-  a second, re-evaluates TTL expiry on each tick, and pushes a `claims` event
+  a second, re-evaluates TTL expiry and the writers' processes (cached, no subprocess per tick) on each tick, and pushes a `claims` event
   listing the branches whose holders changed *and* the branches stacked on
   them with their re-derived status. `git worktree list` is asked only when
   the set of claims changed (or every 15 s), never on a heartbeat.
@@ -217,8 +243,12 @@ leaves it out, since there is nothing for you to do on it.
 
 ## Failure modes
 
-- **The agent died without cleaning up** (no ttl-0 rewrite): its file expires within `ttl`
-  (180s for working); the task goes back to "Needs me" by itself.
+- **The agent died without cleaning up** (no ttl-0 rewrite): a file with
+  `pid` and `process_started_at` is dead at the next poll (about a second in
+  `tt ui`); one without them expires within `ttl` (180s for working). The
+  task goes back to "Needs me" by itself.
+- **`ps` cannot be run, or a recorded pid cannot be probed**: that holder is
+  live by its ttl, as if the fields were absent.
 - **The agent is hung but its file is still live**: `tt task status` shows it
   `STALE`; `tt task release <ref>` revokes its claims at once; `tt task gc`
   removes the file when it expires.

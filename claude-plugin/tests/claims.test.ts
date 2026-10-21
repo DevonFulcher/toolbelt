@@ -15,7 +15,7 @@ const claimSchema = {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://toolbelt.local/schemas/claim.v1.schema.json",
   "title": "toolbelt claim file, contract v1",
-  "description": "One file per holder at $TOOLBELT_HOME/claims/<holder>.json. A holder is live iff now < updated_at + ttl_seconds. ttl_seconds 0 is how the writer ends a holder it cannot delete (an immediately expired tombstone with no claims).",
+  "description": "One file per holder at $TOOLBELT_HOME/claims/<holder>.json. A holder is live iff now < updated_at + ttl_seconds and, when pid and process_started_at are present, the writer process still exists with that start time (checked on the local machine). ttl_seconds 0 is how the writer ends a holder it cannot delete (an immediately expired tombstone with no claims).",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -76,6 +76,13 @@ const claimSchema = {
     "ttl_seconds": {
       "type": "integer",
       "minimum": 0
+    },
+    "pid": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "process_started_at": {
+      "$ref": "#/$defs/timestamp"
     },
     "claims": {
       "type": "array",
@@ -204,6 +211,8 @@ type Doc = {
   started_at: string
   updated_at: string
   ttl_seconds: number
+  pid?: number
+  process_started_at?: string
   claims: { kind: string; path?: string; ref?: string; touched_at: string }[]
 }
 
@@ -228,6 +237,8 @@ function world(
     HOME: '/home/dev',
   },
   cwd = '/g/toolbelt',
+  // what `sh -c 'echo $PPID; ps -o lstart= -p $PPID'` prints; null: the command fails
+  processOutput: string | null = '4242\nWed Jan  1 00:00:00 2026\n',
 ): World {
   const files = new Map<string, Doc>()
   const writes: Doc[] = []
@@ -255,6 +266,10 @@ function world(
   on('fs.read', (_$, e) => {
     const text = revoked.get(e.path)
     return text === undefined ? { deny: 'ENOENT' } : { value: text }
+  })
+  on('process.run', () => {
+    if (processOutput === null) return { deny: 'no sh' }
+    return { value: { exitCode: 0, stdout: processOutput, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
   on('tool.call', () => ({ result: 'ok' }))
   on('session.start', () => ({ cwd }))
@@ -446,6 +461,46 @@ describe('turn scope and state', () => {
     expect(Date.parse(mainDoc(w).updated_at)).toBeGreaterThanOrEqual(Date.parse(mainDoc(w).started_at))
   })
 
+  test('every file records the Claude process: pid and its start time as ISO', async ($, on) => {
+    const w = world(on)
+    await startTurn($, w)
+    await $.classic.SubagentStart({ agent_id: 'ag', agent_type: 'general-purpose' } as never)
+    await w.clock.settle()
+    expect(mainDoc(w)).toMatchObject({ pid: 4242, process_started_at: '2026-01-01T00:00:00.000Z' })
+    expect(w.files.get(`${CLAIMS}/${SESSION}.ag.json`)).toMatchObject({
+      pid: 4242,
+      process_started_at: '2026-01-01T00:00:00.000Z',
+    })
+  })
+
+  test('both process fields are left out when the command fails', async ($, on) => {
+    const w = world(on, undefined, undefined, null)
+    await startTurn($, w)
+    expect(mainDoc(w)).not.toHaveProperty('pid')
+    expect(mainDoc(w)).not.toHaveProperty('process_started_at')
+  })
+
+  test('both process fields are left out when there is no start time', async ($, on) => {
+    const w = world(on, undefined, undefined, '4242\n')
+    await startTurn($, w)
+    expect(mainDoc(w)).not.toHaveProperty('pid')
+    expect(mainDoc(w)).not.toHaveProperty('process_started_at')
+  })
+
+  test('both process fields are left out when the pid is not a number', async ($, on) => {
+    const w = world(on, undefined, undefined, 'abc\nWed Jan  1 00:00:00 2026\n')
+    await startTurn($, w)
+    expect(mainDoc(w)).not.toHaveProperty('pid')
+    expect(mainDoc(w)).not.toHaveProperty('process_started_at')
+  })
+
+  test('both process fields are left out when the start time is not a date', async ($, on) => {
+    const w = world(on, undefined, undefined, '4242\nnot a date\n')
+    await startTurn($, w)
+    expect(mainDoc(w)).not.toHaveProperty('pid')
+    expect(mainDoc(w)).not.toHaveProperty('process_started_at')
+  })
+
   test('session end leaves an already expired, empty file', async ($, on) => {
     const w = world(on)
     await startTurn($, w)
@@ -590,20 +645,16 @@ describe('subagents and the claim tool', () => {
     expect(w.files.get(`${CLAIMS}/${SESSION}.ag_1.json`)).toMatchObject({ ttl_seconds: 0, claims: [] })
   })
 
-  test('a subagent that never stops is released after 2 hours without events, an active one is not', async ($, on) => {
+  test('a subagent with no hook event for hours is not dropped: it ends on SubagentStop', async ($, on) => {
     const w = world(on)
     await startTurn($, w)
     await $.classic.SubagentStart({ agent_id: 'quiet', agent_type: 'general-purpose' } as never)
-    await $.classic.SubagentStart({ agent_id: 'busy', agent_type: 'general-purpose' } as never)
     await endTurn($, w)
-    for (let i = 0; i < 3; i += 1) {
-      await w.clock.advance(30 * 60_000)
-      await $.classic.PostToolUse({ agent_id: 'busy', tool_name: 'Bash', tool_input: {}, tool_response: {}, tool_use_id: 'u' } as never)
-    }
+    await w.clock.advance(5 * 60 * 60_000)
     expect(w.files.get(`${CLAIMS}/${SESSION}.quiet.json`)).toMatchObject({ state: 'working', ttl_seconds: 180 })
-    await w.clock.advance(31 * 60_000)
+    expect(Date.parse(w.files.get(`${CLAIMS}/${SESSION}.quiet.json`)?.updated_at ?? '')).toBe(T0 + 5 * 60 * 60_000)
+    await $.classic.SubagentStop({ agent_id: 'quiet', agent_type: 'general-purpose' } as never)
     expect(w.files.get(`${CLAIMS}/${SESSION}.quiet.json`)).toMatchObject({ ttl_seconds: 0, claims: [] })
-    expect(w.files.get(`${CLAIMS}/${SESSION}.busy.json`)).toMatchObject({ state: 'working', ttl_seconds: 180 })
   })
 
   test('task_claim adds ref claims and the status shows the distinct count', async ($, on) => {

@@ -5,6 +5,8 @@ injected; nothing here reads the real ones."""
 
 import json
 import os
+import subprocess
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -15,6 +17,11 @@ from toolbelt.git.stack.store import RepoIdentity, StackStore
 from toolbelt.task_claims import operations
 from toolbelt.task_claims.atomic_file import write_atomically
 from toolbelt.task_claims.cli import TaskEnvironment, build_task_typer
+from toolbelt.task_claims.process_liveness import (
+    ProcessLiveness,
+    parse_lstart,
+    ps_start_times,
+)
 from toolbelt.task_claims.reading import STALE_AFTER, read_claims
 from toolbelt.task_claims.resolution import (
     TrackedTask,
@@ -844,3 +851,202 @@ def test_the_autonomous_kind_is_exactly_contract_v2(tmp_path: Path, kind, versio
 
     with pytest.raises(UnreadableFile):
         parse_claim_file(path.read_text(), expected_holder="x")
+
+
+# ---- the writer's process (pid + process_started_at) ------------------------------------
+
+STARTED = NOW - timedelta(hours=1)
+
+
+class FakeProcesses:
+    """The processes of a fake machine: ``running`` maps pid to its start
+    time. Counts the ``ps`` calls (``ps_calls``, one list of pids each)."""
+
+    def __init__(self, running: dict[int, datetime]) -> None:
+        self.running = running
+        self.ps_calls: list[list[int]] = []
+        self.clock = 0.0
+
+    def signal(self, pid: int, sig: int) -> None:
+        assert sig == 0
+        if pid not in self.running:
+            raise ProcessLookupError(pid)
+
+    def start_times(self, pids: list[int]) -> dict[int, datetime]:
+        self.ps_calls.append(list(pids))
+        return {p: self.running[p] for p in pids if p in self.running}
+
+    def liveness(self) -> ProcessLiveness:
+        return ProcessLiveness(
+            signal=self.signal,
+            start_times=self.start_times,
+            monotonic=lambda: self.clock,
+        )
+
+
+def write_process_holder(claims: Path, holder: str, pid: int, **kwargs) -> Path:
+    return write_holder(
+        claims, holder, pid=pid, process_started_at=_z(STARTED), **kwargs
+    )
+
+
+def test_a_live_pid_with_the_recorded_start_time_is_live(tmp_path: Path):
+    claims = tmp_path / "claims"
+    write_process_holder(claims, "alive", 100)
+    machine = FakeProcesses({100: STARTED})
+
+    (holder,) = read_claims(claims, NOW, machine.liveness()).holders
+
+    assert (holder.status, holder.process_gone, holder.live) == ("working", False, True)
+
+
+def test_a_dead_pid_is_dead_before_its_ttl(tmp_path: Path):
+    claims = tmp_path / "claims"
+    write_process_holder(claims, "dead", 100, updated_ago=5, ttl=180)
+    machine = FakeProcesses({})
+
+    (holder,) = read_claims(claims, NOW, machine.liveness()).holders
+
+    assert holder.file.expires_at > NOW  # the ttl alone would call it live
+    assert (holder.status, holder.process_gone, holder.live) == ("expired", True, False)
+
+
+def test_a_reused_pid_with_another_start_time_is_dead(tmp_path: Path):
+    claims = tmp_path / "claims"
+    write_process_holder(claims, "reused", 100)
+    machine = FakeProcesses({100: STARTED + timedelta(minutes=5)})
+
+    (holder,) = read_claims(claims, NOW, machine.liveness()).holders
+
+    assert (holder.status, holder.process_gone) == ("expired", True)
+
+
+def test_files_without_the_process_fields_behave_as_before(tmp_path: Path):
+    claims = tmp_path / "claims"
+    write_holder(claims, "plain", updated_ago=5)
+    write_holder(claims, "half", updated_ago=5, pid=100)  # one field alone: ignored
+    write_holder(claims, "human.devon", kind="human", ttl=3600)
+    write_process_holder(claims, "late", 100, updated_ago=500)  # past ttl anyway
+    machine = FakeProcesses({})
+
+    reading = read_claims(claims, NOW, machine.liveness())
+
+    assert {h.holder: (h.status, h.process_gone) for h in reading.holders} == {
+        "half": ("working", False),
+        "human.devon": ("working", False),
+        "late": ("expired", False),
+        "plain": ("working", False),
+    }
+    assert machine.ps_calls == []
+
+
+def test_an_unverifiable_start_time_leaves_the_ttl_to_decide(tmp_path: Path):
+    claims = tmp_path / "claims"
+    write_process_holder(claims, "w", 100)
+    liveness = ProcessLiveness(
+        signal=lambda pid, sig: None,
+        start_times=lambda pids: None,  # ps could not be run
+    )
+
+    (holder,) = read_claims(claims, NOW, liveness).holders
+
+    assert (holder.status, holder.process_gone) == ("working", False)
+
+
+def test_start_times_are_looked_up_in_one_call_and_cached(tmp_path: Path):
+    claims = tmp_path / "claims"
+    for pid in (100, 101, 102):
+        write_process_holder(claims, f"h{pid}", pid)
+    machine = FakeProcesses({100: STARTED, 101: STARTED, 102: STARTED})
+    liveness = machine.liveness()
+
+    for _ in range(5):
+        read_claims(claims, NOW, liveness)
+
+    assert machine.ps_calls == [[100, 101, 102]]
+
+    machine.clock += 31  # the cache entries age out
+    read_claims(claims, NOW, liveness)
+
+    assert len(machine.ps_calls) == 2
+
+
+def test_a_pid_that_died_is_forgotten_so_a_reused_pid_is_looked_up_afresh(
+    tmp_path: Path,
+):
+    claims = tmp_path / "claims"
+    write_process_holder(claims, "w", 100)
+    machine = FakeProcesses({100: STARTED})
+    liveness = machine.liveness()
+    assert read_claims(claims, NOW, liveness).holders[0].live
+
+    del machine.running[100]
+    assert not read_claims(claims, NOW, liveness).holders[0].live
+    machine.running[100] = STARTED + timedelta(days=1)  # the pid, reused
+
+    assert not read_claims(claims, NOW, liveness).holders[0].live
+    assert len(machine.ps_calls) == 2
+
+
+def test_gc_deletes_a_dead_writers_file_at_once_even_with_a_grace(tmp_path: Path):
+    claims = tmp_path / "claims"
+    write_process_holder(claims, "dead", 100)
+    write_process_holder(claims, "alive", 101)
+    machine = FakeProcesses({101: STARTED})
+    liveness = machine.liveness()
+
+    outcome = operations.collect_garbage(
+        claims,
+        read_claims(claims, NOW, liveness),
+        NOW,
+        grace=timedelta(seconds=10),
+        liveness=liveness,
+    )
+
+    assert outcome.claim_files == ["dead.json"]
+    assert (claims / "alive.json").exists()
+
+
+def test_status_json_reports_the_process_and_why_a_holder_is_dead(tmp_path: Path):
+    from toolbelt.task_claims.status_report import status_document, status_text
+
+    claims = tmp_path / "claims"
+    write_process_holder(claims, "dead", 100)
+    reading = read_claims(claims, NOW, FakeProcesses({}).liveness())
+
+    document = status_document(reading, [], NOW)
+
+    (holder,) = document["holders"]
+    assert (holder["pid"], holder["process_gone"], holder["live"]) == (100, True, False)
+    assert holder["process_started_at"] == _z(STARTED)
+    assert "its process is gone" in status_text(document, verbose=True)
+
+
+def test_the_process_fields_satisfy_the_writers_schema(tmp_path: Path):
+    path = write_process_holder(tmp_path / "claims", "s1", 100)
+
+    assert _validate(json.loads(path.read_text()), SCHEMA) == []
+    bad = json.loads(path.read_text()) | {"pid": 0}
+    assert _validate(bad, SCHEMA) != []
+
+
+def test_lstart_parses_as_utc_with_padded_days():
+    assert parse_lstart("Wed Oct 21 14:23:05 2026") == datetime(
+        2026, 10, 21, 14, 23, 5, tzinfo=UTC
+    )
+    assert parse_lstart("Thu Oct  1 04:03:02 2026") == datetime(
+        2026, 10, 1, 4, 3, 2, tzinfo=UTC
+    )
+    assert parse_lstart("garbage") is None
+
+
+def test_the_real_ps_sees_this_process_and_a_dead_one_is_gone():
+    liveness = ProcessLiveness()
+    started = (ps_start_times([os.getpid()]) or {}).get(os.getpid())
+    assert started is not None
+    assert liveness.is_alive(os.getpid(), started)
+    assert not liveness.is_alive(os.getpid(), started - timedelta(days=1))
+
+    child = subprocess.Popen([sys.executable, "-c", "pass"])
+    child.wait()
+    assert not liveness.is_alive(child.pid, started)

@@ -26,7 +26,14 @@ from toolbelt.task_claims.claim_file import (
     iso,
     parse_claim_file,
 )
-from toolbelt.task_claims.reading import Holder, Reading, classify
+from toolbelt.task_claims.process_liveness import ProcessLiveness
+from toolbelt.task_claims.reading import (
+    SYSTEM_LIVENESS,
+    Holder,
+    Reading,
+    classify,
+    process_gone,
+)
 from toolbelt.task_claims.resolution import TrackedTask, resolve_claim
 from toolbelt.task_claims.revocations import record_revocations
 
@@ -270,15 +277,18 @@ def collect_garbage(
     reading: Reading,
     now: datetime,
     grace: timedelta = timedelta(0),
+    liveness: ProcessLiveness = SYSTEM_LIVENESS,
 ) -> GcOutcome:
     """Deletes holder files that expired at least ``grace`` ago (a heartbeat
     racing the deletion cannot lose a claim), revocation files with no holder
     file, and temp files a dead writer left behind. A ``ttl_seconds`` 0
-    tombstone is expired at its ``updated_at``. Unreadable files are left
+    tombstone is expired at its ``updated_at``. A file whose writer's process
+    is gone is deleted at once, without the grace: a dead writer cannot
+    heartbeat. Unreadable files are left
     alone (a writer may be mid-way, or newer than this ``tt``)."""
     outcome = GcOutcome()
     for holder in reading.expired:
-        if _still_expired(holder, now - grace):
+        if _still_expired(holder, now, grace, liveness):
             holder.path.unlink(missing_ok=True)
             outcome.claim_files.append(holder.path.name)
     revoked_dir = claims_dir / REVOKED_DIRNAME
@@ -301,7 +311,9 @@ def collect_garbage(
     return outcome
 
 
-def _still_expired(holder: Holder, now: datetime) -> bool:
+def _still_expired(
+    holder: Holder, now: datetime, grace: timedelta, liveness: ProcessLiveness
+) -> bool:
     """Re-reads the file: the holder may have written since the scan."""
     try:
         current = parse_claim_file(
@@ -309,4 +321,6 @@ def _still_expired(holder: Holder, now: datetime) -> bool:
         )
     except UnreadableFile, OSError:
         return False
-    return classify(current, now) == "expired"
+    # The ttl is judged ``grace`` ago; the writer's process, as of now.
+    gone = process_gone(current, now - grace, liveness)
+    return classify(current, now - grace, is_process_gone=gone) == "expired"

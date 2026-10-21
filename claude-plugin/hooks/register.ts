@@ -2,9 +2,10 @@ import type { EngineInterface, Register } from 'claude-code'
 
 // Writes claim files (contract v1, docs/task-claims.md) recording which tracked
 // worktrees and refs this session is working on. The files are the only
-// interface to toolbelt: this module never spawns `tt` or any process, and the
-// per-tool-call hooks only test a string and update a map. Files are written
-// from a timer, never from the call itself.
+// interface to toolbelt: this module never spawns `tt`, and the per-tool-call
+// hooks only test a string and update a map. Files are written from a timer,
+// never from the call itself. The one process it runs is a single `sh`/`ps`
+// at load to learn the Claude process's pid and start time (see processInfo).
 
 type ClaimKind = 'worktree' | 'ref'
 type HolderState = 'working' | 'idle' | 'blocked'
@@ -15,8 +16,6 @@ type Holder = {
   agentId: string | null
   state: HolderState
   startedAt: number
-  // last hook event seen for this holder; a subagent quiet for SUBAGENT_QUIET_MS is dropped
-  lastActiveAt: number
   cwd: string | null
   claims: Map<string, Claim>
   isDirty: boolean
@@ -30,11 +29,6 @@ type Config = {
 
 const TTL_SECONDS: Record<HolderState, number> = { working: 180, idle: 1800, blocked: 1800 }
 const HEARTBEAT_MS = 30_000
-// A subagent's claim lives from SubagentStart to SubagentStop. If SubagentStop never
-// arrives (the subagent was killed) while the Claude process lives, the heartbeat
-// would keep the claim fresh forever, so a subagent with no hook event for this long
-// is released. Its next event claims again.
-const SUBAGENT_QUIET_MS = 2 * 60 * 60 * 1000
 const MAX_REFS_PER_CALL = 50
 const MAX_REF_LENGTH = 200
 const TASK_CLAIM_TOOL = 'mcp__toolbelt-claims__task_claim'
@@ -51,6 +45,10 @@ let clockOffset = 0
 let timer: { cancel: () => void } | null = null
 let isFlushScheduled = false
 let shownCount = -1
+// The Claude process this module runs in, written into every claim file so a reader
+// can tell at once that the writer died. undefined: not looked up yet; null: could
+// not be determined (the fields are then left out).
+let processInfo: { pid: number; startedAt: string } | null | undefined
 const holders = new Map<string, Holder>()
 
 const now = (): number => Date.now() + clockOffset
@@ -85,12 +83,47 @@ const loadConfig = async ($: EngineInterface): Promise<void> => {
   }
 }
 
+// `ps -o lstart=` prints the start time in the local zone with no zone name, as
+// "Tue Oct 21 10:00:00 2026"; TZ=UTC makes it UTC. Seconds are its resolution.
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+const parseLstart = (text: string): string | null => {
+  const match = /^\w{3}\s+(\w{3})\s+(\d{1,2})\s+(\d{2}):(\d{2}):(\d{2})\s+(\d{4})$/.exec(text.trim())
+  if (match === null) return null
+  const month = MONTHS.indexOf(match[1] as string)
+  if (month < 0) return null
+  const [day, hour, minute, second, year] = [match[2], match[3], match[4], match[5], match[6]].map(Number)
+  return iso(Date.UTC(year as number, month, day as number, hour as number, minute as number, second as number))
+}
+
+// The pid of the process that started this `sh` is the Claude process; its start time
+// is what lets a reader tell a dead writer from a reused pid. Looked up once; on any
+// failure both fields are omitted rather than written wrong.
+const resolveProcess = async ($: EngineInterface): Promise<void> => {
+  if (processInfo !== undefined) return
+  processInfo = null
+  try {
+    const { exitCode, stdout } = await $.process.run(
+      ['sh', '-c', 'echo $PPID; ps -o lstart= -p $PPID'],
+      { env: { TZ: 'UTC', LC_ALL: 'C' }, timeoutMs: 5000 },
+    )
+    if (exitCode !== 0) return
+    const [pidLine, startLine] = stdout.split('\n')
+    const pid = Number(pidLine?.trim())
+    const startedAt = parseLstart(startLine ?? '')
+    if (Number.isInteger(pid) && pid > 1 && startedAt !== null) processInfo = { pid, startedAt }
+  } catch (error) {
+    debug($, `process lookup failed: ${String(error)}`)
+  }
+}
+
 const syncClock = async ($: EngineInterface): Promise<void> => {
   clockOffset = (await $.clock.now()) - Date.now()
 }
 
 const ensureSession = async ($: EngineInterface): Promise<void> => {
   await loadConfig($)
+  await resolveProcess($)
   sessionId = await $.session.id()
   if (sessionCwd === null) sessionCwd = await $.session.cwd()
   await syncClock($)
@@ -104,7 +137,6 @@ const holderFor = (agentId: string | undefined): Holder => {
       agentId: agentId ?? null,
       state: 'working',
       startedAt: now(),
-      lastActiveAt: now(),
       cwd: null,
       claims: new Map(),
       isDirty: true,
@@ -165,7 +197,6 @@ const touch = ($: EngineInterface, agentId: string | undefined, kind: ClaimKind,
   const key = `${kind}:${value}`
   const isNew = !holder.claims.has(key)
   holder.claims.set(key, { kind, value, touchedAt: now() })
-  holder.lastActiveAt = now()
   if (holder.state === 'working' && timer === null) startTimer($)
   if (isNew) {
     holder.isDirty = true
@@ -236,6 +267,10 @@ const writeHolder = async ($: EngineInterface, holder: Holder, isEnded: boolean)
     session_id: sessionId,
     agent_id: holder.agentId,
     link: config.link,
+    // the writer's process (both fields or neither); a reader treats a dead or reused pid as dead
+    ...(processInfo === null || processInfo === undefined
+      ? {}
+      : { pid: processInfo.pid, process_started_at: processInfo.startedAt }),
     state: isEnded ? 'idle' : holder.state,
     started_at: iso(holder.startedAt),
     updated_at: at,
@@ -302,7 +337,6 @@ const startTimer = ($: EngineInterface): void => {
     void (async () => {
       try {
         await ensureSession($)
-        await releaseQuietSubagents($)
         await writeAll($, holder => holder.state === 'working')
         stopTimerIfIdle()
       } catch (error) {
@@ -310,12 +344,6 @@ const startTimer = ($: EngineInterface): void => {
       }
     })()
   })
-}
-
-const releaseQuietSubagents = async ($: EngineInterface): Promise<void> => {
-  for (const [key, holder] of [...holders]) {
-    if (key !== MAIN && now() - holder.lastActiveAt > SUBAGENT_QUIET_MS) await release($, key)
-  }
 }
 
 const release = async ($: EngineInterface, agentId: string): Promise<void> => {
@@ -341,7 +369,6 @@ const setState = ($: EngineInterface, agentId: string | undefined, state: Holder
 
 const resume = ($: EngineInterface, agentId: string | undefined): void => {
   const holder = holders.get(agentId ?? MAIN)
-  if (holder !== undefined) holder.lastActiveAt = now()
   if (holder !== undefined && holder.state === 'blocked') setState($, agentId, 'working')
 }
 
@@ -440,7 +467,6 @@ export const register: Register = on => {
     try {
       const holder = holderFor(e.agent_id)
       holder.state = 'working'
-      holder.lastActiveAt = now()
       holder.isDirty = true
       startTimer($)
       scheduleFlush($)

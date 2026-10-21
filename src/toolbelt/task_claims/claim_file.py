@@ -62,6 +62,12 @@ class ClaimFile(BaseModel):
     updated_at: AwareDatetime
     #: 0 is how a writer ends a holder it cannot delete: dead at once.
     ttl_seconds: int = Field(ge=0)
+    #: The writer's process on this machine (both fields or neither): the
+    #: holder is dead at once when that process is gone, or its pid was
+    #: reused (a different start time). Files without them (``human.*``,
+    #: older plugins) are live by ``ttl_seconds`` alone.
+    pid: int | None = Field(default=None, ge=1)
+    process_started_at: AwareDatetime | None = None
     claims: list[Annotated[WorktreeClaim | RefClaim, Field(discriminator="kind")]]
 
     @model_validator(mode="after")
@@ -69,6 +75,13 @@ class ClaimFile(BaseModel):
         if (self.kind == "autonomous") != (self.version == AUTONOMOUS_VERSION):
             raise ValueError('kind "autonomous" is exactly contract version 2')
         return self
+
+    @property
+    def process(self) -> tuple[int, datetime] | None:
+        """The writer's pid and start time, when the file records both."""
+        if self.pid is None or self.process_started_at is None:
+            return None
+        return (self.pid, self.process_started_at)
 
     @property
     def expires_at(self) -> datetime:

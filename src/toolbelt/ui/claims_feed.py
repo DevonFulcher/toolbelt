@@ -5,7 +5,8 @@ browser or not: reading the claims directory is local and cheap (a listing
 and a few small JSON files), and the claim files are overwritten every turn,
 so the record of who claimed what is only as complete as the reads. Every
 tick (about a second) it re-reads the directory at the current time, so a
-holder whose ttl ran out drops away on its own, and calls ``on_change`` with
+holder whose ttl ran out, or whose writer process (recorded in its file) died,
+drops away on its own, and calls ``on_change`` with
 the branches whose holders changed. The app turns that into one ``claims``
 event that re-derives those branches' next action and their stacked
 children's. Each live claim it reads is also passed to ``record`` (at most
@@ -31,7 +32,14 @@ from pathlib import Path
 
 from toolbelt.task_claims.claim_file import Claim
 from toolbelt.task_claims.operations import collect_garbage
-from toolbelt.task_claims.reading import Holder, Reading, read_claims, reclassify
+from toolbelt.task_claims.process_liveness import ProcessLiveness
+from toolbelt.task_claims.reading import (
+    SYSTEM_LIVENESS,
+    Holder,
+    Reading,
+    read_claims,
+    reclassify,
+)
 from toolbelt.task_claims.resolution import TrackedTask, resolve_claim
 
 CLAIMS_TICK_SECONDS = 1.0
@@ -94,7 +102,11 @@ class ClaimsFeed:
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         tick: float = CLAIMS_TICK_SECONDS,
         resolve_ttl: float = DEFAULT_RESOLVE_TTL_SECONDS,
+        liveness: ProcessLiveness = SYSTEM_LIVENESS,
     ) -> None:
+        #: Checks each tick that a holder's recorded process still runs; it
+        #: caches start times, so a tick costs a syscall per holder.
+        self._liveness = liveness
         self._directory = directory
         self._tasks = tasks
         self._on_change = on_change
@@ -161,14 +173,16 @@ class ClaimsFeed:
         self._reported_unreadable = frozenset(unreadable & self._unreadable_last)
         self._unreadable_last = frozenset(unreadable)
         self._last_good = current | kept
-        return [reclassify(h, now) for h in self._last_good.values()]
+        return [reclassify(h, now, self._liveness) for h in self._last_good.values()]
 
     def poll(self) -> set[BranchKey]:
         """Re-reads the directory; returns (and reports through ``on_change``)
         the branches whose holders changed."""
         now = self._wall_clock()
-        reading = read_claims(self._directory(), now)
-        collect_garbage(self._directory(), reading, now, EXPIRED_FILE_GRACE)
+        reading = read_claims(self._directory(), now, self._liveness)
+        collect_garbage(
+            self._directory(), reading, now, EXPIRED_FILE_GRACE, self._liveness
+        )
         holders = [h for h in self._holders_now(reading, now) if h.live]
         signature = tuple(
             sorted(

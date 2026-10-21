@@ -14,12 +14,17 @@ from toolbelt.task_claims.claim_file import (
     UnreadableFile,
     parse_claim_file,
 )
+from toolbelt.task_claims.process_liveness import ProcessLiveness
 from toolbelt.task_claims.revocations import is_revoked, read_revocations
 
 #: A ``working`` holder heartbeats every 30 s (its ttl is 180 s). One that has
 #: not written for three heartbeats is "stale": still live by its ttl, but
 #: probably hung.
 STALE_AFTER = timedelta(seconds=90)
+
+#: The checker ``tt`` uses (and ``tt ui`` shares across its ticks, so its
+#: start-time cache survives from one tick to the next).
+SYSTEM_LIVENESS = ProcessLiveness()
 
 #: ``expired`` holders are ignored by readers (and deleted by ``tt task gc``).
 type HolderStatus = Literal["working", "idle", "blocked", "expired"]
@@ -31,6 +36,9 @@ class Holder:
     #: The path of the file this was read from.
     path: Path
     status: HolderStatus
+    #: The file records its writer's process and that process is gone (or its
+    #: pid was reused): ``expired`` whatever the ttl says.
+    process_gone: bool
     #: ``working`` and not heard from for ``STALE_AFTER``.
     stale: bool
     #: The claims that stand: ``file.claims`` less the revoked ones.
@@ -76,34 +84,57 @@ class Reading:
         return tuple(holder for holder in self.holders if not holder.live)
 
 
-def classify(file: ClaimFile, now: datetime) -> HolderStatus:
-    """Live iff ``now < updated_at + ttl_seconds``."""
-    if now >= file.expires_at:
+def process_gone(file: ClaimFile, now: datetime, liveness: ProcessLiveness) -> bool:
+    """The file records its writer's process and it is not running (or its
+    pid now belongs to another process). A file without them, or one already
+    past its ttl (nothing left to decide), is never "gone"."""
+    process = file.process
+    return (
+        process is not None
+        and now < file.expires_at
+        and not liveness.is_alive(*process)
+    )
+
+
+def classify(
+    file: ClaimFile, now: datetime, *, is_process_gone: bool = False
+) -> HolderStatus:
+    """Live iff ``now < updated_at + ttl_seconds`` and the writer's process,
+    if the file records it, is still the one running (``is_process_gone``
+    is that check's answer, see ``process_gone``)."""
+    if is_process_gone or now >= file.expires_at:
         return "expired"
     return file.state
 
 
-def reclassify(holder: Holder, now: datetime) -> Holder:
+def reclassify(
+    holder: Holder, now: datetime, liveness: ProcessLiveness = SYSTEM_LIVENESS
+) -> Holder:
     """``holder`` as it stands at ``now`` (a later instant than it was read)."""
-    status = classify(holder.file, now)
+    gone = process_gone(holder.file, now, liveness)
+    status = classify(holder.file, now, is_process_gone=gone)
     return replace(
         holder,
         status=status,
+        process_gone=gone,
         stale=status == "working" and now - holder.file.updated_at >= STALE_AFTER,
     )
 
 
 def read_claims_settled(
-    claims_dir: Path, now: datetime, pause: Callable[[], None]
+    claims_dir: Path,
+    now: datetime,
+    pause: Callable[[], None],
+    liveness: ProcessLiveness = SYSTEM_LIVENESS,
 ) -> Reading:
     """``read_claims``, listing a file as skipped only if it is unreadable on
     two reads ``pause`` apart: the writer overwrites in place (not atomically),
     so a single bad read is usually a write in progress."""
-    first = read_claims(claims_dir, now)
+    first = read_claims(claims_dir, now, liveness)
     if not first.skipped:
         return first
     pause()
-    second = read_claims(claims_dir, now)
+    second = read_claims(claims_dir, now, liveness)
     persistent = {s.name for s in first.skipped}
     return Reading(
         second.holders,
@@ -111,8 +142,12 @@ def read_claims_settled(
     )
 
 
-def read_claims(claims_dir: Path, now: datetime) -> Reading:
+def read_claims(
+    claims_dir: Path, now: datetime, liveness: ProcessLiveness = SYSTEM_LIVENESS
+) -> Reading:
     """Every holder file in ``claims_dir`` at ``now`` (holders in name order).
+    A holder whose file records its writer's process is also ``expired`` when
+    that process is gone, by ``liveness`` (this machine only).
 
     A file that cannot be read is skipped and reported, never an error: a
     writer may be mid-way, or newer than this reader."""
@@ -120,6 +155,7 @@ def read_claims(claims_dir: Path, now: datetime) -> Reading:
     skipped: list[SkippedFile] = []
     if not claims_dir.is_dir():
         return Reading((), ())
+    parsed: list[tuple[Path, str, ClaimFile]] = []
     for path in sorted(claims_dir.iterdir()):
         if path.suffix != ".json" or path.name.startswith(".") or not path.is_file():
             continue
@@ -129,13 +165,22 @@ def read_claims(claims_dir: Path, now: datetime) -> Reading:
         except (UnreadableFile, OSError) as error:
             skipped.append(SkippedFile(path.name, str(error)))
             continue
+        parsed.append((path, holder_id, file))
+    # one ps call for every pid not already cached
+    liveness.prime(
+        file.pid
+        for _, _, file in parsed
+        if file.pid is not None and file.process is not None and now < file.expires_at
+    )
+    for path, holder_id, file in parsed:
         try:
             revocations = read_revocations(claims_dir, holder_id)
         except (UnreadableFile, OSError) as error:
             # Its claims stand, as if nothing had been revoked.
             skipped.append(SkippedFile(f"{REVOKED_DIRNAME}/{path.name}", str(error)))
             revocations = None
-        status = classify(file, now)
+        gone = process_gone(file, now, liveness)
+        status = classify(file, now, is_process_gone=gone)
         revoked_entries = [] if revocations is None else revocations.revoked
         revoked = tuple(c for c in file.claims if is_revoked(c, revoked_entries))
         standing = tuple(c for c in file.claims if c not in revoked)
@@ -144,6 +189,7 @@ def read_claims(claims_dir: Path, now: datetime) -> Reading:
                 file=file,
                 path=path,
                 status=status,
+                process_gone=gone,
                 stale=status == "working" and now - file.updated_at >= STALE_AFTER,
                 claims=standing,
                 revoked=revoked,

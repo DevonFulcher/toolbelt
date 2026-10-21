@@ -42,6 +42,11 @@ def holder_document(holder: Holder, tasks: list[TrackedTask], now: datetime) -> 
         "status": holder.status,
         "live": holder.live,
         "stale": holder.stale,
+        "pid": file.pid,
+        "process_started_at": (
+            None if file.process_started_at is None else iso(file.process_started_at)
+        ),
+        "process_gone": holder.process_gone,
         "session_id": file.session_id,
         "agent_id": file.agent_id,
         "link": file.link,
@@ -84,6 +89,8 @@ def status_text(document: dict, *, verbose: bool) -> str:
         ttl = (
             f"expires in {short_duration(timedelta(seconds=holder['ttl_left_seconds']))}"
             if holder["live"]
+            else "its process is gone"
+            if holder["process_gone"]
             else f"expired {short_duration(timedelta(seconds=-holder['ttl_left_seconds']))} ago"
         )
         age = short_duration(timedelta(seconds=holder["age_seconds"]))
