@@ -24,9 +24,15 @@ from toolbelt.ui import branch_links, pr_states
 from toolbelt.ui.claims_feed import BranchHolder
 from toolbelt.ui.conflict_commit import ConflictCommit
 from toolbelt.ui.live_status import Fetched, StatusRefresher
-from toolbelt.ui.next_action import WHO_ORDER, ParentContext, next_action
+from toolbelt.ui.next_action import (
+    WHO_ORDER,
+    ParentContext,
+    SlackContext,
+    next_action,
+)
 from toolbelt.ui.pr_activity import PrFacts, derive_activity, format_age
 from toolbelt.ui.repo_visibility import visible_repos
+from toolbelt.ui.slack_tracker import NO_SLACK, SlackLookup
 from toolbelt.ui.task_feed import TaskFeed
 
 _PR_NUMBER_RE = re.compile(r"/pull/(\d+)")
@@ -157,7 +163,9 @@ def parent_context(
     parents: Parents,
     branch: str,
     refresher: StatusRefresher,
+    now: datetime,
     claims: ClaimLookup = NO_CLAIMS,
+    slack: SlackLookup = NO_SLACK,
 ) -> ParentContext | None:
     """The tracked branch ``branch`` is stacked on, with its PR state and who
     its own next action waits on (which depends on *its* parent in turn); ``None``
@@ -170,9 +178,10 @@ def parent_context(
         return None
     parent_action = next_action(
         fetched.status,
-        parent_context(repo_id, parents, parent, refresher, claims),
+        parent_context(repo_id, parents, parent, refresher, now, claims, slack),
         claims.working(repo_id, parent),
         claims.autonomous(repo_id, parent),
+        slack.context(repo_id, parent, fetched, now),
     )
     return ParentContext(name=parent, pr=fetched.status.pr, next_who=parent_action.who)
 
@@ -265,11 +274,12 @@ def loaded_status(
     claimed: bool = False,
     autonomous: bool = False,
     conflict: ConflictCommit | None = None,
+    slack: SlackContext | None = None,
 ) -> api.LoadedStatus:
     """``parent`` is the stack context for the next action; ``facts`` (with
     ``now``) adds the PR's history as ``detail``; ``claimed``: a live working
     holder has claimed the branch; ``autonomous``: so has an autonomous
-    agent."""
+    agent; ``slack``: where the PR stands in Slack."""
     has_pr = status.pr is not PrState.NONE
     match = _PR_NUMBER_RE.search(status.url) if status.url else None
     merge = "none"
@@ -277,7 +287,7 @@ def loaded_status(
         merge = "conflicts" if status.has_conflicts else "clean"
     open_comments = status.open_comments if has_pr else 0
     open_comments_bot = status.bot_comments if has_pr else 0
-    action = next_action(status, parent, claimed, autonomous)
+    action = next_action(status, parent, claimed, autonomous, slack)
     chips = pr_states.current_states(
         pr=status.pr.value,
         ci=status.ci.value,
@@ -328,6 +338,7 @@ def live_status(
     now: datetime,
     claimed: bool = False,
     autonomous: bool = False,
+    slack: SlackContext | None = None,
 ) -> api.LoadingStatus | api.FailedStatus | api.LoadedStatus:
     if fetched is None:
         return api.LoadingStatus(load="loading")
@@ -341,6 +352,7 @@ def live_status(
         claimed=claimed,
         autonomous=autonomous,
         conflict=fetched.conflict,
+        slack=slack,
     )
 
 
@@ -361,6 +373,7 @@ def build_snapshot(
     agents: api.Agents | None = None,
     spend: list[api.Spend] | None = None,
     webhooks: list[api.RepoWebhook] | None = None,
+    slack: SlackLookup = NO_SLACK,
 ) -> api.Snapshot:
     """Every repo with tracked branches, and all their branches: repos in
     name order, each repo's branches depth-first."""
@@ -440,13 +453,17 @@ def build_snapshot(
                         task_live=task_feed.get(repo.id, name) if fetchable else None,
                         agent=_link(agent),
                         claim=branch_claim(claims.holders(repo.id, name), now),
+                        slack=slack.info(repo.id, name, looked_up, now),
                         started_at=_iso(started_at) if started_at else None,
                         status=live_status(
-                            refresher.get(repo.id, name),
-                            parent_context(repo.id, parents, name, refresher, claims),
+                            looked_up,
+                            parent_context(
+                                repo.id, parents, name, refresher, now, claims, slack
+                            ),
                             now,
                             claims.working(repo.id, name),
                             claims.autonomous(repo.id, name),
+                            slack.context(repo.id, name, looked_up, now),
                         ),
                     )
                 )

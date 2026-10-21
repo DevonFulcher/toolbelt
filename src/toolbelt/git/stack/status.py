@@ -156,7 +156,7 @@ def _ci_state(rollup: list[dict]) -> CiState:
     return CiState.SUCCESS
 
 
-def _is_bot(login: str) -> bool:
+def is_bot(login: str) -> bool:
     folded = login.casefold()
     return folded.endswith("[bot]") or "copilot" in folded
 
@@ -166,9 +166,7 @@ def _requested_people(requests: list) -> tuple[str, ...]:
     return tuple(
         entry["login"]
         for entry in requests
-        if isinstance(entry, dict)
-        and entry.get("login")
-        and not _is_bot(entry["login"])
+        if isinstance(entry, dict) and entry.get("login") and not is_bot(entry["login"])
     )
 
 
@@ -229,7 +227,7 @@ def count_unresolved_bot_nodes(nodes: list[dict]) -> int:
 def _thread_started_by_bot(node: dict) -> bool:
     comments = (node.get("comments") or {}).get("nodes") or []
     author = (comments[0].get("author") or {}) if comments else {}
-    return author.get("__typename") == "Bot" or _is_bot(author.get("login") or "")
+    return author.get("__typename") == "Bot" or is_bot(author.get("login") or "")
 
 
 def _count_unresolved(payload: dict) -> int:

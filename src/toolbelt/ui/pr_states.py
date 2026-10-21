@@ -236,6 +236,14 @@ _NEXT_TONES = {
     na.MERGE: (GREEN, "Approved and ready to merge."),
     na.WAIT_REVIEW: (GRAY, "Waiting for a reviewer."),
     na.REQUEST_REVIEW: (ACCENT, "Ready, but nobody was asked to review."),
+    na.POST_SLACK: (
+        ACCENT,
+        "Ready for review: post it in the review channel in Slack.",
+    ),
+    na.BUMP_SLACK: (
+        AMBER,
+        "Posted in Slack over a day ago and nobody has reviewed or commented: bump it.",
+    ),
     na.CLAIMED: (
         PURPLE,
         (
@@ -265,6 +273,8 @@ _NEXT_LABELS = {
     na.MERGE: "Merge",
     na.WAIT_REVIEW: "Waiting for review",
     na.REQUEST_REVIEW: "Request review",
+    na.POST_SLACK: "Post in Slack",
+    na.BUMP_SLACK: "Bump in Slack",
     na.CLAIMED: "With an agent",
     na.AUTONOMOUS: "Autonomous agent",
 }
@@ -525,6 +535,8 @@ SLOT_STATES: dict[str, str | None] = {
     "agent_run_summary": None,
     "cost": None,
     "agent_cost": None,
+    "slack_status": None,
+    "slack_age": None,
     "repo": None,
     "branch": None,
     "task": None,

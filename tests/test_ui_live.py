@@ -9,7 +9,7 @@ TestClient buffers a whole response and an event stream never ends.
 
 import asyncio
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Self
 
@@ -22,7 +22,12 @@ from toolbelt.git.stack.status import (
     PrState,
     ReviewState,
 )
-from toolbelt.git.stack.store import RepoIdentity, StackStore, default_db_path
+from toolbelt.git.stack.store import (
+    RepoIdentity,
+    SlackPostRow,
+    StackStore,
+    default_db_path,
+)
 from toolbelt.ui import api_models
 from toolbelt.ui.app import create_app
 from toolbelt.ui.live_status import (
@@ -1017,3 +1022,129 @@ class TestWebhookProblems:
         assert data["webhooks"] == [
             {"repo_id": repo_id, "state": "failed", "problem": "Forwarding stopped: x"}
         ]
+
+
+class TestSlackInTheApp:
+    """With Slack configured a task's next action and its Slack fields come
+    from the posts toolbelt recorded."""
+
+    def seed(self, tmp_path: Path, **kwargs):
+        from toolbelt.ui.slack_config import SlackConfig
+
+        store = StackStore(default_db_path())
+        path = tmp_path / "api"
+        path.mkdir()
+        repo_id = store.ensure_repo(
+            RepoIdentity(
+                git_common_dir=path / ".git",
+                path=path,
+                remote_url="git@github.com:o/r.git",
+            )
+        )
+        store.set_parent(repo_id, "devon/a", "main")
+        store.close()
+
+        class Facts(Fetcher):
+            async def __call__(self, branch: str, root: Path) -> PrSnapshot:
+                return PrSnapshot(OPEN, pr_facts(5))
+
+        app = create_app(fetch=Facts(), slack_settings=SlackConfig("D1"), **kwargs)
+        asyncio.run(app.state.refresher.run_once())
+        return app, repo_id
+
+    def branch(self, app) -> dict:
+        from fastapi.testclient import TestClient
+
+        (branch,) = TestClient(app).get("/api/snapshot").json()["branches"]
+        return branch
+
+    def test_a_ready_pr_nobody_posted_says_post_in_slack(self, tmp_path):
+        app, _ = self.seed(tmp_path)
+
+        branch = self.branch(app)
+
+        assert branch["status"]["next"]["kind"] == "post_slack"
+        assert branch["slack"] == {
+            "posted": False,
+            "last_kind": None,
+            "last_at": None,
+            "bump_due": False,
+        }
+
+    def test_a_recorded_post_makes_it_posted_and_the_next_action_waits(self, tmp_path):
+        app, _ = self.seed(tmp_path)
+        store = StackStore(default_db_path())
+        store.save_slack_posts(
+            [
+                SlackPostRow(
+                    channel="D1",
+                    ts="1.1",
+                    thread_ts="1.1",
+                    repo="o/r",
+                    pr_number=5,
+                    kind="post",
+                    posted_at=datetime.now(UTC),
+                )
+            ]
+        )
+        store.close()
+        app.state.slack.reload()
+
+        branch = self.branch(app)
+
+        assert branch["slack"]["posted"] is True
+        assert branch["slack"]["last_kind"] == "post"
+        assert branch["status"]["next"]["kind"] == "request_review"
+
+    def test_a_post_a_day_old_with_no_look_says_bump_in_slack(self, tmp_path):
+        app, _ = self.seed(tmp_path)
+        store = StackStore(default_db_path())
+        store.save_slack_posts(
+            [
+                SlackPostRow(
+                    channel="D1",
+                    ts="1.1",
+                    thread_ts="1.1",
+                    repo="o/r",
+                    pr_number=5,
+                    kind="post",
+                    posted_at=datetime.now(UTC) - timedelta(hours=25),
+                )
+            ]
+        )
+        store.close()
+        app.state.slack.reload()
+
+        branch = self.branch(app)
+
+        assert branch["slack"]["bump_due"] is True
+        assert branch["status"]["next"]["kind"] == "bump_slack"
+
+    def test_a_status_event_carries_the_slack_standing(self, tmp_path):
+        app, _ = self.seed(tmp_path)
+        # A change in the PR makes the refresher publish its status again.
+        app.state.refresher._cache.clear()
+
+        async def scenario():
+            queue = app.state.hub.subscribe()
+            await app.state.refresher.run_once()
+            while True:
+                name, data = queue.get_nowait()
+                if name == "status":
+                    return data
+
+        data = run(scenario())
+
+        assert data["slack"]["posted"] is False
+        assert data["status"]["next"]["kind"] == "post_slack"
+
+    def test_without_slack_nothing_changes(self, tmp_path):
+        from fastapi.testclient import TestClient
+
+        app, _, _ = seeded_app(tmp_path)
+        asyncio.run(app.state.refresher.run_once())
+
+        (branch,) = TestClient(app).get("/api/snapshot").json()["branches"]
+
+        assert branch["slack"] is None
+        assert branch["status"]["next"]["kind"] != "post_slack"

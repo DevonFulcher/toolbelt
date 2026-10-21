@@ -74,6 +74,7 @@ from toolbelt.git.stack.status import PrState
 from toolbelt.git.stack.store import (
     AgentRun,
     Parents,
+    SlackPostRow,
     StackStore,
     default_db_path,
     state_dir,
@@ -136,6 +137,13 @@ from toolbelt.ui.pr_fetch import (
 from toolbelt.ui.pr_gate import GithubChangeGate, PrGate
 from toolbelt.ui.pushed_views import PushedViews, conversation_of
 from toolbelt.ui.repo_visibility import visible_repos
+from toolbelt.ui.slack_config import SlackConfig
+from toolbelt.ui.slack_tracker import (
+    NO_SLACK,
+    BumpWatcher,
+    SlackLookup,
+    SlackTracker,
+)
 from toolbelt.ui.snapshot import (
     branch_claim,
     build_snapshot,
@@ -208,6 +216,14 @@ def _tracked_branches() -> list[TrackedBranch]:
             if repo.path.is_dir()
             for name in store.all_parents(repo.id)
         ]
+    finally:
+        store.close()
+
+
+def _slack_posts() -> list[SlackPostRow]:
+    store = StackStore(default_db_path())
+    try:
+        return store.slack_posts()
     finally:
         store.close()
 
@@ -385,6 +401,7 @@ def create_app(
     dispatcher: Dispatcher | None = None,
     merger: Callable[[Path, str], MergeOutcome] = run_toolbelt_merge,
     github: GithubRequests | None = None,
+    slack_settings: SlackConfig | None = None,
     change_gate: bool = False,
     lookup_cache: LookupCache | None = None,
     full_refresh_interval: float = DEFAULT_FULL_INTERVAL_SECONDS,
@@ -405,6 +422,8 @@ def create_app(
     ``client_dist`` is the built web client. ``search_open_prs`` lists the
     user's open PRs (one GitHub call per ``untracked_interval``) and
     ``remote_of`` looks up a checkout's origin: see ``untracked_prs.py``.
+    ``slack_settings`` is the ``slack`` section of the config (``None``:
+    Slack is off and a task's next action ignores it; see ``slack_config.py``).
     ``github`` is the client every GitHub request goes through (default: one
     over the signed-in ``gh``'s token, see ``github_requests.py``).
     ``change_gate`` lets a status poll skip the full lookup of a PR GitHub says
@@ -432,12 +451,14 @@ def create_app(
     hub = EventHub(clock=clock, grace=grace_seconds)
 
     def branch_status(repo_id: int, parents: Parents, name: str, now: datetime):
+        fetched = refresher.get(repo_id, name)
         return live_status(
-            refresher.get(repo_id, name),
-            parent_context(repo_id, parents, name, refresher, claims),
+            fetched,
+            parent_context(repo_id, parents, name, refresher, now, claims, slack),
             now,
             claims.working(repo_id, name),
             claims.autonomous(repo_id, name),
+            slack.context(repo_id, name, fetched, now),
         )
 
     def publish_claims(changed: set[BranchKey]) -> None:
@@ -470,19 +491,34 @@ def create_app(
             },
         )
 
-    def publish_status(branch: TrackedBranch, fetched: Fetched) -> None:
-        # The cache already holds ``fetched``, so parent contexts see it.
-        parents = _all_parents(branch.repo_id)
+    def publish_branches(repo_id: int, parents: Parents, names: list[str]) -> None:
+        """A ``status`` event (with its Slack standing) for each of ``names``."""
         now = wall_clock()
-        for name in descendants(parents, branch.branch):
-            status = branch_status(branch.repo_id, parents, name, now)
+        for name in names:
+            looked_up = refresher.get(repo_id, name)
+            info = slack.info(repo_id, name, looked_up, now)
             hub.publish(
                 "status",
                 {
-                    "branch_id": row_id(branch.repo_id, name),
-                    "status": status.model_dump(mode="json"),
+                    "branch_id": row_id(repo_id, name),
+                    "status": branch_status(repo_id, parents, name, now).model_dump(
+                        mode="json"
+                    ),
+                    "slack": info.model_dump(mode="json") if info else None,
                 },
             )
+
+    def publish_status(branch: TrackedBranch, fetched: Fetched) -> None:
+        # The cache already holds ``fetched``, so parent contexts see it.
+        parents = _all_parents(branch.repo_id)
+        publish_branches(branch.repo_id, parents, descendants(parents, branch.branch))
+
+    def publish_slack(changed: set[BranchKey]) -> None:
+        """What a branch's PR is to do next in Slack changes its own status
+        and, through its parent, that of the branches stacked on it."""
+        for repo_id, branch in sorted(changed):
+            parents = _all_parents(repo_id)
+            publish_branches(repo_id, parents, descendants(parents, branch))
 
     claims = ClaimsFeed(
         directory=claims_dir,
@@ -606,6 +642,23 @@ def create_app(
             ledger=SettingsLedger(),
         )
 
+    sync_slugs: dict[int, str | None] = {}
+
+    def slug_of_repo(repo_id: int) -> str | None:
+        """``owner/name`` of a registered repo's remote, from the database."""
+        if repo_id not in sync_slugs:
+            for registered_id, _, remote_url in _registered_repos():
+                sync_slugs[registered_id] = repo_slug(remote_url)
+        return sync_slugs.get(repo_id)
+
+    slack: SlackLookup = NO_SLACK
+    if slack_settings is not None:
+        slack = SlackTracker(
+            posts=_slack_posts,
+            slug_of=slug_of_repo,
+            bump_after=slack_settings.bump_after,
+        )
+
     def webhook_problems() -> list[api.RepoWebhook]:
         """The repos the user administers whose webhook is not working."""
         if forwarders is None:
@@ -704,6 +757,17 @@ def create_app(
     # Tracked branches, runs and settings live in the stack DB: when it
     # changes, what the cards and the Agents view show may have too.
     watcher.on_change = lambda: views.notify("agents", "extras")
+    bump_watcher = (
+        BumpWatcher(
+            tracker=slack,
+            branches=_tracked_branches,
+            fetched=refresher.get,
+            wall_clock=wall_clock,
+            on_change=publish_slack,
+        )
+        if isinstance(slack, SlackTracker)
+        else None
+    )
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -723,6 +787,8 @@ def create_app(
         ]
         if forwarders is not None:
             tasks.append(asyncio.create_task(forwarders.run()))
+        if bump_watcher is not None:
+            tasks.append(asyncio.create_task(bump_watcher.run()))
         try:
             yield
         finally:
@@ -751,6 +817,7 @@ def create_app(
     app.state.dispatcher = dispatcher
     app.state.agent_runner = runner
     app.state.forwarders = forwarders
+    app.state.slack = slack
     app.state.github = requests
     app.state.views = views
 
@@ -815,6 +882,7 @@ def create_app(
             agents=views.agents,
             spend=views.spend,
             webhooks=webhook_problems(),
+            slack=slack,
         )
 
     @app.get("/api/aggregate", response_model=api.Aggregate)

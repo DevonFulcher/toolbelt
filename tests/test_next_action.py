@@ -3,7 +3,7 @@
 import pytest
 
 from toolbelt.git.stack.status import BranchStatus, CiState, PrState, ReviewState
-from toolbelt.ui.next_action import ParentContext, next_action
+from toolbelt.ui.next_action import ParentContext, SlackContext, next_action
 
 URL = "https://github.com/o/r/pull/5"
 
@@ -371,3 +371,84 @@ def test_a_child_of_an_autonomous_agents_branch_waits_on_others():
     action = next_action(status(review=ReviewState.APPROVED), parent)
 
     assert (action.kind, action.who) == ("blocked", "others")
+
+
+class TestSlackRules:
+    """With Slack configured, a ready PR is posted, then bumped when nobody
+    looks."""
+
+    NOT_POSTED = SlackContext(posted=False)
+    POSTED = SlackContext(posted=True)
+    BUMP_DUE = SlackContext(posted=True, bump_due=True)
+
+    def kind(self, branch, slack, parent=None):
+        return next_action(branch, parent, slack=slack).kind
+
+    @pytest.mark.parametrize(
+        "branch",
+        [
+            status(),
+            status(review=ReviewState.REQUESTED),
+            status(ci=CiState.RUNNING),
+            status(ci=CiState.NONE),
+        ],
+    )
+    def test_a_ready_pr_not_posted_is_to_be_posted_whatever_its_review_request_or_running_ci(
+        self, branch
+    ):
+        assert self.kind(branch, self.NOT_POSTED) == "post_slack"
+        assert next_action(branch, None, slack=self.NOT_POSTED).label == "Post in Slack"
+
+    def test_without_slack_nothing_changes(self):
+        assert self.kind(status(), None) == "request_review"
+        assert self.kind(status(review=ReviewState.REQUESTED), None) == "wait_review"
+        assert self.kind(status(ci=CiState.RUNNING), None) == "wait_ci"
+
+    def test_a_posted_pr_is_bumped_once_due_and_otherwise_waits_as_before(self):
+        assert self.kind(status(), self.BUMP_DUE) == "bump_slack"
+        assert self.kind(status(), self.POSTED) == "request_review"
+        waiting = status(review=ReviewState.REQUESTED)
+        assert self.kind(waiting, self.POSTED) == "wait_review"
+        assert self.kind(status(ci=CiState.RUNNING), self.POSTED) == "wait_ci"
+
+    @pytest.mark.parametrize(
+        ("branch", "kind"),
+        [
+            (status(conflicts=True), "resolve_conflicts"),
+            (status(review=ReviewState.REVIEWED), "address_review"),
+            (status(comments=1), "resolve_comments"),
+            # An agent must still see a failing CI first.
+            (status(ci=CiState.FAILED), "fix_ci"),
+        ],
+    )
+    def test_what_blocks_the_pr_comes_before_posting_it(self, branch, kind):
+        assert self.kind(branch, self.NOT_POSTED) == kind
+        assert self.kind(branch, self.BUMP_DUE) == kind
+
+    @pytest.mark.parametrize(
+        ("branch", "kind"),
+        [
+            (status(pr=PrState.NONE), "open_pr"),
+            (status(pr=PrState.DRAFT), "publish"),
+            (status(pr=PrState.DRAFT, ci=CiState.RUNNING), "wait_ci"),
+            (status(pr=PrState.MERGED), "done"),
+            (status(pr=PrState.CLOSED), "done"),
+            (status(review=ReviewState.APPROVED), "merge"),
+        ],
+    )
+    def test_a_draft_a_finished_pr_and_an_approved_one_are_not_posted(
+        self, branch, kind
+    ):
+        assert self.kind(branch, self.NOT_POSTED) == kind
+        assert self.kind(branch, self.BUMP_DUE) == kind
+
+    def test_an_approved_child_is_still_blocked_on_its_parent(self):
+        approved = status(review=ReviewState.APPROVED)
+
+        assert self.kind(approved, self.NOT_POSTED, OPEN_PARENT) == "blocked"
+
+    def test_an_agent_claim_still_replaces_the_slack_action(self):
+        action = next_action(status(), None, claimed=True, slack=self.NOT_POSTED)
+
+        assert action.kind == "claimed"
+        assert action.would_be is not None and action.would_be.kind == "post_slack"

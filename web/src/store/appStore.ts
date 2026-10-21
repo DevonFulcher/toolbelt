@@ -14,6 +14,7 @@ import type {
   CardExtras,
   FetchedBranch,
   RepoWebhook,
+  SlackInfo,
   Spend,
   Branch,
   BranchClaim,
@@ -30,7 +31,7 @@ import type { ConnectionState } from "../live/connection";
 import { DEFAULT_STATE, type View, type ViewState } from "../logic/viewState";
 
 /** A branch without its live parts (those are patched separately). */
-export type StaticBranch = Omit<Branch, "status" | "task_live" | "claim">;
+export type StaticBranch = Omit<Branch, "status" | "task_live" | "claim" | "slack">;
 
 /** Per-card timeline UI state, kept across live updates. */
 export interface CardUi {
@@ -65,6 +66,8 @@ export interface AppState {
   statuses: Record<string, LiveStatus>;
   /** Who holds a claim on each branch (live holders only). */
   claims: Record<string, BranchClaim>;
+  /** Where each branch's PR stands in Slack (absent: Slack is off, or no PR yet). */
+  slacks: Record<string, SlackInfo>;
   /** Only for branches whose task the configured tracker owns. */
   tasks: Record<string, TaskLive>;
   /** When (ms) each branch's PR status was last looked up on GitHub. */
@@ -108,7 +111,7 @@ export interface AppState {
   // -- actions --
   applySnapshot(snapshot: Snapshot, now?: number): void;
   setSnapshotError(message: string): void;
-  statusChanged(branchId: string, status: LiveStatus, v: number): void;
+  statusChanged(branchId: string, status: LiveStatus, v: number, slack?: SlackInfo | null): void;
   taskChanged(branchId: string, task: TaskLive, v: number): void;
   /** Claims changed on some branches: their claim and re-derived status. */
   claimsChanged(patches: ClaimPatch[], v: number): void;
@@ -204,6 +207,7 @@ export function createAppStore(init: StoreInit = {}): AppStore {
     branchesById: {},
     statuses: {},
     claims: {},
+    slacks: {},
     tasks: {},
     fetchedAt: {},
     fetchError: {},
@@ -231,10 +235,12 @@ export function createAppStore(init: StoreInit = {}): AppStore {
       const statuses: Record<string, LiveStatus> = {};
       const tasks: Record<string, TaskLive> = {};
       const claims: Record<string, BranchClaim> = {};
+      const slacks: Record<string, SlackInfo> = {};
       const statics: StaticBranch[] = [];
-      for (const { status, task_live, claim, ...rest } of snapshot.branches) {
+      for (const { status, task_live, claim, slack, ...rest } of snapshot.branches) {
         statuses[rest.id] = status;
         claims[rest.id] = claim;
+        if (slack) slacks[rest.id] = slack;
         if (task_live) tasks[rest.id] = task_live;
         const before = prev.branchesById[rest.id];
         statics.push(before && same(before, rest) ? before : rest);
@@ -254,6 +260,7 @@ export function createAppStore(init: StoreInit = {}): AppStore {
         statuses: share(prev.statuses, statuses),
         tasks: share(prev.tasks, tasks),
         claims: share(prev.claims, claims),
+        slacks: share(prev.slacks, slacks),
         ...fetchedState(snapshot.fetched),
         webhooks: webhooksByRepo(snapshot.webhooks),
         ...(snapshot.extras ? extrasState(snapshot.extras) : {}),
@@ -275,16 +282,23 @@ export function createAppStore(init: StoreInit = {}): AppStore {
       set({ error: message });
     },
 
-    statusChanged(branchId, status, v) {
+    statusChanged(branchId, status, v, slack) {
       const state = get();
       // Already reflected in the snapshot this page was built from.
       if (state.version !== null && v <= state.version) return;
       const before = state.statuses[branchId];
+      let slacks = state.slacks;
+      if (slack !== undefined && !same(slacks[branchId] ?? null, slack)) {
+        slacks = { ...slacks };
+        if (slack === null) delete slacks[branchId];
+        else slacks[branchId] = slack;
+      }
       set({
         version: v,
         updatedAt: clock(),
         statuses:
           before && same(before, status) ? state.statuses : { ...state.statuses, [branchId]: status },
+        slacks,
       });
     },
 

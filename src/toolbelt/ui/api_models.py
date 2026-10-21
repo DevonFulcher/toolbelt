@@ -480,6 +480,8 @@ class Branch(Model):
     agent: Link | None
     #: Who holds a claim on it right now (empty: nobody).
     claim: BranchClaim
+    #: Where its PR stands in Slack (``None``: Slack is off, or no PR yet).
+    slack: SlackInfo | None
     #: ISO time the task started (the branch was registered); ``None`` only
     #: if the database has none for it.
     started_at: str | None
@@ -548,6 +550,19 @@ class RepoWebhook(Model):
     state: Literal["claimed", "leftover", "blocked", "failed", "not_installed"]
     #: Why, in a sentence.
     problem: str
+
+
+class SlackInfo(Model):
+    """Where a branch's PR stands in Slack, from the posts toolbelt recorded
+    (``None`` on a branch when Slack is not configured or it has no PR)."""
+
+    posted: bool
+    #: What the latest post was (``None`` while not posted).
+    last_kind: Literal["post", "bump"] | None
+    #: ISO time of the latest post or bump: what the post age counts from.
+    last_at: str | None
+    #: Posted a day ago or more, and nobody has looked since.
+    bump_due: bool
 
 
 class FetchedBranch(Model):
@@ -1089,6 +1104,9 @@ class StatusEvent(Model):
     v: int
     branch_id: str
     status: LiveStatus
+    #: Its PR's standing in Slack, which changes with the PR (a review means
+    #: no bump) and with time (a bump falls due): ``None`` when Slack is off.
+    slack: SlackInfo | None
 
 
 class TaskEvent(Model):

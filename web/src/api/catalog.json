@@ -160,6 +160,8 @@
     "agent_run_summary": null,
     "cost": null,
     "agent_cost": null,
+    "slack_status": null,
+    "slack_age": null,
     "repo": null,
     "branch": null,
     "task": null,
@@ -791,6 +793,34 @@
       ],
       "dimension": "next",
       "value": "request_review"
+    },
+    {
+      "label": "Post in Slack",
+      "tone": "accent",
+      "legend": "Ready for review: post it in the review channel in Slack.",
+      "reps": [
+        {
+          "how": "now_state",
+          "kind": "next",
+          "absent": false
+        }
+      ],
+      "dimension": "next",
+      "value": "post_slack"
+    },
+    {
+      "label": "Bump in Slack",
+      "tone": "amber",
+      "legend": "Posted in Slack over a day ago and nobody has reviewed or commented: bump it.",
+      "reps": [
+        {
+          "how": "now_state",
+          "kind": "next",
+          "absent": false
+        }
+      ],
+      "dimension": "next",
+      "value": "bump_slack"
     },
     {
       "label": "With an agent",

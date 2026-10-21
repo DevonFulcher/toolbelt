@@ -132,6 +132,7 @@ export function branch(
     task_live: null,
     agent: null,
     claim: { holders: [] },
+    slack: null,
     started_at: null,
     status: { load: "loading" },
     ...rest,

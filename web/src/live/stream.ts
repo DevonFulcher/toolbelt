@@ -94,7 +94,7 @@ export function startLiveUpdates(deps: LiveDeps): LiveUpdates {
         return missed ? loadSnapshot() : undefined;
       }
       case "status":
-        state.statusChanged(event.branch_id, event.status, event.v);
+        state.statusChanged(event.branch_id, event.status, event.v, event.slack);
         return undefined;
       case "task":
         state.taskChanged(event.branch_id, event.task, event.v);

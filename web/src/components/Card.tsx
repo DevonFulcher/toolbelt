@@ -202,6 +202,7 @@ export const Card = memo(
     const repo = useApp((s) => (branch ? s.reposById[branch.repo_id] : undefined));
     const status = useApp((s) => s.statuses[id]) ?? LOADING;
     const task = useApp((s) => s.tasks[id]) ?? null;
+    const slack = useApp((s) => s.slacks[id]) ?? null;
     const claim = useApp((s) => s.claims[id]) ?? NO_CLAIM;
     const extras = useApp((s) => s.extras[id]);
     const decidedAt = useApp((s) => s.decidedAt);
@@ -395,6 +396,16 @@ export const Card = memo(
             ) : (
               "–"
             )}
+          </Slot>
+          <Slot
+            id="slack_status"
+            label="Slack status"
+            state={slack?.posted ? "ok" : slack && status.load === "loaded" && status.pr === "open" ? "gap" : "na"}
+          >
+            {slack ? (slack.posted ? (slack.last_kind === "bump" ? "Bumped in Slack" : "Posted in Slack") : "Not posted in Slack") : "–"}
+          </Slot>
+          <Slot id="slack_age" label="Post age" state={slack?.last_at ? "ok" : "na"}>
+            {slack?.last_at ? <Age text={formatAge((now - Date.parse(slack.last_at)) / 1000)} since={slack.last_at} /> : "–"}
           </Slot>
         </Group>
         <Group

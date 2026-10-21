@@ -71,6 +71,8 @@ export type NextKind =
   | "merge"
   | "wait_review"
   | "request_review"
+  | "post_slack"
+  | "bump_slack"
   | "claimed"
   | "autonomous";
 export type Who = "you" | "agent" | "auto" | "others" | "ci" | "none";
@@ -333,9 +335,20 @@ export interface HelloEvent {
  */
 export interface StatusEvent {
   branch_id: string;
+  slack: SlackInfo | null;
   status: LiveStatus;
   type: "status";
   v: number;
+}
+/**
+ * Where a branch's PR stands in Slack, from the posts toolbelt recorded
+ * (``None`` on a branch when Slack is not configured or it has no PR).
+ */
+export interface SlackInfo {
+  bump_due: boolean;
+  last_at: string | null;
+  last_kind: ("post" | "bump") | null;
+  posted: boolean;
 }
 /**
  * No result in yet (or the repo's checkout is missing: nothing to ask).
@@ -782,6 +795,7 @@ export interface Branch {
   parent: string | null;
   parent_id: string | null;
   repo_id: number;
+  slack: SlackInfo | null;
   stack_height: number;
   stack_pos: number;
   started_at: string | null;
@@ -879,6 +893,8 @@ export interface SlotDimensions {
   review_requested: CatalogDimension | null;
   reviewers: CatalogDimension | null;
   session: CatalogDimension | null;
+  slack_age: CatalogDimension | null;
+  slack_status: CatalogDimension | null;
   task: CatalogDimension | null;
   task_age: CatalogDimension | null;
   task_status: CatalogDimension | null;

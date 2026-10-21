@@ -305,6 +305,28 @@ _MIGRATIONS: list[tuple[str, ...]] = [
         )
         """,
     ),
+    (
+        # What toolbelt posted in Slack about each PR (see ``ui.slack_posts``):
+        # one row per PR per message, so a post that carries several PRs has a
+        # row for each. ``ts`` is the message's own timestamp and ``thread_ts``
+        # the top-level message of its thread (the same, for a post); ``kind``
+        # is ``post`` or ``bump``. ``repo`` is the lower-case ``owner/name``.
+        """
+        CREATE TABLE slack_posts (
+            channel TEXT NOT NULL,
+            ts TEXT NOT NULL,
+            thread_ts TEXT NOT NULL,
+            repo TEXT NOT NULL,
+            pr_number INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            posted_at TEXT NOT NULL,
+            assignee_id TEXT,
+            assignee_name TEXT,
+            PRIMARY KEY (channel, ts, repo, pr_number)
+        )
+        """,
+        "CREATE INDEX slack_posts_by_pr ON slack_posts (repo, pr_number, posted_at)",
+    ),
 ]
 
 
@@ -347,6 +369,21 @@ class PrLookupRow:
     full_at: datetime
     record: str
     schema: int
+
+
+@dataclass(frozen=True)
+class SlackPostRow:
+    """One PR's part of a message toolbelt posted in Slack."""
+
+    channel: str
+    ts: str
+    thread_ts: str
+    repo: str
+    pr_number: int
+    kind: str
+    posted_at: datetime
+    assignee_id: str | None = None
+    assignee_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1377,6 +1414,53 @@ class StackStore:
                     row.record,
                     row.schema,
                 ),
+            )
+
+    def slack_posts(self) -> list[SlackPostRow]:
+        rows = self._conn.execute(
+            "SELECT * FROM slack_posts ORDER BY posted_at, ts, repo, pr_number"
+        )
+        return [
+            SlackPostRow(
+                channel=r["channel"],
+                ts=r["ts"],
+                thread_ts=r["thread_ts"],
+                repo=r["repo"],
+                pr_number=r["pr_number"],
+                kind=r["kind"],
+                posted_at=datetime.fromisoformat(r["posted_at"]),
+                assignee_id=r["assignee_id"],
+                assignee_name=r["assignee_name"],
+            )
+            for r in rows
+        ]
+
+    def save_slack_posts(self, rows: list[SlackPostRow]) -> None:
+        """Records ``rows``; a row for a PR and message already recorded is
+        replaced."""
+        with self._write() as conn:
+            conn.executemany(
+                "INSERT INTO slack_posts (channel, ts, thread_ts, repo, pr_number, "
+                "kind, posted_at, assignee_id, assignee_name) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT (channel, ts, repo, pr_number) DO UPDATE SET "
+                "thread_ts = excluded.thread_ts, kind = excluded.kind, "
+                "posted_at = excluded.posted_at, assignee_id = excluded.assignee_id, "
+                "assignee_name = excluded.assignee_name",
+                [
+                    (
+                        row.channel,
+                        row.ts,
+                        row.thread_ts,
+                        row.repo,
+                        row.pr_number,
+                        row.kind,
+                        _iso(row.posted_at),
+                        row.assignee_id,
+                        row.assignee_name,
+                    )
+                    for row in rows
+                ],
             )
 
     def delete_pr_lookup(self, repo_id: int, branch: str) -> None:

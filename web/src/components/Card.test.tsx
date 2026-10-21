@@ -34,6 +34,8 @@ const SLOT_LABELS: Record<string, string> = {
   task: "Task",
   task_title: "Task title",
   task_status: "Task status",
+  slack_status: "Slack status",
+  slack_age: "Post age",
   session: "Interactive session",
   agent_status: "Autonomous agent",
   agent_run: "Latest agent run",
@@ -274,7 +276,7 @@ describe("a card's labelled slots", () => {
       expect(keys).toEqual([
         ["repo", "branch", "ancestors", "descendants"],
         ["title", "pr", "ci", "review", "comments", "bot_comments", "merge", "conflict_commit", "lines", "pr_age", "in_draft", "review_requested", "ci_failures", "reviewers"],
-        ["next", "task_age", "task", "task_title", "task_status"],
+        ["next", "task_age", "task", "task_title", "task_status", "slack_status", "slack_age"],
         ["session", "agent_status", "agent_run", "agent_run_summary"],
         ["cost", "agent_cost"],
       ]);
@@ -293,7 +295,7 @@ describe("a card's labelled slots", () => {
 
     expect(labels(found)).toEqual(SLOT_LABELS);
     for (const key of Object.keys(SLOT_LABELS)) {
-      if (["repo", "branch", "ancestors", "descendants", "task", "task_title", "task_status", "session", "task_age", "agent_status", "agent_run", "agent_run_summary", "cost", "agent_cost"].includes(key)) continue;
+      if (["repo", "branch", "ancestors", "descendants", "task", "task_title", "task_status", "slack_status", "slack_age", "session", "task_age", "agent_status", "agent_run", "agent_run_summary", "cost", "agent_cost"].includes(key)) continue;
       expect(found[key].slice(1), key).toEqual(["na", "loading…"]);
     }
   });
@@ -454,6 +456,89 @@ describe("claims", () => {
 
     expect(slotsOf("devon/a").next[2]).toContain("With an agent");
     expect(screen.getByText("With an agent", { selector: ".cg-label" })).toBeInTheDocument();
+  });
+});
+
+describe("a card's Slack fields", () => {
+  const open = pr({ pr_number: 8, pr: "open" });
+
+  test("Slack off, or no PR yet: dashes", () => {
+    showCards([branch(1, "devon/a", { status: open, slack: null })]);
+
+    const found = slotsOf("devon/a");
+
+    expect(found.slack_status).toEqual(["Slack status", "na", "–"]);
+    expect(found.slack_age).toEqual(["Post age", "na", "–"]);
+  });
+
+  test("a ready PR not posted is flagged as something to do", () => {
+    showCards([
+      branch(1, "devon/a", { status: open, slack: { posted: false, last_kind: null, last_at: null, bump_due: false } }),
+    ]);
+
+    const found = slotsOf("devon/a");
+
+    expect(found.slack_status).toEqual(["Slack status", "gap", "Not posted in Slack"]);
+    expect(found.slack_age[2]).toBe("–");
+  });
+
+  test("a draft not posted is not flagged: it is not ready", () => {
+    const draft = pr({ pr_number: 8, pr: "draft" });
+    showCards([
+      branch(1, "devon/a", { status: draft, slack: { posted: false, last_kind: null, last_at: null, bump_due: false } }),
+    ]);
+
+    expect(slotsOf("devon/a").slack_status).toEqual(["Slack status", "na", "Not posted in Slack"]);
+  });
+
+  test("a posted PR says so, and how long ago it was last posted or bumped", () => {
+    showCards([
+      branch(1, "devon/a", {
+        status: open,
+        slack: { posted: true, last_kind: "post", last_at: new Date(NOW - 5 * 3600_000).toISOString(), bump_due: false },
+      }),
+      branch(1, "devon/b", {
+        status: open,
+        slack: { posted: true, last_kind: "bump", last_at: new Date(NOW - 2 * DAY).toISOString(), bump_due: true },
+      }),
+    ]);
+
+    expect(slotsOf("devon/a").slack_status).toEqual(["Slack status", "ok", "Posted in Slack"]);
+    expect(slotsOf("devon/a").slack_age).toEqual(["Post age", "ok", "5h"]);
+    expect(slotsOf("devon/b").slack_status).toEqual(["Slack status", "ok", "Bumped in Slack"]);
+    expect(slotsOf("devon/b").slack_age[2]).toBe("2d");
+  });
+
+  test("a status event with the Slack standing updates the card", () => {
+    const { store } = showCards([branch(1, "devon/a", { status: open, slack: null })]);
+
+    act(() =>
+      store.getState().statusChanged("1:devon/a", open, 1, {
+        posted: true,
+        last_kind: "post",
+        last_at: new Date(NOW - 3600_000).toISOString(),
+        bump_due: false,
+      }),
+    );
+
+    expect(slotsOf("devon/a").slack_status[2]).toBe("Posted in Slack");
+
+    act(() => store.getState().statusChanged("1:devon/a", open, 2, null));
+
+    expect(slotsOf("devon/a").slack_status[2]).toBe("–");
+  });
+
+  test("a status event without a Slack field leaves it as it was", () => {
+    const { store } = showCards([
+      branch(1, "devon/a", {
+        status: open,
+        slack: { posted: true, last_kind: "post", last_at: new Date(NOW - 3600_000).toISOString(), bump_due: false },
+      }),
+    ]);
+
+    act(() => store.getState().statusChanged("1:devon/a", open, 1));
+
+    expect(slotsOf("devon/a").slack_status[2]).toBe("Posted in Slack");
   });
 });
 

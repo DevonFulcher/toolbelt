@@ -14,6 +14,11 @@ merge conflicts           Resolve conflicts          you
 changes requested         Address review             you
 unresolved threads        Resolve comments           you
 CI failed                 Fix / re-run CI            you
+open, not approved,       Post in Slack              you
+not posted in Slack
+open, not approved,       Bump in Slack              you
+posted, nobody looked
+for a day
 draft, CI running         Waiting on CI              ci
 draft (CI green / none)   Publish PR in GitHub       you
 open, CI running          Waiting on CI              ci
@@ -24,6 +29,11 @@ approved                  Merge                      you
 review requested          Waiting for review         others
 otherwise                 Request review             you
 ========================  =========================  ======
+
+The two Slack rows apply only when Slack is configured (``slack`` is given):
+posting a ready PR in the review channel is how a review gets asked for. They
+come after CI failed so an agent still sees a failing CI first, and before CI
+running so a PR is posted while its checks run.
 
 A branch an agent has claimed (``claimed=True``: a live ``working`` holder in
 the claims directory, see ``task_claims``) reads **With an agent** instead,
@@ -80,6 +90,8 @@ BLOCKED = "blocked"
 MERGE = "merge"
 WAIT_REVIEW = "wait_review"
 REQUEST_REVIEW = "request_review"
+POST_SLACK = "post_slack"
+BUMP_SLACK = "bump_slack"
 CLAIMED = "claimed"
 AUTONOMOUS = "autonomous"
 KINDS = (
@@ -95,6 +107,8 @@ KINDS = (
     MERGE,
     WAIT_REVIEW,
     REQUEST_REVIEW,
+    POST_SLACK,
+    BUMP_SLACK,
     CLAIMED,
     AUTONOMOUS,
 )
@@ -114,6 +128,8 @@ type NextKind = Literal[
     "merge",
     "wait_review",
     "request_review",
+    "post_slack",
+    "bump_slack",
     "claimed",
     "autonomous",
 ]
@@ -132,6 +148,16 @@ class NextAction:
 
 
 @dataclass(frozen=True)
+class SlackContext:
+    """Where the PR stands in Slack (see ``slack_posts``). Not given when
+    Slack is not configured."""
+
+    posted: bool
+    #: Posted over a day ago and nobody has looked since.
+    bump_due: bool = False
+
+
+@dataclass(frozen=True)
 class ParentContext:
     """The tracked branch this one is stacked on. ``pr`` is its PR state."""
 
@@ -146,12 +172,14 @@ def next_action(
     parent: ParentContext | None,
     claimed: bool = False,
     autonomous: bool = False,
+    slack: SlackContext | None = None,
 ) -> NextAction:
     """``parent`` is ``None`` for a branch on the base branch (or whose
     parent's status is not known yet). ``claimed``: a live working holder has
     claimed the branch; ``autonomous``: a live working autonomous agent
-    holds it."""
-    underlying = _underlying_action(status, parent)
+    holds it. ``slack``: where the PR stands in Slack (``None``: Slack is not
+    configured, so it plays no part)."""
+    underlying = _underlying_action(status, parent, slack)
     if underlying.kind == DONE:
         return underlying
     if claimed:
@@ -162,7 +190,7 @@ def next_action(
 
 
 def _underlying_action(
-    status: BranchStatus, parent: ParentContext | None
+    status: BranchStatus, parent: ParentContext | None, slack: SlackContext | None
 ) -> NextAction:
     if status.pr is PrState.NONE:
         return NextAction("Open PR", WHO_YOU, OPEN_PR)
@@ -176,6 +204,15 @@ def _underlying_action(
         return NextAction("Resolve comments", WHO_YOU, RESOLVE_COMMENTS)
     if status.ci is CiState.FAILED:
         return NextAction("Fix / re-run CI", WHO_YOU, FIX_CI)
+    if (
+        slack is not None
+        and status.pr is PrState.OPEN
+        and status.review is not ReviewState.APPROVED
+    ):
+        if not slack.posted:
+            return NextAction("Post in Slack", WHO_YOU, POST_SLACK)
+        if slack.bump_due:
+            return NextAction("Bump in Slack", WHO_YOU, BUMP_SLACK)
     if status.ci is CiState.RUNNING:
         return NextAction("Waiting on CI", WHO_CI, WAIT_CI)
     if status.pr is PrState.DRAFT:

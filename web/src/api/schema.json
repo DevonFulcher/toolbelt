@@ -875,6 +875,16 @@
         "repo_id": {
           "type": "integer"
         },
+        "slack": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SlackInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "stack_height": {
           "type": "integer"
         },
@@ -935,6 +945,7 @@
         "task_live",
         "agent",
         "claim",
+        "slack",
         "started_at",
         "status"
       ],
@@ -2459,6 +2470,8 @@
         "merge",
         "wait_review",
         "request_review",
+        "post_slack",
+        "bump_slack",
         "claimed",
         "autonomous"
       ],
@@ -3100,6 +3113,50 @@
         }
       ]
     },
+    "SlackInfo": {
+      "additionalProperties": false,
+      "description": "Where a branch's PR stands in Slack, from the posts toolbelt recorded\n(``None`` on a branch when Slack is not configured or it has no PR).",
+      "properties": {
+        "bump_due": {
+          "type": "boolean"
+        },
+        "last_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "post",
+                "bump"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "posted": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "posted",
+        "last_kind",
+        "last_at",
+        "bump_due"
+      ],
+      "title": "SlackInfo",
+      "type": "object"
+    },
     "SlotDimensions": {
       "additionalProperties": false,
       "properties": {
@@ -3343,6 +3400,26 @@
             }
           ]
         },
+        "slack_age": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogDimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "slack_status": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogDimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "task": {
           "anyOf": [
             {
@@ -3427,6 +3504,8 @@
         "agent_run_summary",
         "cost",
         "agent_cost",
+        "slack_status",
+        "slack_age",
         "repo",
         "branch",
         "task",
@@ -3865,6 +3944,16 @@
         "branch_id": {
           "type": "string"
         },
+        "slack": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SlackInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "status": {
           "$ref": "#/$defs/LiveStatus"
         },
@@ -3880,7 +3969,8 @@
         "type",
         "v",
         "branch_id",
-        "status"
+        "status",
+        "slack"
       ],
       "title": "StatusEvent",
       "type": "object"
