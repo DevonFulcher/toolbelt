@@ -135,6 +135,9 @@ class AsyncProcess:
         self._log_exit()
         return code
 
+    def kill(self) -> None:
+        self._process.kill()
+
     def _log_exit(self) -> None:
         assert self._process.returncode is not None
         _log_exit(self.pid, self._process.returncode, self._started)

@@ -133,6 +133,10 @@ export interface Wire {
   event: ServerEvent;
   merge_request: MergeRequest;
   merge_result: MergeResult;
+  slack_draft: SlackDraft;
+  slack_draft_request: SlackDraftRequest;
+  slack_send_request: SlackSendRequest;
+  slack_sent: SlackSent;
   snapshot: Snapshot;
   spend: Spend;
 }
@@ -768,6 +772,70 @@ export interface MergeRequest {
 export interface MergeResult {
   ok: boolean;
   output: string;
+}
+/**
+ * A message waiting for the user to confirm. The text shows a person as
+ * ``@name``; it becomes a real Slack mention when sent.
+ */
+export interface SlackDraft {
+  assignee: SlackPerson | null;
+  candidates: SlackPerson[];
+  channel: string;
+  kind: "post" | "bump";
+  prs: SlackDraftPr[];
+  text: string;
+  thread_ts: string | null;
+}
+/**
+ * Someone who can be asked to review: Slack display name and user ID.
+ */
+export interface SlackPerson {
+  id: string;
+  name: string;
+}
+export interface SlackDraftPr {
+  additions: number;
+  deletions: number;
+  number: number;
+  repo: string;
+  title: string;
+  url: string;
+}
+/**
+ * The body of ``POST /api/slack/draft``: the message to post or bump the
+ * branch's PR, as toolbelt would write it.
+ */
+export interface SlackDraftRequest {
+  assignee_id: string | null;
+  id: string;
+}
+/**
+ * The body of ``POST /api/slack/send``: post the confirmed (possibly
+ * edited) message and record it.
+ */
+export interface SlackSendRequest {
+  assignee_id: string | null;
+  id: string;
+  kind: "post" | "bump";
+  prs: SlackPrRef[];
+  text: string;
+  thread_ts: string | null;
+}
+/**
+ * A PR named in a Slack message: ``repo`` is ``owner/name``, lower case.
+ */
+export interface SlackPrRef {
+  number: number;
+  repo: string;
+}
+/**
+ * What posting did.
+ */
+export interface SlackSent {
+  cost_usd: number;
+  link: string;
+  verified: boolean;
+  warning: string | null;
 }
 export interface Snapshot {
   age: number | null;

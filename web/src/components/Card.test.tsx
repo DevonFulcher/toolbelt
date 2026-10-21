@@ -459,6 +459,42 @@ describe("claims", () => {
   });
 });
 
+describe("a card whose next action is about Slack", () => {
+  const next = (kind: "post_slack" | "bump_slack", label: string) =>
+    pr({ pr_number: 8, pr: "open", next: { label, who: "you", kind, would_be: null } });
+
+  test.each([
+    ["post_slack", "Post in Slack"],
+    ["bump_slack", "Bump in Slack"],
+  ] as const)("%s is a button that opens the message, and posts nothing by itself", async (kind, label) => {
+    const fetchMock = vi.fn(async (path: string) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        kind: kind === "post_slack" ? "post" : "bump",
+        channel: path === "/api/slack/draft" ? "DTEST" : "?",
+        text: "the message",
+        assignee: null,
+        candidates: [],
+        prs: [],
+        thread_ts: null,
+      }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      showCards([branch(1, "devon/a", { status: next(kind, label) })]);
+
+      act(() => screen.getByRole("button", { name: label }).click());
+
+      expect(await screen.findByRole("dialog", { name: label })).toBeInTheDocument();
+      expect(await screen.findByDisplayValue("the message")).toBeInTheDocument();
+      expect(fetchMock.mock.calls.map(([called]) => called)).toEqual(["/api/slack/draft"]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
 describe("a card's Slack fields", () => {
   const open = pr({ pr_number: 8, pr: "open" });
 

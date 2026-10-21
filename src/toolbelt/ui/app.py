@@ -138,6 +138,8 @@ from toolbelt.ui.pr_gate import GithubChangeGate, PrGate
 from toolbelt.ui.pushed_views import PushedViews, conversation_of
 from toolbelt.ui.repo_visibility import visible_repos
 from toolbelt.ui.slack_config import SlackConfig
+from toolbelt.ui.slack_proxy import SlackProxy, SlackProxyError
+from toolbelt.ui.slack_service import SlackNotApplicable, SlackService, SlackUnknown
 from toolbelt.ui.slack_tracker import (
     NO_SLACK,
     BumpWatcher,
@@ -216,6 +218,14 @@ def _tracked_branches() -> list[TrackedBranch]:
             if repo.path.is_dir()
             for name in store.all_parents(repo.id)
         ]
+    finally:
+        store.close()
+
+
+def _save_slack_posts(rows: list[SlackPostRow]) -> None:
+    store = StackStore(default_db_path())
+    try:
+        store.save_slack_posts(rows)
     finally:
         store.close()
 
@@ -402,6 +412,7 @@ def create_app(
     merger: Callable[[Path, str], MergeOutcome] = run_toolbelt_merge,
     github: GithubRequests | None = None,
     slack_settings: SlackConfig | None = None,
+    slack_proxy: SlackProxy | None = None,
     change_gate: bool = False,
     lookup_cache: LookupCache | None = None,
     full_refresh_interval: float = DEFAULT_FULL_INTERVAL_SECONDS,
@@ -423,7 +434,9 @@ def create_app(
     user's open PRs (one GitHub call per ``untracked_interval``) and
     ``remote_of`` looks up a checkout's origin: see ``untracked_prs.py``.
     ``slack_settings`` is the ``slack`` section of the config (``None``:
-    Slack is off and a task's next action ignores it; see ``slack_config.py``).
+    Slack is off and a task's next action ignores it; see ``slack_config.py``);
+    ``slack_proxy`` posts the messages (default: a Haiku session, see
+    ``slack_proxy.py``).
     ``github`` is the client every GitHub request goes through (default: one
     over the signed-in ``gh``'s token, see ``github_requests.py``).
     ``change_gate`` lets a status poll skip the full lookup of a PR GitHub says
@@ -757,6 +770,29 @@ def create_app(
     # Tracked branches, runs and settings live in the stack DB: when it
     # changes, what the cards and the Agents view show may have too.
     watcher.on_change = lambda: views.notify("agents", "extras")
+
+    def next_kind(repo_id: int, name: str) -> str | None:
+        status = branch_status(repo_id, _all_parents(repo_id), name, wall_clock())
+        return status.next.kind if isinstance(status, api.LoadedStatus) else None
+
+    slack_service = (
+        SlackService(
+            config=slack_settings,
+            tracker=slack,
+            send_message=(slack_proxy or SlackProxy()).send,
+            branches=_tracked_branches,
+            fetched=refresher.get,
+            parents=_all_parents,
+            slug_of=slug_of_repo,
+            next_kind=next_kind,
+            posts=_slack_posts,
+            save=_save_slack_posts,
+            wall_clock=wall_clock,
+            changed=publish_slack,
+        )
+        if slack_settings is not None and isinstance(slack, SlackTracker)
+        else None
+    )
     bump_watcher = (
         BumpWatcher(
             tracker=slack,
@@ -965,6 +1001,44 @@ def create_app(
             raise HTTPException(status_code=404, detail="no such repo")
         outcome = await asyncio.to_thread(merger, path, status.pr_url)
         return api.MergeResult(ok=outcome.ok, output=outcome.output)
+
+    def branch_ref(row_id_: str) -> tuple[int, str]:
+        repo_part, _, name = row_id_.partition(":")
+        try:
+            return int(repo_part), name
+        except ValueError as error:
+            raise HTTPException(status_code=404, detail="no such branch") from error
+
+    def slack_on() -> SlackService:
+        if slack_service is None:
+            raise HTTPException(status_code=404, detail="Slack is not configured.")
+        return slack_service
+
+    @app.post("/api/slack/draft", response_model=api.SlackDraft)
+    async def slack_draft(body: api.SlackDraftRequest) -> api.SlackDraft:
+        service = slack_on()
+        repo_id, name = branch_ref(body.id)
+        parents = await asyncio.to_thread(_all_parents, repo_id)
+        if name not in parents:
+            raise HTTPException(status_code=404, detail="no such branch")
+        try:
+            return await asyncio.to_thread(
+                service.draft, repo_id, name, body.assignee_id
+            )
+        except SlackNotApplicable as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @app.post("/api/slack/send", response_model=api.SlackSent)
+    async def slack_send(body: api.SlackSendRequest) -> api.SlackSent:
+        service = slack_on()
+        try:
+            return await service.send(body)
+        except SlackNotApplicable as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except SlackUnknown as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except SlackProxyError as error:
+            raise HTTPException(status_code=502, detail=str(error)) from error
 
     @app.post("/api/agents/enabled", response_model=api.AgentsEnabled)
     async def set_agents_enabled(body: api.AgentsEnabled) -> api.AgentsEnabled:

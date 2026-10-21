@@ -1044,6 +1044,80 @@ class MergeResult(Model):
     output: str
 
 
+class SlackPerson(Model):
+    """Someone who can be asked to review: Slack display name and user ID."""
+
+    id: str
+    name: str
+
+
+class SlackPrRef(Model):
+    """A PR named in a Slack message: ``repo`` is ``owner/name``, lower case."""
+
+    repo: str
+    number: int
+
+
+class SlackDraftPr(Model):
+    repo: str
+    number: int
+    url: str
+    title: str
+    additions: int
+    deletions: int
+
+
+class SlackDraftRequest(Model):
+    """The body of ``POST /api/slack/draft``: the message to post or bump the
+    branch's PR, as toolbelt would write it."""
+
+    #: The branch's row id (see ``Branch.id``).
+    id: str
+    #: Ask this person instead of the one the rules chose (``None``: the rules).
+    assignee_id: str | None
+
+
+class SlackDraft(Model):
+    """A message waiting for the user to confirm. The text shows a person as
+    ``@name``; it becomes a real Slack mention when sent."""
+
+    kind: Literal["post", "bump"]
+    #: Where it will be posted (from the config, never from the client).
+    channel: str
+    text: str
+    assignee: SlackPerson | None
+    #: Who else can be asked.
+    candidates: list[SlackPerson]
+    #: The PRs the message is about.
+    prs: list[SlackDraftPr]
+    #: A bump is a reply under this message (``None`` for a post).
+    thread_ts: str | None
+
+
+class SlackSendRequest(Model):
+    """The body of ``POST /api/slack/send``: post the confirmed (possibly
+    edited) message and record it."""
+
+    id: str
+    kind: Literal["post", "bump"]
+    text: str
+    assignee_id: str | None
+    thread_ts: str | None
+    prs: list[SlackPrRef]
+
+
+class SlackSent(Model):
+    """What posting did."""
+
+    link: str
+    #: Slack's copy has every PR link and mention of the message.
+    verified: bool
+    #: Why it could not be verified, or what is missing from Slack's copy.
+    warning: str | None
+    #: What the session that posted it cost.
+    cost_usd: float
+
+
 class AgentsEnabled(Model):
     """The body of ``POST /api/agents/enabled``."""
 
@@ -1231,6 +1305,10 @@ class Wire(Model):
     agents_enabled: AgentsEnabled
     agents_launching: AgentsLaunching
     merge_request: MergeRequest
+    slack_draft_request: SlackDraftRequest
+    slack_draft: SlackDraft
+    slack_send_request: SlackSendRequest
+    slack_sent: SlackSent
     merge_result: MergeResult
     agent_conversation: AgentConversation
     agent_start: AgentStart

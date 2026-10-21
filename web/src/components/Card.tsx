@@ -18,6 +18,7 @@ import { LOADING, subtreeIds } from "../store/selectors";
 import { useApp, useAppStore } from "../store/StoreContext";
 import { mergeBranch } from "../api/client";
 import { AgentSlots, SpendSlots } from "./CardAgentSlots";
+import { SlackDialog } from "./SlackDialog";
 import { Timeline } from "./Timeline";
 import { Age, CI_TONE, ExternalLink, PR_TONE, Pill, REVIEW_TONE, WHO_TEXT, WHO_TONE } from "./presentation";
 import { useNow, useSecondNow } from "./useNow";
@@ -496,6 +497,8 @@ function NextSlot({
     <Slot id="next" label="Next">
       {status.next.kind === "merge" ? (
         <MergeButton id={id} status={status} />
+      ) : status.next.kind === "post_slack" || status.next.kind === "bump_slack" ? (
+        <SlackButton id={id} status={status} />
       ) : (
         <Pill tone={WHO_TONE[status.next.who]} title={status.next.kind}>
           {status.next.label}
@@ -545,6 +548,26 @@ function MergeButton({ id, status }: { id: string; status: LoadedStatus }) {
           {state.text}
         </pre>
       )}
+    </>
+  );
+}
+
+/** Next is Post in Slack or Bump in Slack: a button that opens the message for the
+ * user to confirm. Nothing is posted until it is confirmed in the dialog. */
+function SlackButton({ id, status }: { id: string; status: LoadedStatus }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        className="merge-button"
+        aria-haspopup="dialog"
+        title="Shows the message to post; nothing is sent until you confirm it"
+        onClick={() => setOpen(true)}
+      >
+        {status.next.label}
+      </button>
+      {open && <SlackDialog id={id} onClose={() => setOpen(false)} />}
     </>
   );
 }

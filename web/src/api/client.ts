@@ -1,4 +1,14 @@
-import type { Aggregate, AgentConversation, Agents, MergeResult, Snapshot, Spend } from "./generated";
+import type {
+  Aggregate,
+  AgentConversation,
+  Agents,
+  MergeResult,
+  Snapshot,
+  SlackDraft,
+  SlackSendRequest,
+  SlackSent,
+  Spend,
+} from "./generated";
 
 export const SNAPSHOT_URL = "/api/snapshot";
 export const EVENTS_URL = "/api/events";
@@ -101,6 +111,34 @@ export async function startAgentRun(id: string, fetchImpl: typeof fetch = fetch)
 
 /** Land a branch's PR (`toolbelt git merge`); resolves with what it did, and
  * rejects with the server's reason when the branch is not ready to merge. */
+/** POST ``body`` as JSON to ``path``; an error response throws its ``detail``. */
+async function postJson<T>(path: string, body: unknown, fetchImpl: typeof fetch): Promise<T> {
+  const response = await fetchImpl(path, {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const detail = ((await response.json().catch(() => ({}))) as { detail?: unknown }).detail;
+    throw new Error(typeof detail === "string" ? detail : `${path}: HTTP ${response.status}`);
+  }
+  return (await response.json()) as T;
+}
+
+/** The Slack message toolbelt would post (or bump) for the branch's PR. */
+export function fetchSlackDraft(
+  id: string,
+  assigneeId: string | null = null,
+  fetchImpl: typeof fetch = fetch,
+): Promise<SlackDraft> {
+  return postJson<SlackDraft>("/api/slack/draft", { id, assignee_id: assigneeId }, fetchImpl);
+}
+
+/** Post the confirmed message; resolves with what posting did. */
+export function sendSlack(request: SlackSendRequest, fetchImpl: typeof fetch = fetch): Promise<SlackSent> {
+  return postJson<SlackSent>("/api/slack/send", request, fetchImpl);
+}
+
 export async function mergeBranch(id: string, fetchImpl: typeof fetch = fetch): Promise<MergeResult> {
   const response = await fetchImpl("/api/merge", {
     method: "POST",

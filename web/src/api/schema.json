@@ -3113,6 +3113,126 @@
         }
       ]
     },
+    "SlackDraft": {
+      "additionalProperties": false,
+      "description": "A message waiting for the user to confirm. The text shows a person as\n``@name``; it becomes a real Slack mention when sent.",
+      "properties": {
+        "assignee": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SlackPerson"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "candidates": {
+          "items": {
+            "$ref": "#/$defs/SlackPerson"
+          },
+          "type": "array"
+        },
+        "channel": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "post",
+            "bump"
+          ],
+          "type": "string"
+        },
+        "prs": {
+          "items": {
+            "$ref": "#/$defs/SlackDraftPr"
+          },
+          "type": "array"
+        },
+        "text": {
+          "type": "string"
+        },
+        "thread_ts": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "channel",
+        "text",
+        "assignee",
+        "candidates",
+        "prs",
+        "thread_ts"
+      ],
+      "title": "SlackDraft",
+      "type": "object"
+    },
+    "SlackDraftPr": {
+      "additionalProperties": false,
+      "properties": {
+        "additions": {
+          "type": "integer"
+        },
+        "deletions": {
+          "type": "integer"
+        },
+        "number": {
+          "type": "integer"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo",
+        "number",
+        "url",
+        "title",
+        "additions",
+        "deletions"
+      ],
+      "title": "SlackDraftPr",
+      "type": "object"
+    },
+    "SlackDraftRequest": {
+      "additionalProperties": false,
+      "description": "The body of ``POST /api/slack/draft``: the message to post or bump the\nbranch's PR, as toolbelt would write it.",
+      "properties": {
+        "assignee_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "assignee_id"
+      ],
+      "title": "SlackDraftRequest",
+      "type": "object"
+    },
     "SlackInfo": {
       "additionalProperties": false,
       "description": "Where a branch's PR stands in Slack, from the posts toolbelt recorded\n(``None`` on a branch when Slack is not configured or it has no PR).",
@@ -3155,6 +3275,130 @@
         "bump_due"
       ],
       "title": "SlackInfo",
+      "type": "object"
+    },
+    "SlackPerson": {
+      "additionalProperties": false,
+      "description": "Someone who can be asked to review: Slack display name and user ID.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "title": "SlackPerson",
+      "type": "object"
+    },
+    "SlackPrRef": {
+      "additionalProperties": false,
+      "description": "A PR named in a Slack message: ``repo`` is ``owner/name``, lower case.",
+      "properties": {
+        "number": {
+          "type": "integer"
+        },
+        "repo": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo",
+        "number"
+      ],
+      "title": "SlackPrRef",
+      "type": "object"
+    },
+    "SlackSendRequest": {
+      "additionalProperties": false,
+      "description": "The body of ``POST /api/slack/send``: post the confirmed (possibly\nedited) message and record it.",
+      "properties": {
+        "assignee_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "post",
+            "bump"
+          ],
+          "type": "string"
+        },
+        "prs": {
+          "items": {
+            "$ref": "#/$defs/SlackPrRef"
+          },
+          "type": "array"
+        },
+        "text": {
+          "type": "string"
+        },
+        "thread_ts": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "text",
+        "assignee_id",
+        "thread_ts",
+        "prs"
+      ],
+      "title": "SlackSendRequest",
+      "type": "object"
+    },
+    "SlackSent": {
+      "additionalProperties": false,
+      "description": "What posting did.",
+      "properties": {
+        "cost_usd": {
+          "type": "number"
+        },
+        "link": {
+          "type": "string"
+        },
+        "verified": {
+          "type": "boolean"
+        },
+        "warning": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "link",
+        "verified",
+        "warning",
+        "cost_usd"
+      ],
+      "title": "SlackSent",
       "type": "object"
     },
     "SlotDimensions": {
@@ -4487,6 +4731,18 @@
     "merge_result": {
       "$ref": "#/$defs/MergeResult"
     },
+    "slack_draft": {
+      "$ref": "#/$defs/SlackDraft"
+    },
+    "slack_draft_request": {
+      "$ref": "#/$defs/SlackDraftRequest"
+    },
+    "slack_send_request": {
+      "$ref": "#/$defs/SlackSendRequest"
+    },
+    "slack_sent": {
+      "$ref": "#/$defs/SlackSent"
+    },
     "snapshot": {
       "$ref": "#/$defs/Snapshot"
     },
@@ -4503,6 +4759,10 @@
     "agents_enabled",
     "agents_launching",
     "merge_request",
+    "slack_draft_request",
+    "slack_draft",
+    "slack_send_request",
+    "slack_sent",
     "merge_result",
     "agent_conversation",
     "agent_start"
