@@ -181,9 +181,16 @@ def test_every_historical_version_migrates_to_head_keeping_its_data(
         datetime.fromisoformat(CREATED) if version < 5 else None
     )
     if version >= 3:
-        assert s.gh_stack_unsupported_at(1) == datetime.fromisoformat(REMOVED)
-        chain = s.get_published_chain(1, "feat")
-        assert chain is not None and chain.branches == ["feat", "plain"]
+        # The stack-mirroring columns and table are no longer used but stay, with
+        # their data, since migrations only append.
+        raw = sqlite3.connect(db)
+        assert raw.execute("SELECT gh_stack_unsupported_at FROM repos").fetchone() == (
+            REMOVED,
+        )
+        assert raw.execute("SELECT branches FROM published_chains").fetchone() == (
+            "feat\nplain",
+        )
+        raw.close()
     if version >= 6:
         [old] = s.removed_branches()
         assert (old.name, old.task, old.landed) == ("old", "OLD-7", True)
