@@ -86,6 +86,18 @@ def sync_repo(root: Path | None = None, *, branch: str | None = None) -> None:
 _STACKED_MERGE_ERROR = "asynchronous merge REST API"
 
 
+def _github_stack(number: int) -> dict | None:
+    """The GitHub stack PR ``number`` is in (``number``, ``size``, ...), or
+    ``None`` when GitHub does not say (``gh`` prints nothing for no stack)."""
+    try:
+        stack = capture(
+            ["gh", "api", f"repos/{{owner}}/{{repo}}/pulls/{number}", "--jq", ".stack"]
+        )
+    except subprocess.CalledProcessError:
+        return None
+    return json.loads(stack) if stack else None
+
+
 def git_merge(pr: str) -> None:
     """Squash-merge a PR, then sync the stack the merged branch belongs to.
 
@@ -127,11 +139,13 @@ def git_merge(pr: str) -> None:
         ["gh", "pr", "merge", "--squash", pr], stderr=subprocess.PIPE, text=True
     )
     if merged.returncode and _STACKED_MERGE_ERROR in merged.stderr:
+        stack = _github_stack(viewed["number"])
+        which = f"stack {stack['number']} ({stack['size']} PRs)" if stack else "a stack"
+        number = stack["number"] if stack else "<stack-number>"
         logger.error(
-            f"PR {viewed['number']} is part of a GitHub stack, which GitHub only "
+            f"PR {viewed['number']} is part of GitHub {which}, which GitHub only "
             "merges through its asynchronous API (rewriting the children's "
-            "branches). Unlink the stack in GitHub first: "
-            "gh stack unstack <stack-number>"
+            f"branches). Unlink the stack in GitHub first: gh stack unstack {number}"
         )
         raise typer.Exit(1)
     if merged.returncode:

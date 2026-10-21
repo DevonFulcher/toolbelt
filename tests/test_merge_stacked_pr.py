@@ -1,4 +1,4 @@
-"""`git_merge` refuses PRs in a GitHub stack and tells the user to unstack it in GitHub.
+"""`git_merge` refuses PRs in a GitHub stack and tells the user which stack to unstack in GitHub.
 
 `gh` and the stack sync are faked: the regular `gh pr merge` fails the way
 GitHub rejects stacked PRs.
@@ -43,7 +43,10 @@ class Gh:
         if cmd[:3] == ["gh", "pr", "view"]:
             return json.dumps(VIEWED)
         self.api_calls.append(cmd)
-        return json.dumps(self.api_responses.pop(0))
+        response = self.api_responses.pop(0)
+        return (
+            json.dumps(response) if response is not None else ""
+        )  # gh prints nothing for null
 
 
 @pytest.fixture
@@ -69,17 +72,36 @@ def _install(monkeypatch: pytest.MonkeyPatch, gh: Gh, worktree: Path) -> None:
     monkeypatch.setattr(workflow, "ensure_not_inside_worktree", lambda *a, **k: None)
 
 
-def test_stacked_pr_is_refused_with_the_unstack_command(
+def test_stacked_pr_is_refused_with_the_unstack_command_for_its_stack(
     monkeypatch: pytest.MonkeyPatch, worktree: Path, caplog: pytest.LogCaptureFixture
 ):
-    gh = Gh(merge_stderr=STACKED_ERROR, api_responses=[])
+    gh = Gh(
+        merge_stderr=STACKED_ERROR,
+        api_responses=[{"id": 99, "number": 1812, "position": 1, "size": 2}],
+    )
+    _install(monkeypatch, gh, worktree)
+
+    with pytest.raises(typer.Exit):
+        workflow.git_merge("7")
+
+    assert "PR 7 is part of GitHub stack 1812 (2 PRs)" in caplog.text
+    assert "gh stack unstack 1812" in caplog.text
+    assert gh.api_calls == [
+        ["gh", "api", "repos/{owner}/{repo}/pulls/7", "--jq", ".stack"]
+    ]
+    assert gh.synced == []
+
+
+def test_the_refusal_still_works_when_github_does_not_say_which_stack(
+    monkeypatch: pytest.MonkeyPatch, worktree: Path, caplog: pytest.LogCaptureFixture
+):
+    gh = Gh(merge_stderr=STACKED_ERROR, api_responses=[None])  # type: ignore[list-item]
     _install(monkeypatch, gh, worktree)
 
     with pytest.raises(typer.Exit):
         workflow.git_merge("7")
 
     assert "gh stack unstack <stack-number>" in caplog.text
-    assert gh.api_calls == []
     assert gh.synced == []
 
 
