@@ -34,6 +34,13 @@ def _git_projects_workdir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
     monkeypatch.setenv("GIT_PROJECTS_WORKDIR", str(tmp_path / "git-projects-workdir"))
 
 
+@pytest.fixture(autouse=True)
+def _no_jira_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`append` moves its task's status in the tracker: with no token that is a
+    warning, never a request to a real Jira."""
+    monkeypatch.delenv("JIRA_API_TOKEN", raising=False)
+
+
 @dataclass
 class Invocation:
     exit_code: int
@@ -288,6 +295,45 @@ def test_append_tags_the_task_with_the_configured_tracker(
     links = lineage.get_links("devon/feature", root=repo)
     assert links is not None
     assert (links.task, links.task_tracker) == ("ABC-1", "jira")
+
+
+def test_append_moves_the_task_to_in_progress_in_the_tracker(
+    repo: Path,
+    capfd: pytest.CaptureFixture,
+    _isolate_config_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _isolate_config_dir.parent.mkdir(parents=True)
+    _isolate_config_dir.write_text(
+        "tasks:\n  tracker: jira\n  jira:\n    base_url: https://j.example\n"
+    )
+    moved = []
+    monkeypatch.setattr(
+        "toolbelt.git.stack.cli.sync_task_status",
+        lambda tracker, task, stage: moved.append(
+            (tracker and tracker.name, task, stage)
+        ),
+    )
+
+    result = _invoke(["append", "feature", *_LINKS], cwd=repo, capfd=capfd)
+
+    assert result.exit_code == 0, result.output
+    assert moved == [("jira", "ABC-1", "in_progress")]
+
+
+def test_append_without_a_tracker_has_no_status_to_move(
+    repo: Path, capfd: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+):
+    moved = []
+    monkeypatch.setattr(
+        "toolbelt.git.stack.cli.sync_task_status",
+        lambda tracker, task, stage: moved.append((tracker, task, stage)),
+    )
+
+    result = _invoke(["append", "feature", *_LINKS], cwd=repo, capfd=capfd)
+
+    assert result.exit_code == 0, result.output
+    assert moved == [(None, "ABC-1", "in_progress")]  # no tracker: it does nothing
 
 
 @pytest.mark.parametrize(

@@ -133,6 +133,7 @@ export function branch(
     agent: null,
     claim: { holders: [] },
     slack: null,
+    merge_queue: null,
     started_at: null,
     status: { load: "loading" },
     ...rest,

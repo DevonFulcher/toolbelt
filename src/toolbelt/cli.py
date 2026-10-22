@@ -1,5 +1,7 @@
 import asyncio
 import os
+from pathlib import Path
+from typing import Annotated
 
 import typer
 
@@ -58,6 +60,14 @@ def ui(
         help="Build the web client first when it is missing or out of date "
         "(needs node and pnpm).",
     ),
+    log_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--log-file",
+            help="Write the log here instead of the terminal, rotating it at "
+            "10 MB and keeping three older files.",
+        ),
+    ] = None,
 ):
     """Serve a read-only web view of every known repo's stacks on 127.0.0.1"""
     if ctx.invoked_subcommand is not None:
@@ -78,6 +88,11 @@ def ui(
     if cwd_root is not None:
         # Same as `tt g tree`: make sure the current repo is registered.
         lineage.all_parents(root=cwd_root)
+    if log_file is not None:
+        from toolbelt.logger import log_to_rotating_file
+
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        log_to_rotating_file(log_file)
     serve(port=port, cwd_root=cwd_root)
 
 

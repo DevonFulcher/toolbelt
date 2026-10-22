@@ -47,6 +47,7 @@ from toolbelt.git.worktrees_ops import delete_branch_and_worktree, main_worktree
 from toolbelt.logger import logger
 from toolbelt.tasks.config import configured_tracker, employer_orgs
 from toolbelt.tasks.requirement import origin_owner, task_required
+from toolbelt.tasks.sync_status import sync_task_status
 
 stack_typer = typer.Typer(help="Stack + worktree management")
 
@@ -134,6 +135,8 @@ def append(
         copy_dotfiles(root=root, wt_path=wt_path)
         update_repo(wt_path)
     logger.info(f"Created worktree at {wt_path}")
+    # Outside the lock: it is a network call, and the branch is made either way.
+    sync_task_status(tracker, task, "in_progress")
 
 
 @stack_typer.command()

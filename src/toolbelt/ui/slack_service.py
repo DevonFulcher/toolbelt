@@ -267,6 +267,7 @@ class SlackService:
                     title=pr.title,
                     additions=pr.additions,
                     deletions=pr.deletions,
+                    assignee=_person_model(chosen),
                 )
                 for pr in prs
             ],
@@ -397,7 +398,12 @@ class SlackService:
             thread_ts=request.thread_ts if request.kind == "bump" else None,
         )
         self._record(sent.session_id, request.kind, sent.cost_usd)
-        person = self._person(request.assignee_id)
+        asked = {(ref.repo, ref.number): ref.assignee_id for ref in request.prs}
+
+        def person_for(pr: _Pr) -> Person | None:
+            """Who was asked about this PR: its own assignee, else the message's."""
+            return self._person(asked.get((pr.repo, pr.number)) or request.assignee_id)
+
         self._save(
             [
                 SlackPostRow(
@@ -408,10 +414,11 @@ class SlackService:
                     pr_number=pr.number,
                     kind=request.kind,
                     posted_at=self._wall_clock(),
-                    assignee_id=person.id if person else None,
-                    assignee_name=person.name if person else None,
+                    assignee_id=asked_of.id if asked_of else None,
+                    assignee_name=asked_of.name if asked_of else None,
                 )
                 for pr in prs
+                for asked_of in [person_for(pr)]
             ]
         )
         self._tracker.reload()

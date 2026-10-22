@@ -62,6 +62,7 @@ def _install(monkeypatch: pytest.MonkeyPatch, gh: Gh, worktree: Path) -> None:
     monkeypatch.setattr(workflow, "capture", gh.capture)
     monkeypatch.setattr(workflow, "get_current_repo_root_path", lambda: worktree.parent)
     monkeypatch.setattr(lineage, "link_pr", lambda *a, **k: None)
+    monkeypatch.setattr(lineage, "get_links", lambda *a, **k: None)
     monkeypatch.setattr(
         stack_worktree, "worktree_paths", lambda root: {"feature": worktree}
     )
@@ -115,6 +116,39 @@ def test_regular_merge_does_not_use_the_async_api(
 
     assert gh.api_calls == []
     assert gh.synced == [(worktree.parent, "feature")]
+
+
+def test_a_merge_moves_the_branchs_task_to_done_once_github_has_merged_it(
+    monkeypatch: pytest.MonkeyPatch, worktree: Path
+):
+    from toolbelt.git.stack import lineage
+    from toolbelt.git.stack.store import BranchLinks
+
+    gh = Gh(merge_stderr="", api_responses=[])
+    _install(monkeypatch, gh, worktree)
+    links = BranchLinks(task="RD-1", task_tracker="jira", agent_link=None)
+    monkeypatch.setattr(lineage, "get_links", lambda *a, **k: links)
+    finished = []
+    monkeypatch.setattr(workflow, "_finish_task", finished.append)
+
+    workflow.git_merge("7")
+
+    assert finished == [links]
+    assert gh.synced == [(worktree.parent, "feature")]
+
+
+def test_a_merge_github_refused_leaves_the_task_alone(
+    monkeypatch: pytest.MonkeyPatch, worktree: Path
+):
+    gh = Gh(merge_stderr="Pull request is not mergeable", api_responses=[])
+    _install(monkeypatch, gh, worktree)
+    finished = []
+    monkeypatch.setattr(workflow, "_finish_task", finished.append)
+
+    with pytest.raises(typer.Exit):
+        workflow.git_merge("7")
+
+    assert finished == []
 
 
 def test_other_merge_failures_exit_without_syncing(

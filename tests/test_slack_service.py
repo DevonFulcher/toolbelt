@@ -589,3 +589,50 @@ def test_a_bump_has_no_link_without_a_workspace_and_a_post_never_has_one():
 
     assert rig.service.draft(1, "a", None).thread_link is None  # no workspace set
     assert rig.service.draft(1, "c", None).thread_link is None  # c is a post
+
+
+# ---- asking a different person about each PR ---------------------------------
+
+
+def test_every_pr_of_a_draft_carries_who_it_asks():
+    rig = Rig()
+
+    draft = rig.service.draft(1, "b", None)
+
+    assert [pr.assignee for pr in draft.prs] == [
+        api.SlackPerson(id="UA", name="alan")
+    ] * 2
+
+
+def with_assignees(send_request: api.SlackSendRequest, *ids: str | None):
+    """The request with each of its PRs asking the person ``ids`` names."""
+    return send_request.model_copy(
+        update={
+            "prs": [
+                ref.model_copy(update={"assignee_id": person})
+                for ref, person in zip(send_request.prs, ids, strict=True)
+            ]
+        }
+    )
+
+
+def test_a_post_of_two_prs_can_ask_a_different_person_about_each():
+    rig = Rig()
+
+    post(rig, with_assignees(request(numbers=(1, 2)), "UW", "UD"))
+
+    assert {(r.pr_number, r.assignee_name) for r in rig.rows} == {
+        (1, "will"),
+        (2, "dan"),
+    }
+
+
+def test_a_pr_with_no_assignee_of_its_own_is_asked_the_messages_assignee():
+    rig = Rig()
+
+    post(rig, with_assignees(request(numbers=(1, 2), assignee_id="UD"), "UW", None))
+
+    assert {(r.pr_number, r.assignee_name) for r in rig.rows} == {
+        (1, "will"),
+        (2, "dan"),
+    }

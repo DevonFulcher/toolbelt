@@ -131,6 +131,8 @@ export interface Wire {
   agents_launching: AgentsLaunching;
   aggregate: Aggregate;
   event: ServerEvent;
+  merge_queue_info: MergeQueueInfo;
+  merge_queue_request: MergeQueueRequest;
   merge_request: MergeRequest;
   merge_result: MergeResult;
   slack_accepted: SlackAccepted;
@@ -339,10 +341,22 @@ export interface HelloEvent {
  */
 export interface StatusEvent {
   branch_id: string;
+  merge_queue: MergeQueueInfo | null;
   slack: SlackInfo | null;
   status: LiveStatus;
   type: "status";
   v: number;
+}
+/**
+ * Where a branch's PR stands in the merge queue (``None`` on a branch when
+ * there is nothing to say: not queued, nothing that can be queued, no note).
+ */
+export interface MergeQueueInfo {
+  can_queue: boolean;
+  merging: boolean;
+  notice: string | null;
+  queued: boolean;
+  queued_at: string | null;
 }
 /**
  * Where a branch's PR stands in Slack, from the posts toolbelt recorded
@@ -784,6 +798,12 @@ export interface ConversationEvent {
   v: number;
 }
 /**
+ * The body of ``POST /api/merge/queue`` and ``/api/merge/unqueue``.
+ */
+export interface MergeQueueRequest {
+  id: string;
+}
+/**
  * The body of ``POST /api/merge``: land the branch's PR.
  */
 export interface MergeRequest {
@@ -808,6 +828,7 @@ export interface SlackAccepted {
  * A PR named in a Slack message: ``repo`` is ``owner/name``, lower case.
  */
 export interface SlackPrRef {
+  assignee_id?: string | null;
   number: number;
   repo: string;
 }
@@ -834,6 +855,7 @@ export interface SlackPerson {
 }
 export interface SlackDraftPr {
   additions: number;
+  assignee: SlackPerson | null;
   deletions: number;
   number: number;
   repo: string;
@@ -881,6 +903,7 @@ export interface Branch {
   current: boolean;
   depth: number;
   id: string;
+  merge_queue: MergeQueueInfo | null;
   name: string;
   order: number;
   parent: string | null;

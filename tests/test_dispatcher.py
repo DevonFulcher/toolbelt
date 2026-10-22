@@ -8,7 +8,11 @@ from pathlib import Path
 import pytest
 from conftest import git
 
-from toolbelt.autonomous_agents.branch_state import BranchState, inspect_branch
+from toolbelt.autonomous_agents.branch_state import (
+    BranchState,
+    RepoFactsCache,
+    inspect_branch,
+)
 from toolbelt.autonomous_agents.dispatcher import (
     Dispatcher,
     DispatchTask,
@@ -429,6 +433,65 @@ def test_a_tracked_branch_with_no_local_branch_is_held_back_not_a_crash():
 
     assert r.decision("gone").reason.code == "no_worktree"
     assert r.launched == []
+
+
+def test_repo_facts_are_looked_up_once_for_the_branches_of_a_pass(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from toolbelt.autonomous_agents import branch_state
+
+    git("checkout", "-q", "-b", "devon/x", cwd=repo)
+    calls = []
+    real = branch_state._git
+
+    def counting(root, *args):
+        calls.append(args)
+        return real(root, *args)
+
+    monkeypatch.setattr(branch_state, "_git", counting)
+    now = [100.0]
+    facts = RepoFactsCache(ttl=5.0, clock=lambda: now[0])
+
+    first = inspect_branch(repo, "devon/x", repo, facts)
+    second = inspect_branch(repo, "devon/x", repo, facts)
+
+    assert first == second
+    assert [c for c in calls if c[:2] == ("config", "user.email")] == [
+        ("config", "user.email")
+    ]
+
+
+def test_repo_facts_are_read_again_after_their_few_seconds(repo: Path):
+    now = [100.0]
+    facts = RepoFactsCache(ttl=5.0, clock=lambda: now[0])
+    git("config", "user.email", "first@example.com", cwd=repo)
+
+    assert facts.get(repo).email == "first@example.com"
+    git("config", "user.email", "second@example.com", cwd=repo)
+    assert facts.get(repo).email == "first@example.com"  # within the pass
+    now[0] += 6.0
+
+    assert facts.get(repo).email == "second@example.com"  # the next pass
+
+
+def test_a_merge_in_progress_is_seen_with_one_lookup_for_every_marker(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from toolbelt.autonomous_agents import branch_state
+
+    git("checkout", "-q", "-b", "devon/x", cwd=repo)
+    (repo / ".git" / "MERGE_HEAD").write_text("0" * 40 + "\n")
+    calls = []
+    real = branch_state._git
+
+    def counting(root, *args):
+        calls.append(args)
+        return real(root, *args)
+
+    monkeypatch.setattr(branch_state, "_git", counting)
+
+    assert inspect_branch(repo, "devon/x", repo).busy is True
+    assert len([c for c in calls if "--git-path" in c]) == 1
 
 
 def test_inspect_branch_says_when_the_local_branch_does_not_exist(repo: Path):

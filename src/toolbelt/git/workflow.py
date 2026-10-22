@@ -27,6 +27,7 @@ from .repo_pull import (
     take_unreported_summary,
 )
 from .stack.forge import Forge, GhForge, candidate_from_json
+from .stack.store import BranchLinks
 from .worktrees_ops import (
     _is_worktree_dirty,
     _worktree_paths_for_branch,
@@ -135,6 +136,7 @@ def git_merge(pr: str) -> None:
     main_wt = main_worktree(root)
     ensure_not_inside_worktree(branch, root=main_wt, caller_dirs=[Path.cwd()])
     lineage.link_pr(branch, [candidate_from_json(viewed)], root=root)
+    links = lineage.get_links(branch, root=root)
     merged = logged_process.run(
         ["gh", "pr", "merge", "--squash", pr], stderr=subprocess.PIPE, text=True
     )
@@ -152,6 +154,7 @@ def git_merge(pr: str) -> None:
         typer.echo(merged.stderr, err=True)
         raise typer.Exit(merged.returncode)
 
+    _finish_task(links)
     worktree = worktree_paths(root=root).get(branch)
     if worktree is None:
         logger.warning(
@@ -161,6 +164,22 @@ def git_merge(pr: str) -> None:
         git_branch_clean(root, forge=GhForge(root))
         return
     sync_repo(main_wt, branch=branch)
+
+
+def _finish_task(links: BranchLinks | None) -> None:
+    """Moves the merged branch's task to its done status (best-effort: the PR
+    is merged whether or not the tracker could be updated)."""
+    # Lazy imports: config pulls in the tracker, which this module does not
+    # otherwise need.
+    from toolbelt.git.repo_pull import default_config_path
+    from toolbelt.tasks.config import configured_tracker
+    from toolbelt.tasks.sync_status import sync_task_status
+
+    if links is None or links.task is None:
+        return
+    tracker = configured_tracker(default_config_path())
+    if tracker is not None and tracker.name == links.task_tracker:
+        sync_task_status(tracker, links.task, "done")
 
 
 def record_branch_pr(branch: str, *, root: Path, forge: Forge) -> None:

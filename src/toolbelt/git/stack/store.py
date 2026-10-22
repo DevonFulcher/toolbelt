@@ -343,6 +343,36 @@ _MIGRATIONS: list[tuple[str, ...]] = [
         """,
         "CREATE INDEX slack_sessions_by_time ON slack_sessions (at)",
     ),
+    (
+        # PRs queued to be merged when their CI passes (see ``ui.merge_queue``).
+        # ``head_oid`` is the PR's head when it was queued: a PR that has
+        # another head by the time its CI passes was not what was approved.
+        """
+        CREATE TABLE merge_queue (
+            repo_id INTEGER NOT NULL,
+            branch TEXT NOT NULL,
+            pr_number INTEGER NOT NULL,
+            head_oid TEXT NOT NULL,
+            queued_at TEXT NOT NULL,
+            PRIMARY KEY (repo_id, branch)
+        )
+        """,
+    ),
+    (
+        # The status moves ``tt ui`` has made for a branch's PR (see
+        # ``ui.task_status_sync``), so each PR moves its task once: a person
+        # who moves the task back afterwards is not overruled at the next restart.
+        """
+        CREATE TABLE task_status_moves (
+            repo_id INTEGER NOT NULL,
+            branch TEXT NOT NULL,
+            stage TEXT NOT NULL,
+            pr_number INTEGER NOT NULL,
+            moved_at TEXT NOT NULL,
+            PRIMARY KEY (repo_id, branch, stage, pr_number)
+        )
+        """,
+    ),
 ]
 
 
@@ -385,6 +415,17 @@ class PrLookupRow:
     full_at: datetime
     record: str
     schema: int
+
+
+@dataclass(frozen=True)
+class MergeQueueRow:
+    """A PR queued to be merged when its CI passes."""
+
+    repo_id: int
+    branch: str
+    pr_number: int
+    head_oid: str
+    queued_at: datetime
 
 
 @dataclass(frozen=True)
@@ -1444,6 +1485,63 @@ class StackStore:
                     row.record,
                     row.schema,
                 ),
+            )
+
+    def merge_queue(self) -> list[MergeQueueRow]:
+        rows = self._conn.execute("SELECT * FROM merge_queue ORDER BY queued_at")
+        return [
+            MergeQueueRow(
+                repo_id=r["repo_id"],
+                branch=r["branch"],
+                pr_number=r["pr_number"],
+                head_oid=r["head_oid"],
+                queued_at=datetime.fromisoformat(r["queued_at"]),
+            )
+            for r in rows
+        ]
+
+    def add_to_merge_queue(self, row: MergeQueueRow) -> None:
+        """Queues ``row``'s branch (queueing it again replaces its entry)."""
+        with self._write() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO merge_queue "
+                "(repo_id, branch, pr_number, head_oid, queued_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    row.repo_id,
+                    row.branch,
+                    row.pr_number,
+                    row.head_oid,
+                    _iso(row.queued_at),
+                ),
+            )
+
+    def remove_from_merge_queue(self, repo_id: int, branch: str) -> None:
+        with self._write() as conn:
+            conn.execute(
+                "DELETE FROM merge_queue WHERE repo_id = ? AND branch = ?",
+                (repo_id, branch),
+            )
+
+    def task_status_moved(
+        self, repo_id: int, branch: str, stage: str, pr_number: int
+    ) -> bool:
+        """The PR's task has been moved to ``stage`` (or found already there)."""
+        row = self._conn.execute(
+            "SELECT 1 FROM task_status_moves "
+            "WHERE repo_id = ? AND branch = ? AND stage = ? AND pr_number = ?",
+            (repo_id, branch, stage, pr_number),
+        ).fetchone()
+        return row is not None
+
+    def record_task_status_move(
+        self, repo_id: int, branch: str, stage: str, pr_number: int, at: datetime
+    ) -> None:
+        with self._write() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO task_status_moves "
+                "(repo_id, branch, stage, pr_number, moved_at) VALUES (?, ?, ?, ?, ?)",
+                (repo_id, branch, stage, pr_number, _iso(at)),
             )
 
     def add_slack_session(self, row: SlackSessionRow) -> None:

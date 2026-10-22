@@ -193,7 +193,8 @@ def test_posting_the_draft_sends_it_records_it_and_changes_the_cards(rig):
 
     assert response.status_code == 202  # accepted: it posts in the background
     assert response.json()["prs"] == [
-        {"repo": pr["repo"], "number": pr["number"]} for pr in draft["prs"]
+        {"repo": pr["repo"], "number": pr["number"], "assignee_id": None}
+        for pr in draft["prs"]
     ]
     assert wait_until_posted(client, f"{repo_id}:a")["posted"] is True
     (call,) = proxy.sent

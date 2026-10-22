@@ -1,6 +1,6 @@
 import { act, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
-import type { Branch, BranchClaim, BranchExtras, LoadedStatus, SlackInfo } from "../api/generated";
+import type { Branch, BranchClaim, BranchExtras, LoadedStatus, MergeQueueInfo, SlackInfo } from "../api/generated";
 import { branch, catalog, detail, event, noPr, pr, repo, snapshot, DAY, NOW } from "../testing/fixtures";
 import { renderWith } from "../testing/render";
 import { App } from "./App";
@@ -493,6 +493,101 @@ describe("a card whose next action is about Slack", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe("a card waiting on CI that can be queued to merge", () => {
+  const waiting = pr({
+    pr_number: 8,
+    ci: "running",
+    review: "approved",
+    next: { label: "Waiting on CI", who: "ci", kind: "wait_ci", would_be: null },
+  });
+  const queueInfo = (over: Partial<MergeQueueInfo>): MergeQueueInfo => ({
+    can_queue: false,
+    queued: false,
+    merging: false,
+    queued_at: null,
+    notice: null,
+    ...over,
+  });
+  const answer = (result: { ok: boolean; status?: number; body?: unknown }) => {
+    const fetchMock = vi.fn(async (...args: [string, RequestInit?]) => {
+      void args;
+      return { ok: result.ok, status: result.status ?? 200, json: async () => result.body ?? {} };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  };
+
+  test("offers to merge it when CI passes, and queues it when pressed", async () => {
+    const fetchMock = answer({ ok: true, body: queueInfo({ queued: true }) });
+    showCards([branch(1, "devon/a", { status: waiting, merge_queue: queueInfo({ can_queue: true }) })]);
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Merge when CI passes" }).click();
+    });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/merge/queue");
+    expect(JSON.parse(String(init?.body))).toEqual({ id: "1:devon/a" });
+  });
+
+  test("a PR that cannot be queued offers nothing", () => {
+    showCards([branch(1, "devon/a", { status: waiting, merge_queue: null })]);
+
+    expect(screen.queryByRole("button", { name: "Merge when CI passes" })).toBeNull();
+  });
+
+  test("a queued PR says so and can be taken off the queue", async () => {
+    const fetchMock = answer({ ok: true, status: 204 });
+    showCards([branch(1, "devon/a", { status: waiting, merge_queue: queueInfo({ queued: true }) })]);
+
+    expect(screen.getByText("Queued: merges when CI passes")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Merge when CI passes" })).toBeNull();
+    await act(async () => {
+      screen.getByRole("button", { name: "Cancel" }).click();
+    });
+
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/merge/unqueue");
+  });
+
+  test("a refusal from the server is shown", async () => {
+    answer({ ok: false, status: 409, body: { detail: "Only a PR that is approved can be queued." } });
+    showCards([branch(1, "devon/a", { status: waiting, merge_queue: queueInfo({ can_queue: true }) })]);
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Merge when CI passes" }).click();
+    });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Only a PR that is approved can be queued.");
+  });
+
+  test("why a PR was taken off the queue is shown on its card", () => {
+    const failed = pr({ pr_number: 8, ci: "failed", next: { label: "Fix / re-run CI", who: "you", kind: "fix_ci", would_be: null } });
+    showCards([
+      branch(1, "devon/a", { status: failed, merge_queue: queueInfo({ notice: "Taken off the merge queue: its CI failed." }) }),
+    ]);
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Taken off the merge queue: its CI failed.");
+  });
+
+  test("once its CI has passed a queued PR reads Merging, not a Merge button", () => {
+    const ready = pr({ pr_number: 8, review: "approved", next: { label: "Merge", who: "you", kind: "merge" } });
+    showCards([branch(1, "devon/a", { status: ready, merge_queue: queueInfo({ queued: true, merging: true }) })]);
+
+    expect(screen.getByText("Merging…")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Merge" })).toBeNull();
+  });
+
+  test("a status event with the queue standing updates the card", () => {
+    const { store } = showCards([branch(1, "devon/a", { status: waiting, merge_queue: null })]);
+
+    act(() => store.getState().statusChanged("1:devon/a", waiting, 1, undefined, queueInfo({ can_queue: true })));
+    expect(screen.getByRole("button", { name: "Merge when CI passes" })).toBeInTheDocument();
+
+    act(() => store.getState().statusChanged("1:devon/a", waiting, 2, undefined, null));
+    expect(screen.queryByRole("button", { name: "Merge when CI passes" })).toBeNull();
   });
 });
 

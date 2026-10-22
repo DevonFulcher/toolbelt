@@ -2,6 +2,7 @@ import type {
   Aggregate,
   AgentConversation,
   Agents,
+  MergeQueueInfo,
   MergeResult,
   Snapshot,
   SlackDraft,
@@ -139,6 +140,22 @@ export function fetchSlackDraft(
  * server's reason when it cannot go. */
 export function sendSlack(request: SlackSendRequest, fetchImpl: typeof fetch = fetch): Promise<SlackAccepted> {
   return postJson<SlackAccepted>("/api/slack/send", request, fetchImpl);
+}
+
+/** Merge the branch's PR as soon as its CI has passed; rejects with the server's
+ * reason when it is not approved and waiting on nothing but CI. */
+export function queueMerge(id: string, fetchImpl: typeof fetch = fetch): Promise<MergeQueueInfo> {
+  return postJson<MergeQueueInfo>("/api/merge/queue", { id }, fetchImpl);
+}
+
+/** Take the branch's PR off the merge queue. */
+export async function unqueueMerge(id: string, fetchImpl: typeof fetch = fetch): Promise<void> {
+  const response = await fetchImpl("/api/merge/unqueue", {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify({ id }),
+  });
+  if (!response.ok) throw new Error(`/api/merge/unqueue: HTTP ${response.status}`);
 }
 
 export async function mergeBranch(id: string, fetchImpl: typeof fetch = fetch): Promise<MergeResult> {

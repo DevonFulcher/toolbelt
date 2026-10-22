@@ -24,6 +24,7 @@ from toolbelt.ui import branch_links, pr_states
 from toolbelt.ui.claims_feed import BranchHolder
 from toolbelt.ui.conflict_commit import ConflictCommit
 from toolbelt.ui.live_status import Fetched, StatusRefresher
+from toolbelt.ui.merge_queue import NO_MERGE_QUEUE, MergeQueueLookup
 from toolbelt.ui.next_action import (
     WHO_ORDER,
     ParentContext,
@@ -374,6 +375,7 @@ def build_snapshot(
     spend: list[api.Spend] | None = None,
     webhooks: list[api.RepoWebhook] | None = None,
     slack: SlackLookup = NO_SLACK,
+    merge_queue: MergeQueueLookup = NO_MERGE_QUEUE,
 ) -> api.Snapshot:
     """Every repo with tracked branches, and all their branches: repos in
     name order, each repo's branches depth-first."""
@@ -454,6 +456,7 @@ def build_snapshot(
                         agent=_link(agent),
                         claim=branch_claim(claims.holders(repo.id, name), now),
                         slack=slack.info(repo.id, name, looked_up, now),
+                        merge_queue=merge_queue.info(repo.id, name),
                         started_at=_iso(started_at) if started_at else None,
                         status=live_status(
                             looked_up,

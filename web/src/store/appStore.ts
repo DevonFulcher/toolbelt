@@ -14,6 +14,7 @@ import type {
   CardExtras,
   FetchedBranch,
   RepoWebhook,
+  MergeQueueInfo,
   SlackInfo,
   Spend,
   Branch,
@@ -31,7 +32,7 @@ import type { ConnectionState } from "../live/connection";
 import { DEFAULT_STATE, type View, type ViewState } from "../logic/viewState";
 
 /** A branch without its live parts (those are patched separately). */
-export type StaticBranch = Omit<Branch, "status" | "task_live" | "claim" | "slack">;
+export type StaticBranch = Omit<Branch, "status" | "task_live" | "claim" | "slack" | "merge_queue">;
 
 /** Per-card timeline UI state, kept across live updates. */
 export interface CardUi {
@@ -68,6 +69,8 @@ export interface AppState {
   claims: Record<string, BranchClaim>;
   /** Where each branch's PR stands in Slack (absent: Slack is off, or no PR yet). */
   slacks: Record<string, SlackInfo>;
+  /** Where each branch's PR stands in the merge queue (absent: nothing to say). */
+  mergeQueues: Record<string, MergeQueueInfo>;
   /** Only for branches whose task the configured tracker owns. */
   tasks: Record<string, TaskLive>;
   /** When (ms) each branch's PR status was last looked up on GitHub. */
@@ -111,7 +114,13 @@ export interface AppState {
   // -- actions --
   applySnapshot(snapshot: Snapshot, now?: number): void;
   setSnapshotError(message: string): void;
-  statusChanged(branchId: string, status: LiveStatus, v: number, slack?: SlackInfo | null): void;
+  statusChanged(
+    branchId: string,
+    status: LiveStatus,
+    v: number,
+    slack?: SlackInfo | null,
+    mergeQueue?: MergeQueueInfo | null,
+  ): void;
   taskChanged(branchId: string, task: TaskLive, v: number): void;
   /** Claims changed on some branches: their claim and re-derived status. */
   claimsChanged(patches: ClaimPatch[], v: number): void;
@@ -208,6 +217,7 @@ export function createAppStore(init: StoreInit = {}): AppStore {
     statuses: {},
     claims: {},
     slacks: {},
+    mergeQueues: {},
     tasks: {},
     fetchedAt: {},
     fetchError: {},
@@ -236,11 +246,13 @@ export function createAppStore(init: StoreInit = {}): AppStore {
       const tasks: Record<string, TaskLive> = {};
       const claims: Record<string, BranchClaim> = {};
       const slacks: Record<string, SlackInfo> = {};
+      const mergeQueues: Record<string, MergeQueueInfo> = {};
       const statics: StaticBranch[] = [];
-      for (const { status, task_live, claim, slack, ...rest } of snapshot.branches) {
+      for (const { status, task_live, claim, slack, merge_queue, ...rest } of snapshot.branches) {
         statuses[rest.id] = status;
         claims[rest.id] = claim;
         if (slack) slacks[rest.id] = slack;
+        if (merge_queue) mergeQueues[rest.id] = merge_queue;
         if (task_live) tasks[rest.id] = task_live;
         const before = prev.branchesById[rest.id];
         statics.push(before && same(before, rest) ? before : rest);
@@ -261,6 +273,7 @@ export function createAppStore(init: StoreInit = {}): AppStore {
         tasks: share(prev.tasks, tasks),
         claims: share(prev.claims, claims),
         slacks: share(prev.slacks, slacks),
+        mergeQueues: share(prev.mergeQueues, mergeQueues),
         ...fetchedState(snapshot.fetched),
         webhooks: webhooksByRepo(snapshot.webhooks),
         ...(snapshot.extras ? extrasState(snapshot.extras) : {}),
@@ -282,7 +295,7 @@ export function createAppStore(init: StoreInit = {}): AppStore {
       set({ error: message });
     },
 
-    statusChanged(branchId, status, v, slack) {
+    statusChanged(branchId, status, v, slack, mergeQueue) {
       const state = get();
       // Already reflected in the snapshot this page was built from.
       if (state.version !== null && v <= state.version) return;
@@ -293,12 +306,19 @@ export function createAppStore(init: StoreInit = {}): AppStore {
         if (slack === null) delete slacks[branchId];
         else slacks[branchId] = slack;
       }
+      let mergeQueues = state.mergeQueues;
+      if (mergeQueue !== undefined && !same(mergeQueues[branchId] ?? null, mergeQueue)) {
+        mergeQueues = { ...mergeQueues };
+        if (mergeQueue === null) delete mergeQueues[branchId];
+        else mergeQueues[branchId] = mergeQueue;
+      }
       set({
         version: v,
         updatedAt: clock(),
         statuses:
           before && same(before, status) ? state.statuses : { ...state.statuses, [branchId]: status },
         slacks,
+        mergeQueues,
       });
     },
 

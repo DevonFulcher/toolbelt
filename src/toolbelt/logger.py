@@ -1,7 +1,9 @@
 """Centralized logging configuration for toolbelt."""
 
 import logging
+import logging.handlers
 import sys
+from pathlib import Path
 
 
 class WrenchFormatter(logging.Formatter):
@@ -38,6 +40,29 @@ def setup_logging(level: int = logging.INFO) -> None:
 
     # Add handler to logger
     root_logger.addHandler(console_handler)
+
+
+#: A log file is kept to this size, and this many older ones beside it.
+LOG_FILE_BYTES = 10 * 1024 * 1024
+LOG_FILE_BACKUPS = 3
+
+
+def log_to_rotating_file(path: Path) -> None:
+    """Send every log line to ``path`` instead of stdout, in the same format.
+    The file is renamed to ``path.1`` (and so on, up to ``LOG_FILE_BACKUPS``
+    older ones) when it passes ``LOG_FILE_BYTES``, so a long-running process
+    never fills the disk."""
+    root_logger = logging.getLogger()
+    handler = logging.handlers.RotatingFileHandler(
+        path,
+        maxBytes=LOG_FILE_BYTES,
+        backupCount=LOG_FILE_BACKUPS,
+        encoding="utf-8",
+    )
+    handler.setLevel(root_logger.level)
+    handler.setFormatter(WrenchFormatter(fmt="%(message)s", datefmt=None))
+    root_logger.handlers.clear()
+    root_logger.addHandler(handler)
 
 
 def setup_app_only_logging(level: int = logging.INFO) -> None:

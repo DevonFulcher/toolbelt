@@ -846,6 +846,16 @@
         "id": {
           "type": "string"
         },
+        "merge_queue": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MergeQueueInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "name": {
           "type": "string"
         },
@@ -946,6 +956,7 @@
         "agent",
         "claim",
         "slack",
+        "merge_queue",
         "started_at",
         "status"
       ],
@@ -2194,6 +2205,64 @@
       "title": "MergeChip",
       "type": "object"
     },
+    "MergeQueueInfo": {
+      "additionalProperties": false,
+      "description": "Where a branch's PR stands in the merge queue (``None`` on a branch when\nthere is nothing to say: not queued, nothing that can be queued, no note).",
+      "properties": {
+        "can_queue": {
+          "type": "boolean"
+        },
+        "merging": {
+          "type": "boolean"
+        },
+        "notice": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "queued": {
+          "type": "boolean"
+        },
+        "queued_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "can_queue",
+        "queued",
+        "merging",
+        "queued_at",
+        "notice"
+      ],
+      "title": "MergeQueueInfo",
+      "type": "object"
+    },
+    "MergeQueueRequest": {
+      "additionalProperties": false,
+      "description": "The body of ``POST /api/merge/queue`` and ``/api/merge/unqueue``.",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "MergeQueueRequest",
+      "type": "object"
+    },
     "MergeRequest": {
       "additionalProperties": false,
       "description": "The body of ``POST /api/merge``: land the branch's PR.",
@@ -3209,6 +3278,16 @@
         "additions": {
           "type": "integer"
         },
+        "assignee": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SlackPerson"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "deletions": {
           "type": "integer"
         },
@@ -3231,7 +3310,8 @@
         "url",
         "title",
         "additions",
-        "deletions"
+        "deletions",
+        "assignee"
       ],
       "title": "SlackDraftPr",
       "type": "object"
@@ -3353,6 +3433,17 @@
       "additionalProperties": false,
       "description": "A PR named in a Slack message: ``repo`` is ``owner/name``, lower case.",
       "properties": {
+        "assignee_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "number": {
           "type": "integer"
         },
@@ -4288,6 +4379,16 @@
         "branch_id": {
           "type": "string"
         },
+        "merge_queue": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MergeQueueInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "slack": {
           "anyOf": [
             {
@@ -4314,7 +4415,8 @@
         "v",
         "branch_id",
         "status",
-        "slack"
+        "slack",
+        "merge_queue"
       ],
       "title": "StatusEvent",
       "type": "object"
@@ -4825,6 +4927,12 @@
     "event": {
       "$ref": "#/$defs/ServerEvent"
     },
+    "merge_queue_info": {
+      "$ref": "#/$defs/MergeQueueInfo"
+    },
+    "merge_queue_request": {
+      "$ref": "#/$defs/MergeQueueRequest"
+    },
     "merge_request": {
       "$ref": "#/$defs/MergeRequest"
     },
@@ -4859,6 +4967,8 @@
     "agents_enabled",
     "agents_launching",
     "merge_request",
+    "merge_queue_request",
+    "merge_queue_info",
     "slack_draft_request",
     "slack_draft",
     "slack_send_request",

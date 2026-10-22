@@ -482,6 +482,8 @@ class Branch(Model):
     claim: BranchClaim
     #: Where its PR stands in Slack (``None``: Slack is off, or no PR yet).
     slack: SlackInfo | None
+    #: Where its PR stands in the merge queue (``None``: nothing to say).
+    merge_queue: MergeQueueInfo | None
     #: ISO time the task started (the branch was registered); ``None`` only
     #: if the database has none for it.
     started_at: str | None
@@ -571,6 +573,22 @@ class SlackInfo(Model):
     #: Link to the Slack thread of the latest post or bump (``None`` when the
     #: config has no ``workspace``).
     thread_link: str | None
+
+
+class MergeQueueInfo(Model):
+    """Where a branch's PR stands in the merge queue (``None`` on a branch when
+    there is nothing to say: not queued, nothing that can be queued, no note)."""
+
+    #: It is approved and waiting on nothing but CI: it can be queued.
+    can_queue: bool
+    #: Queued: it merges when its CI has passed.
+    queued: bool
+    #: Its queued merge is running.
+    merging: bool
+    #: ISO time it was queued.
+    queued_at: str | None
+    #: Why it left the queue without merging (until it is queued again).
+    notice: str | None
 
 
 class FetchedBranch(Model):
@@ -1066,6 +1084,13 @@ class MergeRequest(Model):
     id: str
 
 
+class MergeQueueRequest(Model):
+    """The body of ``POST /api/merge/queue`` and ``/api/merge/unqueue``."""
+
+    #: The branch's row id (see ``Branch.id``).
+    id: str
+
+
 class MergeResult(Model):
     """What `toolbelt git merge` did."""
 
@@ -1086,6 +1111,9 @@ class SlackPrRef(Model):
 
     repo: str
     number: int
+    #: Who is asked about this PR, when not the message's ``assignee_id`` (a post
+    #: of several PRs can ask a different person about each).
+    assignee_id: str | None = None
 
 
 class SlackDraftPr(Model):
@@ -1095,6 +1123,8 @@ class SlackDraftPr(Model):
     title: str
     additions: int
     deletions: int
+    #: Who the draft asks about this PR.
+    assignee: SlackPerson | None
 
 
 class SlackDraftRequest(Model):
@@ -1229,6 +1259,9 @@ class StatusEvent(Model):
     #: Its PR's standing in Slack, which changes with the PR (a review means
     #: no bump) and with time (a bump falls due): ``None`` when Slack is off.
     slack: SlackInfo | None
+    #: Its PR's standing in the merge queue, which changes with its CI and
+    #: reviews: ``None`` when there is nothing to say.
+    merge_queue: MergeQueueInfo | None
 
 
 class TaskEvent(Model):
@@ -1353,6 +1386,8 @@ class Wire(Model):
     agents_enabled: AgentsEnabled
     agents_launching: AgentsLaunching
     merge_request: MergeRequest
+    merge_queue_request: MergeQueueRequest
+    merge_queue_info: MergeQueueInfo
     slack_draft_request: SlackDraftRequest
     slack_draft: SlackDraft
     slack_send_request: SlackSendRequest

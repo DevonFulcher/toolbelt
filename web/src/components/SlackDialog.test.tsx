@@ -16,7 +16,17 @@ const draft = (over: Partial<SlackDraft> = {}): SlackDraft => ({
     { id: "UW", name: "will" },
     { id: "UA", name: "alan" },
   ],
-  prs: [{ repo: "o/r", number: 1, url: "https://github.com/o/r/pull/1", title: "Bottom", additions: 20, deletions: 4 }],
+  prs: [
+    {
+      repo: "o/r",
+      number: 1,
+      url: "https://github.com/o/r/pull/1",
+      title: "Bottom",
+      additions: 20,
+      deletions: 4,
+      assignee: { id: "UA", name: "alan" },
+    },
+  ],
   thread_ts: null,
   thread_link: null,
   ...over,
@@ -91,7 +101,7 @@ describe("the Post in Slack dialog", () => {
         text: "edited https://github.com/o/r/pull/1 @alan",
         assignee_id: "UA",
         thread_ts: null,
-        prs: [{ repo: "o/r", number: 1 }],
+        prs: [{ repo: "o/r", number: 1, assignee_id: "UA" }],
       },
     });
   });
@@ -139,6 +149,86 @@ describe("the Post in Slack dialog", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Nothing to post or bump");
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+  });
+
+  describe("a post of several PRs", () => {
+    const two = (): SlackDraft =>
+      draft({
+        text: [
+          "🤖 AI-generated on behalf of Devon:",
+          "- [Bottom](https://github.com/o/r/pull/1) @alan `+20/-4`",
+          "  - [Top](https://github.com/o/r/pull/12) @alan `+5/-1`",
+          "",
+          "Thanks for your time!",
+        ].join("\n"),
+        prs: [
+          { ...draft().prs[0] },
+          {
+            repo: "o/r",
+            number: 12,
+            url: "https://github.com/o/r/pull/12",
+            title: "Top",
+            additions: 5,
+            deletions: 1,
+            assignee: { id: "UA", name: "alan" },
+          },
+        ],
+      });
+
+    test("each PR has its own picker, and the one above them asks everyone", async () => {
+      serve({ draft: two() });
+      await open();
+
+      expect(screen.getByLabelText("Ask about o/r#1")).toHaveValue("UA");
+      expect(screen.getByLabelText("Ask about o/r#12")).toHaveValue("UA");
+      expect(screen.getByLabelText("Ask everyone")).toHaveValue("UA");
+    });
+
+    test("a single PR has just the one picker", async () => {
+      serve({});
+      await open();
+
+      expect(screen.queryByLabelText("Ask about o/r#1")).toBeNull();
+      expect(screen.getByLabelText("Ask")).toBeInTheDocument();
+    });
+
+    test("asking someone else about one PR changes only its line", async () => {
+      serve({ draft: two() });
+      const box = await open();
+
+      fireEvent.change(screen.getByLabelText("Ask about o/r#12"), { target: { value: "UW" } });
+
+      const lines = (box as HTMLTextAreaElement).value.split("\n");
+      expect(lines[1]).toContain("@alan");
+      expect(lines[2]).toContain("@will");
+      expect(screen.getByLabelText("Ask everyone")).toHaveValue(""); // different people now
+    });
+
+    test("asking everyone changes every line and every picker", async () => {
+      serve({ draft: two() });
+      const box = await open();
+      fireEvent.change(screen.getByLabelText("Ask about o/r#12"), { target: { value: "UW" } });
+
+      fireEvent.change(screen.getByLabelText("Ask everyone"), { target: { value: "UW" } });
+
+      expect((box as HTMLTextAreaElement).value).not.toContain("@alan");
+      expect(screen.getByLabelText("Ask about o/r#1")).toHaveValue("UW");
+      expect(screen.getByLabelText("Ask about o/r#12")).toHaveValue("UW");
+    });
+
+    test("sends each PR with the person asked about it", async () => {
+      const calls = serve({ draft: two(), send: { prs: [] } });
+      await open();
+      fireEvent.change(screen.getByLabelText("Ask about o/r#12"), { target: { value: "UW" } });
+
+      fireEvent.click(screen.getByRole("button", { name: "Post" }));
+
+      await waitFor(() => expect(calls).toHaveLength(2));
+      expect((calls[1].body as { prs: unknown }).prs).toEqual([
+        { repo: "o/r", number: 1, assignee_id: "UA" },
+        { repo: "o/r", number: 12, assignee_id: "UW" },
+      ]);
+    });
   });
 
   test("a bump links to the original post in Slack", async () => {

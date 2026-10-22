@@ -43,6 +43,7 @@ The status lookup (``fetch``), the task tracker and the clocks are
 
 import asyncio
 import contextlib
+import dataclasses
 import functools
 import json
 import time
@@ -55,7 +56,7 @@ from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 
 from toolbelt.autonomous_agents.auth import claude_signed_in
-from toolbelt.autonomous_agents.branch_state import inspect_branch
+from toolbelt.autonomous_agents.branch_state import RepoFactsCache, inspect_branch
 from toolbelt.autonomous_agents.dispatcher import (
     DEFAULT_POLL_INTERVAL_SECONDS,
     Dispatcher,
@@ -70,9 +71,10 @@ from toolbelt.autonomous_agents.limits import (
 from toolbelt.autonomous_agents.runner import AgentRunner
 from toolbelt.autonomous_agents.screen import read_screen_state
 from toolbelt.git.repo_pull import default_config_path
-from toolbelt.git.stack.status import PrState
+from toolbelt.git.stack.status import CiState, PrState
 from toolbelt.git.stack.store import (
     AgentRun,
+    MergeQueueRow,
     Parents,
     SlackPostRow,
     SlackSessionRow,
@@ -129,6 +131,11 @@ from toolbelt.ui.live_status import (
 )
 from toolbelt.ui.lookup_cache import LookupCache
 from toolbelt.ui.merge_pr import MergeOutcome, run_toolbelt_merge
+from toolbelt.ui.merge_queue import (
+    DEFAULT_TICK_SECONDS as DEFAULT_MERGE_QUEUE_TICK_SECONDS,
+)
+from toolbelt.ui.merge_queue import LandResult, MergeQueue, MergeQueueRefused
+from toolbelt.ui.next_action import MERGE, next_action
 from toolbelt.ui.pr_fetch import (
     GraphqlRunner,
     PrSnapshot,
@@ -158,6 +165,7 @@ from toolbelt.ui.snapshot import (
 )
 from toolbelt.ui.task_cache import TaskInfoCache
 from toolbelt.ui.task_feed import LinkedTask, TaskFeed
+from toolbelt.ui.task_status_sync import TaskStatusSync
 from toolbelt.ui.untracked_prs import (
     DEFAULT_INTERVAL_SECONDS as DEFAULT_UNTRACKED_INTERVAL_SECONDS,
 )
@@ -240,6 +248,40 @@ def _record_slack_session(row: SlackSessionRow) -> None:
         store.close()
 
 
+class LandRefused(Exception):
+    """The branch's PR cannot be merged now; ``status`` is the HTTP status the
+    Merge button's request answers with."""
+
+    def __init__(self, status: int, detail: str) -> None:
+        super().__init__(detail)
+        self.status = status
+        self.detail = detail
+
+
+def _merge_queue_entries() -> list[MergeQueueRow]:
+    store = StackStore(default_db_path())
+    try:
+        return store.merge_queue()
+    finally:
+        store.close()
+
+
+def _add_to_merge_queue(row: MergeQueueRow) -> None:
+    store = StackStore(default_db_path())
+    try:
+        store.add_to_merge_queue(row)
+    finally:
+        store.close()
+
+
+def _remove_from_merge_queue(repo_id: int, branch: str) -> None:
+    store = StackStore(default_db_path())
+    try:
+        store.remove_from_merge_queue(repo_id, branch)
+    finally:
+        store.close()
+
+
 def _slack_posts() -> list[SlackPostRow]:
     store = StackStore(default_db_path())
     try:
@@ -294,6 +336,41 @@ def _linked_tasks(tracker: TaskTracker | None) -> list[LinkedTask]:
                 if owner is not None:
                     tasks.append(LinkedTask(repo.id, name, links.task, owner))
         return tasks
+    finally:
+        store.close()
+
+
+def _linked_tracker(
+    tracker: TaskTracker | None, repo_id: int, branch: str
+) -> tuple[str, TaskTracker] | None:
+    """The branch's task ref and the configured tracker that owns it."""
+    if tracker is None:
+        return None
+    store = StackStore(default_db_path())
+    try:
+        links = store.get_links(repo_id, branch)
+    finally:
+        store.close()
+    if links is None or not links.task:
+        return None
+    owner = branch_links.owning_tracker(links.task_tracker, tracker)
+    return (links.task, owner) if owner is not None else None
+
+
+def _task_status_moved(repo_id: int, branch: str, stage: str, pr_number: int) -> bool:
+    store = StackStore(default_db_path())
+    try:
+        return store.task_status_moved(repo_id, branch, stage, pr_number)
+    finally:
+        store.close()
+
+
+def _record_task_status_move(
+    repo_id: int, branch: str, stage: str, pr_number: int, at: datetime
+) -> None:
+    store = StackStore(default_db_path())
+    try:
+        store.record_task_status_move(repo_id, branch, stage, pr_number, at)
     finally:
         store.close()
 
@@ -424,6 +501,7 @@ def create_app(
     slack_settings: SlackConfig | None = None,
     slack_proxy: SlackProxy | None = None,
     slack_reader: SlackReader | None = None,
+    merge_queue_tick: float = DEFAULT_MERGE_QUEUE_TICK_SECONDS,
     change_gate: bool = False,
     lookup_cache: LookupCache | None = None,
     full_refresh_interval: float = DEFAULT_FULL_INTERVAL_SECONDS,
@@ -447,7 +525,8 @@ def create_app(
     ``slack_settings`` is the ``slack`` section of the config (``None``:
     Slack is off and a task's next action ignores it; see ``slack_config.py``);
     ``slack_proxy`` posts the messages (default: a Haiku session, see
-    ``slack_proxy.py``); ``slack_reader`` reads the user's own posts for an
+    ``slack_proxy.py``); ``merge_queue_tick`` is how often queued merges are
+    checked (see ``merge_queue.py``); ``slack_reader`` reads the user's own posts for an
     import (default: a Haiku session allowed only the read tools, see
     ``slack_import.py``).
     ``github`` is the client every GitHub request goes through (default: one
@@ -518,11 +597,13 @@ def create_app(
         )
 
     def publish_branches(repo_id: int, parents: Parents, names: list[str]) -> None:
-        """A ``status`` event (with its Slack standing) for each of ``names``."""
+        """A ``status`` event (with its Slack and merge-queue standing) for each
+        of ``names``."""
         now = wall_clock()
         for name in names:
             looked_up = refresher.get(repo_id, name)
             info = slack.info(repo_id, name, looked_up, now)
+            queue_info = merge_queue.info(repo_id, name)
             hub.publish(
                 "status",
                 {
@@ -531,6 +612,9 @@ def create_app(
                         mode="json"
                     ),
                     "slack": info.model_dump(mode="json") if info else None,
+                    "merge_queue": queue_info.model_dump(mode="json")
+                    if queue_info
+                    else None,
                 },
             )
 
@@ -623,12 +707,13 @@ def create_app(
         raise LookupError(f"{root} is not a registered repo")
 
     if dispatcher is None:
+        repo_facts = RepoFactsCache()
         dispatcher = Dispatcher(
             tasks=_dispatch_tasks,
             fetch=shared_lookup,
             holders=claims.holders,
             inspect=lambda item: inspect_branch(
-                item.repo_path, item.task.branch, item.task.worktree
+                item.repo_path, item.task.branch, item.task.worktree, repo_facts
             ),
             runs=lambda: _agent_runs(wall_clock()),
             enabled=_agents_enabled,
@@ -789,6 +874,75 @@ def create_app(
         status = branch_status(repo_id, _all_parents(repo_id), name, wall_clock())
         return status.next.kind if isinstance(status, api.LoadedStatus) else None
 
+    def would_merge(repo_id: int, name: str) -> bool:
+        """Its CI is running and, once that passed, Merge would be its next
+        action: approved, no conflicts or comments, not a draft, and any parent
+        PR merged (and no agent holds it)."""
+        looked_up = refresher.get(repo_id, name)
+        if (
+            looked_up is None
+            or looked_up.status is None
+            or looked_up.status.ci is not CiState.RUNNING
+            or claims.working(repo_id, name)
+            or claims.autonomous(repo_id, name)
+        ):
+            return False
+        now = wall_clock()
+        parent = parent_context(
+            repo_id, _all_parents(repo_id), name, refresher, now, claims, slack
+        )
+        passed = dataclasses.replace(looked_up.status, ci=CiState.SUCCESS)
+        return next_action(passed, parent).kind == MERGE
+
+    async def land(repo_id: int, name: str) -> LandResult:
+        """Merges the branch's PR when its next action is Merge: what the Merge
+        button and the merge queue do. Raises ``LandRefused`` when it cannot."""
+        parents = await asyncio.to_thread(_all_parents, repo_id)
+        if name not in parents:
+            raise LandRefused(404, "no such branch")
+        status = branch_status(repo_id, parents, name, wall_clock())
+        if (
+            not isinstance(status, api.LoadedStatus)
+            or status.next.kind != "merge"
+            or status.pr_url is None
+        ):
+            raise LandRefused(
+                409, "Nothing to merge: the branch's next action is not Merge."
+            )
+
+        def repo_path() -> Path | None:
+            store = StackStore(default_db_path())
+            try:
+                return next((r.path for r in store.repos() if r.id == repo_id), None)
+            finally:
+                store.close()
+
+        path = await asyncio.to_thread(repo_path)
+        if path is None:
+            raise LandRefused(404, "no such repo")
+        outcome = await asyncio.to_thread(merger, path, status.pr_url)
+        return LandResult(ok=outcome.ok, output=outcome.output)
+
+    async def land_queued(repo_id: int, name: str) -> LandResult:
+        try:
+            return await land(repo_id, name)
+        except LandRefused as refused:
+            return LandResult(ok=False, output=refused.detail)
+
+    merge_queue = MergeQueue(
+        entries=_merge_queue_entries,
+        add=_add_to_merge_queue,
+        remove=_remove_from_merge_queue,
+        branches=_tracked_branches,
+        fetched=refresher.get,
+        next_kind=next_kind,
+        would_merge=would_merge,
+        land=land_queued,
+        wall_clock=wall_clock,
+        changed=publish_slack,
+        tick=merge_queue_tick,
+    )
+
     slack_service = (
         SlackService(
             config=slack_settings,
@@ -821,6 +975,15 @@ def create_app(
         else None
     )
 
+    task_status_sync = TaskStatusSync(
+        branches=_tracked_branches,
+        fetched=refresher.get,
+        linked=lambda repo_id, branch: _linked_tracker(tracker(), repo_id, branch),
+        moved=_task_status_moved,
+        record=_record_task_status_move,
+        wall_clock=wall_clock,
+    )
+
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         watcher.check()  # baseline: only later writes are changes
@@ -841,6 +1004,8 @@ def create_app(
             tasks.append(asyncio.create_task(forwarders.run()))
         if bump_watcher is not None:
             tasks.append(asyncio.create_task(bump_watcher.run()))
+        tasks.append(asyncio.create_task(merge_queue.run()))
+        tasks.append(asyncio.create_task(task_status_sync.run()))
         try:
             yield
         finally:
@@ -870,6 +1035,7 @@ def create_app(
     app.state.agent_runner = runner
     app.state.forwarders = forwarders
     app.state.slack = slack
+    app.state.merge_queue = merge_queue
     app.state.github = requests
     app.state.views = views
 
@@ -935,6 +1101,7 @@ def create_app(
             spend=views.spend,
             webhooks=webhook_problems(),
             slack=slack,
+            merge_queue=merge_queue,
         )
 
     @app.get("/api/aggregate", response_model=api.Aggregate)
@@ -986,37 +1153,31 @@ def create_app(
 
     @app.post("/api/merge", response_model=api.MergeResult)
     async def merge_branch(body: api.MergeRequest) -> api.MergeResult:
-        repo_part, _, branch = body.id.partition(":")
+        repo_id, name = branch_ref(body.id)
         try:
-            repo_id = int(repo_part)
-        except ValueError as error:
-            raise HTTPException(status_code=404, detail="no such branch") from error
-        parents = await asyncio.to_thread(_all_parents, repo_id)
-        if branch not in parents:
-            raise HTTPException(status_code=404, detail="no such branch")
-        status = branch_status(repo_id, parents, branch, wall_clock())
-        if (
-            not isinstance(status, api.LoadedStatus)
-            or status.next.kind != "merge"
-            or status.pr_url is None
-        ):
+            result = await land(repo_id, name)
+        except LandRefused as refused:
             raise HTTPException(
-                status_code=409,
-                detail="Nothing to merge: the branch's next action is not Merge.",
-            )
+                status_code=refused.status, detail=refused.detail
+            ) from refused
+        return api.MergeResult(ok=result.ok, output=result.output)
 
-        def repo_path() -> Path | None:
-            store = StackStore(default_db_path())
-            try:
-                return next((r.path for r in store.repos() if r.id == repo_id), None)
-            finally:
-                store.close()
+    @app.post("/api/merge/queue", response_model=api.MergeQueueInfo)
+    async def queue_merge(body: api.MergeQueueRequest) -> api.MergeQueueInfo:
+        """Merge the branch's PR as soon as its CI has passed."""
+        repo_id, name = branch_ref(body.id)
+        parents = await asyncio.to_thread(_all_parents, repo_id)
+        if name not in parents:
+            raise HTTPException(status_code=404, detail="no such branch")
+        try:
+            return merge_queue.queue(repo_id, name)
+        except MergeQueueRefused as refused:
+            raise HTTPException(status_code=409, detail=str(refused)) from refused
 
-        path = await asyncio.to_thread(repo_path)
-        if path is None:
-            raise HTTPException(status_code=404, detail="no such repo")
-        outcome = await asyncio.to_thread(merger, path, status.pr_url)
-        return api.MergeResult(ok=outcome.ok, output=outcome.output)
+    @app.post("/api/merge/unqueue", status_code=204)
+    async def unqueue_merge(body: api.MergeQueueRequest) -> None:
+        repo_id, name = branch_ref(body.id)
+        merge_queue.cancel(repo_id, name)
 
     def branch_ref(row_id_: str) -> tuple[int, str]:
         repo_part, _, name = row_id_.partition(":")

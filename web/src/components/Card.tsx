@@ -5,6 +5,7 @@ import type {
   HolderState,
   LiveStatus,
   LoadedStatus,
+  MergeQueueInfo,
   RepoWebhook,
   SlackInfo,
   SlotDimensions,
@@ -19,6 +20,7 @@ import { LOADING, subtreeIds } from "../store/selectors";
 import { useApp, useAppStore } from "../store/StoreContext";
 import { AgentSlots, SpendSlots } from "./CardAgentSlots";
 import { MergeDialog } from "./MergeDialog";
+import { MergeQueueControls } from "./MergeQueueControls";
 import { SlackDialog } from "./SlackDialog";
 import { Timeline } from "./Timeline";
 import { Age, CI_TONE, ExternalLink, PR_TONE, Pill, REVIEW_TONE, WHO_TEXT, WHO_TONE } from "./presentation";
@@ -205,6 +207,7 @@ export const Card = memo(
     const status = useApp((s) => s.statuses[id]) ?? LOADING;
     const task = useApp((s) => s.tasks[id]) ?? null;
     const slack = useApp((s) => s.slacks[id]) ?? null;
+    const mergeQueue = useApp((s) => s.mergeQueues[id]) ?? null;
     const claim = useApp((s) => s.claims[id]) ?? NO_CLAIM;
     const extras = useApp((s) => s.extras[id]);
     const decidedAt = useApp((s) => s.decidedAt);
@@ -349,7 +352,7 @@ export const Card = memo(
           <PrSlots status={status} note={note} />
         </Group>
         <Group id="task" title="Task">
-          <NextSlot id={id} status={status} note={note} claim={claim} slackPosting={slack?.posting ?? false} />
+          <NextSlot id={id} status={status} note={note} claim={claim} slackPosting={slack?.posting ?? false} queue={mergeQueue} />
           <Slot
             id="task_age"
             label="Task age"
@@ -480,6 +483,7 @@ function NextSlot({
   note,
   claim,
   slackPosting,
+  queue,
 }: {
   id: string;
   status: LiveStatus;
@@ -487,6 +491,8 @@ function NextSlot({
   claim: BranchClaim;
   /** A message about the PR is being posted in Slack in the background. */
   slackPosting: boolean;
+  /** Where the PR stands in the merge queue (``null``: nothing to say). */
+  queue: MergeQueueInfo | null;
 }) {
   if (status.load !== "loaded") {
     return (
@@ -499,7 +505,11 @@ function NextSlot({
   const { would_be: wouldBe } = status.next;
   return (
     <Slot id="next" label="Next">
-      {status.next.kind === "merge" ? (
+      {status.next.kind === "merge" && queue?.queued ? (
+        <Pill tone={WHO_TONE.ci} title="Queued: being merged now that its CI has passed">
+          Merging…
+        </Pill>
+      ) : status.next.kind === "merge" ? (
         <MergeButton id={id} status={status} />
       ) : status.next.kind === "post_slack" || status.next.kind === "bump_slack" ? (
         <SlackButton id={id} status={status} posting={slackPosting} />
@@ -511,6 +521,7 @@ function NextSlot({
       <span className="card-next-who muted">
         {wouldBe ? `would be: ${wouldBe.label}` : WHO_TEXT[status.next.who]}
       </span>
+      {queue && <MergeQueueControls id={id} queue={queue} />}
       <ClaimChips claim={claim} />
     </Slot>
   );

@@ -10,11 +10,21 @@
         email: me@example.com           # basic auth only; $JIRA_EMAIL wins
         auth: basic                     # basic (Cloud, default) | bearer (Server/DC)
         api_version: 3                  # 2 for Server / Data Center
+        statuses:                       # what `append` and `merge` move a task to
+          in_progress: In Progress      # (these are the defaults)
+          in_review: In Review
+          done: Done                    # a project that ends in "Closed" says so
       employer_orgs: [dbt-labs, fivetran]   # GitHub owners whose repos need a task
 
 ``tasks.employer_orgs`` defaults to ``dbt-labs`` and ``fivetran``. A repo whose
 GitHub ``origin`` owner is in it needs ``--task`` on ``toolbelt git append``;
 any other repo does not (see ``toolbelt.tasks.requirement``).
+
+``toolbelt git append --task`` moves the task to ``statuses.in_progress``,
+``tt ui`` to ``statuses.in_review`` when it sees the branch's PR open (not a
+draft), and ``toolbelt git merge`` to ``statuses.done`` (see ``toolbelt.tasks.jira`` for
+when a task is left where it is). Both are best-effort: a missing token or an
+unreachable ticket is a warning, and the git command still succeeds.
 
 The API token is never kept in this file: it comes from ``$JIRA_API_TOKEN``
 (see ``toolbelt.tasks.jira``).

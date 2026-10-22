@@ -62,7 +62,10 @@ query($owner: String!, $repo: String!, $branch: String!) {{
         head: commits(last: 1) {{ nodes {{ commit {{
           statusCheckRollup {{ state contexts(first: 100) {{ nodes {{
             __typename
-            ... on CheckRun {{ conclusion status }}
+            ... on CheckRun {{
+              name conclusion status startedAt
+              checkSuite {{ workflowRun {{ databaseId createdAt workflow {{ name }} }} }}
+            }}
             ... on StatusContext {{ state }}
           }} }} }}
         }} }} }}

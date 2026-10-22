@@ -4,6 +4,7 @@
 import { useEffect, useState } from "react";
 import { fetchSlackDraft, sendSlack } from "../api/client";
 import type { SlackDraft } from "../api/generated";
+import { renameMention } from "../logic/slackText";
 import { Dialog } from "./Dialog";
 
 type Phase =
@@ -15,7 +16,8 @@ type Phase =
 export function SlackDialog({ id, onClose }: { id: string; onClose: () => void }) {
   const [phase, setPhase] = useState<Phase>({ name: "loading" });
   const [text, setText] = useState("");
-  const [assigneeId, setAssigneeId] = useState<string | null>(null);
+  // Who is asked about each PR of the draft, in its order (a bump asks one person about all).
+  const [assignees, setAssignees] = useState<(string | null)[]>([]);
   const [problem, setProblem] = useState<string | null>(null);
 
   useEffect(() => {
@@ -24,7 +26,7 @@ export function SlackDialog({ id, onClose }: { id: string; onClose: () => void }
       .then((draft) => {
         if (!current) return;
         setText(draft.text);
-        setAssigneeId(draft.assignee?.id ?? null);
+        setAssignees(draft.prs.map((pr) => pr.assignee?.id ?? draft.assignee?.id ?? null));
         setPhase({ name: "ready", draft });
       })
       .catch((error: unknown) => {
@@ -38,13 +40,38 @@ export function SlackDialog({ id, onClose }: { id: string; onClose: () => void }
   const draft = phase.name === "ready" || phase.name === "sending" ? phase.draft : null;
   const title = draft ? (draft.kind === "post" ? "Post in Slack" : "Bump in Slack") : "Slack";
 
+  const nameOf = (personId: string | null): string | undefined =>
+    draft?.candidates.find((person) => person.id === personId)?.name;
+  const several = draft !== null && draft.kind === "post" && draft.prs.length > 1;
+
   // Asking someone else changes the name in the text, keeping any edits made to it.
-  const ask = (nextId: string): void => {
+  // With several PRs, asking about one changes only the lines linking that PR.
+  const askAbout = (index: number, nextId: string): void => {
     if (!draft) return;
-    const before = draft.candidates.find((person) => person.id === assigneeId);
-    const after = draft.candidates.find((person) => person.id === nextId);
-    if (before && after) setText((current) => current.split(`@${before.name}`).join(`@${after.name}`));
-    setAssigneeId(nextId);
+    const before = nameOf(assignees[index]);
+    const after = nameOf(nextId);
+    if (before && after) setText((current) => renameMention(current, before, after, draft.prs[index].number));
+    setAssignees((current) => current.map((id, i) => (i === index ? nextId : id)));
+  };
+
+  // Asking everyone (or the one person of a single PR or a bump) changes every line.
+  const askAll = (nextId: string): void => {
+    if (!draft) return;
+    const after = nameOf(nextId);
+    if (after) {
+      setText((current) =>
+        several
+          ? draft.prs.reduce<string>((acc, pr, index) => {
+              const before = nameOf(assignees[index]);
+              return before ? renameMention(acc, before, after, pr.number) : acc;
+            }, current)
+          : assignees.reduce<string>((acc, id) => {
+              const before = nameOf(id);
+              return before ? renameMention(acc, before, after) : acc;
+            }, current),
+      );
+    }
+    setAssignees((current) => current.map(() => nextId));
   };
 
   const send = (): void => {
@@ -56,9 +83,9 @@ export function SlackDialog({ id, onClose }: { id: string; onClose: () => void }
       id,
       kind: ready.kind,
       text,
-      assignee_id: assigneeId,
+      assignee_id: assignees[0] ?? null,
       thread_ts: ready.thread_ts,
-      prs: ready.prs.map((pr) => ({ repo: pr.repo, number: pr.number })),
+      prs: ready.prs.map((pr, index) => ({ repo: pr.repo, number: pr.number, assignee_id: assignees[index] ?? null })),
     })
       .then(onClose) // it posts in the background: the card shows how it went
       .catch((error: unknown) => {
@@ -96,13 +123,17 @@ export function SlackDialog({ id, onClose }: { id: string; onClose: () => void }
             )}
           </p>
           <label className="slack-field">
-            <span className="slack-label">Ask</span>
+            <span className="slack-label">{several ? "Ask everyone" : "Ask"}</span>
             <select
-              value={assigneeId ?? ""}
+              value={assignees.every((id) => id === assignees[0]) ? (assignees[0] ?? "") : ""}
               disabled={phase.name !== "ready"}
-              onChange={(event) => ask(event.target.value)}
+              onChange={(event) => askAll(event.target.value)}
             >
-              {assigneeId === null && <option value="">nobody chosen</option>}
+              {(assignees[0] === null || !assignees.every((id) => id === assignees[0])) && (
+                <option value="" disabled>
+                  {several && assignees.some((id) => id !== null) ? "different people" : "nobody chosen"}
+                </option>
+              )}
               {draft.candidates.map((person) => (
                 <option key={person.id} value={person.id}>
                   {person.name}
@@ -110,6 +141,31 @@ export function SlackDialog({ id, onClose }: { id: string; onClose: () => void }
               ))}
             </select>
           </label>
+          {several && (
+            <ul className="slack-per-pr" aria-label="Who is asked about each PR">
+              {draft.prs.map((pr, index) => (
+                <li key={pr.url}>
+                  <label>
+                    <span className="slack-pr-name">{`${pr.repo}#${pr.number}`}</span>{" "}
+                    <span className="muted">{pr.title}</span>{" "}
+                    <select
+                      aria-label={`Ask about ${pr.repo}#${pr.number}`}
+                      value={assignees[index] ?? ""}
+                      disabled={phase.name !== "ready"}
+                      onChange={(event) => askAbout(index, event.target.value)}
+                    >
+                      {assignees[index] === null && <option value="">nobody chosen</option>}
+                      {draft.candidates.map((person) => (
+                        <option key={person.id} value={person.id}>
+                          {person.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          )}
           <label className="slack-field">
             <span className="slack-label">Message</span>
             <textarea
