@@ -255,8 +255,6 @@ class PrDetail(Model):
     draft_age: Age | None
     review_request_age: Age | None
     ci_failures: int
-    #: Reviewers with a review request outstanding.
-    reviewers: list[str]
     #: Lines the PR adds and deletes against its base (its parent branch for a
     #: stacked PR).
     additions: int
@@ -573,6 +571,9 @@ class SlackInfo(Model):
     #: Link to the Slack thread of the latest post or bump (``None`` when the
     #: config has no ``workspace``).
     thread_link: str | None
+    #: Who the latest post or bump asked to review it (``None``: nobody, or not
+    #: posted): the card's Assigned Review.
+    assignee: str | None
 
 
 class MergeQueueInfo(Model):

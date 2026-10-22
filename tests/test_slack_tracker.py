@@ -171,6 +171,29 @@ def test_the_latest_posts_thread_is_linked_when_the_workspace_is_known():
     assert unlinked is not None and unlinked.thread_link is None
 
 
+def asked(row_: SlackPostRow, name: str | None) -> SlackPostRow:
+    return SlackPostRow(**{**row_.__dict__, "assignee_name": name})
+
+
+def test_the_assigned_review_is_who_the_latest_post_or_bump_asked():
+    post = asked(row(30), "patrick.yost")
+    bump = asked(row(2, kind="bump"), "will.james")
+
+    after_post = tracker(Posts(post)).info(1, "a", FETCHED, NOW)
+    after_bump = tracker(Posts(post, bump)).info(1, "a", FETCHED, NOW)
+
+    assert after_post is not None and after_post.assignee == "patrick.yost"
+    assert after_bump is not None and after_bump.assignee == "will.james"
+
+
+def test_nobody_is_assigned_before_a_post_or_when_the_post_asked_nobody():
+    before = tracker(Posts()).info(1, "a", FETCHED, NOW)
+    nobody = tracker(Posts(asked(row(5), None))).info(1, "a", FETCHED, NOW)
+
+    assert before is not None and before.assignee is None
+    assert nobody is not None and nobody.assignee is None
+
+
 def test_the_watcher_notices_a_bump_falling_due_once_a_day_has_passed():
     clock, changes = Clock(), []
     w = watcher(Posts(row(23)), clock, changes)

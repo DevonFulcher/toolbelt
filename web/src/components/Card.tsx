@@ -412,6 +412,9 @@ export const Card = memo(
           <Slot id="slack_age" label="Post age" state={slack?.last_at ? "ok" : "na"}>
             {slack?.last_at ? <Age text={formatElapsed((now - Date.parse(slack.last_at)) / 1000)} since={slack.last_at} /> : "–"}
           </Slot>
+          <Slot id="assigned_review" label="Assigned Review" state={slack?.assignee ? "ok" : "na"}>
+            {slack ? (slack.assignee ?? <Pill tone="gray">not assigned</Pill>) : "–"}
+          </Slot>
         </Group>
         <Group
           id="agent"
@@ -656,7 +659,6 @@ function PrSlots({ status, note }: { status: LiveStatus; note: ReactNode }) {
       ["in_draft", "In draft"],
       ["review_requested", "Review requested"],
       ["ci_failures", "CI failures"],
-      ["reviewers", "Reviewers"],
     ];
     return (
       <>
@@ -813,15 +815,6 @@ function LoadedPrSlots({ status }: { status: LoadedStatus }) {
                   {`${detail.ci_failures} failure${detail.ci_failures === 1 ? "" : "s"}`}
                 </Pill>
               </Slot>
-              {detail.reviewers.length > 0 ? (
-                <Slot id="reviewers" label="Reviewers">
-                  {detail.reviewers.join(", ")}
-                </Slot>
-              ) : (
-                <Slot id="reviewers" label="Reviewers" state="na">
-                  <Pill tone="gray">none requested</Pill>
-                </Slot>
-              )}
             </>
           ) : (
             <UnavailableSlots note="PR details unavailable" />
@@ -886,7 +879,6 @@ function UnavailableSlots({ note }: { note: string }) {
     ["in_draft", "In draft"],
     ["review_requested", "Review requested"],
     ["ci_failures", "CI failures"],
-    ["reviewers", "Reviewers"],
   ];
   return (
     <>

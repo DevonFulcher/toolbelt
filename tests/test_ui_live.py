@@ -1072,6 +1072,7 @@ class TestSlackInTheApp:
             "posting": False,
             "notice": None,
             "thread_link": None,
+            "assignee": None,
         }
 
     def test_a_recorded_post_makes_it_posted_and_the_next_action_waits(self, tmp_path):

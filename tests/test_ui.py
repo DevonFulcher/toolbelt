@@ -611,7 +611,6 @@ class TestPrDetail:
             detail.review_request_age.since,
         ) == ("3h", "2026-10-06T06:00:00Z")
         assert detail.ci_failures == 2
-        assert detail.reviewers == ["sam"]
         assert (detail.additions, detail.deletions) == (120, 4)
         assert (detail.created, detail.ended, detail.is_draft) == (
             "2026-10-01T09:00:00Z",

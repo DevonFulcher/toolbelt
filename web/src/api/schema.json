@@ -2774,12 +2774,6 @@
             }
           ]
         },
-        "reviewers": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
         "title": {
           "type": "string"
         }
@@ -2790,7 +2784,6 @@
         "draft_age",
         "review_request_age",
         "ci_failures",
-        "reviewers",
         "additions",
         "deletions",
         "created",
@@ -3356,6 +3349,16 @@
       "additionalProperties": false,
       "description": "Where a branch's PR stands in Slack, from the posts toolbelt recorded\n(``None`` on a branch when Slack is not configured or it has no PR).",
       "properties": {
+        "assignee": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "bump_due": {
           "type": "boolean"
         },
@@ -3417,7 +3420,8 @@
         "bump_due",
         "posting",
         "notice",
-        "thread_link"
+        "thread_link",
+        "assignee"
       ],
       "title": "SlackInfo",
       "type": "object"
@@ -3652,6 +3656,16 @@
             }
           ]
         },
+        "assigned_review": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogDimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "bot_comments": {
           "anyOf": [
             {
@@ -3822,16 +3836,6 @@
             }
           ]
         },
-        "reviewers": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/CatalogDimension"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "session": {
           "anyOf": [
             {
@@ -3934,7 +3938,6 @@
         "conflict_commit",
         "in_draft",
         "review_requested",
-        "reviewers",
         "ci_failures",
         "title",
         "task_age",
@@ -3948,6 +3951,7 @@
         "agent_cost",
         "slack_status",
         "slack_age",
+        "assigned_review",
         "repo",
         "branch",
         "task",

@@ -131,6 +131,7 @@ class SlackTracker:
             posting=pr in self._posting,
             notice=self._notice.get(pr),
             thread_link=self._permalink(last.channel, last.thread_ts) if last else None,
+            assignee=last.assignee_name if last else None,
         )
 
 

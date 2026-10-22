@@ -89,7 +89,6 @@ export function detail(overrides: Partial<PrDetail> = {}): PrDetail {
     draft_age: null,
     review_request_age: null,
     ci_failures: 0,
-    reviewers: [],
     additions: 12,
     deletions: 3,
     created: ago(5 * DAY),

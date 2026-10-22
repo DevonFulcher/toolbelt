@@ -463,7 +463,7 @@ STATES: tuple[StateValue, ...] = (
         _ph("draft", absent=True),
         _ev("ready_for_review"),
     ),
-    # Review requested / Reviewers slots.
+    # Review requested slot.
     _v(
         "reviewers",
         "pending",
@@ -521,7 +521,6 @@ SLOT_STATES: dict[str, str | None] = {
     "conflict_commit": "merge",
     "in_draft": "draft",
     "review_requested": "reviewers",
-    "reviewers": "reviewers",
     "ci_failures": "ci",
     "title": "pr",
     "task_age": "task",
@@ -537,6 +536,7 @@ SLOT_STATES: dict[str, str | None] = {
     "agent_cost": None,
     "slack_status": None,
     "slack_age": None,
+    "assigned_review": None,
     "repo": None,
     "branch": None,
     "task": None,

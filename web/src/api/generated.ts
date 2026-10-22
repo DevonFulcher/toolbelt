@@ -364,6 +364,7 @@ export interface MergeQueueInfo {
  * (``None`` on a branch when Slack is not configured or it has no PR).
  */
 export interface SlackInfo {
+  assignee: string | null;
   bump_due: boolean;
   last_at: string | null;
   last_kind: ("post" | "bump") | null;
@@ -422,7 +423,6 @@ export interface PrDetail {
   is_draft: boolean;
   pr_age: Age;
   review_request_age: Age | null;
-  reviewers: string[];
   title: string;
 }
 /**
@@ -989,6 +989,7 @@ export interface SlotDimensions {
   agent_run_summary: CatalogDimension | null;
   agent_status: CatalogDimension | null;
   ancestors: CatalogDimension | null;
+  assigned_review: CatalogDimension | null;
   bot_comments: CatalogDimension | null;
   branch: CatalogDimension | null;
   ci: CatalogDimension | null;
@@ -1006,7 +1007,6 @@ export interface SlotDimensions {
   repo: CatalogDimension | null;
   review: CatalogDimension | null;
   review_requested: CatalogDimension | null;
-  reviewers: CatalogDimension | null;
   session: CatalogDimension | null;
   slack_age: CatalogDimension | null;
   slack_status: CatalogDimension | null;

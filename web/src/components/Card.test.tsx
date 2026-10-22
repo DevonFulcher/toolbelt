@@ -36,6 +36,7 @@ const SLOT_LABELS: Record<string, string> = {
   task_status: "Task status",
   slack_status: "Slack status",
   slack_age: "Post age",
+  assigned_review: "Assigned Review",
   session: "Interactive session",
   agent_status: "Autonomous agent",
   agent_run: "Latest agent run",
@@ -49,7 +50,6 @@ const SLOT_LABELS: Record<string, string> = {
   in_draft: "In draft",
   review_requested: "Review requested",
   ci_failures: "CI failures",
-  reviewers: "Reviewers",
   title: "PR title",
   timeline: "Timeline",
 };
@@ -101,7 +101,6 @@ describe("a card's labelled slots", () => {
         pr_age: { text: "5d", since: new Date(NOW - 5 * DAY).toISOString() },
         review_request_age: { text: "1d", since: new Date(NOW - DAY).toISOString() },
         ci_failures: 2,
-        reviewers: ["sam", "lee"],
         additions: 120,
         deletions: 4,
       }),
@@ -155,7 +154,6 @@ describe("a card's labelled slots", () => {
     expect(b.review_requested).toEqual(["Review requested", "ok", "1d"]);
     expect(b.ci_failures[2]).toBe("2 failures");
     expect(document.querySelector('article[data-id="1:devon/b"] [data-slot="ci_failures"] .pill')).toHaveClass("tone-red");
-    expect(b.reviewers).toEqual(["Reviewers", "ok", "sam, lee"]);
     expect(b.ancestors[2]).toBe("1");
     expect(b.descendants[2]).toBe("0");
     expect(within(document.querySelector('article[data-id="1:devon/b"]') as HTMLElement).getByRole("link", { name: "open in stacked view →" })).toBeInTheDocument();
@@ -203,7 +201,7 @@ describe("a card's labelled slots", () => {
     expect(labels(found)).toEqual(SLOT_LABELS);
     expect(found.next[2]).toBe("Open PR needs you");
     expect(found.pr).toEqual(["PR", "gap", "no PR"]);
-    for (const key of ["ci", "review", "comments", "bot_comments", "merge", "conflict_commit", "lines", "pr_age", "in_draft", "review_requested", "ci_failures", "reviewers", "title"]) {
+    for (const key of ["ci", "review", "comments", "bot_comments", "merge", "conflict_commit", "lines", "pr_age", "in_draft", "review_requested", "ci_failures", "title"]) {
       expect(found[key].slice(1), key).toEqual(["na", "no PR"]);
     }
     // No start recorded and no PR: nothing to draw, and no chip row repeating
@@ -247,7 +245,6 @@ describe("a card's labelled slots", () => {
     for (const key of ["comments", "bot_comments", "merge", "ci_failures"]) {
       expect(card.querySelector(`[data-slot="${key}"] .pill`)).toHaveClass("tone-green");
     }
-    expect(found.reviewers).toEqual(["Reviewers", "na", "none requested"]);
     // A merged PR's merge slot says why it is empty.
     expect(slotsOf("devon/m").merge).toEqual(["Merge", "na", "n/a (PR merged)"]);
   });
@@ -275,8 +272,8 @@ describe("a card's labelled slots", () => {
       const keys = groups.map((g) => [...g.querySelectorAll<HTMLElement>(".slot")].map((s) => s.dataset.slot));
       expect(keys).toEqual([
         ["repo", "branch", "ancestors", "descendants"],
-        ["title", "pr", "ci", "review", "comments", "bot_comments", "merge", "conflict_commit", "lines", "pr_age", "in_draft", "review_requested", "ci_failures", "reviewers"],
-        ["next", "task_age", "task", "task_title", "task_status", "slack_status", "slack_age"],
+        ["title", "pr", "ci", "review", "comments", "bot_comments", "merge", "conflict_commit", "lines", "pr_age", "in_draft", "review_requested", "ci_failures"],
+        ["next", "task_age", "task", "task_title", "task_status", "slack_status", "slack_age", "assigned_review"],
         ["session", "agent_status", "agent_run", "agent_run_summary"],
         ["cost", "agent_cost"],
       ]);
@@ -295,7 +292,7 @@ describe("a card's labelled slots", () => {
 
     expect(labels(found)).toEqual(SLOT_LABELS);
     for (const key of Object.keys(SLOT_LABELS)) {
-      if (["repo", "branch", "ancestors", "descendants", "task", "task_title", "task_status", "slack_status", "slack_age", "session", "task_age", "agent_status", "agent_run", "agent_run_summary", "cost", "agent_cost"].includes(key)) continue;
+      if (["repo", "branch", "ancestors", "descendants", "task", "task_title", "task_status", "slack_status", "slack_age", "assigned_review", "session", "task_age", "agent_status", "agent_run", "agent_run_summary", "cost", "agent_cost"].includes(key)) continue;
       expect(found[key].slice(1), key).toEqual(["na", "loading…"]);
     }
   });
@@ -601,6 +598,7 @@ describe("a card while a message is posted in the background", () => {
     posting: false,
     notice: null,
     thread_link: null,
+    assignee: null,
     ...over,
   });
 
@@ -638,6 +636,52 @@ describe("a card while a message is posted in the background", () => {
   });
 });
 
+describe("a card's Assigned Review", () => {
+  const open = pr({ pr_number: 8, pr: "open" });
+  const info = (assignee: string | null): SlackInfo => ({
+    posted: assignee !== null,
+    last_kind: assignee ? "post" : null,
+    last_at: assignee ? new Date(NOW - 3600_000).toISOString() : null,
+    bump_due: false,
+    posting: false,
+    notice: null,
+    thread_link: null,
+    assignee,
+  });
+
+  test("names who the latest Slack post or bump asked to review it", () => {
+    showCards([branch(1, "devon/a", { status: open, slack: info("will.james") })]);
+
+    expect(slotsOf("devon/a").assigned_review).toEqual(["Assigned Review", "ok", "will.james"]);
+  });
+
+  test("says nobody is assigned until it is posted", () => {
+    showCards([branch(1, "devon/a", { status: open, slack: info(null) })]);
+
+    expect(slotsOf("devon/a").assigned_review).toEqual(["Assigned Review", "na", "not assigned"]);
+  });
+
+  test("has nothing to say when Slack is off", () => {
+    showCards([branch(1, "devon/a", { status: open, slack: null })]);
+
+    expect(slotsOf("devon/a").assigned_review).toEqual(["Assigned Review", "na", "–"]);
+  });
+
+  test("follows a bump to the person asked then", () => {
+    const { store } = showCards([branch(1, "devon/a", { status: open, slack: info("patrick.yost") })]);
+
+    act(() => store.getState().statusChanged("1:devon/a", open, 1, info("will.james")));
+
+    expect(slotsOf("devon/a").assigned_review[2]).toBe("will.james");
+  });
+
+  test("the old Reviewers slot is gone", () => {
+    showCards([branch(1, "devon/a", { status: open, slack: info("will.james") })]);
+
+    expect(slotsOf("devon/a").reviewers).toBeUndefined();
+  });
+});
+
 describe("a card's Slack fields", () => {
   const open = pr({ pr_number: 8, pr: "open" });
 
@@ -652,7 +696,7 @@ describe("a card's Slack fields", () => {
 
   test("a ready PR not posted is flagged as something to do", () => {
     showCards([
-      branch(1, "devon/a", { status: open, slack: { posted: false, last_kind: null, last_at: null, bump_due: false, posting: false, notice: null, thread_link: null } }),
+      branch(1, "devon/a", { status: open, slack: { posted: false, last_kind: null, last_at: null, bump_due: false, posting: false, notice: null, thread_link: null, assignee: null } }),
     ]);
 
     const found = slotsOf("devon/a");
@@ -664,7 +708,7 @@ describe("a card's Slack fields", () => {
   test("a draft not posted is not flagged: it is not ready", () => {
     const draft = pr({ pr_number: 8, pr: "draft" });
     showCards([
-      branch(1, "devon/a", { status: draft, slack: { posted: false, last_kind: null, last_at: null, bump_due: false, posting: false, notice: null, thread_link: null } }),
+      branch(1, "devon/a", { status: draft, slack: { posted: false, last_kind: null, last_at: null, bump_due: false, posting: false, notice: null, thread_link: null, assignee: null } }),
     ]);
 
     expect(slotsOf("devon/a").slack_status).toEqual(["Slack status", "na", "Not posted in Slack"]);
@@ -674,11 +718,11 @@ describe("a card's Slack fields", () => {
     showCards([
       branch(1, "devon/a", {
         status: open,
-        slack: { posted: true, last_kind: "post", last_at: new Date(NOW - 5 * 3600_000).toISOString(), bump_due: false, posting: false, notice: null, thread_link: null },
+        slack: { posted: true, last_kind: "post", last_at: new Date(NOW - 5 * 3600_000).toISOString(), bump_due: false, posting: false, notice: null, thread_link: null, assignee: null },
       }),
       branch(1, "devon/b", {
         status: open,
-        slack: { posted: true, last_kind: "bump", last_at: new Date(NOW - 2 * DAY).toISOString(), bump_due: true, posting: false, notice: null, thread_link: null },
+        slack: { posted: true, last_kind: "bump", last_at: new Date(NOW - 2 * DAY).toISOString(), bump_due: true, posting: false, notice: null, thread_link: null, assignee: null },
       }),
     ]);
 
@@ -700,6 +744,7 @@ describe("a card's Slack fields", () => {
         posting: false,
         notice: null,
         thread_link: null,
+        assignee: null,
       }),
     );
 
@@ -714,7 +759,7 @@ describe("a card's Slack fields", () => {
     const { store } = showCards([
       branch(1, "devon/a", {
         status: open,
-        slack: { posted: true, last_kind: "post", last_at: new Date(NOW - 3600_000).toISOString(), bump_due: false, posting: false, notice: null, thread_link: null },
+        slack: { posted: true, last_kind: "post", last_at: new Date(NOW - 3600_000).toISOString(), bump_due: false, posting: false, notice: null, thread_link: null, assignee: null },
       }),
     ]);
 

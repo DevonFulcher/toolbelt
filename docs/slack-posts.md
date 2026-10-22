@@ -30,6 +30,8 @@ page never names one.
 - **Next**: `Post in Slack` / `Bump in Slack`, as a button.
 - **Slack status**: `Not posted in Slack`, `Posted in Slack`, `Bumped in Slack`.
 - **Post age**: time since the last post or bump.
+- **Assigned Review**: who the latest post or bump asked to review the PR (it
+  replaces the card's "Reviewers" slot, which showed GitHub's requested reviewers).
 
 `Post in Slack` is the next action for an open, not-approved PR that is not
 posted. It comes after the rules that block a PR (conflicts, changes requested,
