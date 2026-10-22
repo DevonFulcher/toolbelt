@@ -422,12 +422,11 @@ export const register: Register = on => {
   })
 
   on('turn.complete', async ($, e, next) => {
-    // a subagent's own turns carry agentId; only the main loop's end is ours. Subagent
-    // holders are not touched: a background subagent keeps working after the main turn
-    // ends, so its claim lives until SubagentStop or session end.
-    if (e.agentId === undefined) {
-      try {
-        await ensureSession($)
+    try {
+      await ensureSession($)
+      if (e.agentId === undefined) {
+        // the main loop's end. Subagent holders are not touched: a background subagent keeps
+        // working after the main turn ends, so its claim lives until its own turn ends.
         const main = holders.get(MAIN)
         if (main !== undefined) {
           main.state = 'idle'
@@ -435,9 +434,17 @@ export const register: Register = on => {
         }
         stopTimerIfIdle()
         scheduleFlush($)
-      } catch (error) {
-        debug($, `turn.complete failed: ${String(error)}`)
+      } else {
+        // a subagent's own turn ended, so it has stopped. classic.SubagentStop is the usual
+        // signal for this but is not always delivered (the engine can pass it over: see
+        // docs/task-claims.md), so the claim is also released here. A tool call it makes
+        // afterwards claims again.
+        await release($, e.agentId)
+        stopTimerIfIdle()
+        refreshStatus($)
       }
+    } catch (error) {
+      debug($, `turn.complete failed: ${String(error)}`)
     }
     return next(e)
   })

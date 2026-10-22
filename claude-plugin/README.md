@@ -45,9 +45,11 @@ State and lifetime:
 - `blocked` on a permission prompt or input dialog: ttl 1800. The next tool
   result puts it back to `working`.
 - The main holder's claims are turn-scoped: every turn starts with an empty list.
-- A subagent gets its own file, live from SubagentStart until it stops (or the
-  session ends), also while the main turn is over. If SubagentStop never comes,
-  the claim ends when the Claude process dies (see below), or at session end.
+- A subagent gets its own file, live from its first claim until it stops (or the
+  session ends), also while the main turn is over. It stops at SubagentStop or at
+  its own `turn.complete` (the engine can pass `classic.*` events over this
+  plugin, so SubagentStop alone is not reliable). If neither comes, the claim
+  ends when the Claude process dies (see below), or at session end.
 - Before each write the mod reads `claims/revoked/<holder>.json` (written by
   `tt`) and drops any claim touched at or before its revocation time.
 - The status line shows `claimed: N` while working and something is claimed.

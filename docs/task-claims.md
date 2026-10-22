@@ -71,18 +71,22 @@ file name without `.json` (a file that disagrees is ignored).
   is handled like an expired one: ignored, listed by `tt task status
   --verbose` ("its process is gone"), and deleted by `tt task gc` and by
   `tt ui` (at once rather than after the 10 s grace: a dead writer cannot
-  heartbeat). The check is not a substitute for SubagentStop: a subagent
-  orphaned inside a live Claude process keeps its holder alive until its
-  SubagentStop or the session ends.
+  heartbeat). The check is not a substitute for a subagent's end: a subagent
+  orphaned inside a live Claude process keeps its holder alive until
+  SubagentStop, its own `turn.complete`, or the session ends.
 - **Semantics.** `working` live claims make the task "With an agent". `idle` =
   the agent's turn ended and it waits for the user; `blocked` = it waits on a
   permission prompt/question. idle/blocked live holders do NOT change the
   task's status; the UI shows a chip ("agent idle" / "agent blocked on you")
   with the session link. The main holder's claims are TURN-SCOPED: at a new main
   turn the writer starts with an empty claims list. A subagent holder's claims
-  live from SubagentStart to SubagentStop (or session end), independent of the
-  main turn: a background subagent keeps working, and keeps its claims and
-  heartbeat, after the main turn ends.
+  live until the subagent stops, independent of the main turn: a background
+  subagent keeps working, and keeps its claims and heartbeat, after the main
+  turn ends. The end is SubagentStop or, because the engine can pass
+  `classic.*` events over a plugin without running it (Claude Code's built-in
+  sec-default plugin does, for SubagentStart, SubagentStop and the tool-result
+  events), the subagent's own `turn.complete` (the event carries its `agentId`).
+  A tool call it makes after that claims again.
 - **Writes** were specified as atomic (a temp file in the same directory,
   then rename), but the plugin's mod API only has a plain overwrite: see
   "Amendments" below. Readers tolerate empty/unreadable/partial/unknown-version

@@ -596,6 +596,25 @@ describe('subagents and the claim tool', () => {
     expect(w.files.get(`${CLAIMS}/${SESSION}.ag_1.json`)).toMatchObject({ ttl_seconds: 0, claims: [] })
   })
 
+  test('a subagent turn end releases its holder when SubagentStop never comes', async ($, on) => {
+    const w = world(on)
+    await startTurn($, w)
+    await $.tool.call(EDIT('/g/wt/repo/sub/f.ts', 'ag/1'))
+    await w.clock.settle()
+    const subPath = `${CLAIMS}/${SESSION}.ag_1.json`
+    expect(w.files.get(subPath)).toMatchObject({ state: 'working' })
+
+    await $.turn.complete({ answer: '', durationMs: 1, turnId: 't2', reason: 'answer', agentId: 'ag/1' } as never)
+    await w.clock.settle()
+    expect(w.files.get(subPath)).toMatchObject({ ttl_seconds: 0, claims: [] })
+    // the main holder is not touched by a subagent's turn end
+    expect(mainDoc(w)).toMatchObject({ state: 'working' })
+
+    await $.tool.call(EDIT('/g/wt/repo/other/f.ts', 'ag/1'))
+    await w.clock.settle()
+    expect(claimed(w.files.get(subPath) as Doc)).toEqual(['/g/wt/repo/other'])
+  })
+
   test('a main turn end leaves a running subagent claimed and heartbeating', async ($, on) => {
     const w = world(on)
     await startTurn($, w)
