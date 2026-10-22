@@ -90,7 +90,7 @@ export function startLiveUpdates(deps: LiveDeps): LiveUpdates {
     switch (event.type) {
       case "hello": {
         const missed = missedEvents(state.version, event.v);
-        state.hello(event.v, event.age);
+        state.hello(event.v, event.age, event.build);
         return missed ? loadSnapshot() : undefined;
       }
       case "status":

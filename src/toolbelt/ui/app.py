@@ -106,7 +106,7 @@ from toolbelt.ui.claims_feed import (
     ClaimObservation,
     ClaimsFeed,
 )
-from toolbelt.ui.client_build import CLIENT_DIST
+from toolbelt.ui.client_build import CLIENT_DIST, served_build
 from toolbelt.ui.conflict_commit import conflict_for
 from toolbelt.ui.forwarder_ledger import SettingsLedger
 from toolbelt.ui.github_requests import (
@@ -1315,7 +1315,11 @@ def create_app(
             try:
                 yield _sse(
                     "hello",
-                    {"v": hub.version, "age": refresher.seconds_since_refresh()},
+                    {
+                        "v": hub.version,
+                        "age": refresher.seconds_since_refresh(),
+                        "build": served_build(client_dist),
+                    },
                 )
                 while True:
                     try:

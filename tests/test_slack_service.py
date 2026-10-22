@@ -12,7 +12,7 @@ from toolbelt.git.stack.store import SlackPostRow, SlackSessionRow
 from toolbelt.ui import api_models as api
 from toolbelt.ui.live_status import Fetched, TrackedBranch
 from toolbelt.ui.pr_activity import PrFacts
-from toolbelt.ui.slack_compose import ATTRIBUTION, Person
+from toolbelt.ui.slack_compose import Person
 from toolbelt.ui.slack_config import AssignRule, SlackConfig
 from toolbelt.ui.slack_import import ChannelMessage, ChannelRead
 from toolbelt.ui.slack_proxy import SentMessage
@@ -187,7 +187,7 @@ def test_a_post_covers_the_branch_and_its_stack_bottom_first_with_one_assignee()
     assert draft.kind == "post" and draft.channel == "DTEST"
     assert [pr.number for pr in draft.prs] == [1, 2]  # not the separate branch c
     assert draft.assignee == api.SlackPerson(id="UA", name="alan")
-    assert draft.text.splitlines()[1:3] == [
+    assert draft.text.splitlines()[0:2] == [
         "- [Bottom](https://github.com/o/r/pull/1) @alan `+100/-10`",
         "  - [Top](https://github.com/o/r/pull/2) @alan `+50/-5`",
     ]
@@ -202,7 +202,7 @@ def test_a_post_leaves_out_stack_members_that_are_not_ready():
     draft = rig.service.draft(1, "b", None)
 
     assert [pr.number for pr in draft.prs] == [2]
-    assert draft.text.splitlines()[1].startswith(
+    assert draft.text.splitlines()[0].startswith(
         "- [Top]"
     )  # no parent in the post: top level
 
@@ -265,7 +265,7 @@ def test_sending_posts_the_text_to_the_configured_channel_with_mentions_and_reco
     assert call["channel"] == "DTEST"
     assert call["thread_ts"] is None
     assert call["text"] == (
-        f"{ATTRIBUTION}\nhello <@UA> https://github.com/o/r/pull/1 https://github.com/o/r/pull/2"
+        "hello <@UA> https://github.com/o/r/pull/1 https://github.com/o/r/pull/2"
     )
     assert accepted.prs == request(numbers=(1, 2)).prs
     assert notice(rig, 1) is None and notice(rig, 2) is None  # verified

@@ -1,9 +1,10 @@
 """The Slack messages for a PR: a post that asks for review and the bump that
 follows when nobody has looked.
 
-Text is composed the way the ``pr-publish`` skill writes it (a first line saying
-an AI wrote it on Devon's behalf, markdown links and ``-`` bullets that Slack
-renders, a stack indented under the PR it is stacked on). A person is written
+Text is composed the way the ``pr-publish`` skill writes it (markdown links and
+``-`` bullets that Slack renders, a stack indented under the PR it is stacked
+on). The messages are canned and the user confirms each one before it is sent,
+so they carry no line saying how they were written. A person is written
 ``@name`` so the dialog shows what Slack will show; ``to_slack`` turns each
 ``@name`` into the ``<@id>`` mention Slack needs when the message is sent.
 
@@ -12,8 +13,6 @@ Pure functions: nothing here reads Slack or GitHub.
 
 import re
 from dataclasses import dataclass
-
-ATTRIBUTION = "🤖 AI-generated on behalf of Devon:"
 
 _TICKET_KEY = re.compile(r"^\s*[A-Z][A-Z0-9]+-\d+\s*[:\-–]?\s*")
 
@@ -41,6 +40,24 @@ class PostPr:
     parent_number: int | None = None
 
 
+@dataclass(frozen=True)
+class BumpPr:
+    """A PR in a bump."""
+
+    #: ``owner/name``: the message shows just the name.
+    repo: str
+    number: int
+    url: str
+    additions: int
+    deletions: int
+
+
+def _link(pr: BumpPr) -> str:
+    """``[repo#number](url) `+a/-d` ``: how a bump names a PR."""
+    name = pr.repo.rsplit("/", 1)[-1]
+    return f"[{name}#{pr.number}]({pr.url}) `+{pr.additions}/-{pr.deletions}`"
+
+
 def short_context(title: str) -> str:
     """A few words on what the PR does: its title without the ticket key,
     starting with a capital."""
@@ -63,33 +80,29 @@ def compose_post(prs: list[PostPr]) -> str:
         f"{_mention(pr.assignee)} `+{pr.additions}/-{pr.deletions}`"
         for pr in prs
     ]
-    return "\n".join([ATTRIBUTION, *bullets, "", "Thanks for your time!"])
+    return "\n".join([*bullets, "", "Thanks for your time!"])
 
 
-def compose_bump(urls: list[str], assignee: Person | None) -> str:
+def compose_bump(prs: list[BumpPr], assignee: Person | None) -> str:
     """A threaded reply under the original post for PRs nobody has looked at."""
-    if len(urls) == 1:
-        subject = f"{urls[0]} has"
+    links = [_link(pr) for pr in prs]
+    if len(links) == 1:
+        subject = f"{links[0]} has"
     else:
-        subject = f"{', '.join(urls[:-1])} and {urls[-1]} have"
-    ask = f"{assignee.name}, could you" if assignee else "Could someone"
-    text = (
+        subject = f"{', '.join(links[:-1])} and {links[-1]} have"
+    ask = f"@{assignee.name}, would you" if assignee else "Would someone"
+    return (
         f"It has been over 24 hours and {subject} no comments or reviews yet. "
-        f"{'@' if assignee else ''}{ask} take a look"
-        f"{' instead' if assignee else ''}? Thanks!"
+        f"{ask} mind taking a look? Thanks!"
     )
-    return f"{ATTRIBUTION}\n{text}"
 
 
 def to_slack(text: str, mentions: dict[str, str]) -> str:
-    """``text`` with each ``@name`` (a key of ``mentions``) as Slack's
-    ``<@id>``, and the attribution line first when it is missing."""
+    """``text`` with each ``@name`` (a key of ``mentions``) as Slack's ``<@id>``."""
     for name in sorted(mentions, key=len, reverse=True):
         text = re.sub(
             rf"(?<![\w@])@{re.escape(name)}(?![\w-]|\.\w)",
             f"<@{mentions[name]}>",
             text,
         )
-    if not text.startswith(ATTRIBUTION):
-        text = f"{ATTRIBUTION}\n{text}"
     return text

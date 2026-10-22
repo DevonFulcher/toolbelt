@@ -1939,6 +1939,16 @@
             }
           ]
         },
+        "build": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "type": {
           "const": "hello",
           "type": "string"
@@ -1950,7 +1960,8 @@
       "required": [
         "type",
         "v",
-        "age"
+        "age",
+        "build"
       ],
       "title": "HelloEvent",
       "type": "object"

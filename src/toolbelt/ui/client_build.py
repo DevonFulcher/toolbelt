@@ -11,6 +11,7 @@ The tool lookup and the process runner are arguments so tests drive the
 decisions without running pnpm.
 """
 
+import re
 import shutil
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -32,6 +33,18 @@ _INPUT_FILES = (
     "vite.config.ts",
     "tsconfig.json",
 )
+
+
+def served_build(dist: Path = CLIENT_DIST) -> str | None:
+    """Which build of the client ``dist`` holds: the file name of its main script
+    (content-hashed, so it changes with every build), or ``None`` when there is
+    no build. A page compares it with its own to say it is out of date."""
+    try:
+        page = (dist / "index.html").read_text()
+    except OSError:
+        return None
+    found = re.search(r"/assets/(index-[\w-]+\.js)", page)
+    return found.group(1) if found else None
 
 
 class ClientBuildError(Exception):

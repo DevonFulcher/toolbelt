@@ -332,6 +332,7 @@ export interface PrMilestones {
  */
 export interface HelloEvent {
   age: number | null;
+  build: string | null;
   type: "hello";
   v: number;
 }

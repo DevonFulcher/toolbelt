@@ -2,7 +2,6 @@ import { describe, expect, test } from "vitest";
 import { renameMention } from "./slackText";
 
 const POST = [
-  "🤖 AI-generated on behalf of Devon:",
   "- [One](https://github.com/o/r/pull/1) @alan `+1/-1`",
   "  - [Two](https://github.com/o/r/pull/12) @alan `+2/-2`",
   "- [Three](https://github.com/o/r/pull/123) @alan `+3/-3`",
@@ -16,9 +15,9 @@ describe("renameMention", () => {
   test("renames it only on the lines of the PR given, whose number may start another's", () => {
     const renamed = renameMention(POST, "alan", "will", 12).split("\n");
 
-    expect(renamed[1]).toContain("@alan");
-    expect(renamed[2]).toContain("@will");
-    expect(renamed[3]).toContain("@alan"); // pull/123 is not pull/12
+    expect(renamed[0]).toContain("@alan");
+    expect(renamed[1]).toContain("@will");
+    expect(renamed[2]).toContain("@alan"); // pull/123 is not pull/12
   });
 
   test("does not rename a longer name that starts the same", () => {

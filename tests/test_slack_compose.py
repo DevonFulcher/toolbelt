@@ -1,7 +1,7 @@
 """The Slack messages for a PR, as the pr-publish skill writes them."""
 
 from toolbelt.ui.slack_compose import (
-    ATTRIBUTION,
+    BumpPr,
     Person,
     PostPr,
     compose_bump,
@@ -37,7 +37,6 @@ def test_a_single_pr_post():
     text = compose_post([pr(7, "DI-1: Add alerting on main", lines=(381, 9))])
 
     assert text == (
-        f"{ATTRIBUTION}\n"
         "- [Add alerting on main](https://github.com/o/r/pull/7) @alan.andradecestelos `+381/-9`\n"
         "\n"
         "Thanks for your time!"
@@ -54,7 +53,7 @@ def test_a_stack_is_indented_under_the_pr_it_is_stacked_on_bottom_first():
         ]
     )
 
-    assert text.splitlines()[1:5] == [
+    assert text.splitlines()[0:4] == [
         "- [Bottom](https://github.com/o/r/pull/1) @alan.andradecestelos `+5/-1`",
         "  - [Middle](https://github.com/o/r/pull/2) @alan.andradecestelos `+10/-2`",
         "    - [Top](https://github.com/o/r/pull/3) @alan.andradecestelos `+10/-2`",
@@ -65,7 +64,7 @@ def test_a_stack_is_indented_under_the_pr_it_is_stacked_on_bottom_first():
 def test_a_pr_stacked_on_one_not_in_the_post_is_a_top_level_bullet():
     text = compose_post([pr(2, "Child", parent=1)])
 
-    assert text.splitlines()[1].startswith("- [Child]")
+    assert text.splitlines()[0].startswith("- [Child]")
 
 
 def test_a_pr_without_an_assignee_has_no_mention():
@@ -74,23 +73,46 @@ def test_a_pr_without_an_assignee_has_no_mention():
     assert "pull/7) `+10/-2`" in text
 
 
-def test_a_bump_names_the_pr_and_the_different_assignee():
-    assert compose_bump(["https://github.com/o/r/pull/7"], DANIEL) == (
-        f"{ATTRIBUTION}\n"
-        "It has been over 24 hours and https://github.com/o/r/pull/7 has no comments "
-        "or reviews yet. @daniel.baptista dias, could you take a look instead? Thanks!"
+def bump_pr(number: int, repo="dbt-labs/ai-codegen-api", lines=(96, 6)) -> BumpPr:
+    return BumpPr(
+        repo=repo,
+        number=number,
+        url=f"https://github.com/{repo}/pull/{number}",
+        additions=lines[0],
+        deletions=lines[1],
     )
 
 
-def test_a_bump_for_several_prs_lists_them():
-    text = compose_bump(["u1", "u2", "u3"], ALAN)
+def test_a_bump_names_the_pr_as_a_link_with_its_size_and_asks_the_different_assignee():
+    assert compose_bump([bump_pr(1795)], DANIEL) == (
+        "It has been over 24 hours and "
+        "[ai-codegen-api#1795](https://github.com/dbt-labs/ai-codegen-api/pull/1795) `+96/-6` "
+        "has no comments or reviews yet. "
+        "@daniel.baptista dias, would you mind taking a look? Thanks!"
+    )
 
-    assert "u1, u2 and u3 have no comments or reviews yet" in text
+
+def test_a_bump_for_several_prs_lists_them_with_their_sizes():
+    text = compose_bump(
+        [
+            bump_pr(1, lines=(1, 1)),
+            bump_pr(2, repo="o/other", lines=(2, 2)),
+            bump_pr(3),
+        ],
+        ALAN,
+    )
+
+    assert (
+        "[ai-codegen-api#1](https://github.com/dbt-labs/ai-codegen-api/pull/1) `+1/-1`, "
+        "[other#2](https://github.com/o/other/pull/2) `+2/-2` and "
+        "[ai-codegen-api#3](https://github.com/dbt-labs/ai-codegen-api/pull/3) `+96/-6` "
+        "have no comments or reviews yet"
+    ) in text
 
 
 def test_a_bump_without_a_person_asks_anyone():
-    assert compose_bump(["u1"], None).endswith(
-        "u1 has no comments or reviews yet. Could someone take a look? Thanks!"
+    assert compose_bump([bump_pr(1)], None).endswith(
+        "`+96/-6` has no comments or reviews yet. Would someone mind taking a look? Thanks!"
     )
 
 
@@ -103,6 +125,7 @@ def test_names_become_slack_mentions_and_longer_names_win():
     assert "<@U1>, and <@U2>. Also @alan.andradecestelos2 stays." in got
 
 
-def test_the_attribution_is_added_when_the_text_lost_it_and_not_twice():
-    assert to_slack("hello", {}).startswith(f"{ATTRIBUTION}\nhello")
-    assert to_slack(f"{ATTRIBUTION}\nhello", {}) == f"{ATTRIBUTION}\nhello"
+def test_no_line_about_who_wrote_the_message_is_added():
+    assert to_slack("hello", {}) == "hello"
+    assert "AI-generated" not in compose_post([pr(7, "Add it")])
+    assert "AI-generated" not in compose_bump([bump_pr(1)], ALAN)

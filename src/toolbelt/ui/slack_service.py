@@ -23,6 +23,7 @@ from toolbelt.ui import api_models as api
 from toolbelt.ui.live_status import Fetched, TrackedBranch
 from toolbelt.ui.slack_assignee import choose_assignee
 from toolbelt.ui.slack_compose import (
+    BumpPr,
     Person,
     PostPr,
     compose_bump,
@@ -217,7 +218,10 @@ class SlackService:
             bump=True,
             exclude=asked,
         )
-        text = compose_bump([p.url for p in due], chosen)
+        text = compose_bump(
+            [BumpPr(p.repo, p.number, p.url, p.additions, p.deletions) for p in due],
+            chosen,
+        )
         return self._draft_of("bump", text, chosen, due, last.thread_ts)
 
     def _bump_due_in_thread(

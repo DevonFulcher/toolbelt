@@ -11,6 +11,7 @@ import { SpendPage } from "./SpendView";
 import { TableView } from "./TableView";
 import { TooltipProvider } from "./Tooltip";
 import { UntrackedCallout } from "./UntrackedCallout";
+import { UpdateNotice } from "./UpdateNotice";
 import { ClockContext, NowContext } from "./useNow";
 
 /** How often ages and timeline tracks are re-drawn between server updates. */
@@ -29,6 +30,7 @@ export function App({ clock = Date.now }: { clock?: () => number }) {
         <header>
           <h1>toolbelt factory</h1>
           <LiveIndicator />
+          <UpdateNotice />
         </header>
         <main>
           <Content />

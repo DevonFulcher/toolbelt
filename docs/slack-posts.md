@@ -53,8 +53,12 @@ under the original post, for the PRs of that thread that are due, asking someone
 other than who was asked before. The bump dialog links to the original post
 (needs `workspace`).
 
-The text is written the way the skill writes it, starting `🤖 AI-generated on
-behalf of Devon:`. `@name` becomes a Slack mention when it is sent.
+A bump names each PR as `[repo#number](link)` followed by its `+added/-deleted`
+lines, as the post does, and asks "would you mind taking a look?".
+
+The text is written the way the skill writes it, with no line saying how it was
+written (the messages are canned and you confirm each one). `@name` becomes a
+Slack mention when it is sent.
 
 ## How it is sent, and what it costs
 

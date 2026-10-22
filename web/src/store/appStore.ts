@@ -30,6 +30,7 @@ import type {
 } from "../api/generated";
 import type { ConnectionState } from "../live/connection";
 import { DEFAULT_STATE, type View, type ViewState } from "../logic/viewState";
+import { runningBuild } from "../live/build";
 
 /** A branch without its live parts (those are patched separately). */
 export type StaticBranch = Omit<Branch, "status" | "task_live" | "claim" | "slack" | "merge_queue">;
@@ -101,6 +102,8 @@ export interface AppState {
   /** `Date.now()` of the last refresh we know about. */
   updatedAt: number | null;
   connection: ConnectionState;
+  /** The server serves a newer build than this page runs: reload to get it. */
+  outOfDate: boolean;
 
   view: ViewState;
   cardUi: Record<string, CardUi>;
@@ -132,7 +135,8 @@ export interface AppState {
   spendChanged(spend: Spend[], v?: number): void;
   webhooksChanged(webhooks: RepoWebhook[], v?: number): void;
   conversationChanged(conversation: AgentConversation, v?: number): void;
-  hello(v: number, ageSeconds: number | null): void;
+  /** ``build``: which build of the page the server serves now. */
+  hello(v: number, ageSeconds: number | null, build?: string | null): void;
   setConnection(state: ConnectionState): void;
   /** Replaces the view state (the URL follows). */
   setView(view: ViewState): void;
@@ -234,6 +238,7 @@ export function createAppStore(init: StoreInit = {}): AppStore {
     version: null,
     updatedAt: null,
     connection: "connecting",
+    outOfDate: false,
     view: init.view ?? DEFAULT_STATE,
     cardUi: {},
     collapsed: preferences.loadCollapsed(),
@@ -400,11 +405,14 @@ export function createAppStore(init: StoreInit = {}): AppStore {
       set({ version: v, untracked });
     },
 
-    hello(v, ageSeconds) {
+    hello(v, ageSeconds, build) {
+      const running = runningBuild();
       set({
         connection: "live",
         version: v,
         updatedAt: ageSeconds === null ? null : clock() - ageSeconds * 1000,
+        // Once out of date a page stays so: only a reload fixes it.
+        outOfDate: get().outOfDate || (build != null && running !== null && build !== running),
       });
     },
 

@@ -10,7 +10,7 @@ afterEach(() => {
 const draft = (over: Partial<SlackDraft> = {}): SlackDraft => ({
   kind: "post",
   channel: "DTEST",
-  text: "🤖 AI-generated on behalf of Devon:\n- [Bottom](https://github.com/o/r/pull/1) @alan `+20/-4`\n\nThanks for your time!",
+  text: "- [Bottom](https://github.com/o/r/pull/1) @alan `+20/-4`\n\nThanks for your time!",
   assignee: { id: "UA", name: "alan" },
   candidates: [
     { id: "UW", name: "will" },
@@ -155,7 +155,6 @@ describe("the Post in Slack dialog", () => {
     const two = (): SlackDraft =>
       draft({
         text: [
-          "🤖 AI-generated on behalf of Devon:",
           "- [Bottom](https://github.com/o/r/pull/1) @alan `+20/-4`",
           "  - [Top](https://github.com/o/r/pull/12) @alan `+5/-1`",
           "",
@@ -199,8 +198,8 @@ describe("the Post in Slack dialog", () => {
       fireEvent.change(screen.getByLabelText("Ask about o/r#12"), { target: { value: "UW" } });
 
       const lines = (box as HTMLTextAreaElement).value.split("\n");
-      expect(lines[1]).toContain("@alan");
-      expect(lines[2]).toContain("@will");
+      expect(lines[0]).toContain("@alan");
+      expect(lines[1]).toContain("@will");
       expect(screen.getByLabelText("Ask everyone")).toHaveValue(""); // different people now
     });
 

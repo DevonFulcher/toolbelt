@@ -89,7 +89,7 @@ describe("live updates", () => {
     expect(store.getState().branches.map((b) => b.name)).toEqual(["a"]);
     expect(env.fetches).toBe(1);
 
-    current().emit({ type: "hello", v: 0, age: null });
+    current().emit({ type: "hello", v: 0, age: null, build: null });
     await settle();
     expect(store.getState().connection).toBe("live");
     // The version matched the snapshot's: nothing was missed.
@@ -112,7 +112,7 @@ describe("live updates", () => {
     });
     await settle();
 
-    current().emit({ type: "hello", v: 9, age: 3 });
+    current().emit({ type: "hello", v: 9, age: 3, build: null });
     await settle();
 
     expect(env.fetches).toBe(2);
@@ -125,7 +125,7 @@ describe("live updates", () => {
       snapshots: [snapshot([branch(1, "a")]), snapshot([branch(1, "a"), branch(1, "b")], undefined, { version: 1 })],
     });
     await settle();
-    current().emit({ type: "hello", v: 0, age: null });
+    current().emit({ type: "hello", v: 0, age: null, build: null });
 
     current().emit({ type: "structure", v: 1 });
     await settle();
@@ -139,7 +139,7 @@ describe("live updates", () => {
       snapshots: [snapshot([branch(1, "a")]), snapshot([branch(1, "a")], undefined, { version: 1 })],
     });
     await settle();
-    current().emit({ type: "hello", v: 0, age: null });
+    current().emit({ type: "hello", v: 0, age: null, build: null });
 
     current().emit({ type: "structure", v: 1 });
     current().emit({ type: "status", v: 2, branch_id: "1:a", status: loaded, slack: null, merge_queue: null });
@@ -155,7 +155,7 @@ describe("live updates", () => {
     });
     await settle();
 
-    current().emit({ type: "hello", v: 5, age: null });
+    current().emit({ type: "hello", v: 5, age: null, build: null });
     current().emit({ type: "status", v: 4, branch_id: "1:a", status: stale, slack: null, merge_queue: null });
     await settle();
 
@@ -165,7 +165,7 @@ describe("live updates", () => {
   test("task events patch the branch's task", async () => {
     const { store, current } = setup();
     await settle();
-    current().emit({ type: "hello", v: 0, age: null });
+    current().emit({ type: "hello", v: 0, age: null, build: null });
 
     current().emit({
       type: "task",
@@ -181,7 +181,7 @@ describe("live updates", () => {
   test("an untracked event replaces the list of untracked PRs", async () => {
     const { store, current } = setup();
     await settle();
-    current().emit({ type: "hello", v: 0, age: null });
+    current().emit({ type: "hello", v: 0, age: null, build: null });
 
     current().emit({ type: "untracked", v: 1, untracked: { state: "loaded", prs: [], truncated: false, hidden: 0 } });
     await settle();
@@ -193,7 +193,7 @@ describe("live updates", () => {
     const { env, store, advance, current } = setup();
     await settle();
     const first = current();
-    first.emit({ type: "hello", v: 0, age: null });
+    first.emit({ type: "hello", v: 0, age: null, build: null });
 
     first.readyState = 2;
     first.onerror?.({});
@@ -228,7 +228,7 @@ describe("live updates", () => {
     live.visibilityChanged();
     expect(env.sources).toHaveLength(2);
     expect(store.getState().connection).toBe("resuming");
-    current().emit({ type: "hello", v: 0, age: null });
+    current().emit({ type: "hello", v: 0, age: null, build: null });
     await settle();
     expect(store.getState().connection).toBe("live");
   });
@@ -269,7 +269,7 @@ describe("live updates", () => {
 test("a claims event applies each listed branch's claim and status", async () => {
   const { store, current } = setup();
   await settle();
-  current().emit({ type: "hello", v: 0, age: null });
+  current().emit({ type: "hello", v: 0, age: null, build: null });
   const claimed = pr({
     next: { label: "With an agent", who: "agent", kind: "claimed", would_be: null },
   });
@@ -305,7 +305,7 @@ test("a claims event applies each listed branch's claim and status", async () =>
 test("the pushed views reach the store: extras, agents, spend, webhooks and a conversation", async () => {
   const { store, current } = setup();
   await settle();
-  current().emit({ type: "hello", v: 0, age: null });
+  current().emit({ type: "hello", v: 0, age: null, build: null });
 
   current().emit({
     type: "extras",

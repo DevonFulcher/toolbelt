@@ -1246,6 +1246,9 @@ class HelloEvent(Model):
     type: Literal["hello"]
     v: int
     age: float | None
+    #: Which build of the page the server serves now (``None``: none built). A
+    #: page that runs another one has been left open across an update.
+    build: str | None
 
 
 class StatusEvent(Model):
