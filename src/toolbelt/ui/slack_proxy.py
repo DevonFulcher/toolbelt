@@ -95,7 +95,8 @@ END
 """
 
 
-def _parse(output: str) -> tuple[dict, float]:
+def parse_answer(output: str) -> tuple[dict, float]:
+    """The JSON object a session answered with, and what the session cost."""
     try:
         envelope = json.loads(output)
     except json.JSONDecodeError as bad:
@@ -129,7 +130,7 @@ class SlackProxy:
             ["--allowedTools", SEND_TOOL, READ_TOOL],
             _send_prompt(channel, text, thread_ts),
         )
-        answer, cost = _parse(output)
+        answer, cost = parse_answer(output)
         if "error" in answer:
             raise SlackProxyError(f"Slack refused the message: {answer['error']}")
         link = str(answer.get("link", ""))

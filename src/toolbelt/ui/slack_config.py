@@ -14,6 +14,7 @@ default_config_path``)::
         - {min_lines: 500, to: will.james}            # +added and -deleted lines
         - {max_lines: 150, rotate: [patrick.yost, will.james]}   # asked longest ago
       default: will.james         # when no rule matches
+      user_id: U04460UT8GK        # whose posts an import reads (your Slack user ID)
 
 Without ``channel`` toolbelt never reads or posts to Slack and a task's next
 action ignores it. A direct message works as the channel (its ID, ``D...``),
@@ -52,6 +53,7 @@ class SlackConfig:
     reviewers: tuple[Person, ...] = ()
     rules: tuple[AssignRule, ...] = field(default_factory=tuple)
     default: str | None = None
+    user_id: str | None = None
 
 
 def slack_config(config_file: Path) -> SlackConfig | None:
@@ -81,4 +83,5 @@ def slack_config(config_file: Path) -> SlackConfig | None:
             for rule in section.get("assign") or []
         ),
         default=section.get("default"),
+        user_id=section.get("user_id"),
     )

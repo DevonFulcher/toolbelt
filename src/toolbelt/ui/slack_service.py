@@ -14,7 +14,7 @@ The channel is always the configured one. The client never names it.
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from toolbelt.git.stack.store import Parents, SlackPostRow
 from toolbelt.ui import api_models as api
@@ -28,6 +28,7 @@ from toolbelt.ui.slack_compose import (
     to_slack,
 )
 from toolbelt.ui.slack_config import SlackConfig
+from toolbelt.ui.slack_import import ChannelMessage, rows_from_messages
 from toolbelt.ui.slack_proxy import SentMessage
 from toolbelt.ui.slack_tracker import SlackTracker
 from toolbelt.ui.snapshot import descendants
@@ -56,6 +57,7 @@ class _Pr:
 
 
 Sender = Callable[..., Awaitable[SentMessage]]
+Reader = Callable[..., Awaitable[tuple[list[ChannelMessage], float]]]
 
 
 class SlackService:
@@ -65,6 +67,7 @@ class SlackService:
         config: SlackConfig,
         tracker: SlackTracker,
         send_message: Sender,
+        read_messages: Reader,
         branches: Callable[[], list[TrackedBranch]],
         fetched: Callable[[int, str], Fetched | None],
         parents: Callable[[int], Parents],
@@ -76,11 +79,14 @@ class SlackService:
         changed: Callable[[set[tuple[int, str]]], None],
     ) -> None:
         """``send_message(channel=, text=, thread_ts=)`` posts (``SlackProxy.send``);
-        ``next_kind`` is a branch's next action; ``changed`` is told which
-        branches' Slack standing changed."""
+        ``read_messages(channel=, user_id=, since=)`` reads the user's own
+        messages (``SlackReader.own_messages``); ``next_kind`` is a branch's
+        next action; ``changed`` is told which branches' Slack standing
+        changed."""
         self._config = config
         self._tracker = tracker
         self._send = send_message
+        self._read = read_messages
         self._branches = branches
         self._fetched = fetched
         self._parents = parents
@@ -186,6 +192,7 @@ class SlackService:
         history = self._posts()
         last = _last_post(history, pr)
         assert last is not None
+        self._require_configured_channel(last, pr)
         due = self._bump_due_in_thread(last.channel, last.thread_ts, history)
         asked = frozenset(
             row.assignee_name
@@ -258,6 +265,46 @@ class SlackService:
             thread_ts=thread_ts,
         )
 
+    def _require_configured_channel(self, last: SlackPostRow, pr: _Pr) -> None:
+        """A bump replies in the thread of the last post, which must be in the
+        configured channel: a thread elsewhere (an imported post in another
+        channel) is never replied to."""
+        if last.channel != self._config.channel:
+            raise SlackNotApplicable(
+                f"{pr.repo}#{pr.number} was last posted in {last.channel}, not in "
+                f"the configured channel {self._config.channel}."
+            )
+
+    # ---- importing -------------------------------------------------------------
+
+    async def import_recent(
+        self, *, days: int, channel: str | None = None
+    ) -> api.SlackImported:
+        """Records the user's own posts and replies in ``channel`` (default: the
+        configured one) of the last ``days`` days as posted, so PRs posted
+        before toolbelt posted anything read as posted. Reads only."""
+        if not self._config.user_id:
+            raise SlackNotApplicable("slack.user_id is not set in the config.")
+        channel = channel or self._config.channel
+        messages, cost = await self._read(
+            channel=channel,
+            user_id=self._config.user_id,
+            since=self._wall_clock() - timedelta(days=days),
+        )
+        rows = rows_from_messages(channel, messages, self._config.reviewers)
+        self._save(rows)
+        self._tracker.reload()
+        posted = {(row.repo, row.pr_number) for row in rows}
+        self._changed(
+            {
+                (pr.repo_id, pr.branch)
+                for tracked in self._branches()
+                if (pr := self._pr(tracked.repo_id, tracked.branch)) is not None
+                and (pr.repo, pr.number) in posted
+            }
+        )
+        return api.SlackImported(messages=len(messages), prs=len(posted), cost_usd=cost)
+
     # ---- sending ---------------------------------------------------------------
 
     async def send(self, request: api.SlackSendRequest) -> api.SlackSent:
@@ -278,6 +325,8 @@ class SlackService:
                 raise SlackNotApplicable(
                     f"{pr.repo}#{pr.number} was not posted in that thread."
                 )
+            if request.kind == "bump" and last is not None:
+                self._require_configured_channel(last, pr)
         mentions = {p.name: p.id for p in self._config.reviewers}
         text = to_slack(request.text, mentions)
         sent = await self._send(

@@ -16,6 +16,7 @@ from toolbelt.ui.pr_activity import PrFacts
 from toolbelt.ui.pr_fetch import PrSnapshot
 from toolbelt.ui.slack_compose import Person
 from toolbelt.ui.slack_config import AssignRule, SlackConfig
+from toolbelt.ui.slack_import import ChannelMessage
 from toolbelt.ui.slack_proxy import SentMessage, SlackProxyError
 
 ALAN, WILL = Person("alan", "UA"), Person("will", "UW")
@@ -23,6 +24,7 @@ CONFIG = SlackConfig(
     channel="DTEST",
     reviewers=(WILL, ALAN),
     rules=(AssignRule(to="alan"),),
+    user_id="UDEV",
 )
 
 
@@ -43,6 +45,19 @@ class FakeProxy:
             read_back=text,
             cost_usd=0.04,
         )
+
+
+class FakeReader:
+    def __init__(self) -> None:
+        self.read: list[dict] = []
+        self.messages: list[ChannelMessage] = []
+        self.fail: str | None = None
+
+    async def own_messages(self, **kwargs):
+        if self.fail:
+            raise SlackProxyError(self.fail)
+        self.read.append(kwargs)
+        return self.messages, 0.06
 
 
 def facts(number: int, title: str) -> PrFacts:
@@ -96,8 +111,15 @@ def rig(tmp_path: Path):
         )
 
     proxy = FakeProxy()
-    app = create_app(fetch=fetch, slack_settings=CONFIG, slack_proxy=proxy)  # type: ignore[arg-type]
+    reader = FakeReader()
+    app = create_app(
+        fetch=fetch,
+        slack_settings=CONFIG,
+        slack_proxy=proxy,  # type: ignore[arg-type]
+        slack_reader=reader,  # type: ignore[arg-type]
+    )
     asyncio.run(app.state.refresher.run_once())
+    app.state.reader = reader
     return app, repo_id, proxy, TestClient(app)
 
 
@@ -275,3 +297,32 @@ def test_without_slack_configured_the_endpoints_do_not_exist_to_use(tmp_path):
 
     assert draft.status_code == 404 and send.status_code == 404
     assert "not configured" in draft.json()["detail"]
+
+
+def test_an_import_marks_the_prs_the_user_already_posted_as_posted(rig):
+    app, _, proxy, client = rig
+    app.state.reader.messages = [
+        ChannelMessage(
+            "1792000000.000100",
+            None,
+            "- <https://github.com/o/r/pull/1|One> <@UA|alan>",
+        )
+    ]
+
+    response = client.post("/api/slack/import", json={"days": 5, "channel": None})
+
+    assert response.status_code == 200
+    assert response.json() == {"messages": 1, "prs": 1, "cost_usd": 0.06}
+    got = branches(client)
+    assert got["a"]["slack"]["posted"] is True
+    assert got["b"]["slack"]["posted"] is False
+    assert proxy.sent == []  # reading never posts
+
+
+def test_a_failed_import_is_a_bad_gateway(rig):
+    app, _, _, client = rig
+    app.state.reader.fail = "the session timed out"
+
+    response = client.post("/api/slack/import", json={"days": 5, "channel": None})
+
+    assert response.status_code == 502

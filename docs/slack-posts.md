@@ -17,6 +17,7 @@ slack:
     - {min_lines: 500, to: will.james}
     - {max_lines: 150, rotate: [patrick.yost, will.james]}
   default: will.james
+  user_id: U04460UT8GK        # your Slack user ID: whose posts an import reads
 ```
 
 A direct message works as the channel (give your own user ID), which is how to
@@ -69,3 +70,17 @@ thread timestamps, kind, time and who was asked. That is the source of truth: th
 status polling never reads Slack, so it costs nothing. A bump falling due is
 announced by a watcher that checks once a minute. Posts made by hand outside
 toolbelt are not seen until they are imported.
+
+## Importing posts made by hand
+
+`POST /api/slack/import` with `{"days": 5, "channel": null}` records your own
+posts and thread replies of the last `days` days as posted, so PRs you posted
+before toolbelt did read as posted and their post age starts from your post.
+`channel` is the channel to read (`null`: the configured one). A session allowed
+only the Slack read tools reads your messages (`user_id`); a top-level message
+is a post of every PR it links and a reply is a bump of every PR it links, asking
+the person mentioned on the PR's line (else the first one mentioned). It costs
+about $0.06 and never posts. Running it again records each post once.
+
+A bump replies in the thread of the last post, which must be in the configured
+channel: a post imported from another channel is never replied to.

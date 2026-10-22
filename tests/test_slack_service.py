@@ -14,6 +14,7 @@ from toolbelt.ui.live_status import Fetched, TrackedBranch
 from toolbelt.ui.pr_activity import PrFacts
 from toolbelt.ui.slack_compose import ATTRIBUTION, Person
 from toolbelt.ui.slack_config import AssignRule, SlackConfig
+from toolbelt.ui.slack_import import ChannelMessage
 from toolbelt.ui.slack_proxy import SentMessage
 from toolbelt.ui.slack_service import (
     SlackNotApplicable,
@@ -28,6 +29,7 @@ CONFIG = SlackConfig(
     channel="DTEST",
     reviewers=(WILL, ALAN, DAN),
     rules=(AssignRule(to="alan"),),
+    user_id="UDEV",
 )
 
 
@@ -71,6 +73,8 @@ class Rig:
         }
         self.kinds = {"a": "post_slack", "b": "post_slack", "c": "post_slack"}
         self.sent: list[dict] = []
+        self.read: list[dict] = []
+        self.messages: list[ChannelMessage] = []
         self.changed: list[set] = []
         self.read_back: str | None = "OK"
         self.tracker = SlackTracker(
@@ -82,6 +86,7 @@ class Rig:
             config=CONFIG,
             tracker=self.tracker,
             send_message=self.send_message,
+            read_messages=self.read_messages,
             branches=lambda: [
                 TrackedBranch(1, name, Path("/r")) for name in self.parents
             ],
@@ -94,6 +99,10 @@ class Rig:
             wall_clock=lambda: NOW,
             changed=self.changed.append,
         )
+
+    async def read_messages(self, **kwargs):
+        self.read.append(kwargs)
+        return self.messages, 0.06
 
     async def send_message(self, **kwargs) -> SentMessage:
         self.sent.append(kwargs)
@@ -344,3 +353,92 @@ def test_the_person_asked_is_recorded_only_when_they_are_a_configured_reviewer()
     asyncio.run(rig.service.send(request(assignee_id="UNKNOWN")))
 
     assert rig.rows[0].assignee_id is None and rig.rows[0].assignee_name is None
+
+
+# ---- importing what was posted by hand ---------------------------------------
+
+
+def test_an_import_records_the_users_own_posts_so_their_prs_read_as_posted():
+    rig = Rig()
+    rig.messages = [
+        ChannelMessage(
+            "1792000000.000100",
+            None,
+            "- <https://github.com/o/r/pull/1|One> <@UA|alan> `+1/-1`",
+        )
+    ]
+
+    imported = asyncio.run(rig.service.import_recent(days=5))
+
+    assert imported == api.SlackImported(messages=1, prs=1, cost_usd=0.06)
+    assert [(r.channel, r.pr_number, r.kind) for r in rig.rows] == [
+        ("DTEST", 1, "post")
+    ]
+    assert rig.tracker.info(1, "a", rig.looked_up["a"], NOW).posted
+    assert rig.changed == [{(1, "a")}]
+
+
+def test_an_import_reads_the_users_messages_of_the_last_days_in_the_configured_channel():
+    rig = Rig()
+
+    asyncio.run(rig.service.import_recent(days=5))
+
+    assert rig.read == [
+        {"channel": "DTEST", "user_id": "UDEV", "since": NOW - timedelta(days=5)}
+    ]
+
+
+def test_an_import_can_read_another_channel_and_records_posts_under_it():
+    rig = Rig()
+    rig.messages = [
+        ChannelMessage("1792000000.000100", None, "https://github.com/o/r/pull/3")
+    ]
+
+    asyncio.run(rig.service.import_recent(days=5, channel="CREVIEW"))
+
+    assert rig.read[0]["channel"] == "CREVIEW"
+    assert [r.channel for r in rig.rows] == ["CREVIEW"]
+
+
+def test_an_import_needs_to_know_whose_posts_to_read():
+    rig = Rig()
+    rig.service._config = SlackConfig(channel="DTEST")
+
+    with pytest.raises(SlackNotApplicable, match="user_id"):
+        asyncio.run(rig.service.import_recent(days=5))
+
+    assert rig.read == []
+
+
+def test_importing_twice_records_each_post_once():
+    rig = Rig()
+    rig.messages = [
+        ChannelMessage("1792000000.000100", None, "https://github.com/o/r/pull/1")
+    ]
+    saved: dict = {}
+    rig.service._save = lambda rows: saved.update(
+        {(r.channel, r.ts, r.repo, r.pr_number): r for r in rows}
+    )
+
+    asyncio.run(rig.service.import_recent(days=5))
+    asyncio.run(rig.service.import_recent(days=5))
+
+    assert len(saved) == 1
+
+
+# ---- a thread in another channel is never replied to -------------------------
+
+
+def test_a_post_found_in_another_channel_is_not_bumped():
+    rig = Rig()
+    rig.kinds["a"] = "bump_slack"
+    rig.post_row(1, hours_ago=30)
+    rig.rows[0] = SlackPostRow(**{**rig.rows[0].__dict__, "channel": "CREVIEW"})
+    rig.tracker.reload()
+
+    with pytest.raises(SlackNotApplicable, match="CREVIEW"):
+        rig.service.draft(1, "a", None)
+    with pytest.raises(SlackNotApplicable, match="CREVIEW"):
+        asyncio.run(rig.service.send(request("bump", thread_ts="1.0")))
+
+    assert rig.sent == []
