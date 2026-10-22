@@ -140,6 +140,20 @@ def test_task_conditions(changes, code):
     assert reason_code(task(**changes), world()) == code
 
 
+def test_a_pr_left_to_the_user_for_re_blocking_says_why_when_it_is_known():
+    plain = decide(task(failed_ci_commits=14), world())
+    explained = decide(
+        task(
+            failed_ci_commits=14, ci_history="CI failed on 14 of the last 28 commits."
+        ),
+        world(),
+    )
+
+    assert plain is not None and explained is not None
+    assert explained.code == "thrash"
+    assert explained.text == plain.text + " CI failed on 14 of the last 28 commits."
+
+
 def test_a_draft_is_left_to_the_user_whatever_else_is_true_of_it():
     reason = decide(
         task(pr_draft=True, claimed_by_other=True, worktree_clean=False), world()

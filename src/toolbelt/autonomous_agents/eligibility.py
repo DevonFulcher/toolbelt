@@ -74,6 +74,9 @@ class TaskFacts:
     #: Reviews by bots on the PR, and commits whose CI failed.
     bot_reviews: int
     failed_ci_commits: int
+    #: Why CI keeps failing, when it has been looked into (see ``ci_history``);
+    #: said with the reason a PR that keeps getting re-blocked is left alone.
+    ci_history: str | None = None
 
 
 @dataclass(frozen=True)
@@ -231,7 +234,8 @@ def _reasons(task: TaskFacts, world: World) -> Iterator[Reason]:
             "thrash",
             f"This PR keeps getting re-blocked ({task.bot_reviews} bot reviews, "
             f"CI failed on {task.failed_ci_commits} commits): more patching may "
-            "not converge, so it is left to you.",
+            "not converge, so it is left to you."
+            + (f" {task.ci_history}" if task.ci_history else ""),
         )
     mine = [run for run in world.runs if run.task_id == task.task_id]
     on_head = [run for run in mine if run.head_sha == task.head_sha]

@@ -2,6 +2,7 @@
 PR lookups, git, claims, the clock and the screen are all injected."""
 
 import asyncio
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -116,6 +117,16 @@ class Rig:
         async def launch(decision) -> None:
             self.launched.append(decision.branch)
 
+        self.explained: list[tuple[Path, int]] = []
+        self.explanation: str | None = "CI fails in Integration tests."
+        self.explaining_fails = False
+
+        async def explain_ci(path: Path, number: int) -> str | None:
+            self.explained.append((path, number))
+            if self.explaining_fails:
+                raise RuntimeError("GitHub is down")
+            return self.explanation
+
         self.dispatcher = Dispatcher(
             tasks=lambda: self.tasks,
             fetch=fetch,
@@ -131,6 +142,7 @@ class Rig:
             poll_interval=300,
             launch=launch,
             launching=lambda: self.launching,
+            explain_ci=explain_ci,
         )
 
     def tick(self) -> None:
@@ -315,6 +327,74 @@ def test_a_pr_that_keeps_failing_is_left_to_the_user():
     r.tick()
 
     assert r.decision("a").reason.code == "thrash"
+
+
+def failing_commits(count: int, head="abc") -> PrFacts:
+    commits = [
+        TimelineItem(NOW, "commit", "me", oid=f"c{i}", ci="FAILURE")
+        for i in range(count)
+    ]
+    return replace(facts(commits), head_oid=head)
+
+
+def test_a_pr_left_to_the_user_says_why_its_ci_keeps_failing():
+    r = rig(a=PrSnapshot(status(), failing_commits(3)))
+
+    r.tick()
+
+    reason = r.decision("a").reason
+    assert reason.code == "thrash"
+    assert reason.text.endswith("so it is left to you. CI fails in Integration tests.")
+    assert r.explained == [(Path("/repo"), 1)]
+
+
+def test_only_a_pr_that_trips_the_guard_is_looked_into():
+    r = rig(
+        quiet=PrSnapshot(status(), failing_commits(2)),
+        green=PrSnapshot(
+            status(ci=CiState.SUCCESS, open_comments=1), failing_commits(0)
+        ),
+    )
+
+    r.tick()
+
+    assert r.explained == []
+
+
+def test_a_pr_is_looked_into_once_per_head_commit():
+    r = rig(a=PrSnapshot(status(), failing_commits(3)))
+    r.tick()
+    r.tick()
+    assert len(r.explained) == 1
+
+    r.snapshots["a"] = PrSnapshot(status(), failing_commits(4, head="def"))
+    r.monotonic = 301  # the snapshot is fetched again
+    r.tick()
+
+    assert len(r.explained) == 2
+
+
+def test_the_explanation_of_an_older_head_is_not_given_for_a_new_one():
+    r = rig(a=PrSnapshot(status(), failing_commits(3)))
+    r.tick()
+    r.snapshots["a"] = PrSnapshot(status(), failing_commits(4, head="def"))
+    r.explanation = "CI fails in Lint."
+    r.monotonic = 301
+
+    r.tick()
+
+    assert "Integration tests" not in r.decision("a").reason.text
+    assert r.decision("a").reason.text.endswith("CI fails in Lint.")
+
+
+def test_when_looking_into_it_fails_the_decision_stands_without_the_explanation():
+    r = rig(a=PrSnapshot(status(), failing_commits(3)))
+    r.explaining_fails = True
+
+    r.tick()
+
+    reason = r.decision("a").reason
+    assert reason.code == "thrash" and reason.text.endswith("so it is left to you.")
 
 
 # ---- polling GitHub --------------------------------------------------------------------------------

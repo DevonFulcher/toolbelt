@@ -221,7 +221,7 @@ def ci_of(*contexts):
 
 
 def test_the_query_asks_for_what_the_dedupe_of_runs_reads():
-    """``_current_contexts`` reads each check run's workflow and its run's time:
+    """``current_contexts`` reads each check run's workflow and its run's time:
     without them in the query nothing is superseded and old failures count."""
     from toolbelt.ui.pr_fetch import PR_QUERY
 

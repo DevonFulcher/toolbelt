@@ -19,6 +19,7 @@ from datetime import datetime
 from pathlib import Path
 
 from toolbelt.autonomous_agents.branch_state import BranchState
+from toolbelt.autonomous_agents.ci_history import CiExplainer
 from toolbelt.autonomous_agents.eligibility import (
     Reason,
     TaskFacts,
@@ -143,6 +144,7 @@ class Dispatcher:
         concurrency: int = DEFAULT_CONCURRENCY,
         launch: Callable[[Decision], Awaitable[None]] | None = None,
         launching: Callable[[], bool] = lambda: True,
+        explain_ci: CiExplainer | None = None,
     ) -> None:
         self._tasks = tasks
         self._fetch = fetch
@@ -161,6 +163,10 @@ class Dispatcher:
         self._concurrency = concurrency
         self._launch = launch
         self._launching = launching
+        self._explain_ci = explain_ci
+        #: Why CI keeps failing on a PR that trips the guard, by task, for the
+        #: head commit it was looked up at: a new commit looks it up again.
+        self._ci_history: dict[tuple[int, str], tuple[str, str | None]] = {}
         self._launching_now = False
         #: Called at the end of every pass, once the decisions are current.
         self.on_tick: Callable[[], None] | None = None
@@ -210,6 +216,30 @@ class Dispatcher:
         ]
         await asyncio.gather(*(one(item) for item in due))
 
+    async def _look_into_ci(self, tasks: list[DispatchTask]) -> None:
+        """For each PR that trips the guard against re-blocked PRs, find out why
+        its CI keeps failing (once per head commit)."""
+        if self._explain_ci is None:
+            return
+        for item in tasks:
+            key = item.task.key
+            snapshot = self._snapshots.get(key)
+            if snapshot is None or snapshot[1].facts is None:
+                continue
+            facts = snapshot[1].facts
+            if (
+                facts.state != "OPEN"
+                or failed_ci_commits(facts) < self.limits.thrash_failed_commits
+                or self._ci_history.get(key, ("", None))[0] == facts.head_oid
+            ):
+                continue
+            try:
+                explained = await self._explain_ci(item.repo_path, facts.number)
+            except Exception:  # noqa: BLE001 - optional: the decision stands without it
+                logger.exception("looking into %s's CI failed", item.task.branch)
+                explained = None
+            self._ci_history[key] = (facts.head_oid, explained)
+
     def _world(self, now: datetime) -> World:
         enabled = self._enabled()
         return World(
@@ -241,6 +271,7 @@ class Dispatcher:
             return
         tasks = await asyncio.to_thread(self._tasks)
         await self._refresh(tasks)
+        await self._look_into_ci(tasks)
         self.decisions = await asyncio.to_thread(self._decide_all, tasks, world)
         self.blockers = global_blockers(world)
         self.ticked_at = now
@@ -292,6 +323,13 @@ class Dispatcher:
             raise OverrideRefused(decision.reason)
         await self._launch(decision)
 
+    def _ci_history_of(self, key: tuple[int, str], snapshot: PrSnapshot) -> str | None:
+        """Why CI keeps failing, if it was looked into at the PR's current head."""
+        held = self._ci_history.get(key)
+        if held is None or snapshot.facts is None or held[0] != snapshot.facts.head_oid:
+            return None
+        return held[1]
+
     def _decide(
         self,
         item: DispatchTask,
@@ -333,6 +371,7 @@ class Dispatcher:
             claimed_by_other=any(h.kind != "autonomous" for h in holders),
             bot_reviews=bot_reviews(snapshot.facts),
             failed_ci_commits=failed_ci_commits(snapshot.facts),
+            ci_history=self._ci_history_of(item.task.key, snapshot),
         )
         reason = decide(facts, world, override=override)
         return Decision(

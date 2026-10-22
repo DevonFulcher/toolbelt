@@ -268,7 +268,7 @@ def _item(node: dict) -> TimelineItem | None:
     return None
 
 
-def _current_contexts(contexts: list[dict]) -> list[dict]:
+def current_contexts(contexts: list[dict]) -> list[dict]:
     """The contexts that count: GitHub keeps every workflow run's check runs on
     a commit, so a rerun (or a second trigger) leaves the earlier run's failed
     or cancelled ones beside the newer run's, which supersede them. The PR page
@@ -316,7 +316,7 @@ def _check_entries(node: dict) -> list[dict]:
             "status": context.get("status"),
             "state": context.get("state"),
         }
-        for context in _current_contexts(rollup["contexts"]["nodes"])
+        for context in current_contexts(rollup["contexts"]["nodes"])
     ]
 
 

@@ -57,6 +57,7 @@ from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 
 from toolbelt.autonomous_agents.auth import claude_signed_in
 from toolbelt.autonomous_agents.branch_state import RepoFactsCache, inspect_branch
+from toolbelt.autonomous_agents.ci_history import ci_explainer
 from toolbelt.autonomous_agents.dispatcher import (
     DEFAULT_POLL_INTERVAL_SECONDS,
     Dispatcher,
@@ -723,6 +724,12 @@ def create_app(
             wall_clock=wall_clock,
             launch=lambda decision: _start_run(runner, decision),
             launching=_agents_launching,
+            explain_ci=ci_explainer(
+                lambda query, variables: requests.graphql(
+                    query, variables, caller="ci_history"
+                ),
+                slug_of_path,
+            ),
         )
 
     views = PushedViews(

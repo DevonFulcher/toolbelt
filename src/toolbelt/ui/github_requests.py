@@ -21,7 +21,7 @@ The transport is a seam (``httpx.MockTransport`` in tests).
 
 import asyncio
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -120,7 +120,7 @@ class GithubRequests:
     async def graphql(
         self,
         query: str,
-        variables: dict[str, str],
+        variables: Mapping[str, str | int],
         *,
         caller: str,
         partial: str | None = None,
