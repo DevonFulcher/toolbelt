@@ -10,7 +10,6 @@ import pytest
 from toolbelt.git.stack.store import StackStore
 from toolbelt.ui.slack_compose import Person
 from toolbelt.ui.slack_config import SlackConfig
-from toolbelt.ui.slack_import import ChannelMessage, MessageRead
 from toolbelt.ui.slack_link import (
     LinkError,
     MessageRef,
@@ -24,22 +23,6 @@ NOW = datetime(2026, 10, 22, 20, 0, tzinfo=UTC)
 WILL, ALAN = Person("will.james", "UW"), Person("alan", "UA")
 CONFIG = SlackConfig(channel="CREVIEW", reviewers=(WILL, ALAN))
 URL = "https://dbt-labs.slack.com/archives/C0A0TFP0XC6/p1792696217666559"
-
-
-class Reader:
-    def __init__(
-        self, text: str, *, thread_ts: str | None = None, session="s1"
-    ) -> None:
-        self.text = text
-        self.thread_ts = thread_ts
-        self.session = session
-        self.asked: list[dict] = []
-
-    async def read_message(self, **kwargs) -> MessageRead:
-        self.asked.append(kwargs)
-        return MessageRead(
-            ChannelMessage(kwargs["ts"], self.thread_ts, self.text), 0.02, self.session
-        )
 
 
 @pytest.fixture
@@ -134,102 +117,73 @@ def test_a_reply_is_a_bump_in_its_thread():
 
 # ---- linking -----------------------------------------------------------------------
 
-
-def link(store, reader, **kwargs):
-    arguments = {"message_url": URL, "pr_urls": [], "ask": None, "now": NOW} | kwargs
-    return link_message(store, CONFIG, reader, **arguments)
+PR_7 = "https://github.com/o/r/pull/7"
 
 
-def test_given_prs_are_linked_without_reading_slack(store):
-    reader = Reader("must not be read")
+def link(store, **kwargs):
+    arguments = {"message_url": URL, "pr_urls": [PR_7], "ask": None} | kwargs
+    return link_message(store, CONFIG, **arguments)
 
-    rows = link(store, reader, pr_urls=["https://github.com/o/r/pull/7"], ask="alan")
 
-    assert reader.asked == []
+def test_the_given_prs_are_recorded_with_who_was_asked(store):
+    rows = link(store, pr_urls=[PR_7, "https://github.com/o/r/pull/8"], ask="alan")
+
     assert [(r.repo, r.pr_number, r.assignee_name) for r in rows] == [
-        ("o/r", 7, "alan")
+        ("o/r", 7, "alan"),
+        ("o/r", 8, "alan"),
     ]
-    assert [(r.pr_number, r.assignee_id) for r in store.slack_posts()] == [(7, "UA")]
-
-
-def test_without_prs_they_are_read_out_of_the_message(store):
-    reader = Reader(
-        "- <https://github.com/o/r/pull/1|One> <@UW|will.james> `+1/-1`\n"
-        "- <https://github.com/o/r/pull/2|Two> <@UA|alan> `+2/-2`"
-    )
-
-    rows = link(store, reader)
-
-    assert reader.asked == [
-        {"channel": "C0A0TFP0XC6", "ts": "1792696217.666559", "thread_ts": None}
+    assert [(r.pr_number, r.assignee_id) for r in store.slack_posts()] == [
+        (7, "UA"),
+        (8, "UA"),
     ]
-    assert [(r.pr_number, r.assignee_name) for r in rows] == [
-        (1, "will.james"),
-        (2, "alan"),
-    ]
-    assert len(store.slack_posts()) == 2
 
 
-def test_the_session_that_read_the_message_is_recorded_in_the_spend(store):
-    link(store, Reader("https://github.com/o/r/pull/1"))
+def test_nobody_is_asked_unless_named(store):
+    (row,) = link(store)
 
-    (session,) = store.slack_sessions(since=datetime(2026, 1, 1, tzinfo=UTC))
-    assert (session.session_id, session.purpose, session.cost_usd) == (
-        "s1",
-        "import",
-        0.02,
-    )
+    assert (row.assignee_id, row.assignee_name) == (None, None)
 
 
-def test_who_was_asked_can_be_named_over_what_the_message_mentions(store):
-    rows = link(
-        store, Reader("https://github.com/o/r/pull/1 <@UW|will.james>"), ask="alan"
-    )
+def test_a_reply_is_recorded_as_a_bump_in_its_thread(store):
+    rows = link(store, message_url=URL + "?thread_ts=1792600000.000100")
 
-    assert [r.assignee_name for r in rows] == ["alan"]
-
-
-def test_a_reply_read_from_slack_is_a_bump_in_its_thread(store):
-    reader = Reader("https://github.com/o/r/pull/1", thread_ts="1792600000.000100")
-
-    rows = link(store, reader, message_url=URL + "?thread_ts=1792600000.000100")
-
-    assert reader.asked[0]["thread_ts"] == "1792600000.000100"
     assert [(r.kind, r.thread_ts) for r in rows] == [("bump", "1792600000.000100")]
 
 
-def test_a_message_that_links_no_pr_asks_for_them_to_be_named(store):
+def test_the_prs_must_be_named_because_nothing_is_read_from_slack(store):
     with pytest.raises(LinkError, match="--pr"):
-        link(store, Reader("thanks all!"))
+        link(store, pr_urls=[])
 
     assert store.slack_posts() == []
 
 
 def test_a_person_who_is_not_a_reviewer_is_refused(store):
     with pytest.raises(LinkError, match="not one of the slack.reviewers"):
-        link(
-            store,
-            Reader("x"),
-            pr_urls=["https://github.com/o/r/pull/1"],
-            ask="nobody.here",
-        )
+        link(store, ask="nobody.here")
+
+    assert store.slack_posts() == []
+
+
+def test_a_bad_message_link_or_pr_link_records_nothing(store):
+    with pytest.raises(LinkError):
+        link(store, message_url="https://example.com/nope")
+    with pytest.raises(LinkError):
+        link(store, pr_urls=["https://github.com/o/r/issues/7"])
 
     assert store.slack_posts() == []
 
 
 def test_linking_twice_records_each_post_once(store):
-    reader = Reader("https://github.com/o/r/pull/1")
-
-    link(store, reader)
-    link(store, reader)
+    link(store)
+    link(store)
 
     assert len(store.slack_posts()) == 1
 
 
-def test_the_reader_is_not_asked_when_the_link_is_bad(store):
-    reader = Reader("x")
+def test_nothing_in_the_link_module_calls_a_model():
+    """Toolbelt records what it is told: reading Slack is the caller's job."""
+    import toolbelt.ui.slack_link as module
 
-    with pytest.raises(LinkError):
-        link(store, reader, message_url="https://example.com/nope")
-
-    assert reader.asked == []
+    source = Path(module.__file__).read_text()
+    assert "claude" not in source.casefold().replace("claude -p", "")
+    assert "slack_import" not in source and "slack_proxy" not in source

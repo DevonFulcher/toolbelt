@@ -17,7 +17,6 @@ slack:
     - {min_lines: 500, to: will.james}
     - {max_lines: 150, rotate: [patrick.yost, will.james]}
   default: will.james
-  user_id: U04460UT8GK        # your Slack user ID: whose posts an import reads
   workspace: fivetran         # the Slack subdomain (fivetran.slack.com): links to threads
 ```
 
@@ -77,7 +76,7 @@ Slack, since the message may have been sent.
 
 ## What it costs
 
-Every session that posts, bumps or imports is recorded in `slack_sessions` with
+Every session that posts or bumps is recorded in `slack_sessions` with
 the exact cost it reported. The spend view shows them in their own Slack section
 (by window, and by what the session was for) and leaves them out of the other
 figures, as it does the autonomous agents' runs; the agents' daily and monthly
@@ -90,40 +89,28 @@ Toolbelt records each post (`slack_posts` in the stack DB): PR, message and
 thread timestamps, kind, time and who was asked. That is the source of truth: the
 status polling never reads Slack, so it costs nothing. A bump falling due is
 announced by a watcher that checks once a minute. Posts made by hand outside
-toolbelt are not seen until they are imported.
+toolbelt are not seen until they are linked with `toolbelt slack link` (below).
 
 ## Linking one message by hand
 
-`toolbelt slack link <message link>` records a Slack message you posted yourself
-as the post of the PRs (tasks) it is about, with the same effect as posting from
-the card: the PR reads posted, its post age counts from the message, and the
-person asked is its Assigned Review. The link is the message's "Copy link"
+`toolbelt slack link <message link> --pr <PR link> [--pr ...] [--ask <name>]`
+records a Slack message you posted yourself as the post of the PRs (tasks) it is
+about, with the same effect as posting from the card: the PR reads posted, its
+post age counts from the message, and the person asked is its Assigned Review.
+The link is the message's "Copy link"
 (`https://<workspace>.slack.com/archives/<channel>/p<digits>`); a link to a reply
 in a thread (it ends `?thread_ts=...`) is recorded as a bump.
 
 ```
-tt slack link https://dbt-labs.slack.com/archives/C0A0TFP0XC6/p1792696217666559
-tt slack link <link> --pr https://github.com/o/r/pull/7 --pr https://github.com/o/r/pull/8 --ask will.james
+tt slack link https://dbt-labs.slack.com/archives/C0A0TFP0XC6/p1792696217666559 \
+  --pr https://github.com/o/r/pull/7 --pr https://github.com/o/r/pull/8 --ask will.james
 ```
 
-Without `--pr` the PRs are the ones the message links, read out of it by a
-read-only Slack session (about $0.02). With `--pr` Slack is not read at all.
-`--ask` names who was asked (a `slack.reviewers` name); without it that is the
-person the message mentions on the PR's line. The message may be in any channel or
-a direct message. The posts go into the stack DB, and a running `tt ui` notices
-and updates its cards without a restart. A bump never replies in a channel other
-than the configured one, so a message elsewhere only marks the PR as posted.
+Toolbelt reads nothing from Slack and calls no model: whoever runs the command
+(you, or an agent that read the message) names the PRs and who was asked, and
+toolbelt validates the links and writes the posts. `--ask` is a `slack.reviewers`
+name; without it nobody is recorded as asked. The message may be in any channel
+or a direct message. The posts go into the stack DB, and a running `tt ui`
+notices and updates its cards without a restart. A bump never replies in a channel
+other than the configured one, so a message elsewhere only marks the PR as posted.
 
-## Importing posts made by hand
-
-`POST /api/slack/import` with `{"days": 5, "channel": null}` records your own
-posts and thread replies of the last `days` days as posted, so PRs you posted
-before toolbelt did read as posted and their post age starts from your post.
-`channel` is the channel to read (`null`: the configured one). A session allowed
-only the Slack read tools reads your messages (`user_id`); a top-level message
-is a post of every PR it links and a reply is a bump of every PR it links, asking
-the person mentioned on the PR's line (else the first one mentioned). It costs
-about $0.06 and never posts. Running it again records each post once.
-
-A bump replies in the thread of the last post, which must be in the configured
-channel: a post imported from another channel is never replied to.

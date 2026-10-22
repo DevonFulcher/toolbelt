@@ -3,22 +3,20 @@
 ``toolbelt slack link <message link>`` records the message as the post (or, for
 a reply, the bump) of each PR it names, so the PR reads as posted, its post age
 counts from the message and the person it asked is its Assigned Review: exactly
-what posting from the card records. The PRs are the ones given with ``--pr`` or,
-when none is given, the ones the message links, which a read-only Slack session
-reads out of it. The posts are written to the stack DB; a running ``tt ui``
-notices and updates its cards.
+what posting from the card records. The caller names the PRs (``--pr``) and who
+was asked (``--ask``); toolbelt reads nothing from Slack, it validates and
+records. The posts are written to the stack DB; a running ``tt ui`` notices and
+updates its cards.
 """
 
-import asyncio
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from urllib.parse import parse_qs, urlsplit
 
-from toolbelt.git.stack.store import SlackPostRow, SlackSessionRow, StackStore
+from toolbelt.git.stack.store import SlackPostRow, StackStore
 from toolbelt.ui.slack_compose import Person
 from toolbelt.ui.slack_config import SlackConfig
-from toolbelt.ui.slack_import import SlackReader, rows_from_messages
 
 _MESSAGE_PATH = re.compile(
     r"/archives/(?P<channel>[A-Z0-9]+)/p(?P<seconds>\d{10})(?P<micros>\d{6})"
@@ -86,48 +84,22 @@ def rows_for_prs(
 def link_message(
     store: StackStore,
     config: SlackConfig,
-    reader: SlackReader,
     *,
     message_url: str,
     pr_urls: list[str],
     ask: str | None,
-    now: datetime,
 ) -> list[SlackPostRow]:
-    """Records the message as the post of each PR (see the module docstring) and
-    returns what was recorded."""
+    """Records the message as the post of each of ``pr_urls`` (see the module
+    docstring) and returns what was recorded."""
     ref = parse_message_url(message_url)
+    if not pr_urls:
+        raise LinkError("name the PRs the message is about with --pr <GitHub PR link>")
     asked = None
     if ask is not None:
         asked = next((p for p in config.reviewers if p.name == ask), None)
         if asked is None:
             known = ", ".join(p.name for p in config.reviewers)
             raise LinkError(f"{ask!r} is not one of the slack.reviewers ({known})")
-    if pr_urls:
-        rows = rows_for_prs(ref, [parse_pr(url) for url in pr_urls], asked)
-    else:
-        read = asyncio.run(
-            reader.read_message(channel=ref.channel, ts=ref.ts, thread_ts=ref.thread_ts)
-        )
-        if read.session_id:
-            store.add_slack_session(
-                SlackSessionRow(read.session_id, now, "import", read.cost_usd)
-            )
-        rows = rows_from_messages(ref.channel, [read.message], config.reviewers)
-        if asked is not None:
-            rows = [
-                SlackPostRow(
-                    **{
-                        **row.__dict__,
-                        "assignee_id": asked.id,
-                        "assignee_name": asked.name,
-                    }
-                )
-                for row in rows
-            ]
-        if not rows:
-            raise LinkError(
-                "The message links no GitHub PR: name them with --pr "
-                "https://github.com/<owner>/<repo>/pull/<number>"
-            )
+    rows = rows_for_prs(ref, [parse_pr(url) for url in pr_urls], asked)
     store.save_slack_posts(rows)
     return rows

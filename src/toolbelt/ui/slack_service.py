@@ -16,7 +16,7 @@ import logging
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from toolbelt.git.stack.store import Parents, SlackPostRow, SlackSessionRow
 from toolbelt.ui import api_models as api
@@ -31,7 +31,6 @@ from toolbelt.ui.slack_compose import (
     to_slack,
 )
 from toolbelt.ui.slack_config import SlackConfig
-from toolbelt.ui.slack_import import ChannelRead, rows_from_messages
 from toolbelt.ui.slack_proxy import SentMessage
 from toolbelt.ui.slack_tracker import SlackTracker
 from toolbelt.ui.snapshot import descendants
@@ -62,7 +61,6 @@ class _Pr:
 
 
 Sender = Callable[..., Awaitable[SentMessage]]
-Reader = Callable[..., Awaitable[ChannelRead]]
 
 
 class SlackService:
@@ -72,7 +70,6 @@ class SlackService:
         config: SlackConfig,
         tracker: SlackTracker,
         send_message: Sender,
-        read_messages: Reader,
         branches: Callable[[], list[TrackedBranch]],
         fetched: Callable[[int, str], Fetched | None],
         parents: Callable[[int], Parents],
@@ -85,15 +82,13 @@ class SlackService:
         changed: Callable[[set[tuple[int, str]]], None],
     ) -> None:
         """``send_message(channel=, text=, thread_ts=)`` posts (``SlackProxy.send``);
-        ``read_messages(channel=, user_id=, since=)`` reads the user's own
-        messages (``SlackReader.own_messages``); ``next_kind`` is a branch's
+        ``next_kind`` is a branch's
         next action; ``record_session`` is given each session that read or
         posted, for the spend figures; ``changed`` is told which branches'
         Slack standing changed."""
         self._config = config
         self._tracker = tracker
         self._send = send_message
-        self._read = read_messages
         self._branches = branches
         self._fetched = fetched
         self._parents = parents
@@ -300,39 +295,6 @@ class SlackService:
             self._record_session(
                 SlackSessionRow(session_id, self._wall_clock(), purpose, cost_usd)
             )
-
-    # ---- importing -------------------------------------------------------------
-
-    async def import_recent(
-        self, *, days: int, channel: str | None = None
-    ) -> api.SlackImported:
-        """Records the user's own posts and replies in ``channel`` (default: the
-        configured one) of the last ``days`` days as posted, so PRs posted
-        before toolbelt posted anything read as posted. Reads only."""
-        if not self._config.user_id:
-            raise SlackNotApplicable("slack.user_id is not set in the config.")
-        channel = channel or self._config.channel
-        read = await self._read(
-            channel=channel,
-            user_id=self._config.user_id,
-            since=self._wall_clock() - timedelta(days=days),
-        )
-        self._record(read.session_id, "import", read.cost_usd)
-        rows = rows_from_messages(channel, read.messages, self._config.reviewers)
-        self._save(rows)
-        self._tracker.reload()
-        posted = {(row.repo, row.pr_number) for row in rows}
-        self._changed(
-            {
-                (pr.repo_id, pr.branch)
-                for tracked in self._branches()
-                if (pr := self._pr(tracked.repo_id, tracked.branch)) is not None
-                and (pr.repo, pr.number) in posted
-            }
-        )
-        return api.SlackImported(
-            messages=len(read.messages), prs=len(posted), cost_usd=read.cost_usd
-        )
 
     # ---- sending ---------------------------------------------------------------
 

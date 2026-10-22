@@ -1183,25 +1183,6 @@ class SlackAccepted(Model):
     prs: list[SlackPrRef]
 
 
-class SlackImportRequest(Model):
-    """The body of ``POST /api/slack/import``: record the user's own posts and
-    replies of the last ``days`` days as posted. Reads only."""
-
-    days: int
-    #: The channel to read (``None``: the configured one).
-    channel: str | None
-
-
-class SlackImported(Model):
-    """What an import found."""
-
-    #: The user's posts and replies it read.
-    messages: int
-    #: The PRs they link, now recorded as posted.
-    prs: int
-    cost_usd: float
-
-
 class AgentsEnabled(Model):
     """The body of ``POST /api/agents/enabled``."""
 

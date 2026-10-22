@@ -38,55 +38,40 @@ def slack_link(
         ),
     ],
     pr: Annotated[
-        list[str] | None,
+        list[str],
         typer.Option(
             "--pr",
-            help="A GitHub PR URL the message is about (repeat for several). Without "
-            "it the PRs are the ones the message links, read from Slack (read-only, "
-            "about $0.03).",
+            help="A GitHub PR URL the message is about (repeat for several).",
         ),
-    ] = None,
+    ],
     ask: Annotated[
         str | None,
         typer.Option(
             "--ask",
-            help="Who the message asked, a name from slack.reviewers (default: whoever "
-            "the message mentions on the PR's line).",
+            help="Who the message asked, a name from slack.reviewers (default: nobody).",
         ),
     ] = None,
 ):
     """Link a Slack message you posted by hand to the PRs (tasks) it is about
 
-    The PRs then read as posted: their post age counts from the message and the
-    person asked is their Assigned Review. A message that is a reply in a thread
-    is recorded as a bump. A running `tt ui` updates its cards on its own."""
-    from datetime import UTC, datetime
-
+    Name the PRs with --pr and who was asked with --ask: toolbelt reads nothing
+    from Slack, it records the message as the post of each PR. The PRs then read
+    as posted: their post age counts from the message and the person asked is
+    their Assigned Review. A message that is a reply in a thread is recorded as a
+    bump. A running `tt ui` updates its cards on its own."""
     from toolbelt.git.repo_pull import default_config_path
     from toolbelt.git.stack.store import StackStore, default_db_path
     from toolbelt.ui.slack_config import slack_config
-    from toolbelt.ui.slack_import import SlackReader
     from toolbelt.ui.slack_link import LinkError, link_message
-    from toolbelt.ui.slack_proxy import SlackProxyError
 
     config = slack_config(default_config_path())
     if config is None:
         typer.echo("error: there is no slack: section in the config file.", err=True)
         raise typer.Exit(1)
-    if not pr:
-        typer.echo("Reading the message in Slack (read-only)...", err=True)
     store = StackStore(default_db_path())
     try:
-        rows = link_message(
-            store,
-            config,
-            SlackReader(),
-            message_url=message_url,
-            pr_urls=pr or [],
-            ask=ask,
-            now=datetime.now(UTC),
-        )
-    except (LinkError, SlackProxyError) as error:
+        rows = link_message(store, config, message_url=message_url, pr_urls=pr, ask=ask)
+    except LinkError as error:
         typer.echo(f"error: {error}", err=True)
         raise typer.Exit(1) from error
     finally:

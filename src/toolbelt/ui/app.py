@@ -146,8 +146,7 @@ from toolbelt.ui.pr_gate import GithubChangeGate, PrGate
 from toolbelt.ui.pushed_views import PushedViews, conversation_of
 from toolbelt.ui.repo_visibility import visible_repos
 from toolbelt.ui.slack_config import SlackConfig
-from toolbelt.ui.slack_import import SlackReader
-from toolbelt.ui.slack_proxy import SlackProxy, SlackProxyError
+from toolbelt.ui.slack_proxy import SlackProxy
 from toolbelt.ui.slack_service import SlackNotApplicable, SlackService, SlackUnknown
 from toolbelt.ui.slack_tracker import (
     NO_SLACK,
@@ -500,7 +499,6 @@ def create_app(
     github: GithubRequests | None = None,
     slack_settings: SlackConfig | None = None,
     slack_proxy: SlackProxy | None = None,
-    slack_reader: SlackReader | None = None,
     merge_queue_tick: float = DEFAULT_MERGE_QUEUE_TICK_SECONDS,
     change_gate: bool = False,
     lookup_cache: LookupCache | None = None,
@@ -526,9 +524,7 @@ def create_app(
     Slack is off and a task's next action ignores it; see ``slack_config.py``);
     ``slack_proxy`` posts the messages (default: a Haiku session, see
     ``slack_proxy.py``); ``merge_queue_tick`` is how often queued merges are
-    checked (see ``merge_queue.py``); ``slack_reader`` reads the user's own posts for an
-    import (default: a Haiku session allowed only the read tools, see
-    ``slack_import.py``).
+    checked (see ``merge_queue.py``).
     ``github`` is the client every GitHub request goes through (default: one
     over the signed-in ``gh``'s token, see ``github_requests.py``).
     ``change_gate`` lets a status poll skip the full lookup of a PR GitHub says
@@ -980,7 +976,6 @@ def create_app(
             config=slack_settings,
             tracker=slack,
             send_message=(slack_proxy or SlackProxy()).send,
-            read_messages=(slack_reader or SlackReader()).own_messages,
             branches=_tracked_branches,
             fetched=refresher.get,
             parents=_all_parents,
@@ -1249,16 +1244,6 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(error)) from error
         except SlackUnknown as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
-
-    @app.post("/api/slack/import", response_model=api.SlackImported)
-    async def slack_import(body: api.SlackImportRequest) -> api.SlackImported:
-        service = slack_on()
-        try:
-            return await service.import_recent(days=body.days, channel=body.channel)
-        except SlackNotApplicable as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        except SlackProxyError as error:
-            raise HTTPException(status_code=502, detail=str(error)) from error
 
     @app.post("/api/agents/enabled", response_model=api.AgentsEnabled)
     async def set_agents_enabled(body: api.AgentsEnabled) -> api.AgentsEnabled:

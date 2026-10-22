@@ -59,6 +59,15 @@ def test_the_message_is_recorded_as_the_post_of_each_given_pr(
     ]
 
 
+def test_the_prs_must_be_named(_isolate_config_dir: Path):
+    configure(_isolate_config_dir)
+
+    result = runner.invoke(app, ["slack", "link", MESSAGE])
+
+    assert result.exit_code == 2 and "--pr" in result.output
+    assert posts() == []
+
+
 def test_it_says_when_slack_is_not_configured():
     result = runner.invoke(app, ["slack", "link", MESSAGE, "--pr", PR])
 
