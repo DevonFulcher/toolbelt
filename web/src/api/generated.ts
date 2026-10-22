@@ -133,10 +133,10 @@ export interface Wire {
   event: ServerEvent;
   merge_request: MergeRequest;
   merge_result: MergeResult;
+  slack_accepted: SlackAccepted;
   slack_draft: SlackDraft;
   slack_draft_request: SlackDraftRequest;
   slack_send_request: SlackSendRequest;
-  slack_sent: SlackSent;
   snapshot: Snapshot;
   spend: Spend;
 }
@@ -352,7 +352,10 @@ export interface SlackInfo {
   bump_due: boolean;
   last_at: string | null;
   last_kind: ("post" | "bump") | null;
+  notice: string | null;
   posted: boolean;
+  posting: boolean;
+  thread_link: string | null;
 }
 /**
  * No result in yet (or the repo's checkout is missing: nothing to ask).
@@ -794,6 +797,21 @@ export interface MergeResult {
   output: string;
 }
 /**
+ * The answer to ``POST /api/slack/send``: the message is being posted in
+ * the background. Its PRs read ``posting`` until it is done; then they read
+ * posted, or carry a ``notice`` saying why not.
+ */
+export interface SlackAccepted {
+  prs: SlackPrRef[];
+}
+/**
+ * A PR named in a Slack message: ``repo`` is ``owner/name``, lower case.
+ */
+export interface SlackPrRef {
+  number: number;
+  repo: string;
+}
+/**
  * A message waiting for the user to confirm. The text shows a person as
  * ``@name``; it becomes a real Slack mention when sent.
  */
@@ -804,6 +822,7 @@ export interface SlackDraft {
   kind: "post" | "bump";
   prs: SlackDraftPr[];
   text: string;
+  thread_link: string | null;
   thread_ts: string | null;
 }
 /**
@@ -840,22 +859,6 @@ export interface SlackSendRequest {
   prs: SlackPrRef[];
   text: string;
   thread_ts: string | null;
-}
-/**
- * A PR named in a Slack message: ``repo`` is ``owner/name``, lower case.
- */
-export interface SlackPrRef {
-  number: number;
-  repo: string;
-}
-/**
- * What posting did.
- */
-export interface SlackSent {
-  cost_usd: number;
-  link: string;
-  verified: boolean;
-  warning: string | null;
 }
 export interface Snapshot {
   age: number | null;

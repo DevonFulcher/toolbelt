@@ -563,6 +563,14 @@ class SlackInfo(Model):
     last_at: str | None
     #: Posted a day ago or more, and nobody has looked since.
     bump_due: bool
+    #: A message about this PR is being posted in the background.
+    posting: bool
+    #: What the last post that finished had to say: why it failed (nothing was
+    #: recorded), or what Slack's copy was missing. ``None`` when all went well.
+    notice: str | None
+    #: Link to the Slack thread of the latest post or bump (``None`` when the
+    #: config has no ``workspace``).
+    thread_link: str | None
 
 
 class FetchedBranch(Model):
@@ -1114,6 +1122,9 @@ class SlackDraft(Model):
     prs: list[SlackDraftPr]
     #: A bump is a reply under this message (``None`` for a post).
     thread_ts: str | None
+    #: Link to that message in Slack (``None`` for a post, or when the config
+    #: has no ``workspace``).
+    thread_link: str | None
 
 
 class SlackSendRequest(Model):
@@ -1128,16 +1139,12 @@ class SlackSendRequest(Model):
     prs: list[SlackPrRef]
 
 
-class SlackSent(Model):
-    """What posting did."""
+class SlackAccepted(Model):
+    """The answer to ``POST /api/slack/send``: the message is being posted in
+    the background. Its PRs read ``posting`` until it is done; then they read
+    posted, or carry a ``notice`` saying why not."""
 
-    link: str
-    #: Slack's copy has every PR link and mention of the message.
-    verified: bool
-    #: Why it could not be verified, or what is missing from Slack's copy.
-    warning: str | None
-    #: What the session that posted it cost.
-    cost_usd: float
+    prs: list[SlackPrRef]
 
 
 class SlackImportRequest(Model):
@@ -1349,7 +1356,7 @@ class Wire(Model):
     slack_draft_request: SlackDraftRequest
     slack_draft: SlackDraft
     slack_send_request: SlackSendRequest
-    slack_sent: SlackSent
+    slack_accepted: SlackAccepted
     merge_result: MergeResult
     agent_conversation: AgentConversation
     agent_start: AgentStart

@@ -6,7 +6,7 @@ import type {
   Snapshot,
   SlackDraft,
   SlackSendRequest,
-  SlackSent,
+  SlackAccepted,
   Spend,
 } from "./generated";
 
@@ -134,9 +134,11 @@ export function fetchSlackDraft(
   return postJson<SlackDraft>("/api/slack/draft", { id, assignee_id: assigneeId }, fetchImpl);
 }
 
-/** Post the confirmed message; resolves with what posting did. */
-export function sendSlack(request: SlackSendRequest, fetchImpl: typeof fetch = fetch): Promise<SlackSent> {
-  return postJson<SlackSent>("/api/slack/send", request, fetchImpl);
+/** Post the confirmed message. It is posted in the background: this resolves once
+ * the server has accepted it (the PRs then read `posting`), and rejects with the
+ * server's reason when it cannot go. */
+export function sendSlack(request: SlackSendRequest, fetchImpl: typeof fetch = fetch): Promise<SlackAccepted> {
+  return postJson<SlackAccepted>("/api/slack/send", request, fetchImpl);
 }
 
 export async function mergeBranch(id: string, fetchImpl: typeof fetch = fetch): Promise<MergeResult> {

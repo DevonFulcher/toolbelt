@@ -237,8 +237,27 @@ class TestFormatAge:
         assert fmt(days=1) == "1d"
         assert fmt(days=13) == "13d"
         assert fmt(days=14) == "2w"
-        assert fmt(days=75) == "10w"
+        assert fmt(days=75) == "10w 5d"
         assert fmt(seconds=-5) == "<1m"
+
+    def test_the_largest_unit_and_the_two_below_it_are_shown(self):
+        def fmt(**kwargs):
+            return format_age(timedelta(**kwargs))
+
+        assert fmt(hours=3, minutes=12) == "3h 12m"
+        assert fmt(days=1, hours=5, minutes=7) == "1d 5h 7m"
+        assert fmt(days=2, hours=23, minutes=59) == "2d 23h 59m"
+        assert fmt(days=13, hours=23, minutes=1) == "13d 23h 1m"
+        assert fmt(days=16, hours=20, minutes=30) == "2w 2d 20h"
+
+    def test_a_unit_that_is_zero_is_left_out(self):
+        def fmt(**kwargs):
+            return format_age(timedelta(**kwargs))
+
+        assert fmt(days=2, minutes=59) == "2d 59m"
+        assert fmt(days=2, hours=4) == "2d 4h"
+        assert fmt(days=21) == "3w"
+        assert fmt(days=21, hours=4) == "3w 4h"
 
 
 class TestPreOpenCommits:

@@ -183,6 +183,115 @@ def test_ci_state_comes_from_the_head_commits_check_contexts(contexts, expected)
     assert parse_snapshot(response(node)).status.ci is expected
 
 
+def run_check(
+    name, conclusion, *, workflow="PR pipeline", at="2026-10-22T02:48:36Z", run=1
+):
+    return {
+        "__typename": "CheckRun",
+        "name": name,
+        "conclusion": conclusion,
+        "status": "COMPLETED",
+        "startedAt": at,
+        "checkSuite": {
+            "workflowRun": {
+                "databaseId": run,
+                "createdAt": at,
+                "workflow": {"name": workflow},
+            }
+        },
+    }
+
+
+def ci_of(*contexts):
+    node = pr_node(
+        head={
+            "nodes": [
+                {
+                    "commit": {
+                        "statusCheckRollup": {
+                            "state": "FAILURE",
+                            "contexts": {"nodes": list(contexts)},
+                        }
+                    }
+                }
+            ]
+        }
+    )
+    return parse_snapshot(response(node)).status.ci
+
+
+def test_a_newer_run_of_a_workflow_supersedes_the_failures_of_its_earlier_runs():
+    earlier = "2026-10-22T02:48:36Z"
+    later = "2026-10-22T13:56:02Z"
+
+    ci = ci_of(
+        run_check("Integration tests status", "FAILURE", at=earlier, run=1),
+        run_check("Coverage report", "CANCELLED", at=earlier, run=1),
+        run_check("Integration tests status", "SUCCESS", at=later, run=2),
+    )
+
+    assert (
+        ci is CiState.SUCCESS
+    )  # the cancelled check has no newer one, but its run does
+
+
+def test_a_failure_in_the_newest_run_still_fails():
+    ci = ci_of(
+        run_check("build", "SUCCESS", at="2026-10-22T02:48:36Z", run=1),
+        run_check("build", "FAILURE", at="2026-10-22T13:56:02Z", run=2),
+    )
+
+    assert ci is CiState.FAILED
+
+
+def test_a_workflows_runs_are_judged_apart_from_other_workflows():
+    ci = ci_of(
+        run_check("lint", "FAILURE", workflow="Lint", run=1),
+        run_check(
+            "build", "SUCCESS", workflow="PR pipeline", run=2, at="2026-10-22T13:56:02Z"
+        ),
+    )
+
+    assert ci is CiState.FAILED
+
+
+def test_a_newer_run_in_progress_replaces_an_earlier_failure():
+    running = {
+        **run_check("build", None, at="2026-10-22T13:56:02Z", run=2),
+        "status": "IN_PROGRESS",
+    }
+
+    ci = ci_of(run_check("build", "FAILURE", run=1), running)
+
+    assert ci is CiState.RUNNING
+
+
+def test_every_job_of_the_newest_run_counts_even_when_they_share_a_name():
+    at = "2026-10-22T13:56:02Z"
+
+    ci = ci_of(
+        run_check("Integration tests", "SUCCESS", at=at, run=2),
+        run_check("Integration tests", "FAILURE", at=at, run=2),
+    )
+
+    assert ci is CiState.FAILED
+
+
+def test_a_check_run_with_no_workflow_counts_once_the_newest_by_name():
+    older = {
+        "__typename": "CheckRun",
+        "name": "x",
+        "conclusion": "FAILURE",
+        "status": "COMPLETED",
+        "startedAt": "2026-10-22T01:00:00Z",
+        "checkSuite": {"workflowRun": None},
+    }
+    newer = {**older, "conclusion": "SUCCESS", "startedAt": "2026-10-22T02:00:00Z"}
+
+    assert ci_of(older, newer) is CiState.SUCCESS
+    assert ci_of(newer, older) is CiState.SUCCESS
+
+
 def test_no_checks_is_no_ci():
     node = pr_node(head={"nodes": [{"commit": {"statusCheckRollup": None}}]})
 

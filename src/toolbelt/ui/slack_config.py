@@ -54,6 +54,14 @@ class SlackConfig:
     rules: tuple[AssignRule, ...] = field(default_factory=tuple)
     default: str | None = None
     user_id: str | None = None
+    workspace: str | None = None
+
+    def permalink(self, channel: str, ts: str) -> str | None:
+        """The link to the message at ``ts`` in ``channel`` (``None`` without a
+        ``workspace``)."""
+        if not self.workspace:
+            return None
+        return f"https://{self.workspace}.slack.com/archives/{channel}/p{ts.replace('.', '')}"
 
 
 def slack_config(config_file: Path) -> SlackConfig | None:
@@ -84,4 +92,5 @@ def slack_config(config_file: Path) -> SlackConfig | None:
         ),
         default=section.get("default"),
         user_id=section.get("user_id"),
+        workspace=section.get("workspace"),
     )

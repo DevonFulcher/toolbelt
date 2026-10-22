@@ -18,6 +18,7 @@ slack:
     - {max_lines: 150, rotate: [patrick.yost, will.james]}
   default: will.james
   user_id: U04460UT8GK        # your Slack user ID: whose posts an import reads
+  workspace: fivetran         # the Slack subdomain (fivetran.slack.com): links to threads
 ```
 
 A direct message works as the channel (give your own user ID), which is how to
@@ -41,11 +42,16 @@ count). Drafts, merged and approved PRs are never posted.
 ## Posting
 
 The button opens the message for you to read and edit; nothing is sent until you
-press **Post**. A post covers the branch and the PRs of its stack that are
+press **Post**. Posting takes tens of seconds, so it runs in the background: the
+dialog closes at once, the button reads "Posting in Slack…" and **Slack status**
+says so, and when it is done the status reads posted and links to the thread. If
+it failed, nothing was recorded and the card says why (the button is there to try
+again); if Slack's copy lacked a link or mention, the card says which. A post covers the branch and the PRs of its stack that are
 ready, bottom first and indented under the PR each is stacked on, with the
 person the rules chose (change it in the dialog). A bump is a threaded reply
 under the original post, for the PRs of that thread that are due, asking someone
-other than who was asked before.
+other than who was asked before. The bump dialog links to the original post
+(needs `workspace`).
 
 The text is written the way the skill writes it, starting `🤖 AI-generated on
 behalf of Devon:`. `@name` becomes a Slack mention when it is sent.
@@ -60,8 +66,8 @@ link and mention of what was sent and warns if not (Slack rewrites the
 formatting, so the text itself is not compared). A send costs about $0.08.
 Slack's connector adds a "Sent using Claude" line.
 
-If the session fails or times out, nothing is recorded and the error says to
-check Slack, since the message may have been sent.
+If the session fails or times out, nothing is recorded and the card says to check
+Slack, since the message may have been sent.
 
 ## What it costs
 

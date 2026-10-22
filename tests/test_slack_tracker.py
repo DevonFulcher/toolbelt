@@ -139,6 +139,38 @@ def watcher(posts: Posts, clock: Clock, changes: list[set], **kwargs):
     )
 
 
+def test_a_pr_being_posted_reads_posting_until_it_is_done_and_keeps_a_notice():
+    t = tracker(Posts())
+
+    t.begin_posting([("o/r", 5)])
+    during = t.info(1, "a", FETCHED, NOW)
+    t.end_posting([("o/r", 5)], "Posting in Slack failed: timed out")
+    after = t.info(1, "a", FETCHED, NOW)
+    t.begin_posting([("o/r", 5)])
+    again = t.info(1, "a", FETCHED, NOW)
+
+    assert during is not None and during.posting and during.notice is None
+    assert after is not None and not after.posting
+    assert after.notice == "Posting in Slack failed: timed out"
+    assert (
+        again is not None and again.posting and again.notice is None
+    )  # a new post clears it
+    assert not t.is_posting("o/r", 6)
+
+
+def test_the_latest_posts_thread_is_linked_when_the_workspace_is_known():
+    linked = tracker(
+        Posts(row(30), row(2, kind="bump")),
+        permalink=lambda channel, ts: f"https://acme.slack.com/{channel}/{ts}",
+    )
+
+    info = linked.info(1, "a", FETCHED, NOW)
+
+    assert info is not None and info.thread_link == "https://acme.slack.com/C1/1.0"
+    unlinked = tracker(Posts(row(2))).info(1, "a", FETCHED, NOW)
+    assert unlinked is not None and unlinked.thread_link is None
+
+
 def test_the_watcher_notices_a_bump_falling_due_once_a_day_has_passed():
     clock, changes = Clock(), []
     w = watcher(Posts(row(23)), clock, changes)

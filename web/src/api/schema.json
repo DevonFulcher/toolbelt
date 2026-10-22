@@ -3113,6 +3113,23 @@
         }
       ]
     },
+    "SlackAccepted": {
+      "additionalProperties": false,
+      "description": "The answer to ``POST /api/slack/send``: the message is being posted in\nthe background. Its PRs read ``posting`` until it is done; then they read\nposted, or carry a ``notice`` saying why not.",
+      "properties": {
+        "prs": {
+          "items": {
+            "$ref": "#/$defs/SlackPrRef"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "prs"
+      ],
+      "title": "SlackAccepted",
+      "type": "object"
+    },
     "SlackDraft": {
       "additionalProperties": false,
       "description": "A message waiting for the user to confirm. The text shows a person as\n``@name``; it becomes a real Slack mention when sent.",
@@ -3152,6 +3169,16 @@
         "text": {
           "type": "string"
         },
+        "thread_link": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "thread_ts": {
           "anyOf": [
             {
@@ -3170,7 +3197,8 @@
         "assignee",
         "candidates",
         "prs",
-        "thread_ts"
+        "thread_ts",
+        "thread_link"
       ],
       "title": "SlackDraft",
       "type": "object"
@@ -3264,15 +3292,41 @@
             }
           ]
         },
+        "notice": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "posted": {
           "type": "boolean"
+        },
+        "posting": {
+          "type": "boolean"
+        },
+        "thread_link": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
         "posted",
         "last_kind",
         "last_at",
-        "bump_due"
+        "bump_due",
+        "posting",
+        "notice",
+        "thread_link"
       ],
       "title": "SlackInfo",
       "type": "object"
@@ -3392,39 +3446,6 @@
         "prs"
       ],
       "title": "SlackSendRequest",
-      "type": "object"
-    },
-    "SlackSent": {
-      "additionalProperties": false,
-      "description": "What posting did.",
-      "properties": {
-        "cost_usd": {
-          "type": "number"
-        },
-        "link": {
-          "type": "string"
-        },
-        "verified": {
-          "type": "boolean"
-        },
-        "warning": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "required": [
-        "link",
-        "verified",
-        "warning",
-        "cost_usd"
-      ],
-      "title": "SlackSent",
       "type": "object"
     },
     "SlackSpend": {
@@ -4810,6 +4831,9 @@
     "merge_result": {
       "$ref": "#/$defs/MergeResult"
     },
+    "slack_accepted": {
+      "$ref": "#/$defs/SlackAccepted"
+    },
     "slack_draft": {
       "$ref": "#/$defs/SlackDraft"
     },
@@ -4818,9 +4842,6 @@
     },
     "slack_send_request": {
       "$ref": "#/$defs/SlackSendRequest"
-    },
-    "slack_sent": {
-      "$ref": "#/$defs/SlackSent"
     },
     "snapshot": {
       "$ref": "#/$defs/Snapshot"
@@ -4841,7 +4862,7 @@
     "slack_draft_request",
     "slack_draft",
     "slack_send_request",
-    "slack_sent",
+    "slack_accepted",
     "merge_result",
     "agent_conversation",
     "agent_start"

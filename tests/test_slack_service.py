@@ -153,6 +153,29 @@ def request(kind="post", text=None, numbers=(1,), **overrides) -> api.SlackSendR
     return api.SlackSendRequest(**base)  # type: ignore[arg-type]
 
 
+def post(rig: Rig, send_request: api.SlackSendRequest) -> api.SlackAccepted:
+    """Sends and waits for the background post to finish."""
+
+    async def go() -> api.SlackAccepted:
+        accepted = await rig.service.send(send_request)
+        await rig.service.idle()
+        return accepted
+
+    return asyncio.run(go())
+
+
+def notice(rig: Rig, number: int) -> str | None:
+    """What the PR's card says about the last post that finished."""
+    info = rig.tracker.info(
+        1,
+        {1: "a", 2: "b", 3: "c"}[number],
+        rig.looked_up[{1: "a", 2: "b", 3: "c"}[number]],
+        NOW,
+    )
+    assert info is not None
+    return info.notice
+
+
 # ---- the draft of a post -----------------------------------------------------
 
 
@@ -236,7 +259,7 @@ def test_a_bump_names_every_pr_of_the_thread_that_is_due_and_only_those():
 def test_sending_posts_the_text_to_the_configured_channel_with_mentions_and_records_it():
     rig = Rig()
 
-    sent = asyncio.run(rig.service.send(request(numbers=(1, 2))))
+    accepted = post(rig, request(numbers=(1, 2)))
 
     (call,) = rig.sent
     assert call["channel"] == "DTEST"
@@ -244,20 +267,22 @@ def test_sending_posts_the_text_to_the_configured_channel_with_mentions_and_reco
     assert call["text"] == (
         f"{ATTRIBUTION}\nhello <@UA> https://github.com/o/r/pull/1 https://github.com/o/r/pull/2"
     )
-    assert sent.verified and sent.warning is None and sent.cost_usd == 0.05
+    assert accepted.prs == request(numbers=(1, 2)).prs
+    assert notice(rig, 1) is None and notice(rig, 2) is None  # verified
     assert {(r.repo, r.pr_number, r.kind, r.assignee_name) for r in rig.rows} == {
         ("o/r", 1, "post", "alan"),
         ("o/r", 2, "post", "alan"),
     }
     assert {r.channel for r in rig.rows} == {"DTEST"}
     assert all(r.posted_at == NOW for r in rig.rows)
-    assert rig.changed == [{(1, "a"), (1, "b")}]
+    # told once when it starts (the PRs read posting) and once when it is done
+    assert rig.changed == [{(1, "a"), (1, "b")}, {(1, "a"), (1, "b")}]
 
 
 def test_after_sending_the_tracker_sees_the_pr_as_posted():
     rig = Rig()
 
-    asyncio.run(rig.service.send(request()))
+    post(rig, request())
 
     info = rig.tracker.info(1, "a", rig.looked_up["a"], NOW)
     assert info is not None and info.posted and info.last_kind == "post"
@@ -269,7 +294,7 @@ def test_the_channel_is_never_taken_from_the_request():
         {**request().model_dump(), "id": "1:a"}
     )
 
-    asyncio.run(rig.service.send(forged))
+    post(rig, forged)
 
     assert rig.sent[0]["channel"] == "DTEST"
     assert "channel" not in api.SlackSendRequest.model_fields
@@ -280,7 +305,7 @@ def test_a_pr_already_posted_is_not_posted_again():
     rig.post_row(1, 2)
 
     with pytest.raises(SlackNotApplicable, match="already posted"):
-        asyncio.run(rig.service.send(request()))
+        post(rig, request())
     assert rig.sent == []
 
 
@@ -288,7 +313,7 @@ def test_a_bump_is_sent_only_as_a_reply_in_the_thread_the_pr_was_posted_in():
     rig = Rig()
     rig.post_row(1, 30, thread="1.0")
 
-    asyncio.run(rig.service.send(request("bump", thread_ts="1.0")))
+    post(rig, request("bump", thread_ts="1.0"))
 
     assert rig.sent[0]["thread_ts"] == "1.0"
     assert [r.kind for r in rig.rows if r.ts != "30.1"] == ["bump"]
@@ -300,9 +325,9 @@ def test_a_bump_with_the_wrong_thread_or_for_a_pr_never_posted_is_refused():
     rig.post_row(1, 30, thread="1.0")
 
     with pytest.raises(SlackNotApplicable, match="not posted in that thread"):
-        asyncio.run(rig.service.send(request("bump", thread_ts="2.0")))
+        post(rig, request("bump", thread_ts="2.0"))
     with pytest.raises(SlackNotApplicable, match="not posted in that thread"):
-        asyncio.run(rig.service.send(request("bump", numbers=(3,), thread_ts="1.0")))
+        post(rig, request("bump", numbers=(3,), thread_ts="1.0"))
     assert rig.sent == []
 
 
@@ -310,19 +335,19 @@ def test_a_pr_that_is_not_tracked_is_refused():
     rig = Rig()
 
     with pytest.raises(SlackUnknown):
-        asyncio.run(rig.service.send(request(numbers=(99,))))
+        post(rig, request(numbers=(99,)))
     with pytest.raises(SlackNotApplicable, match="names no PR"):
-        asyncio.run(rig.service.send(request(numbers=())))
+        post(rig, request(numbers=()))
 
 
 def test_a_message_missing_a_link_in_slacks_copy_is_posted_with_a_warning():
     rig = Rig()
     rig.read_back = "something else entirely"
 
-    sent = asyncio.run(rig.service.send(request()))
+    post(rig, request())
 
-    assert not sent.verified
-    assert sent.warning is not None and "https://github.com/o/r/pull/1" in sent.warning
+    warning = notice(rig, 1)
+    assert warning is not None and "https://github.com/o/r/pull/1" in warning
     assert len(rig.rows) == 1  # it was posted, so it is recorded
 
 
@@ -330,10 +355,10 @@ def test_a_message_that_could_not_be_read_back_is_posted_with_a_warning():
     rig = Rig()
     rig.read_back = None
 
-    sent = asyncio.run(rig.service.send(request()))
+    post(rig, request())
 
-    assert not sent.verified and sent.warning is not None
-    assert "could not be read back" in sent.warning
+    warning = notice(rig, 1)
+    assert warning is not None and "could not be read back" in warning
 
 
 def test_a_failed_send_records_nothing():
@@ -344,16 +369,61 @@ def test_a_failed_send_records_nothing():
 
     rig.service._send = failing
 
-    with pytest.raises(RuntimeError):
-        asyncio.run(rig.service.send(request()))
+    post(rig, request())  # accepted: the failure comes later, on the PR
 
-    assert rig.rows == [] and rig.changed == []
+    assert rig.rows == []
+    assert notice(rig, 1) == "Posting in Slack failed: Slack refused"
+    info = rig.tracker.info(1, "a", rig.looked_up["a"], NOW)
+    assert info is not None and not info.posted and not info.posting
+    assert rig.changed == [{(1, "a")}, {(1, "a")}]  # posting began, then ended
+
+
+def test_while_a_post_is_in_flight_the_pr_reads_posting_and_cannot_be_posted_again():
+    rig = Rig()
+    release = asyncio.Event()
+    gate = rig.send_message
+
+    async def slow(**kwargs):
+        await release.wait()
+        return await gate(**kwargs)
+
+    rig.service._send = slow
+
+    async def go():
+        await rig.service.send(request())
+        during = rig.tracker.info(1, "a", rig.looked_up["a"], NOW)
+        with pytest.raises(SlackNotApplicable, match="already being posted"):
+            await rig.service.send(request())
+        release.set()
+        await rig.service.idle()
+        return during
+
+    during = asyncio.run(go())
+
+    assert during is not None and during.posting and not during.posted
+    after = rig.tracker.info(1, "a", rig.looked_up["a"], NOW)
+    assert after is not None and after.posted and not after.posting
+    assert len(rig.sent) == 1
+
+
+def test_a_new_post_clears_the_notice_of_the_one_before():
+    rig = Rig()
+    rig.read_back = None
+    post(rig, request())
+    assert notice(rig, 1) is not None
+    rig.rows.clear()  # forget the post, as a failed one would have
+    rig.tracker.reload()
+    rig.read_back = "OK"
+
+    post(rig, request())
+
+    assert notice(rig, 1) is None
 
 
 def test_the_person_asked_is_recorded_only_when_they_are_a_configured_reviewer():
     rig = Rig()
 
-    asyncio.run(rig.service.send(request(assignee_id="UNKNOWN")))
+    post(rig, request(assignee_id="UNKNOWN"))
 
     assert rig.rows[0].assignee_id is None and rig.rows[0].assignee_name is None
 
@@ -442,7 +512,7 @@ def test_a_post_found_in_another_channel_is_not_bumped():
     with pytest.raises(SlackNotApplicable, match="CREVIEW"):
         rig.service.draft(1, "a", None)
     with pytest.raises(SlackNotApplicable, match="CREVIEW"):
-        asyncio.run(rig.service.send(request("bump", thread_ts="1.0")))
+        post(rig, request("bump", thread_ts="1.0"))
 
     assert rig.sent == []
 
@@ -453,7 +523,7 @@ def test_a_post_found_in_another_channel_is_not_bumped():
 def test_a_post_records_the_session_that_sent_it_with_its_cost():
     rig = Rig()
 
-    asyncio.run(rig.service.send(request()))
+    post(rig, request())
 
     assert rig.sessions == [SlackSessionRow("send-session-1", NOW, "post", 0.05)]
 
@@ -462,7 +532,7 @@ def test_a_bump_records_its_session_as_a_bump():
     rig = Rig()
     rig.post_row(1, hours_ago=30, thread="1.0")
 
-    asyncio.run(rig.service.send(request("bump", thread_ts="1.0")))
+    post(rig, request("bump", thread_ts="1.0"))
 
     assert [s.purpose for s in rig.sessions] == ["bump"]
 
@@ -489,6 +559,33 @@ def test_a_session_with_no_id_is_not_recorded():
 
     rig.service._send = anonymous
 
-    asyncio.run(rig.service.send(request()))
+    post(rig, request())
 
     assert rig.sessions == []
+
+
+# ---- the link to the original post -------------------------------------------
+
+
+def test_a_bump_links_to_the_post_it_replies_to():
+    rig = Rig()
+    rig.kinds["a"] = "bump_slack"
+    rig.post_row(1, hours_ago=30, thread="1792500000.000100")
+    rig.service._config = SlackConfig(
+        channel="DTEST", reviewers=(WILL, ALAN, DAN), workspace="acme"
+    )
+
+    draft = rig.service.draft(1, "a", None)
+
+    assert (
+        draft.thread_link == "https://acme.slack.com/archives/DTEST/p1792500000000100"
+    )
+
+
+def test_a_bump_has_no_link_without_a_workspace_and_a_post_never_has_one():
+    rig = Rig()
+    rig.kinds["a"] = "bump_slack"
+    rig.post_row(1, hours_ago=30, thread="1792500000.000100")
+
+    assert rig.service.draft(1, "a", None).thread_link is None  # no workspace set
+    assert rig.service.draft(1, "c", None).thread_link is None  # c is a post

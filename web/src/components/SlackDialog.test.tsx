@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import type { SlackDraft, SlackSent } from "../api/generated";
+import type { SlackAccepted, SlackDraft } from "../api/generated";
 import { SlackDialog } from "./SlackDialog";
 
 afterEach(() => {
@@ -18,19 +18,14 @@ const draft = (over: Partial<SlackDraft> = {}): SlackDraft => ({
   ],
   prs: [{ repo: "o/r", number: 1, url: "https://github.com/o/r/pull/1", title: "Bottom", additions: 20, deletions: 4 }],
   thread_ts: null,
+  thread_link: null,
   ...over,
 });
 
-const sent = (over: Partial<SlackSent> = {}): SlackSent => ({
-  link: "https://s.slack.com/archives/DTEST/p1792600001000100",
-  verified: true,
-  warning: null,
-  cost_usd: 0.04,
-  ...over,
-});
+const accepted = (): SlackAccepted => ({ prs: [{ repo: "o/r", number: 1 }] });
 
 /** A fetch that answers the draft and send endpoints; records what it was sent. */
-function serve(opts: { draft?: SlackDraft | { status: number; detail: string }; send?: SlackSent | { status: number; detail: string } }) {
+function serve(opts: { draft?: SlackDraft | { status: number; detail: string }; send?: SlackAccepted | { status: number; detail: string } }) {
   const calls: { path: string; body: unknown }[] = [];
   const answer = (value: unknown) => {
     const failure = value as { status?: number; detail?: string };
@@ -44,14 +39,14 @@ function serve(opts: { draft?: SlackDraft | { status: number; detail: string }; 
     vi.fn(async (path: string, init: RequestInit) => {
       const body = JSON.parse(String(init.body)) as unknown;
       calls.push({ path, body });
-      return path === "/api/slack/draft" ? answer(opts.draft ?? draft()) : answer(opts.send ?? sent());
+      return path === "/api/slack/draft" ? answer(opts.draft ?? draft()) : answer(opts.send ?? accepted());
     }),
   );
   return calls;
 }
 
-const open = async () => {
-  render(<SlackDialog id="1:a" onClose={() => undefined} />);
+const open = async (onClose: () => void = () => undefined) => {
+  render(<SlackDialog id="1:a" onClose={onClose} />);
   return screen.findByRole("textbox");
 };
 
@@ -79,16 +74,15 @@ describe("the Post in Slack dialog", () => {
     expect(box).toHaveValue(draft().text.replace("@alan", "@will") + "\nPlease look today @will.");
   });
 
-  test("Post sends the edited text, who was asked and the PRs, then says it was posted", async () => {
-    const calls = serve({ send: sent({ cost_usd: 0.05 }) });
-    const box = await open();
+  test("Post sends the edited text, who was asked and the PRs, then closes: it posts in the background", async () => {
+    const calls = serve({});
+    const onClose = vi.fn();
+    const box = await open(onClose);
     fireEvent.change(box, { target: { value: "edited https://github.com/o/r/pull/1 @alan" } });
 
     fireEvent.click(screen.getByRole("button", { name: "Post" }));
 
-    const link = await screen.findByRole("link", { name: "Posted in Slack" });
-    expect(link).toHaveAttribute("href", "https://s.slack.com/archives/DTEST/p1792600001000100");
-    expect(screen.getByText(/cost \$0\.05/)).toBeInTheDocument();
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
     expect(calls[1]).toEqual({
       path: "/api/slack/send",
       body: {
@@ -100,17 +94,24 @@ describe("the Post in Slack dialog", () => {
         prs: [{ repo: "o/r", number: 1 }],
       },
     });
-    expect(screen.getByRole("button", { name: "Done" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Post" })).not.toBeInTheDocument();
   });
 
-  test("a message Slack's copy did not match is flagged", async () => {
-    serve({ send: sent({ verified: false, warning: "Posted, but Slack's copy is missing: UA" }) });
+  test("while the server takes the message the button says it is sending", async () => {
+    let release: () => void = () => undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string) => {
+        if (path === "/api/slack/draft") return { ok: true, status: 200, json: async () => draft() };
+        await new Promise<void>((resolve) => (release = resolve));
+        return { ok: true, status: 202, json: async () => accepted() };
+      }),
+    );
     await open();
 
     fireEvent.click(screen.getByRole("button", { name: "Post" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Slack's copy is missing: UA");
+    expect(await screen.findByRole("button", { name: "Sending…" })).toBeDisabled();
+    release();
   });
 
   test("a failed send says why and can be tried again", async () => {
@@ -121,7 +122,6 @@ describe("the Post in Slack dialog", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("the Slack session timed out");
     expect(screen.getByRole("button", { name: "Post" })).toBeEnabled();
-    expect(screen.queryByRole("link", { name: "Posted in Slack" })).not.toBeInTheDocument();
   });
 
   test("an empty message cannot be sent", async () => {
@@ -139,6 +139,30 @@ describe("the Post in Slack dialog", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Nothing to post or bump");
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+  });
+
+  test("a bump links to the original post in Slack", async () => {
+    serve({
+      draft: draft({
+        kind: "bump",
+        thread_ts: "1792500000.000100",
+        thread_link: "https://s.slack.com/archives/DTEST/p1792500000000100",
+        text: "It has been over 24 hours",
+      }),
+    });
+    render(<SlackDialog id="1:a" onClose={() => undefined} />);
+
+    const link = await screen.findByRole("link", { name: "Original post in Slack" });
+
+    expect(link).toHaveAttribute("href", "https://s.slack.com/archives/DTEST/p1792500000000100");
+  });
+
+  test("a post has no original post to link to", async () => {
+    serve({ draft: draft() });
+    render(<SlackDialog id="1:a" onClose={() => undefined} />);
+    await screen.findByRole("button", { name: "Post" });
+
+    expect(screen.queryByRole("link", { name: "Original post in Slack" })).toBeNull();
   });
 
   test("a bump says it replies in a thread and sends that thread", async () => {

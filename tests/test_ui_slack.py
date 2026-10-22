@@ -3,6 +3,7 @@ posting it, the recording and the events that follow. The Slack sender is
 faked: nothing here reaches Slack."""
 
 import asyncio
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -120,7 +121,24 @@ def rig(tmp_path: Path):
     )
     asyncio.run(app.state.refresher.run_once())
     app.state.reader = reader
-    return app, repo_id, proxy, TestClient(app)
+    # In a ``with`` so the app's event loop outlives a request: a post runs in
+    # the background after its request has been answered.
+    with TestClient(app) as client:
+        yield app, repo_id, proxy, client
+
+
+def wait_until_posted(client, branch_id: str) -> dict:
+    """The branch's Slack info once its background post has finished."""
+    for _ in range(200):
+        branch = next(
+            b
+            for b in client.get("/api/snapshot").json()["branches"]
+            if b["id"] == branch_id
+        )
+        if not branch["slack"]["posting"]:
+            return branch["slack"]
+        time.sleep(0.01)
+    raise AssertionError("the post did not finish")
 
 
 def branches(client) -> dict:
@@ -173,8 +191,11 @@ def test_posting_the_draft_sends_it_records_it_and_changes_the_cards(rig):
         },
     )
 
-    assert response.status_code == 200
-    assert response.json()["verified"] is True
+    assert response.status_code == 202  # accepted: it posts in the background
+    assert response.json()["prs"] == [
+        {"repo": pr["repo"], "number": pr["number"]} for pr in draft["prs"]
+    ]
+    assert wait_until_posted(client, f"{repo_id}:a")["posted"] is True
     (call,) = proxy.sent
     assert call["channel"] == "DTEST" and call["thread_ts"] is None
     assert "<@UA>" in call["text"] and "@alan" not in call["text"].replace("<@UA>", "")
@@ -184,12 +205,15 @@ def test_posting_the_draft_sends_it_records_it_and_changes_the_cards(rig):
     events = []
     while not queue.empty():
         events.append(queue.get_nowait())
-    posted = {
-        data["branch_id"]: data["slack"]["posted"]
+    # each card is told when the post starts and when it is done
+    states = [
+        (data["branch_id"], data["slack"]["posting"], data["slack"]["posted"])
         for name, data in events
         if name == "status"
-    }
-    assert posted == {f"{repo_id}:a": True, f"{repo_id}:b": True}
+    ]
+    for branch in (f"{repo_id}:a", f"{repo_id}:b"):
+        assert (branch, True, False) in states and (branch, False, True) in states
+        assert states.index((branch, True, False)) < states.index((branch, False, True))
 
 
 def test_it_cannot_be_posted_twice(rig):
@@ -202,7 +226,8 @@ def test_it_cannot_be_posted_twice(rig):
         "thread_ts": None,
         "prs": [{"repo": "o/r", "number": 1}],
     }
-    assert client.post("/api/slack/send", json=body).status_code == 200
+    assert client.post("/api/slack/send", json=body).status_code == 202
+    wait_until_posted(client, f"{repo_id}:a")
 
     again = client.post("/api/slack/send", json=body)
 
@@ -231,7 +256,7 @@ def test_a_branch_with_nothing_to_post_has_no_draft(rig):
     assert response.status_code == 409
 
 
-def test_a_failed_send_is_a_bad_gateway_and_records_nothing(rig):
+def test_a_failed_send_records_nothing_and_says_why_on_the_card(rig):
     _, repo_id, proxy, client = rig
     proxy.fail = "the Slack session timed out"
 
@@ -247,9 +272,10 @@ def test_a_failed_send_is_a_bad_gateway_and_records_nothing(rig):
         },
     )
 
-    assert response.status_code == 502
-    assert "timed out" in response.json()["detail"]
-    assert branches(client)["a"]["slack"]["posted"] is False
+    assert response.status_code == 202
+    slack = wait_until_posted(client, f"{repo_id}:a")
+    assert slack["posted"] is False
+    assert "timed out" in slack["notice"]
 
 
 def test_unknown_branches_and_prs_are_404(rig):

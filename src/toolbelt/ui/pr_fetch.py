@@ -265,8 +265,41 @@ def _item(node: dict) -> TimelineItem | None:
     return None
 
 
+def _current_contexts(contexts: list[dict]) -> list[dict]:
+    """The contexts that count: GitHub keeps every workflow run's check runs on
+    a commit, so a rerun (or a second trigger) leaves the earlier run's failed
+    or cancelled ones beside the newer run's, which supersede them. The PR page
+    shows only a workflow's newest run, so only its check runs count; a check
+    run with no workflow counts once, the newest by name. Status contexts are
+    already one per context."""
+    newest_run: dict[str, tuple[str, int]] = {}
+    for context in contexts:
+        run = (context.get("checkSuite") or {}).get("workflowRun")
+        if run:
+            workflow = run["workflow"]["name"]
+            key = (run["createdAt"], run["databaseId"])
+            newest_run[workflow] = max(newest_run.get(workflow, key), key)
+    kept = []
+    newest_standalone: dict[str, dict] = {}
+    for context in contexts:
+        run = (context.get("checkSuite") or {}).get("workflowRun")
+        if run:
+            key = (run["createdAt"], run["databaseId"])
+            if key == newest_run[run["workflow"]["name"]]:
+                kept.append(context)
+        elif context.get("name"):
+            earlier = newest_standalone.get(context["name"])
+            if earlier is None or (context.get("startedAt") or "") >= (
+                earlier.get("startedAt") or ""
+            ):
+                newest_standalone[context["name"]] = context
+        else:
+            kept.append(context)
+    return kept + list(newest_standalone.values())
+
+
 def _check_entries(node: dict) -> list[dict]:
-    """The head commit's check contexts, shaped like `gh pr view`'s
+    """The head commit's current check contexts, shaped like `gh pr view`'s
     ``statusCheckRollup`` entries (which is what ``parse_status`` reads)."""
     commits = node["head"]["nodes"]
     if not commits:
@@ -280,7 +313,7 @@ def _check_entries(node: dict) -> list[dict]:
             "status": context.get("status"),
             "state": context.get("state"),
         }
-        for context in rollup["contexts"]["nodes"]
+        for context in _current_contexts(rollup["contexts"]["nodes"])
     ]
 
 

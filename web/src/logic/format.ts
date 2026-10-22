@@ -1,4 +1,4 @@
-// Time and duration formatting. formatAge is kept in step with
+// Time and duration formatting. formatElapsed is kept in step with
 // pr_activity.format_age on the server, which produces the same text.
 
 export const MINUTE = 60 * 1000;
@@ -13,6 +13,29 @@ export function formatAge(seconds: number): string {
   if (s < 86400) return `${Math.floor(s / 3600)}h`;
   if (s < 14 * 86400) return `${Math.floor(s / 86400)}d`;
   return `${Math.floor(s / (7 * 86400))}w`;
+}
+
+const ELAPSED_UNITS: [string, number][] = [
+  ["w", 7 * 86400],
+  ["d", 86400],
+  ["h", 3600],
+  ["m", 60],
+];
+
+/** What an age field shows: the largest unit and the two below it, a unit that
+ * is zero left out: "<1m", "5m", "3h 12m", "2d 4h 12m", "3w 2d 4h" (weeks from
+ * two weeks). */
+export function formatElapsed(seconds: number): string {
+  let rest = Math.max(0, Math.floor(seconds));
+  if (rest < 60) return "<1m";
+  const first = rest >= 14 * 86400 ? 0 : rest >= 86400 ? 1 : rest >= 3600 ? 2 : 3;
+  const parts: string[] = [];
+  for (const [name, size] of ELAPSED_UNITS.slice(first, first + 3)) {
+    const count = Math.floor(rest / size);
+    rest -= count * size;
+    if (count > 0) parts.push(`${count}${name}`);
+  }
+  return parts.join(" ");
 }
 
 /** "2d 4h", "3h 12m", "5m", "3w 2d": the two largest non-zero units. */

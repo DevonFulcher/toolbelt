@@ -1,6 +1,6 @@
-import { act, screen, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
-import type { Branch, BranchClaim, BranchExtras, LoadedStatus } from "../api/generated";
+import type { Branch, BranchClaim, BranchExtras, LoadedStatus, SlackInfo } from "../api/generated";
 import { branch, catalog, detail, event, noPr, pr, repo, snapshot, DAY, NOW } from "../testing/fixtures";
 import { renderWith } from "../testing/render";
 import { App } from "./App";
@@ -478,6 +478,7 @@ describe("a card whose next action is about Slack", () => {
         candidates: [],
         prs: [],
         thread_ts: null,
+        thread_link: null,
       }),
     }));
     vi.stubGlobal("fetch", fetchMock);
@@ -495,6 +496,53 @@ describe("a card whose next action is about Slack", () => {
   });
 });
 
+describe("a card while a message is posted in the background", () => {
+  const next = pr({ pr_number: 8, pr: "open", next: { label: "Post in Slack", who: "you", kind: "post_slack", would_be: null } });
+  const slackInfo = (over: Partial<SlackInfo>): SlackInfo => ({
+    posted: false,
+    last_kind: null,
+    last_at: null,
+    bump_due: false,
+    posting: false,
+    notice: null,
+    thread_link: null,
+    ...over,
+  });
+
+  test("the button is disabled and says it is posting, and the status says so too", () => {
+    showCards([branch(1, "devon/a", { status: next, slack: slackInfo({ posting: true }) })]);
+
+    expect(screen.getByRole("button", { name: "Posting in Slack…" })).toBeDisabled();
+    expect(slotsOf("devon/a").slack_status[2]).toBe("Posting in Slack…");
+  });
+
+  test("a failed post says why on the card and the button is there to try again", () => {
+    showCards([branch(1, "devon/a", { status: next, slack: slackInfo({ notice: "Posting in Slack failed: timed out" }) })]);
+
+    expect(screen.getByRole("button", { name: "Post in Slack" })).toBeEnabled();
+    expect(screen.getByRole("alert")).toHaveTextContent("Posting in Slack failed: timed out");
+  });
+
+  test("a posted PR's status links to its thread", () => {
+    showCards([
+      branch(1, "devon/a", {
+        status: pr({ pr_number: 8, pr: "open" }),
+        slack: slackInfo({
+          posted: true,
+          last_kind: "post",
+          last_at: new Date(NOW - 3600_000).toISOString(),
+          thread_link: "https://s.slack.com/archives/C1/p1",
+        }),
+      }),
+    ]);
+
+    expect(screen.getByRole("link", { name: "Posted in Slack" })).toHaveAttribute(
+      "href",
+      "https://s.slack.com/archives/C1/p1",
+    );
+  });
+});
+
 describe("a card's Slack fields", () => {
   const open = pr({ pr_number: 8, pr: "open" });
 
@@ -509,7 +557,7 @@ describe("a card's Slack fields", () => {
 
   test("a ready PR not posted is flagged as something to do", () => {
     showCards([
-      branch(1, "devon/a", { status: open, slack: { posted: false, last_kind: null, last_at: null, bump_due: false } }),
+      branch(1, "devon/a", { status: open, slack: { posted: false, last_kind: null, last_at: null, bump_due: false, posting: false, notice: null, thread_link: null } }),
     ]);
 
     const found = slotsOf("devon/a");
@@ -521,7 +569,7 @@ describe("a card's Slack fields", () => {
   test("a draft not posted is not flagged: it is not ready", () => {
     const draft = pr({ pr_number: 8, pr: "draft" });
     showCards([
-      branch(1, "devon/a", { status: draft, slack: { posted: false, last_kind: null, last_at: null, bump_due: false } }),
+      branch(1, "devon/a", { status: draft, slack: { posted: false, last_kind: null, last_at: null, bump_due: false, posting: false, notice: null, thread_link: null } }),
     ]);
 
     expect(slotsOf("devon/a").slack_status).toEqual(["Slack status", "na", "Not posted in Slack"]);
@@ -531,11 +579,11 @@ describe("a card's Slack fields", () => {
     showCards([
       branch(1, "devon/a", {
         status: open,
-        slack: { posted: true, last_kind: "post", last_at: new Date(NOW - 5 * 3600_000).toISOString(), bump_due: false },
+        slack: { posted: true, last_kind: "post", last_at: new Date(NOW - 5 * 3600_000).toISOString(), bump_due: false, posting: false, notice: null, thread_link: null },
       }),
       branch(1, "devon/b", {
         status: open,
-        slack: { posted: true, last_kind: "bump", last_at: new Date(NOW - 2 * DAY).toISOString(), bump_due: true },
+        slack: { posted: true, last_kind: "bump", last_at: new Date(NOW - 2 * DAY).toISOString(), bump_due: true, posting: false, notice: null, thread_link: null },
       }),
     ]);
 
@@ -554,6 +602,9 @@ describe("a card's Slack fields", () => {
         last_kind: "post",
         last_at: new Date(NOW - 3600_000).toISOString(),
         bump_due: false,
+        posting: false,
+        notice: null,
+        thread_link: null,
       }),
     );
 
@@ -568,7 +619,7 @@ describe("a card's Slack fields", () => {
     const { store } = showCards([
       branch(1, "devon/a", {
         status: open,
-        slack: { posted: true, last_kind: "post", last_at: new Date(NOW - 3600_000).toISOString(), bump_due: false },
+        slack: { posted: true, last_kind: "post", last_at: new Date(NOW - 3600_000).toISOString(), bump_due: false, posting: false, notice: null, thread_link: null },
       }),
     ]);
 
@@ -767,19 +818,26 @@ describe("a card whose next action is Merge", () => {
     review: "approved",
     next: { label: "Merge", who: "you", kind: "merge" },
   });
-  const merge = (result: { ok: boolean; output: string } | Error, confirmed = true) => {
+  const merge = (result: { ok: boolean; output: string } | Error) => {
     const fetchMock = vi.fn(async (...args: [string, RequestInit?]) => {
       void args;
       if (result instanceof Error) return { ok: false, status: 409, json: async () => ({ detail: result.message }) };
       return { ok: true, status: 200, json: async () => result };
     });
     vi.stubGlobal("fetch", fetchMock);
-    vi.stubGlobal("confirm", vi.fn(() => confirmed));
+    const confirm = vi.fn(() => true);
+    vi.stubGlobal("confirm", confirm);
     showCards([branch(1, "devon/a", { status: ready })]);
-    return fetchMock;
+    return { fetchMock, confirm };
   };
-  const mergePosts = (fetchMock: ReturnType<typeof merge>) =>
+  const mergePosts = (fetchMock: ReturnType<typeof merge>["fetchMock"]) =>
     fetchMock.mock.calls.filter(([url]) => url === "/api/merge");
+  const openDialog = async () => {
+    await act(async () => {
+      screen.getByRole("button", { name: "Merge" }).click();
+    });
+    return screen.findByRole("dialog", { name: "Merge PR #8" });
+  };
 
   test("shows Merge as a button, not a pill", () => {
     merge({ ok: true, output: "" });
@@ -797,50 +855,65 @@ describe("a card whose next action is Merge", () => {
     expect(card.querySelector('[data-slot="next"] .pill')).not.toBeNull();
   });
 
-  test("pressing it asks first, then lands the PR", async () => {
-    const fetchMock = merge({ ok: true, output: "merged" });
+  test("pressing it opens a dialog, not the browser's confirm box, and merges nothing yet", async () => {
+    const { fetchMock, confirm } = merge({ ok: true, output: "merged" });
 
-    await act(async () => {
-      screen.getByRole("button", { name: "Merge" }).click();
-    });
+    const dialog = await openDialog();
 
-    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("PR #8"));
-    const [posted] = mergePosts(fetchMock);
-    expect(posted[1]?.method).toBe("POST");
-    expect(JSON.parse(String(posted[1]?.body))).toEqual({ id: "1:devon/a" });
-  });
-
-  test("declining the question lands nothing", async () => {
-    const fetchMock = merge({ ok: true, output: "" }, false);
-
-    await act(async () => {
-      screen.getByRole("button", { name: "Merge" }).click();
-    });
-
+    expect(within(dialog).getByText(/Squash-merge PR #8/)).toBeInTheDocument();
+    expect(confirm).not.toHaveBeenCalled();
     expect(mergePosts(fetchMock)).toHaveLength(0);
   });
 
-  test("a merge that fails shows toolbelt's output on the card", async () => {
-    merge({ ok: false, output: "GraphQL: not mergeable" });
+  test("confirming in the dialog lands the PR and closes it", async () => {
+    const { fetchMock } = merge({ ok: true, output: "merged" });
+    const dialog = await openDialog();
 
     await act(async () => {
-      screen.getByRole("button", { name: "Merge" }).click();
+      within(dialog).getByRole("button", { name: "Merge" }).click();
     });
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("GraphQL: not mergeable");
+    const [posted] = mergePosts(fetchMock);
+    expect(posted[1]?.method).toBe("POST");
+    expect(JSON.parse(String(posted[1]?.body))).toEqual({ id: "1:devon/a" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  test("cancelling lands nothing and closes the dialog", async () => {
+    const { fetchMock } = merge({ ok: true, output: "" });
+    const dialog = await openDialog();
+
+    await act(async () => {
+      within(dialog).getByRole("button", { name: "Cancel" }).click();
+    });
+
+    expect(mergePosts(fetchMock)).toHaveLength(0);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  test("a merge that fails shows toolbelt's output in the dialog, which stays open to try again", async () => {
+    merge({ ok: false, output: "GraphQL: not mergeable" });
+    const dialog = await openDialog();
+
+    await act(async () => {
+      within(dialog).getByRole("button", { name: "Merge" }).click();
+    });
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("GraphQL: not mergeable");
+    expect(within(dialog).getByRole("button", { name: "Merge" })).toBeEnabled();
   });
 
   test("a refusal from the server is shown too", async () => {
     merge(new Error("Nothing to merge: the branch's next action is not Merge."));
+    const dialog = await openDialog();
 
     await act(async () => {
-      screen.getByRole("button", { name: "Merge" }).click();
+      within(dialog).getByRole("button", { name: "Merge" }).click();
     });
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Nothing to merge");
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Nothing to merge");
   });
 });
-
 
 describe("a repo the user administers whose webhook is not working", () => {
   const badge = (id = "1:devon/a"): HTMLElement | null =>

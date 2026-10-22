@@ -53,12 +53,20 @@ class SlackTracker:
         posts: Callable[[], list[SlackPostRow]],
         slug_of: Callable[[int], str | None],
         bump_after: timedelta,
+        permalink: Callable[[str, str], str | None] = lambda channel, ts: None,
     ) -> None:
-        """``slug_of`` gives a repo's ``owner/name`` (lower case)."""
+        """``slug_of`` gives a repo's ``owner/name`` (lower case);
+        ``permalink(channel, ts)`` the link to a message (``None``: unknown)."""
         self._posts = posts
         self._slug_of = slug_of
         self._bump_after = bump_after
+        self._permalink = permalink
         self._by_pr: dict[tuple[str, int], list[SlackPostRow]] = {}
+        # What a background post is doing, kept in memory: the PRs a message is
+        # being posted for, and what the last one that finished had to say
+        # (why it failed, or what Slack's copy lacked).
+        self._posting: set[tuple[str, int]] = set()
+        self._notice: dict[tuple[str, int], str] = {}
         self.reload()
 
     def reload(self) -> None:
@@ -66,6 +74,20 @@ class SlackTracker:
         for row in self._posts():
             by_pr.setdefault((row.repo, row.pr_number), []).append(row)
         self._by_pr = by_pr
+
+    def is_posting(self, slug: str, number: int) -> bool:
+        return (slug, number) in self._posting
+
+    def begin_posting(self, prs: list[tuple[str, int]]) -> None:
+        self._posting.update(prs)
+        for pr in prs:
+            self._notice.pop(pr, None)
+
+    def end_posting(self, prs: list[tuple[str, int]], notice: str | None) -> None:
+        self._posting.difference_update(prs)
+        if notice:
+            for pr in prs:
+                self._notice[pr] = notice
 
     def state(
         self, repo_id: int, branch: str, fetched: Fetched | None, now: datetime
@@ -98,11 +120,17 @@ class SlackTracker:
         state = self.state(repo_id, branch, fetched, now)
         if state is None:
             return None
+        pr = (self._slug_of(repo_id) or "", fetched.facts.number)  # type: ignore[union-attr]
+        rows = self._by_pr.get(pr, [])
+        last = max(rows, key=lambda row: row.posted_at) if rows else None
         return api.SlackInfo(
             posted=state.posted,
             last_kind=state.last_kind,  # type: ignore[arg-type]
             last_at=state.last_at.isoformat() if state.last_at else None,
             bump_due=state.bump_due,
+            posting=pr in self._posting,
+            notice=self._notice.get(pr),
+            thread_link=self._permalink(last.channel, last.thread_ts) if last else None,
         )
 
 

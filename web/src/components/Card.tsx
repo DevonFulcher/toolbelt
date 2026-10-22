@@ -6,6 +6,7 @@ import type {
   LiveStatus,
   LoadedStatus,
   RepoWebhook,
+  SlackInfo,
   SlotDimensions,
   Tone,
 } from "../api/generated";
@@ -16,13 +17,13 @@ import { serializeState } from "../logic/viewState";
 import { rollup, youText } from "../logic/rollup";
 import { LOADING, subtreeIds } from "../store/selectors";
 import { useApp, useAppStore } from "../store/StoreContext";
-import { mergeBranch } from "../api/client";
 import { AgentSlots, SpendSlots } from "./CardAgentSlots";
+import { MergeDialog } from "./MergeDialog";
 import { SlackDialog } from "./SlackDialog";
 import { Timeline } from "./Timeline";
 import { Age, CI_TONE, ExternalLink, PR_TONE, Pill, REVIEW_TONE, WHO_TEXT, WHO_TONE } from "./presentation";
 import { useNow, useSecondNow } from "./useNow";
-import { formatAge } from "../logic/format";
+import { formatElapsed } from "../logic/format";
 
 /** Every labelled slot of a card; the catalog says which dimension each shows. */
 export type SlotKey = keyof SlotDimensions;
@@ -348,7 +349,7 @@ export const Card = memo(
           <PrSlots status={status} note={note} />
         </Group>
         <Group id="task" title="Task">
-          <NextSlot id={id} status={status} note={note} claim={claim} />
+          <NextSlot id={id} status={status} note={note} claim={claim} slackPosting={slack?.posting ?? false} />
           <Slot
             id="task_age"
             label="Task age"
@@ -358,7 +359,7 @@ export const Card = memo(
               "n/a (PR merged)"
             ) : branch.started_at ? (
               <Age
-                text={formatAge((now - Date.parse(branch.started_at)) / 1000)}
+                text={formatElapsed((now - Date.parse(branch.started_at)) / 1000)}
                 since={branch.started_at}
               />
             ) : (
@@ -403,10 +404,10 @@ export const Card = memo(
             label="Slack status"
             state={slack?.posted ? "ok" : slack && status.load === "loaded" && status.pr === "open" ? "gap" : "na"}
           >
-            {slack ? (slack.posted ? (slack.last_kind === "bump" ? "Bumped in Slack" : "Posted in Slack") : "Not posted in Slack") : "–"}
+            {slack ? <SlackStatus slack={slack} /> : "–"}
           </Slot>
           <Slot id="slack_age" label="Post age" state={slack?.last_at ? "ok" : "na"}>
-            {slack?.last_at ? <Age text={formatAge((now - Date.parse(slack.last_at)) / 1000)} since={slack.last_at} /> : "–"}
+            {slack?.last_at ? <Age text={formatElapsed((now - Date.parse(slack.last_at)) / 1000)} since={slack.last_at} /> : "–"}
           </Slot>
         </Group>
         <Group
@@ -478,11 +479,14 @@ function NextSlot({
   status,
   note,
   claim,
+  slackPosting,
 }: {
   id: string;
   status: LiveStatus;
   note: ReactNode;
   claim: BranchClaim;
+  /** A message about the PR is being posted in Slack in the background. */
+  slackPosting: boolean;
 }) {
   if (status.load !== "loaded") {
     return (
@@ -498,7 +502,7 @@ function NextSlot({
       {status.next.kind === "merge" ? (
         <MergeButton id={id} status={status} />
       ) : status.next.kind === "post_slack" || status.next.kind === "bump_slack" ? (
-        <SlackButton id={id} status={status} />
+        <SlackButton id={id} status={status} posting={slackPosting} />
       ) : (
         <Pill tone={WHO_TONE[status.next.who]} title={status.next.kind}>
           {status.next.label}
@@ -512,41 +516,48 @@ function NextSlot({
   );
 }
 
-/** Next is Merge: a button that lands the PR with `toolbelt git merge` (after
- * asking). The branch leaves the page when the merge syncs the stack. */
+/** Next is Merge: a button that opens a dialog asking whether to land the PR
+ * with `toolbelt git merge`. The branch leaves the page when the merge syncs the
+ * stack. */
 function MergeButton({ id, status }: { id: string; status: LoadedStatus }) {
-  const [state, setState] = useState<{ phase: "idle" | "merging" } | { phase: "failed"; text: string }>({
-    phase: "idle",
-  });
+  const [open, setOpen] = useState(false);
   const target = status.pr_number !== null ? `PR #${status.pr_number}` : "this PR";
-  const press = (): void => {
-    const ok = window.confirm(
-      `Squash-merge ${target} on GitHub and sync its stack (toolbelt git merge)?\n\n` +
-        "If the PR is part of a GitHub stack, this also merges the open PRs below it.",
-    );
-    if (!ok) return;
-    setState({ phase: "merging" });
-    mergeBranch(id)
-      .then((result) => setState(result.ok ? { phase: "idle" } : { phase: "failed", text: result.output }))
-      .catch((error: unknown) =>
-        setState({ phase: "failed", text: error instanceof Error ? error.message : String(error) }),
-      );
-  };
   return (
     <>
       <button
         type="button"
         className="merge-button"
-        disabled={state.phase === "merging"}
-        title="Runs toolbelt git merge for this PR"
-        onClick={press}
+        aria-haspopup="dialog"
+        title="Asks before running toolbelt git merge for this PR"
+        onClick={() => setOpen(true)}
       >
-        {state.phase === "merging" ? "Merging…" : status.next.label}
+        {status.next.label}
       </button>
-      {state.phase === "failed" && (
-        <pre className="merge-error" role="alert">
-          {state.text}
-        </pre>
+      {open && <MergeDialog id={id} target={target} onClose={() => setOpen(false)} />}
+    </>
+  );
+}
+
+/** Where the PR stands in Slack: a link to the thread once posted, "Posting…"
+ * while a post is in the background, and why the last one failed or what Slack's
+ * copy lacked. */
+function SlackStatus({ slack }: { slack: SlackInfo }) {
+  const label = slack.posted ? (slack.last_kind === "bump" ? "Bumped in Slack" : "Posted in Slack") : "Not posted in Slack";
+  return (
+    <>
+      {slack.posting ? (
+        "Posting in Slack…"
+      ) : slack.posted && slack.thread_link ? (
+        <a href={slack.thread_link} target="_blank" rel="noreferrer">
+          {label}
+        </a>
+      ) : (
+        label
+      )}
+      {slack.notice && !slack.posting && (
+        <span className="error" role="alert">
+          {` ${slack.notice}`}
+        </span>
       )}
     </>
   );
@@ -554,7 +565,7 @@ function MergeButton({ id, status }: { id: string; status: LoadedStatus }) {
 
 /** Next is Post in Slack or Bump in Slack: a button that opens the message for the
  * user to confirm. Nothing is posted until it is confirmed in the dialog. */
-function SlackButton({ id, status }: { id: string; status: LoadedStatus }) {
+function SlackButton({ id, status, posting }: { id: string; status: LoadedStatus; posting: boolean }) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -562,10 +573,11 @@ function SlackButton({ id, status }: { id: string; status: LoadedStatus }) {
         type="button"
         className="merge-button"
         aria-haspopup="dialog"
-        title="Shows the message to post; nothing is sent until you confirm it"
+        disabled={posting}
+        title={posting ? "Being posted in the background" : "Shows the message to post; nothing is sent until you confirm it"}
         onClick={() => setOpen(true)}
       >
-        {status.next.label}
+        {posting ? "Posting in Slack…" : status.next.label}
       </button>
       {open && <SlackDialog id={id} onClose={() => setOpen(false)} />}
     </>

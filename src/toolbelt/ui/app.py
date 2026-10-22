@@ -683,6 +683,7 @@ def create_app(
             posts=_slack_posts,
             slug_of=slug_of_repo,
             bump_after=slack_settings.bump_after,
+            permalink=slack_settings.permalink,
         )
 
     def webhook_problems() -> list[api.RepoWebhook]:
@@ -1043,8 +1044,8 @@ def create_app(
         except SlackNotApplicable as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
 
-    @app.post("/api/slack/send", response_model=api.SlackSent)
-    async def slack_send(body: api.SlackSendRequest) -> api.SlackSent:
+    @app.post("/api/slack/send", response_model=api.SlackAccepted, status_code=202)
+    async def slack_send(body: api.SlackSendRequest) -> api.SlackAccepted:
         service = slack_on()
         try:
             return await service.send(body)
@@ -1052,8 +1053,6 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(error)) from error
         except SlackUnknown as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
-        except SlackProxyError as error:
-            raise HTTPException(status_code=502, detail=str(error)) from error
 
     @app.post("/api/slack/import", response_model=api.SlackImported)
     async def slack_import(body: api.SlackImportRequest) -> api.SlackImported:

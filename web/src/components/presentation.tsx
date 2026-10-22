@@ -4,7 +4,7 @@
 // one.
 import type { CiState, Link, PrState, ReviewState, TaskLive, Tone, Who } from "../api/generated";
 import { useNow } from "./useNow";
-import { formatAge } from "../logic/format";
+import { formatElapsed } from "../logic/format";
 
 export const PR_TONE: Record<PrState, Tone> = {
   open: "green",
@@ -86,9 +86,9 @@ export function TaskValue({ link, task }: { link: Link | null; task: TaskLive | 
   );
 }
 
-/** A growing age ("5d"), kept current between server updates. */
+/** A growing age ("2d 4h"), kept current between server updates. */
 export function Age({ text, since }: { text: string; since: string | null }) {
   const now = useNow();
   const started = since ? Date.parse(since) : Number.NaN;
-  return <time dateTime={since ?? undefined}>{Number.isNaN(started) ? text : formatAge((now - started) / 1000)}</time>;
+  return <time dateTime={since ?? undefined}>{Number.isNaN(started) ? text : formatElapsed((now - started) / 1000)}</time>;
 }

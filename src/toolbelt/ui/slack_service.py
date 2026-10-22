@@ -11,6 +11,8 @@ are the source of truth, so nothing reads Slack to find out.
 The channel is always the configured one. The client never names it.
 """
 
+import asyncio
+import logging
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -32,6 +34,8 @@ from toolbelt.ui.slack_import import ChannelRead, rows_from_messages
 from toolbelt.ui.slack_proxy import SentMessage
 from toolbelt.ui.slack_tracker import SlackTracker
 from toolbelt.ui.snapshot import descendants
+
+LOGGER = logging.getLogger(__name__)
 
 
 class SlackNotApplicable(Exception):
@@ -97,6 +101,7 @@ class SlackService:
         self._posts = posts
         self._save = save
         self._record_session = record_session
+        self._tasks: set[asyncio.Task[None]] = set()
         self._wall_clock = wall_clock
         self._changed = changed
 
@@ -266,6 +271,11 @@ class SlackService:
                 for pr in prs
             ],
             thread_ts=thread_ts,
+            thread_link=(
+                self._config.permalink(self._config.channel, thread_ts)
+                if thread_ts
+                else None
+            ),
         )
 
     def _require_configured_channel(self, last: SlackPostRow, pr: _Pr) -> None:
@@ -321,14 +331,21 @@ class SlackService:
 
     # ---- sending ---------------------------------------------------------------
 
-    async def send(self, request: api.SlackSendRequest) -> api.SlackSent:
+    async def send(self, request: api.SlackSendRequest) -> api.SlackAccepted:
+        """Checks the message can go, then posts it in the background: the
+        Slack session takes tens of seconds, so this returns at once and the
+        PRs read ``posting`` (see ``SlackTracker``) until it is done. Raises
+        when it cannot go (already posted or being posted, not that thread)."""
         prs = [self._pr_of(ref) for ref in request.prs]
         if not prs:
             raise SlackNotApplicable("The message names no PR.")
         history = self._posts()
-        now = self._wall_clock()
         for pr in prs:
             last = _last_post(history, pr)
+            if self._tracker.is_posting(pr.repo, pr.number):
+                raise SlackNotApplicable(
+                    f"{pr.repo}#{pr.number} is already being posted in Slack."
+                )
             if request.kind == "post" and last is not None:
                 raise SlackNotApplicable(
                     f"{pr.repo}#{pr.number} is already posted in Slack."
@@ -341,6 +358,37 @@ class SlackService:
                 )
             if request.kind == "bump" and last is not None:
                 self._require_configured_channel(last, pr)
+        keys = [(pr.repo, pr.number) for pr in prs]
+        branches = {(pr.repo_id, pr.branch) for pr in prs}
+        self._tracker.begin_posting(keys)
+        self._changed(branches)
+        task = asyncio.create_task(self._post(request, prs))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return api.SlackAccepted(prs=request.prs)
+
+    async def idle(self) -> None:
+        """Returns when no post is in flight."""
+        while self._tasks:
+            await asyncio.gather(*self._tasks)
+
+    async def _post(self, request: api.SlackSendRequest, prs: list[_Pr]) -> None:
+        keys = [(pr.repo, pr.number) for pr in prs]
+        branches = {(pr.repo_id, pr.branch) for pr in prs}
+        notice = None
+        try:
+            notice = await self._post_and_record(request, prs)
+        except Exception as error:  # a failed post says why, and records nothing
+            LOGGER.exception("posting in Slack failed")
+            notice = f"Posting in Slack failed: {error}"
+        finally:
+            self._tracker.end_posting(keys, notice)
+            self._changed(branches)
+
+    async def _post_and_record(
+        self, request: api.SlackSendRequest, prs: list[_Pr]
+    ) -> str | None:
+        """Posts and records it; returns what Slack's copy lacked, if anything."""
         mentions = {p.name: p.id for p in self._config.reviewers}
         text = to_slack(request.text, mentions)
         sent = await self._send(
@@ -359,7 +407,7 @@ class SlackService:
                     repo=pr.repo,
                     pr_number=pr.number,
                     kind=request.kind,
-                    posted_at=now,
+                    posted_at=self._wall_clock(),
                     assignee_id=person.id if person else None,
                     assignee_name=person.name if person else None,
                 )
@@ -367,14 +415,7 @@ class SlackService:
             ]
         )
         self._tracker.reload()
-        self._changed({(pr.repo_id, pr.branch) for pr in prs})
-        warning = _verify(text, sent)
-        return api.SlackSent(
-            link=sent.link,
-            verified=warning is None,
-            warning=warning,
-            cost_usd=sent.cost_usd,
-        )
+        return _verify(text, sent)
 
 
 def _last_post(history: list[SlackPostRow], pr: _Pr) -> SlackPostRow | None:

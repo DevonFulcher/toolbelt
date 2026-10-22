@@ -3,15 +3,14 @@
 // card; nothing is sent until Send is pressed.
 import { useEffect, useState } from "react";
 import { fetchSlackDraft, sendSlack } from "../api/client";
-import type { SlackDraft, SlackSent } from "../api/generated";
+import type { SlackDraft } from "../api/generated";
 import { Dialog } from "./Dialog";
 
 type Phase =
   | { name: "loading" }
   | { name: "failed"; text: string }
   | { name: "ready"; draft: SlackDraft }
-  | { name: "sending"; draft: SlackDraft }
-  | { name: "sent"; draft: SlackDraft; result: SlackSent };
+  | { name: "sending"; draft: SlackDraft };
 
 export function SlackDialog({ id, onClose }: { id: string; onClose: () => void }) {
   const [phase, setPhase] = useState<Phase>({ name: "loading" });
@@ -36,7 +35,7 @@ export function SlackDialog({ id, onClose }: { id: string; onClose: () => void }
     };
   }, [id]);
 
-  const draft = phase.name === "ready" || phase.name === "sending" || phase.name === "sent" ? phase.draft : null;
+  const draft = phase.name === "ready" || phase.name === "sending" ? phase.draft : null;
   const title = draft ? (draft.kind === "post" ? "Post in Slack" : "Bump in Slack") : "Slack";
 
   // Asking someone else changes the name in the text, keeping any edits made to it.
@@ -61,7 +60,7 @@ export function SlackDialog({ id, onClose }: { id: string; onClose: () => void }
       thread_ts: ready.thread_ts,
       prs: ready.prs.map((pr) => ({ repo: pr.repo, number: pr.number })),
     })
-      .then((result) => setPhase({ name: "sent", draft: ready, result }))
+      .then(onClose) // it posts in the background: the card shows how it went
       .catch((error: unknown) => {
         setProblem(error instanceof Error ? error.message : String(error));
         setPhase({ name: "ready", draft: ready });
@@ -87,6 +86,14 @@ export function SlackDialog({ id, onClose }: { id: string; onClose: () => void }
               </span>
             ))}
             .
+            {draft.thread_link && (
+              <>
+                {" "}
+                <a href={draft.thread_link} target="_blank" rel="noreferrer">
+                  Original post in Slack
+                </a>
+              </>
+            )}
           </p>
           <label className="slack-field">
             <span className="slack-label">Ask</span>
@@ -117,34 +124,20 @@ export function SlackDialog({ id, onClose }: { id: string; onClose: () => void }
               {problem}
             </p>
           )}
-          {phase.name === "sent" ? (
-            <p>
-              <a href={phase.result.link} target="_blank" rel="noreferrer">
-                Posted in Slack
-              </a>
-              {` (cost $${phase.result.cost_usd.toFixed(2)}). `}
-              {phase.result.warning && (
-                <span className="error" role="alert">
-                  {phase.result.warning}
-                </span>
-              )}{" "}
-              <button type="button" className="agents-toggle" onClick={onClose}>
-                Done
-              </button>
-            </p>
-          ) : (
-            <p>
-              <button
-                type="button"
-                className="merge-button"
-                disabled={phase.name !== "ready" || text.trim() === ""}
-                onClick={send}
-              >
-                {phase.name === "sending" ? "Sending…" : draft.kind === "post" ? "Post" : "Send bump"}
-              </button>{" "}
-              <span className="muted">Sends exactly this text, with @names turned into mentions.</span>
-            </p>
-          )}
+          <p>
+            <button
+              type="button"
+              className="merge-button"
+              disabled={phase.name !== "ready" || text.trim() === ""}
+              onClick={send}
+            >
+              {phase.name === "sending" ? "Sending…" : draft.kind === "post" ? "Post" : "Send bump"}
+            </button>{" "}
+            <span className="muted">
+              Sends exactly this text, with @names turned into mentions. It posts in the background: the card shows when
+              it is done.
+            </span>
+          </p>
         </div>
       )}
     </Dialog>

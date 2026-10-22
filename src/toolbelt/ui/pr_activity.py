@@ -284,19 +284,32 @@ def derive_activity(facts: PrFacts, now: datetime) -> PrActivity:
     )
 
 
+_AGE_UNITS = (("w", 7 * 86400), ("d", 86400), ("h", 3600), ("m", 60))
+
+
 def format_age(age: timedelta) -> str:
-    """Compact: ``5m``, ``3h``, ``4d``, ``3w``. (Kept in step with
-    ``formatAge`` in ``web/src/logic/format.ts``, which re-renders it live.)"""
+    """The largest unit and the two below it, a unit that is zero left out:
+    ``5m``, ``3h 12m``, ``2d 4h 12m``, ``3w 2d 4h`` (weeks from two weeks).
+    (Kept in step with ``formatElapsed`` in ``web/src/logic/format.ts``, which
+    re-renders it live.)"""
     seconds = max(int(age.total_seconds()), 0)
     if seconds < 60:
         return "<1m"
-    if seconds < 3600:
-        return f"{seconds // 60}m"
-    if seconds < 86400:
-        return f"{seconds // 3600}h"
-    if seconds < 14 * 86400:
-        return f"{seconds // 86400}d"
-    return f"{seconds // (7 * 86400)}w"
+    first = (
+        0
+        if seconds >= 14 * 86400
+        else 1
+        if seconds >= 86400
+        else 2
+        if seconds >= 3600
+        else 3
+    )
+    parts = []
+    for name, size in _AGE_UNITS[first : first + 3]:
+        count, seconds = divmod(seconds, size)
+        if count:
+            parts.append(f"{count}{name}")
+    return " ".join(parts)
 
 
 def _iso_or_none(value: datetime | None) -> str | None:

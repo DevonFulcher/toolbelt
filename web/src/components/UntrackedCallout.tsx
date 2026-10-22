@@ -1,4 +1,4 @@
-import { formatAge } from "../logic/format";
+import { formatElapsed } from "../logic/format";
 import { useApp, useAppStore } from "../store/StoreContext";
 import { ExternalLink } from "./presentation";
 import { useNow } from "./useNow";
@@ -48,7 +48,7 @@ export function UntrackedCallout() {
                   <span className="callout-repo">{pr.repo}</span>
                   <ExternalLink href={pr.url}>{`#${pr.number} ${pr.title}`}</ExternalLink>
                   {pr.is_draft && <span className="pill tone-gray">draft</span>}
-                  <span className="muted">{formatAge((now - Date.parse(pr.created_at)) / 1000)}</span>
+                  <span className="muted">{formatElapsed((now - Date.parse(pr.created_at)) / 1000)}</span>
                 </li>
               ))}
             </ul>
