@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 
-from claude_agent_sdk import AssistantMessage, ResultMessage
+from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
 
 from toolbelt.autonomous_agents.dispatcher import Decision
 from toolbelt.autonomous_agents.instructions import (
@@ -46,9 +46,11 @@ def decision(trigger: str = "fix_ci", **changes) -> Decision:
 USAGE = {"input_tokens": 3, "output_tokens": 400, "cache_read_input_tokens": 50_000}
 
 
-def assistant(message_id: str = "m1", usage: dict | None = None) -> AssistantMessage:
+def assistant(
+    message_id: str = "m1", usage: dict | None = None, content: list | None = None
+) -> AssistantMessage:
     return AssistantMessage(
-        content=[],
+        content=content or [],
         model="claude-haiku-5-5",
         usage=usage or USAGE,
         message_id=message_id,
@@ -71,8 +73,12 @@ def result(**changes) -> ResultMessage:
 
 
 class Rig:
-    def __init__(self, tmp_path: Path, messages=(), *, hang=False, raises=None):
+    def __init__(
+        self, tmp_path: Path, messages=(), *, hang=False, raises=None, clock=None
+    ):
         self.db = tmp_path / "stacks.db"
+        self.changed = 0
+        self.seen_while_working: list = []
         self.claims = tmp_path / "claims"
         self.calls: list[dict] = []
         self.claim_seen_during: dict | None = None
@@ -85,6 +91,7 @@ class Rig:
                 raise raises
             for message in messages:
                 yield message
+                self.seen_while_working.append(self.runs_now())
             if hang:
                 await asyncio.sleep(60)
 
@@ -95,7 +102,19 @@ class Rig:
             wall_clock=lambda: NOW,
             query=query,
             heartbeat_seconds=0.05,
+            **({"clock": clock} if clock else {}),
         )
+        self.runner.on_change = self.count_change
+
+    def count_change(self) -> None:
+        self.changed += 1
+
+    def runs_now(self) -> list:
+        store = StackStore(self.db)
+        try:
+            return store.agent_runs()
+        finally:
+            store.close()
 
     def read_claim(self) -> dict | None:
         files = list(self.claims.glob("auto.*.json")) if self.claims.exists() else []
@@ -128,6 +147,112 @@ def test_a_successful_run_records_what_the_sdk_reports(tmp_path: Path):
     assert run.summary and run.summary.startswith("Fixed the lint error.")
     assert (run.task_id, run.trigger, run.head_sha) == ("t1", "fix_ci", "abc")
     assert run.model == LIMITS.model
+
+
+def test_the_run_is_claimed_the_moment_it_is_recorded(tmp_path: Path):
+    rig = Rig(tmp_path, [result()], hang=True)
+
+    async def scenario():
+        run_id = await rig.runner.start(decision())
+        claim = rig.read_claim()  # before its task has run at all
+        await asyncio.sleep(
+            0
+        )  # let the task begin, as a later request to stop it would
+        rig.runner.stop(run_id)
+        await rig.runner.running[run_id]
+        return run_id, claim
+
+    run_id, claim = asyncio.run(scenario())
+
+    assert claim is not None and claim["holder"] == f"auto.{run_id}"
+    assert claim["state"] == "working"
+
+
+def ticking(step: float = 10.0):
+    """A clock that moves ``step`` seconds each time it is read."""
+    now = [0.0]
+
+    def clock() -> float:
+        now[0] += step
+        return now[0]
+
+    return clock
+
+
+def test_a_working_run_saves_its_turns_cost_and_what_it_is_doing(tmp_path: Path):
+    bash = ToolUseBlock(
+        id="t1", name="Bash", input={"command": "gh run view 123\nsecond line"}
+    )
+    rig = Rig(
+        tmp_path,
+        [
+            assistant("m1", content=[TextBlock(text="Looking at the failing job")]),
+            assistant("m2", content=[bash]),
+            result(),
+        ],
+        clock=ticking(),
+    )
+
+    rig.run()
+
+    first, second, _ = rig.seen_while_working
+    assert (first[0].state, first[0].turns, first[0].activity) == (
+        "running",
+        1,
+        "Looking at the failing job",
+    )
+    assert first[0].cost_usd > 0
+    assert (second[0].turns, second[0].activity) == (2, "Running: gh run view 123")
+
+
+def test_progress_is_saved_at_most_every_few_seconds(tmp_path: Path):
+    messages = [
+        assistant(f"m{i}", content=[TextBlock(text=f"step {i}")]) for i in range(4)
+    ]
+    rig = Rig(tmp_path, [*messages, result()], clock=ticking(step=1.0))
+
+    rig.run()
+
+    activities = [seen[0].activity for seen in rig.seen_while_working[:4]]
+    assert activities[0] is None  # 1 second after the run began: too soon to save
+    assert any(a for a in activities)  # but later messages were saved
+
+
+def test_the_page_is_told_each_time_progress_is_saved(tmp_path: Path):
+    rig = Rig(tmp_path, [assistant(), assistant("m2"), result()], clock=ticking())
+
+    rig.run()
+
+    assert rig.changed >= 3  # two saves while working, one when it ended
+
+
+def test_a_finished_run_no_longer_has_an_activity(tmp_path: Path):
+    rig = Rig(
+        tmp_path,
+        [assistant(content=[TextBlock(text="working")]), result()],
+        clock=ticking(),
+    )
+
+    run = rig.run()
+
+    assert run.state == "succeeded" and run.activity is None
+    assert run.turns == 6  # the SDK's own total replaces the running count
+
+
+def test_a_message_with_nothing_to_say_keeps_the_last_activity(tmp_path: Path):
+    rig = Rig(
+        tmp_path,
+        [
+            assistant("m1", content=[TextBlock(text="Reading the workflow")]),
+            assistant("m2"),
+            result(),
+        ],
+        clock=ticking(),
+    )
+
+    rig.run()
+
+    assert rig.seen_while_working[1][0].activity == "Reading the workflow"
 
 
 def test_the_run_holds_a_v2_claim_while_working_and_releases_it_after(tmp_path: Path):

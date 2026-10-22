@@ -114,12 +114,13 @@ class MergeQueue:
         row = self._queued.get(key)
         notice = self._notice.get(key)
         can_queue = row is None and self._would_merge(repo_id, branch)
-        if row is None and not can_queue and notice is None:
+        merging = key in self._merging
+        if row is None and not can_queue and notice is None and not merging:
             return None
         return api.MergeQueueInfo(
             can_queue=can_queue,
             queued=row is not None,
-            merging=key in self._merging,
+            merging=merging,
             queued_at=row.queued_at.isoformat() if row else None,
             notice=notice,
         )
@@ -153,6 +154,28 @@ class MergeQueue:
         info = self.info(repo_id, branch)
         assert info is not None
         return info
+
+    def merge_now(self, repo_id: int, branch: str) -> None:
+        """Merges the branch's PR now, in the background (the Merge button): it
+        reads ``merging`` until done, and a failure is its ``notice``. Raises
+        ``MergeQueueRefused`` unless Merge is its next action."""
+        key = (repo_id, branch)
+        if key in self._merging:
+            return
+        if self._next_kind(repo_id, branch) != "merge":
+            raise MergeQueueRefused(
+                "Nothing to merge: the branch's next action is not Merge."
+            )
+        self._notice.pop(key, None)
+        self._start_merge(key, queued=False)
+
+    def _start_merge(self, key: BranchKey, *, queued: bool) -> None:
+        task = asyncio.create_task(self._merge(key, queued=queued))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        # Marked now, not once the task gets its turn, so nothing else starts it.
+        self._merging.add(key)
+        self._changed({key})
 
     def cancel(self, repo_id: int, branch: str) -> None:
         key = (repo_id, branch)
@@ -199,30 +222,29 @@ class MergeQueue:
                 continue
             kind = self._next_kind(*key)
             if kind == "merge":
-                task = asyncio.create_task(self._merge(key))
-                self._tasks.add(task)
-                task.add_done_callback(self._tasks.discard)
+                self._start_merge(key, queued=True)
             elif kind in ("wait_ci", "claimed", "autonomous"):
                 continue  # still waiting (a claimed branch is left to its agent)
             else:
                 why = _DROPPED_BECAUSE.get(kind or "", f"its next action became {kind}")
                 self._drop(key, f"Taken off the merge queue: {why}.")
 
-    async def _merge(self, key: BranchKey) -> None:
+    async def _merge(self, key: BranchKey, *, queued: bool) -> None:
         # One merge at a time: each one restacks the stack it belonged to.
         async with self._lock:
-            if key not in self._queued:  # cancelled while waiting its turn
+            if queued and key not in self._queued:  # cancelled while waiting
+                self._merging.discard(key)
+                self._changed({key})
                 return
-            self._merging.add(key)
-            self._changed({key})
             notice = None
+            what = "queued merge" if queued else "merge"
             try:
                 result = await self._land(*key)
                 if not result.ok:
-                    notice = f"The queued merge failed: {result.output[-NOTICE_LIMIT:]}"
+                    notice = f"The {what} failed: {result.output[-NOTICE_LIMIT:]}"
             except Exception as error:  # a failed merge says why, and leaves the queue
-                LOGGER.exception("queued merge failed")
-                notice = f"The queued merge failed: {error}"
+                LOGGER.exception("%s failed", what)
+                notice = f"The {what} failed: {error}"
             finally:
                 self._merging.discard(key)
                 self._drop(key, notice)

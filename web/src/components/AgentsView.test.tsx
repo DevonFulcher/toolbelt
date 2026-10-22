@@ -78,7 +78,7 @@ describe("the agents view", () => {
             trigger: "fix_ci",
             reason: { code: "draft", text: "The PR is a draft: agents leave drafts to you.", until: null },
             decided_at: base.decisions[0].decided_at,
-            can_override: true,
+            can_override: true, starting: false, start_error: null,
           },
         ],
       }),
@@ -197,8 +197,8 @@ describe("the agents view", () => {
 
   test("a held-back task a person can override has a button that starts a run on it", async () => {
     const base = agents();
-    const draft = { ...base.decisions[0], id: "1:devon/d", branch: "devon/d", reason: { code: "draft" as const, text: "The PR is a draft: agents leave drafts to you.", until: null }, can_override: true };
-    const claimed = { ...base.decisions[1], can_override: false };
+    const draft = { ...base.decisions[0], id: "1:devon/d", branch: "devon/d", reason: { code: "draft" as const, text: "The PR is a draft: agents leave drafts to you.", until: null }, can_override: true, starting: false, start_error: null };
+    const claimed = { ...base.decisions[1], can_override: false, starting: false, start_error: null };
     const { posts } = serve(agents({ decisions: [draft, claimed] }));
     show();
 
@@ -211,7 +211,7 @@ describe("the agents view", () => {
 
   test("when a reason still stops a hand start, it says which", async () => {
     const base = agents();
-    const draft = { ...base.decisions[0], reason: { code: "draft" as const, text: "The PR is a draft.", until: null }, can_override: true };
+    const draft = { ...base.decisions[0], reason: { code: "draft" as const, text: "The PR is a draft.", until: null }, can_override: true, starting: false, start_error: null };
     serve(agents({ decisions: [draft] }), { refuseStart: "A person or an agent session holds this task." });
     show();
 

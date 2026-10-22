@@ -418,3 +418,97 @@ def test_the_watcher_checks_the_queue_every_tick():
     asyncio.run(go())
 
     assert rig.landed == ["a"]
+
+
+# ---- the Merge button: merging now, in the background ------------------------------
+
+
+def merge_now(rig: Rig, name: str = "a") -> None:
+    async def go() -> None:
+        rig.queue.merge_now(1, name)
+        await rig.queue.idle()
+
+    asyncio.run(go())
+
+
+def test_merging_now_merges_a_pr_that_was_never_queued():
+    rig = Rig()
+    rig.merge_now("a")
+    rig.would["a"] = False  # CI has passed: it is not waiting on CI
+
+    merge_now(rig)
+
+    assert rig.landed == ["a"]
+    assert rig.info() is None  # nothing to say once it is done
+
+
+def test_merging_now_is_refused_unless_merge_is_the_next_action():
+    rig = Rig()  # "a" is waiting on CI
+
+    with pytest.raises(MergeQueueRefused, match="not Merge"):
+        merge_now(rig)
+
+    assert rig.landed == []
+
+
+def test_a_merge_in_progress_reads_merging_even_though_it_was_never_queued():
+    rig = Rig()
+    rig.merge_now("a")
+    rig.gate = asyncio.Event()
+    seen = []
+
+    async def go() -> None:
+        rig.queue.merge_now(1, "a")
+        await asyncio.sleep(0)
+        seen.append(rig.info())
+        rig.gate.set()  # type: ignore[union-attr]
+        await rig.queue.idle()
+
+    asyncio.run(go())
+
+    assert seen[0] is not None and seen[0].merging and not seen[0].queued
+
+
+def test_a_merge_that_fails_says_so_with_its_output():
+    rig = Rig()
+    rig.merge_now("a")
+    rig.result = LandResult(ok=False, output="GraphQL: not mergeable")
+
+    merge_now(rig)
+
+    info = rig.info()
+    assert (
+        info is not None and info.notice == "The merge failed: GraphQL: not mergeable"
+    )
+    assert not info.merging
+
+
+def test_asking_to_merge_twice_merges_once():
+    rig = Rig()
+    rig.merge_now("a")
+    rig.gate = asyncio.Event()
+
+    async def go() -> None:
+        rig.queue.merge_now(1, "a")
+        rig.queue.merge_now(1, "a")
+        await asyncio.sleep(0)
+        rig.gate.set()  # type: ignore[union-attr]
+        await rig.queue.idle()
+
+    asyncio.run(go())
+
+    assert rig.landed == ["a"]
+
+
+def test_a_new_merge_clears_the_note_of_the_last_one():
+    rig = Rig()
+    rig.merge_now("a")
+    rig.result = LandResult(ok=False, output="boom")
+    merge_now(rig)
+    assert rig.info() is not None and rig.info().notice  # type: ignore[union-attr]
+    rig.result = LandResult(ok=True, output="merged")
+    rig.would["a"] = False
+
+    merge_now(rig)
+
+    assert rig.info() is None

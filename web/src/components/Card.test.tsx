@@ -776,7 +776,7 @@ describe("a card's agent and spend slots", () => {
       has_action: true,
       trigger: "fix_ci",
       reason: null,
-      can_override: false,
+      can_override: false, starting: false, start_error: null,
       latest_run: null,
       runs: 0,
       recent_runs: over.latest_run ? [over.latest_run] : [],
@@ -810,7 +810,7 @@ describe("a card's agent and spend slots", () => {
     const held = extras({
       trigger: "resolve_comments",
       reason: { code: "draft", text: "The PR is a draft: agents leave drafts to you.", until: null },
-      can_override: true,
+      can_override: true, starting: false, start_error: null,
     });
 
     const found = show(held);
@@ -832,7 +832,7 @@ describe("a card's agent and spend slots", () => {
         state: "running",
         started_at: new Date(NOW - 3 * 60_000).toISOString(),
         ended_at: null,
-        turns: 3,
+        turns: 3, activity: null,
         cost_usd: 0.0123,
         summary: null,
         error: null,
@@ -843,8 +843,74 @@ describe("a card's agent and spend slots", () => {
     const found = show(working);
 
     expect(found.agent_status[2]).toBe("working Stop");
-    expect(found.agent_run[2]).toBe("running Fix / re-run CI");
-    expect(found.agent_run_summary[2]).toContain("still running");
+    expect(found.agent_run[2]).toBe("running Fix / re-run CI for 3m, turn 3, $0.0123 so far");
+    expect(found.agent_run_summary[2]).toContain("starting up");
+  });
+
+  const workingRun = (activity: string | null) =>
+    extras({
+      reason: { code: "working", text: "An agent is working on this now.", until: null },
+      latest_run: {
+        run_id: "r9",
+        id: "1:devon/a",
+        repo: "api",
+        branch: "devon/a",
+        trigger: "fix_ci",
+        model: "claude-haiku-5-5",
+        state: "running",
+        started_at: new Date(NOW - 90_000).toISOString(),
+        ended_at: null,
+        turns: 7,
+        activity,
+        cost_usd: 0.05,
+        summary: null,
+        error: null,
+      },
+      runs: 1,
+    });
+
+  test("a run that is still working shows what it is doing now", () => {
+    const found = show(workingRun("Running: gh run view 123"));
+
+    expect(found.agent_run_summary[2]).toContain("Now: Running: gh run view 123");
+    expect(found.agent_run[2]).toContain("turn 7");
+  });
+
+  test("a run asked for by hand reads starting, not a button, until it has started", () => {
+    const found = show(extras({ starting: true, reason: null, trigger: "fix_ci" }));
+
+    expect(found.agent_status[2]).toContain("starting…");
+    expect(screen.queryByRole("button", { name: /Run an agent/ })).toBeNull();
+  });
+
+  test("the run button says it is starting while the request is on its way", async () => {
+    let release: () => void = () => undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        await new Promise<void>((resolve) => (release = resolve));
+        return { ok: true, status: 202, json: async () => ({ starting: true }) };
+      }),
+    );
+    show(extras({ reason: null, trigger: "fix_ci" }));
+
+    act(() => screen.getByRole("button", { name: "Run an agent now" }).click());
+
+    expect(await screen.findByRole("button", { name: "Starting…" })).toBeDisabled();
+    release();
+    vi.unstubAllGlobals();
+  });
+
+  test("why a run asked for by hand did not start is shown on the card", () => {
+    const found = show(
+      extras({
+        reason: { code: "claimed", text: "A person or an agent session holds this task.", until: null },
+        can_override: false,
+        start_error: "A person or an agent session holds this task.",
+      }),
+    );
+
+    expect(found.agent_status[2]).toContain("holds this task");
   });
 
   test("the latest run shows its result and the cost of every run on the task", () => {
@@ -861,7 +927,7 @@ describe("a card's agent and spend slots", () => {
         state: "succeeded",
         started_at: new Date(NOW - 3600_000).toISOString(),
         ended_at: new Date(NOW - 3000_000).toISOString(),
-        turns: 9,
+        turns: 9, activity: null,
         cost_usd: 0.0831,
         summary: "Replied to two Copilot threads.",
         error: null,
@@ -910,6 +976,7 @@ describe("a card's agent and spend slots", () => {
         cost_usd: cost,
         summary,
         error: null,
+        activity: null,
       });
       const latest = run("r2", "resolve_comments", 0.0831, 9, "Replied to two Copilot threads.");
       const earlier = run("r1", "fix_ci", 0.0213, 4, "Re-ran the flaky job.");
@@ -958,11 +1025,11 @@ describe("a card whose next action is Merge", () => {
     review: "approved",
     next: { label: "Merge", who: "you", kind: "merge" },
   });
-  const merge = (result: { ok: boolean; output: string } | Error) => {
+  const merge = (result: { merging: boolean } | Error) => {
     const fetchMock = vi.fn(async (...args: [string, RequestInit?]) => {
       void args;
       if (result instanceof Error) return { ok: false, status: 409, json: async () => ({ detail: result.message }) };
-      return { ok: true, status: 200, json: async () => result };
+      return { ok: true, status: 202, json: async () => result };
     });
     vi.stubGlobal("fetch", fetchMock);
     const confirm = vi.fn(() => true);
@@ -980,7 +1047,7 @@ describe("a card whose next action is Merge", () => {
   };
 
   test("shows Merge as a button, not a pill", () => {
-    merge({ ok: true, output: "" });
+    merge({ merging: true });
 
     const card = document.querySelector('article[data-id="1:devon/a"]') as HTMLElement;
     expect(within(card).getByRole("button", { name: "Merge" })).toBeInTheDocument();
@@ -996,7 +1063,7 @@ describe("a card whose next action is Merge", () => {
   });
 
   test("pressing it opens a dialog, not the browser's confirm box, and merges nothing yet", async () => {
-    const { fetchMock, confirm } = merge({ ok: true, output: "merged" });
+    const { fetchMock, confirm } = merge({ merging: true });
 
     const dialog = await openDialog();
 
@@ -1006,7 +1073,7 @@ describe("a card whose next action is Merge", () => {
   });
 
   test("confirming in the dialog lands the PR and closes it", async () => {
-    const { fetchMock } = merge({ ok: true, output: "merged" });
+    const { fetchMock } = merge({ merging: true });
     const dialog = await openDialog();
 
     await act(async () => {
@@ -1020,7 +1087,7 @@ describe("a card whose next action is Merge", () => {
   });
 
   test("cancelling lands nothing and closes the dialog", async () => {
-    const { fetchMock } = merge({ ok: true, output: "" });
+    const { fetchMock } = merge({ merging: true });
     const dialog = await openDialog();
 
     await act(async () => {
@@ -1031,16 +1098,22 @@ describe("a card whose next action is Merge", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  test("a merge that fails shows toolbelt's output in the dialog, which stays open to try again", async () => {
-    merge({ ok: false, output: "GraphQL: not mergeable" });
-    const dialog = await openDialog();
+  test("a merge that fails in the background leaves toolbelt's output on the card", () => {
+    merge({ merging: true });
+    const failed = { can_queue: false, queued: false, merging: false, queued_at: null, notice: "The merge failed: GraphQL: not mergeable" };
+    showCards([branch(1, "devon/f", { status: ready, merge_queue: failed })]);
 
-    await act(async () => {
-      within(dialog).getByRole("button", { name: "Merge" }).click();
-    });
+    expect(screen.getAllByRole("alert").some((el) => el.textContent?.includes("The merge failed: GraphQL: not mergeable"))).toBe(true);
+  });
 
-    expect(await within(dialog).findByRole("alert")).toHaveTextContent("GraphQL: not mergeable");
-    expect(within(dialog).getByRole("button", { name: "Merge" })).toBeEnabled();
+  test("a merge in progress reads Merging, with no button to press twice", () => {
+    merge({ merging: true });
+    const merging = { can_queue: false, queued: false, merging: true, queued_at: null, notice: null };
+    showCards([branch(1, "devon/b", { status: ready, merge_queue: merging })]);
+
+    expect(screen.getAllByText("Merging…").length).toBeGreaterThan(0);
+    const card = document.querySelector('article[data-id="1:devon/b"]') as HTMLElement;
+    expect(within(card).queryByRole("button", { name: "Merge" })).toBeNull();
   });
 
   test("a refusal from the server is shown too", async () => {

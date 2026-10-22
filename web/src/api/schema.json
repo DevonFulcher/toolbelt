@@ -95,6 +95,19 @@
         "repo": {
           "type": "string"
         },
+        "start_error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "starting": {
+          "type": "boolean"
+        },
         "trigger": {
           "$ref": "#/$defs/AgentTrigger"
         }
@@ -106,7 +119,9 @@
         "trigger",
         "reason",
         "decided_at",
-        "can_override"
+        "can_override",
+        "starting",
+        "start_error"
       ],
       "title": "AgentDecision",
       "type": "object"
@@ -260,6 +275,16 @@
     "AgentRunInfo": {
       "additionalProperties": false,
       "properties": {
+        "activity": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "branch": {
           "type": "string"
         },
@@ -334,7 +359,8 @@
         "turns",
         "cost_usd",
         "summary",
-        "error"
+        "error",
+        "activity"
       ],
       "title": "AgentRunInfo",
       "type": "object"
@@ -1040,6 +1066,19 @@
         "runs": {
           "type": "integer"
         },
+        "start_error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "starting": {
+          "type": "boolean"
+        },
         "trigger": {
           "anyOf": [
             {
@@ -1056,6 +1095,8 @@
         "trigger",
         "reason",
         "can_override",
+        "starting",
+        "start_error",
         "latest_run",
         "runs",
         "recent_runs"
@@ -2286,24 +2327,6 @@
         "id"
       ],
       "title": "MergeRequest",
-      "type": "object"
-    },
-    "MergeResult": {
-      "additionalProperties": false,
-      "description": "What `toolbelt git merge` did.",
-      "properties": {
-        "ok": {
-          "type": "boolean"
-        },
-        "output": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "ok",
-        "output"
-      ],
-      "title": "MergeResult",
       "type": "object"
     },
     "MergeValue": {
@@ -4951,9 +4974,6 @@
     "merge_request": {
       "$ref": "#/$defs/MergeRequest"
     },
-    "merge_result": {
-      "$ref": "#/$defs/MergeResult"
-    },
     "slack_accepted": {
       "$ref": "#/$defs/SlackAccepted"
     },
@@ -4988,7 +5008,6 @@
     "slack_draft",
     "slack_send_request",
     "slack_accepted",
-    "merge_result",
     "agent_conversation",
     "agent_start"
   ],

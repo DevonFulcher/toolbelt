@@ -961,6 +961,11 @@ class AgentDecision(Model):
     decided_at: str
     #: A person can start a run by hand past ``reason``.
     can_override: bool
+    #: A run was asked for by hand and has not started yet.
+    starting: bool
+    #: Why a run asked for by hand did not start (``None``: it did, or none
+    #: was asked for).
+    start_error: str | None
 
 
 class AgentRunInfo(Model):
@@ -979,6 +984,10 @@ class AgentRunInfo(Model):
     #: The agent's own report of what it did.
     summary: str | None
     error: str | None
+    #: What a working run is doing now, in a few words (``None``: nothing yet,
+    #: or the run ended). Its turns and cost so far are in ``turns`` and
+    #: ``cost_usd``.
+    activity: str | None
 
 
 class AgentLimitsInfo(Model):
@@ -1041,6 +1050,10 @@ class CardAgent(Model):
     reason: AgentReason | None
     #: A person can start a run by hand past ``reason``.
     can_override: bool
+    #: A run was asked for by hand and has not started yet.
+    starting: bool
+    #: Why a run asked for by hand did not start.
+    start_error: str | None
     #: The branch's most recent run, if it has had one.
     latest_run: AgentRunInfo | None
     runs: int
@@ -1090,14 +1103,6 @@ class MergeQueueRequest(Model):
 
     #: The branch's row id (see ``Branch.id``).
     id: str
-
-
-class MergeResult(Model):
-    """What `toolbelt git merge` did."""
-
-    ok: bool
-    #: The end of its output (the error when it failed).
-    output: str
 
 
 class SlackPerson(Model):
@@ -1396,6 +1401,5 @@ class Wire(Model):
     slack_draft: SlackDraft
     slack_send_request: SlackSendRequest
     slack_accepted: SlackAccepted
-    merge_result: MergeResult
     agent_conversation: AgentConversation
     agent_start: AgentStart

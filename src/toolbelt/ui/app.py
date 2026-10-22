@@ -62,7 +62,6 @@ from toolbelt.autonomous_agents.dispatcher import (
     DEFAULT_POLL_INTERVAL_SECONDS,
     Dispatcher,
     DispatchTask,
-    OverrideRefused,
 )
 from toolbelt.autonomous_agents.limits import (
     AGENTS_ENABLED_SETTING,
@@ -1158,16 +1157,19 @@ def create_app(
 
         return await asyncio.to_thread(build)
 
-    @app.post("/api/merge", response_model=api.MergeResult)
-    async def merge_branch(body: api.MergeRequest) -> api.MergeResult:
+    @app.post("/api/merge", status_code=202)
+    async def merge_branch(body: api.MergeRequest) -> dict[str, bool]:
+        """Merge the branch's PR. It is merged in the background: the PR reads
+        ``merging`` until done, and a failure is its merge-queue ``notice``."""
         repo_id, name = branch_ref(body.id)
+        parents = await asyncio.to_thread(_all_parents, repo_id)
+        if name not in parents:
+            raise HTTPException(status_code=404, detail="no such branch")
         try:
-            result = await land(repo_id, name)
-        except LandRefused as refused:
-            raise HTTPException(
-                status_code=refused.status, detail=refused.detail
-            ) from refused
-        return api.MergeResult(ok=result.ok, output=result.output)
+            merge_queue.merge_now(repo_id, name)
+        except MergeQueueRefused as refused:
+            raise HTTPException(status_code=409, detail=str(refused)) from refused
+        return {"merging": True}
 
     @app.post("/api/merge/queue", response_model=api.MergeQueueInfo)
     async def queue_merge(body: api.MergeQueueRequest) -> api.MergeQueueInfo:
@@ -1272,19 +1274,18 @@ def create_app(
             raise HTTPException(status_code=404, detail="no such run")
         return conversation
 
-    @app.post("/api/agents/start")
+    @app.post("/api/agents/start", status_code=202)
     async def start_agent_run(body: api.AgentStart) -> dict[str, bool]:
+        """Start a run on a task by hand. The run is started in the background:
+        the task reads ``starting`` until it is recorded, and a refusal is
+        reported on the task."""
         repo_id, _, branch = body.id.partition(":")
         try:
-            await dispatcher.start_now((int(repo_id), branch))
+            dispatcher.request_start((int(repo_id), branch))
         except (KeyError, ValueError) as error:
             raise HTTPException(
                 status_code=404, detail="no such task for an agent"
             ) from error
-        except OverrideRefused as refused:
-            raise HTTPException(
-                status_code=409, detail=refused.reason.text
-            ) from refused
         return {"starting": True}
 
     # Webhooks received since the server started, by event, and how many of

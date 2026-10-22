@@ -10,6 +10,8 @@ import asyncio
 import re
 import subprocess
 import sys
+import threading
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -995,6 +997,18 @@ def test_tt_ui_serves_over_uvicorn(tmp_path):
 # ---- landing a PR from the page ---------------------------------------------------------
 
 
+def wait_until(condition, what: str) -> None:
+    for _ in range(300):
+        if condition():
+            return
+        time.sleep(0.01)
+    raise AssertionError(f"timed out waiting for {what}")
+
+
+def merge_info(client: TestClient, name: str = "devon/a") -> dict | None:
+    return next(b for b in snap(client)["branches"] if b["name"] == name)["merge_queue"]
+
+
 def test_a_branch_whose_next_action_is_merge_is_landed_with_toolbelt_in_its_repo(
     tmp_path, make_client, fetcher
 ):
@@ -1006,28 +1020,59 @@ def test_a_branch_whose_next_action_is_merge_is_landed_with_toolbelt_in_its_repo
         calls.append((path, pr_url))
         return MergeOutcome(ok=True, output="merged")
 
-    client = make_client(merger=merger)
-    refresh(client)
+    with make_client(merger=merger) as client:
+        client.portal.call(client.app.state.refresher.run_once)
 
-    body = client.post("/api/merge", json={"id": f"{repo_id}:devon/a"}).json()
+        response = client.post("/api/merge", json={"id": f"{repo_id}:devon/a"})
 
-    assert body == {"ok": True, "output": "merged"}
-    assert calls == [(tmp_path / "api", "https://github.com/o/r/pull/5")]
+        # Accepted at once: the merge happens after the answer.
+        assert response.status_code == 202 and response.json() == {"merging": True}
+        wait_until(lambda: calls, "the merge")
+        assert calls == [(tmp_path / "api", "https://github.com/o/r/pull/5")]
+        wait_until(
+            lambda: not (merge_info(client) or {}).get("merging"), "it to finish"
+        )
 
 
-def test_a_failed_merge_reports_the_error_for_the_page_to_show(
+def test_a_merge_in_progress_reads_merging_on_the_branch(
     tmp_path, make_client, fetcher
 ):
     repo_id = seed_repo(tmp_path, "api", {"devon/a": "main"})
     fetcher.statuses["devon/a"] = open_status(review=ReviewState.APPROVED)
-    client = make_client(
+    release = threading.Event()
+
+    def merger(path: Path, pr_url: str):
+        release.wait(timeout=10)
+        return MergeOutcome(ok=True, output="merged")
+
+    with make_client(merger=merger) as client:
+        client.portal.call(client.app.state.refresher.run_once)
+        client.post("/api/merge", json={"id": f"{repo_id}:devon/a"})
+
+        wait_until(lambda: (merge_info(client) or {}).get("merging"), "merging to show")
+        release.set()
+        wait_until(
+            lambda: not (merge_info(client) or {}).get("merging"), "it to finish"
+        )
+
+
+def test_a_failed_merge_leaves_the_error_on_the_branch_for_the_page_to_show(
+    tmp_path, make_client, fetcher
+):
+    repo_id = seed_repo(tmp_path, "api", {"devon/a": "main"})
+    fetcher.statuses["devon/a"] = open_status(review=ReviewState.APPROVED)
+    with make_client(
         merger=lambda path, url: MergeOutcome(ok=False, output="GraphQL: not mergeable")
-    )
-    refresh(client)
+    ) as client:
+        client.portal.call(client.app.state.refresher.run_once)
 
-    body = client.post("/api/merge", json={"id": f"{repo_id}:devon/a"}).json()
+        accepted = client.post("/api/merge", json={"id": f"{repo_id}:devon/a"})
 
-    assert body == {"ok": False, "output": "GraphQL: not mergeable"}
+        assert accepted.status_code == 202
+        wait_until(lambda: (merge_info(client) or {}).get("notice"), "the failure note")
+        info = merge_info(client)
+        assert info is not None and info["merging"] is False
+        assert info["notice"] == "The merge failed: GraphQL: not mergeable"
 
 
 def test_a_branch_that_is_not_ready_to_merge_is_refused_and_nothing_runs(

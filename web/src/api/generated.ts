@@ -134,7 +134,6 @@ export interface Wire {
   merge_queue_info: MergeQueueInfo;
   merge_queue_request: MergeQueueRequest;
   merge_request: MergeRequest;
-  merge_result: MergeResult;
   slack_accepted: SlackAccepted;
   slack_draft: SlackDraft;
   slack_draft_request: SlackDraftRequest;
@@ -199,6 +198,8 @@ export interface AgentDecision {
   id: string;
   reason: AgentReason | null;
   repo: string;
+  start_error: string | null;
+  starting: boolean;
   trigger: AgentTrigger;
 }
 export interface AgentLimitsInfo {
@@ -214,6 +215,7 @@ export interface AgentLimitsInfo {
   task_usd_per_day: number;
 }
 export interface AgentRunInfo {
+  activity: string | null;
   branch: string;
   cost_usd: number;
   ended_at: string | null;
@@ -627,6 +629,8 @@ export interface CardAgent {
   reason: AgentReason | null;
   recent_runs: AgentRunInfo[];
   runs: number;
+  start_error: string | null;
+  starting: boolean;
   trigger: AgentTrigger | null;
 }
 /**
@@ -809,13 +813,6 @@ export interface MergeQueueRequest {
  */
 export interface MergeRequest {
   id: string;
-}
-/**
- * What `toolbelt git merge` did.
- */
-export interface MergeResult {
-  ok: boolean;
-  output: string;
 }
 /**
  * The answer to ``POST /api/slack/send``: the message is being posted in

@@ -35,3 +35,7 @@ when it was queued, and when), so a restart keeps it. It is checked every ten
 seconds against the PR lookups the page already keeps current; a merge starts
 within that time of the CI passing. `POST /api/merge/queue` and
 `/api/merge/unqueue` (body `{"id": "<repo id>:<branch>"}`) queue and cancel.
+
+The Merge button uses the same background path: `POST /api/merge` answers `202`
+at once, the card reads "Merging…", and if `toolbelt git merge` fails the card
+shows its output ("The merge failed: …") until the next attempt.

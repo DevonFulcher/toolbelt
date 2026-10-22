@@ -1,3 +1,5 @@
+import time
+
 """The Agents view's server side: `/api/agents` and the on/off switch."""
 
 import json
@@ -255,30 +257,46 @@ def test_the_conversation_of_an_unknown_run_is_a_404():
     assert client_for(r).get("/api/agents/runs/nope/conversation").status_code == 404
 
 
-def test_a_person_can_start_a_run_on_a_task_an_agent_would_leave_alone():
+def wait_until(condition, what: str) -> None:
+    for _ in range(300):
+        if condition():
+            return
+        time.sleep(0.01)
+    raise AssertionError(f"timed out waiting for {what}")
+
+
+def test_a_run_can_be_started_by_hand_past_a_reason_a_person_may_override():
     r = rig(draft=PrSnapshot(status(pr=PrState.DRAFT), None))
     r.tick()
     set_enabled(True)
-    client = client_for(r)
 
-    (decision,) = client.get("/api/agents").json()["decisions"]
-    assert decision["can_override"] is True
+    with client_for(r) as client:
+        (decision,) = client.get("/api/agents").json()["decisions"]
+        assert decision["can_override"] is True
 
-    assert client.post("/api/agents/start", json={"id": decision["id"]}).json() == {
-        "starting": True
-    }
-    assert r.launched == ["draft"]
+        accepted = client.post("/api/agents/start", json={"id": decision["id"]})
+
+        assert accepted.status_code == 202 and accepted.json() == {"starting": True}
+        wait_until(lambda: r.launched == ["draft"], "the run to start")
 
 
-def test_starting_a_run_by_hand_says_why_when_it_cannot():
+def test_starting_a_run_by_hand_is_accepted_at_once_and_a_refusal_is_shown_on_the_task():
     r = rig(a=PrSnapshot(status(), None))
     r.holders["a"] = (holder("agent", "idle"),)
     r.tick()
+    set_enabled(True)
 
-    refused = client_for(r).post("/api/agents/start", json={"id": "1:a"})
+    with client_for(r) as client:
+        accepted = client.post("/api/agents/start", json={"id": "1:a"})
 
-    assert refused.status_code == 409
-    assert "holds this task" in refused.json()["detail"]
+        assert accepted.status_code == 202  # not 409: the decision is made after
+        wait_until(
+            lambda: client.get("/api/agents").json()["decisions"][0]["start_error"],
+            "the refusal",
+        )
+        (decision,) = client.get("/api/agents").json()["decisions"]
+        assert "holds this task" in decision["start_error"]
+        assert decision["starting"] is False
     assert r.launched == []
 
 

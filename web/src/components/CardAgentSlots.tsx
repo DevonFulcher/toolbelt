@@ -7,7 +7,7 @@ import type { Branch, BranchExtras, SlotDimensions } from "../api/generated";
 import { formatUsd } from "../logic/spendFormat";
 import { RUN_TEXT, RUN_TONE, TRIGGER_LABEL, reasonText, runCost } from "./AgentsView";
 import { RunsDialog } from "./RunsDialog";
-import { Pill } from "./presentation";
+import { Age, Pill } from "./presentation";
 
 const NO_RUN = <span className="muted">–</span>;
 
@@ -40,6 +40,8 @@ export function AgentSlots({
   const agent = extras?.agent;
   const run = agent?.latest_run ?? null;
   const working = agent?.reason?.code === "working" || run?.state === "running";
+  // A run asked for by hand is on its way: the server is making the decision.
+  const starting = !working && (agent?.starting ?? false);
 
   return (
     <>
@@ -58,13 +60,17 @@ export function AgentSlots({
               </button>
             )}
           </>
+        ) : starting ? (
+          <>
+            <Pill tone="purple">starting…</Pill> <span className="muted">claiming the task and starting an agent</span>
+          </>
         ) : !agent.has_action ? (
           <span className="muted">nothing for an agent to do</span>
         ) : agent.reason === null ? (
           <>
             <span className="agent-ready">{`may ${TRIGGER_LABEL[agent.trigger ?? "fix_ci"].toLowerCase()} now`}</span>{" "}
             <button type="button" className="agents-toggle" disabled={busy} onClick={() => act(() => startAgentRun(branchId))}>
-              Run an agent now
+              {busy ? "Starting…" : "Run an agent now"}
             </button>
           </>
         ) : (
@@ -72,12 +78,12 @@ export function AgentSlots({
             <span className="agent-blocked">{`${TRIGGER_LABEL[agent.trigger ?? "fix_ci"]}: ${reasonText(agent.reason)}`}</span>{" "}
             {agent.can_override && (
               <button type="button" className="agents-toggle" disabled={busy} onClick={() => act(() => startAgentRun(branchId))}>
-                Run an agent anyway
+                {busy ? "Starting…" : "Run an agent anyway"}
               </button>
             )}
           </>
         )}
-        {problem && <span className="error">{` ${problem}`}</span>}
+        {(problem ?? agent?.start_error) && <span className="error">{` ${problem ?? agent?.start_error}`}</span>}
       </Slot>
       <Slot id="agent_run" label="Latest agent run" state={run ? "ok" : "na"}>
         {agent === undefined ? (
@@ -88,6 +94,13 @@ export function AgentSlots({
           <>
             <Pill tone={RUN_TONE[run.state]}>{RUN_TEXT[run.state]}</Pill>
             {` ${TRIGGER_LABEL[run.trigger]}`}
+            {run.state === "running" && (
+              <span className="muted">
+                {" for "}
+                <Age text="" since={run.started_at} />
+                {`, turn ${run.turns}, ${runCost(run.cost_usd)} so far`}
+              </span>
+            )}
             {agent.runs > 1 && <span className="muted">{` (${agent.runs} runs in all)`}</span>}
           </>
         )}
@@ -100,7 +113,9 @@ export function AgentSlots({
             ) : run.summary ? (
               <span className="agent-run-summary">{run.summary}</span>
             ) : (
-              <span className="muted">{run.state === "running" ? "still running" : "no summary"}</span>
+              <span className="muted">
+                {run.state === "running" ? (run.activity ? `Now: ${run.activity}` : "starting up…") : "no summary"}
+              </span>
             )}{" "}
             <button type="button" className="agents-toggle" aria-haspopup="dialog" onClick={() => setRunsOpen(true)}>
               Runs

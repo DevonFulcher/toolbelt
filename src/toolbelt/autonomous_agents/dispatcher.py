@@ -175,6 +175,12 @@ class Dispatcher:
         self._auth: tuple[float, bool] | None = None
         #: The newest decisions, by (repo id, branch).
         self.decisions: dict[tuple[int, str], Decision] = {}
+        #: Tasks a person asked to start a run on that has not started yet (the
+        #: decision it needs takes seconds), and why one that did not start did
+        #: not (shown until the next request for that task).
+        self.starting: set[tuple[int, str]] = set()
+        self.start_errors: dict[tuple[int, str], str] = {}
+        self._starts: set[asyncio.Task[None]] = set()
         #: What stops every agent right now, as of the last tick.
         self.blockers: list[Reason] = []
         #: When the last tick ended (None: none yet).
@@ -297,6 +303,46 @@ class Dispatcher:
             if decision is not None:
                 decisions[item.task.key] = decision
         return decisions
+
+    def request_start(self, key: tuple[int, str]) -> None:
+        """Starts a run on the task by hand, in the background: the decision it
+        needs (git, the sign-in check) takes seconds, so this returns at once,
+        the task reads ``starting`` until its run is recorded, and a refusal or
+        failure is in ``start_errors``. Raises ``KeyError`` for a task with
+        nothing an agent does."""
+        if key not in self.decisions:
+            raise KeyError(key)
+        if key in self.starting:
+            return
+        self.starting.add(key)
+        self.start_errors.pop(key, None)
+        self._changed()
+        task = asyncio.create_task(self._start_requested(key))
+        self._starts.add(task)
+        task.add_done_callback(self._starts.discard)
+
+    async def _start_requested(self, key: tuple[int, str]) -> None:
+        try:
+            await self.start_now(key)
+        except OverrideRefused as refused:
+            self.start_errors[key] = refused.reason.text
+        except KeyError:
+            self.start_errors[key] = "There is nothing for an agent to do on this task."
+        except Exception as error:  # noqa: BLE001 - shown on the task's card
+            logger.exception("starting a run on %s failed", key[1])
+            self.start_errors[key] = f"Could not start a run: {error}"
+        finally:
+            self.starting.discard(key)
+            self._changed()
+
+    def _changed(self) -> None:
+        if self.on_tick is not None:
+            self.on_tick()
+
+    async def idle(self) -> None:
+        """Returns when no requested start is in flight."""
+        while self._starts:
+            await asyncio.gather(*self._starts)
 
     async def start_now(self, key: tuple[int, str]) -> None:
         """Start a run on the task by hand, past the reasons a person may

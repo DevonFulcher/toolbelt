@@ -508,8 +508,8 @@ function NextSlot({
   const { would_be: wouldBe } = status.next;
   return (
     <Slot id="next" label="Next">
-      {status.next.kind === "merge" && queue?.queued ? (
-        <Pill tone={WHO_TONE.ci} title="Queued: being merged now that its CI has passed">
+      {status.next.kind === "merge" && (queue?.queued || queue?.merging) ? (
+        <Pill tone={WHO_TONE.ci} title="Being merged">
           Merging…
         </Pill>
       ) : status.next.kind === "merge" ? (

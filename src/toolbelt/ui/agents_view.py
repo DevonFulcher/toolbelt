@@ -39,6 +39,7 @@ def run_info(run: AgentRun, repo_names: dict[int, str]) -> api.AgentRunInfo:
         cost_usd=run.cost_usd,
         summary=run.summary,
         error=run.error,
+        activity=run.activity,
     )
 
 
@@ -100,6 +101,8 @@ def build_agents(
                 reason=reason_info(d.reason) if d.reason else None,
                 decided_at=d.decided_at.isoformat(),
                 can_override=d.can_override,
+                starting=(d.repo_id, d.branch) in dispatcher.starting,
+                start_error=dispatcher.start_errors.get((d.repo_id, d.branch)),
             )
             for d in decisions
         ],

@@ -49,6 +49,8 @@ def build_card_extras(
                     if decision and decision.reason
                     else None,
                     can_override=decision.can_override if decision else False,
+                    starting=key in dispatcher.starting,
+                    start_error=dispatcher.start_errors.get(key),
                     latest_run=run_info(runs[0], repo_names) if runs else None,
                     runs=len(runs),
                     recent_runs=[

@@ -208,8 +208,13 @@ function AgentCard({
             ) : (
               <>
                 <span className="agent-ready">An agent could take this, but Start runs is off</span>
-                <button type="button" className="agents-toggle" onClick={() => onStart(decision.id)}>
-                  Run an agent now
+                <button
+                  type="button"
+                  className="agents-toggle"
+                  disabled={decision.starting}
+                  onClick={() => onStart(decision.id)}
+                >
+                  {decision.starting ? "Starting…" : "Run an agent now"}
                 </button>
               </>
             )
@@ -217,12 +222,18 @@ function AgentCard({
             <>
               <span className="agent-blocked">{reasonText(decision.reason)}</span>
               {decision.can_override && (
-                <button type="button" className="agents-toggle" onClick={() => onStart(decision.id)}>
-                  Run an agent anyway
+                <button
+                  type="button"
+                  className="agents-toggle"
+                  disabled={decision.starting}
+                  onClick={() => onStart(decision.id)}
+                >
+                  {decision.starting ? "Starting…" : "Run an agent anyway"}
                 </button>
               )}
             </>
           )}
+          {decision.start_error && <span className="error">{` ${decision.start_error}`}</span>}
         </Field>
       </Group>
       <Group id="task" title="Runs on this task">
@@ -237,6 +248,7 @@ function AgentCard({
                 <span className={`pill tone-${RUN_TONE[run.state]}`}>{RUN_TEXT[run.state]}</span>
                 <span>{`${when(run.started_at)} · ${runCost(run.cost_usd)}`}</span>
                 {run.summary && <span className="agent-run-summary">{run.summary}</span>}
+                {run.state === "running" && run.activity && <span className="agent-run-activity">{run.activity}</span>}
                 {run.state === "running" && (
                   <button type="button" className="agents-toggle" onClick={() => onStop(run.run_id)}>
                     Stop

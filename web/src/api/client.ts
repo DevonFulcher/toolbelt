@@ -3,7 +3,6 @@ import type {
   AgentConversation,
   Agents,
   MergeQueueInfo,
-  MergeResult,
   Snapshot,
   SlackDraft,
   SlackSendRequest,
@@ -158,15 +157,9 @@ export async function unqueueMerge(id: string, fetchImpl: typeof fetch = fetch):
   if (!response.ok) throw new Error(`/api/merge/unqueue: HTTP ${response.status}`);
 }
 
-export async function mergeBranch(id: string, fetchImpl: typeof fetch = fetch): Promise<MergeResult> {
-  const response = await fetchImpl("/api/merge", {
-    method: "POST",
-    headers: { Accept: "application/json", "Content-Type": "application/json" },
-    body: JSON.stringify({ id }),
-  });
-  if (!response.ok) {
-    const detail = ((await response.json().catch(() => ({}))) as { detail?: unknown }).detail;
-    throw new Error(typeof detail === "string" ? detail : `/api/merge: HTTP ${response.status}`);
-  }
-  return (await response.json()) as MergeResult;
+/** Merge the branch's PR. It is merged in the background: this resolves once the
+ * server has accepted it (the PR then reads `merging`, and a failure is its merge
+ * queue `notice`), and rejects with the server's reason when it is not ready. */
+export async function mergeBranch(id: string, fetchImpl: typeof fetch = fetch): Promise<void> {
+  await postJson<unknown>("/api/merge", { id }, fetchImpl);
 }

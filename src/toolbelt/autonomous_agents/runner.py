@@ -11,6 +11,7 @@ interactive session.
 """
 
 import asyncio
+import time
 import uuid
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
@@ -18,7 +19,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-lazy from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, ResultMessage
+lazy from claude_agent_sdk import (
+    AssistantMessage,
+    ClaudeAgentOptions,
+    ResultMessage,
+    TextBlock,
+    ToolUseBlock,
+)
 lazy from claude_agent_sdk import query as sdk_query
 
 from toolbelt.autonomous_agents.claim_writer import HEARTBEAT_SECONDS, RunClaim
@@ -42,6 +49,11 @@ ALLOWED_TOOLS = ["Bash", "Read", "Edit", "Write", "Glob", "Grep"]
 DISALLOWED_TOOLS = ["Task", "WebFetch", "WebSearch", "NotebookEdit"]
 #: Longest summary kept on a run.
 SUMMARY_LIMIT = 4000
+#: A working run's progress (turns, cost, what it is doing) is saved this often
+#: at most, for the page to show.
+PROGRESS_SECONDS = 3.0
+#: Longest "what it is doing now" kept.
+ACTIVITY_LIMIT = 160
 
 _AUTH_HINTS = ("oauth", "authenticate", "not logged in", "please run /login")
 
@@ -83,6 +95,36 @@ class _Spend:
         )
 
 
+def _first_line(text: str) -> str:
+    return text.strip().split("\n", 1)[0].strip()
+
+
+def _tool_activity(name: str, arguments: dict[str, Any]) -> str:
+    """A tool call in a few words."""
+    if name == "Bash":
+        return f"Running: {_first_line(str(arguments.get('command', '')))}"
+    if name in ("Read", "Edit", "Write"):
+        verb = "Reading" if name == "Read" else "Editing"
+        return f"{verb} {arguments.get('file_path', '')}"
+    if name in ("Grep", "Glob"):
+        return f"Searching for {arguments.get('pattern', '')}"
+    return f"Using {name}"
+
+
+def _activity(message: Any) -> str | None:
+    """What an assistant message says the agent is doing: its last tool call,
+    else the first line of its text; ``None`` when it says nothing."""
+    tool: str | None = None
+    text: str | None = None
+    for block in message.content:
+        if isinstance(block, ToolUseBlock):
+            tool = _tool_activity(block.name, block.input)
+        elif isinstance(block, TextBlock) and block.text.strip():
+            text = _first_line(block.text)
+    found = tool or text
+    return found[:ACTIVITY_LIMIT] if found else None
+
+
 def _is_auth_failure(text: str) -> bool:
     folded = text.casefold()
     return any(hint in folded for hint in _AUTH_HINTS)
@@ -98,6 +140,7 @@ class AgentRunner:
         wall_clock: Callable[[], datetime],
         query: Query | None = None,
         heartbeat_seconds: float = HEARTBEAT_SECONDS,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._db_path = db_path
         self._claims_dir = claims_dir
@@ -105,6 +148,7 @@ class AgentRunner:
         self._wall_clock = wall_clock
         self._query = query
         self._heartbeat_seconds = heartbeat_seconds
+        self._clock = clock
         #: The runs working now, by run id.
         self.running: dict[str, asyncio.Task[None]] = {}
         #: Called when a run starts and when it ends.
@@ -158,7 +202,11 @@ class AgentRunner:
                 store.close()
 
         run_id = await asyncio.to_thread(create)
-        task = asyncio.create_task(self._run(run_id, decision, session_id))
+        # The task is held from the moment its run is recorded, not once the
+        # run's own task gets going.
+        claim = RunClaim(self._claims_dir(), run_id, decision.worktree)
+        claim.start(now)
+        task = asyncio.create_task(self._run(run_id, decision, session_id, claim))
         self.running[run_id] = task
         task.add_done_callback(lambda _t: self.running.pop(run_id, None))
         if self.on_change is not None:
@@ -178,12 +226,14 @@ class AgentRunner:
             await asyncio.sleep(self._heartbeat_seconds)
             claim.heartbeat(self._wall_clock())
 
-    async def _run(self, run_id: str, decision: Decision, session_id: str) -> None:
+    async def _run(
+        self, run_id: str, decision: Decision, session_id: str, claim: RunClaim
+    ) -> None:
         assert decision.worktree is not None
-        claim = RunClaim(self._claims_dir(), run_id, decision.worktree)
-        claim.start(self._wall_clock())
         heartbeat = asyncio.create_task(self._heartbeat(claim))
         spend = _Spend()
+        activity: str | None = None
+        saved_at = self._clock()
         result: Any = None
         state = "failed"
         error: str | None = "the run ended without a result"
@@ -196,6 +246,14 @@ class AgentRunner:
                 ):
                     if isinstance(message, AssistantMessage):
                         spend.add(message)
+                        activity = _activity(message) or activity
+                        if self._clock() - saved_at >= PROGRESS_SECONDS:
+                            saved_at = self._clock()
+                            await asyncio.to_thread(
+                                self._save_progress, run_id, spend, activity
+                            )
+                            if self.on_change is not None:
+                                self.on_change()
                     elif isinstance(message, ResultMessage):
                         result = message
             state, error = self._classify(result)
@@ -232,6 +290,19 @@ class AgentRunner:
                 return "failed", "Claude is not signed in: run `claude auth login`."
             return "failed", text
         return "succeeded", None
+
+    def _save_progress(self, run_id: str, spend: _Spend, activity: str | None) -> None:
+        store = self._store()
+        try:
+            store.update_agent_run_progress(
+                run_id,
+                turns=spend.turns,
+                cost_usd=spend.cost_usd,
+                tokens=spend.tokens,
+                activity=activity,
+            )
+        finally:
+            store.close()
 
     def _finish(
         self,

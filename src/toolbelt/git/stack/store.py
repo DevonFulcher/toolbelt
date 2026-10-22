@@ -373,6 +373,12 @@ _MIGRATIONS: list[tuple[str, ...]] = [
         )
         """,
     ),
+    (
+        # What a working run is doing now, in a few words (see
+        # ``autonomous_agents.runner``): kept while it runs, with its turns and
+        # cost so far, so a card can show a run that has not finished.
+        "ALTER TABLE agent_runs ADD COLUMN activity TEXT",
+    ),
 ]
 
 
@@ -629,6 +635,8 @@ class AgentRun:
     #: The agent's own report of what it did.
     summary: str | None
     error: str | None
+    #: What a working run is doing now (``None``: nothing yet, or it ended).
+    activity: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1321,7 +1329,7 @@ class StackStore:
                 "UPDATE agent_runs SET state = ?, ended_at = ?, session_id = ?, "
                 "turns = ?, cost_usd = ?, input_tokens = ?, output_tokens = ?, "
                 "cache_read_tokens = ?, cache_write_5m_tokens = ?, "
-                "cache_write_1h_tokens = ?, summary = ?, error = ? "
+                "cache_write_1h_tokens = ?, summary = ?, error = ?, activity = NULL "
                 "WHERE run_id = ? AND state = 'running'",
                 (
                     state,
@@ -1336,6 +1344,36 @@ class StackStore:
                     tokens.cache_write_1h,
                     summary,
                     error,
+                    run_id,
+                ),
+            )
+
+    def update_agent_run_progress(
+        self,
+        run_id: str,
+        *,
+        turns: int,
+        cost_usd: float,
+        tokens: TokenCounts,
+        activity: str | None,
+    ) -> None:
+        """What a run has done so far, while it works. A run that ended is left
+        as it is."""
+        with self._write() as conn:
+            conn.execute(
+                "UPDATE agent_runs SET turns = ?, cost_usd = ?, input_tokens = ?, "
+                "output_tokens = ?, cache_read_tokens = ?, "
+                "cache_write_5m_tokens = ?, cache_write_1h_tokens = ?, "
+                "activity = ? WHERE run_id = ? AND state = 'running'",
+                (
+                    turns,
+                    cost_usd,
+                    tokens.input,
+                    tokens.output,
+                    tokens.cache_read,
+                    tokens.cache_write_5m,
+                    tokens.cache_write_1h,
+                    activity,
                     run_id,
                 ),
             )
@@ -1381,6 +1419,7 @@ class StackStore:
                 ),
                 summary=r["summary"],
                 error=r["error"],
+                activity=r["activity"],
             )
             for r in rows
         ]

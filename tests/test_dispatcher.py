@@ -397,6 +397,84 @@ def test_when_looking_into_it_fails_the_decision_stands_without_the_explanation(
     assert reason.code == "thrash" and reason.text.endswith("so it is left to you.")
 
 
+# ---- starting a run by hand, in the background ----------------------------------------------------
+
+
+def start_by_hand(r: Rig, branch: str = "a") -> None:
+    async def scenario() -> None:
+        r.dispatcher.request_start((1, branch))
+        r.starting_right_after = (1, branch) in r.dispatcher.starting
+        await r.dispatcher.idle()
+
+    asyncio.run(scenario())
+
+
+def test_a_run_started_by_hand_reads_starting_until_it_has_started():
+    r = rig(a=PrSnapshot(status(pr=PrState.DRAFT), None))
+    r.tick()
+
+    start_by_hand(r)
+
+    assert r.starting_right_after is True  # at once, before the decision is made
+    assert r.dispatcher.starting == set()
+    assert r.launched == ["a"]
+    assert r.dispatcher.start_errors == {}
+
+
+def test_a_refusal_is_kept_for_the_task_until_it_is_asked_again():
+    r = rig(a=PrSnapshot(status(), None))
+    r.holders["a"] = (holder("agent", "idle"),)
+    r.tick()
+
+    start_by_hand(r)
+
+    assert "holds this task" in r.dispatcher.start_errors[(1, "a")]
+    r.holders["a"] = ()
+    r.launching = False  # only the request below starts a run
+    r.tick()
+    start_by_hand(r)
+    assert r.dispatcher.start_errors == {} and r.launched == ["a"]
+
+
+def test_a_task_with_nothing_for_an_agent_cannot_be_asked_for():
+    r = rig(a=PrSnapshot(status(ci=CiState.SUCCESS, review=ReviewState.APPROVED), None))
+    r.tick()
+
+    with pytest.raises(KeyError):
+        asyncio.run(_request(r))
+
+
+async def _request(r: Rig) -> None:
+    r.dispatcher.request_start((1, "a"))
+
+
+def test_a_failure_to_start_is_shown_on_the_task_not_raised():
+    r = rig(a=PrSnapshot(status(pr=PrState.DRAFT), None))
+    r.tick()
+
+    async def failing(decision) -> None:
+        raise RuntimeError("no worktree")
+
+    r.dispatcher._launch = failing
+    start_by_hand(r)
+
+    assert r.dispatcher.start_errors[(1, "a")] == "Could not start a run: no worktree"
+
+
+def test_asking_twice_while_one_is_starting_starts_one_run():
+    r = rig(a=PrSnapshot(status(pr=PrState.DRAFT), None))
+    r.tick()
+
+    async def scenario() -> None:
+        r.dispatcher.request_start((1, "a"))
+        r.dispatcher.request_start((1, "a"))
+        await r.dispatcher.idle()
+
+    asyncio.run(scenario())
+
+    assert r.launched == ["a"]
+
+
 # ---- polling GitHub --------------------------------------------------------------------------------
 
 
