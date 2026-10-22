@@ -872,9 +872,35 @@ def create_app(
     watcher = StructureWatcher(
         version=db_version or held_data_version, hub=hub, tick=tick
     )
+
     # Tracked branches, runs and settings live in the stack DB: when it
     # changes, what the cards and the Agents view show may have too.
-    watcher.on_change = lambda: views.notify("agents", "extras")
+    def reload_slack_posts() -> None:
+        """Another process recorded a post (``toolbelt slack link``): read the
+        posts again and update the cards of the PRs whose posts changed."""
+        if not isinstance(slack, SlackTracker):
+            return
+        changed_prs = slack.reload()
+        if not changed_prs:
+            return
+        affected: set[BranchKey] = set()
+        for tracked in _tracked_branches():
+            looked_up = refresher.get(tracked.repo_id, tracked.branch)
+            if (
+                looked_up is not None
+                and looked_up.facts is not None
+                and (slug_of_repo(tracked.repo_id), looked_up.facts.number)
+                in changed_prs
+            ):
+                affected.add(tracked.key)
+        if affected:
+            publish_slack(affected)
+
+    def on_database_change() -> None:
+        views.notify("agents", "extras")
+        reload_slack_posts()
+
+    watcher.on_change = on_database_change
 
     def next_kind(repo_id: int, name: str) -> str | None:
         status = branch_status(repo_id, _all_parents(repo_id), name, wall_clock())

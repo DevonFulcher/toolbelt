@@ -118,6 +118,7 @@ def rig(tmp_path: Path):
         slack_settings=CONFIG,
         slack_proxy=proxy,  # type: ignore[arg-type]
         slack_reader=reader,  # type: ignore[arg-type]
+        tick=0.05,  # a change another process makes to the database is seen at once
     )
     asyncio.run(app.state.refresher.run_once())
     app.state.reader = reader
@@ -353,3 +354,39 @@ def test_a_failed_import_is_a_bad_gateway(rig):
     response = client.post("/api/slack/import", json={"days": 5, "channel": None})
 
     assert response.status_code == 502
+
+
+def test_a_post_another_process_records_shows_up_on_the_card_without_a_restart(rig):
+    from toolbelt.ui.slack_link import parse_message_url, rows_for_prs
+
+    app, repo_id, _, client = rig
+    assert branches(client)["a"]["slack"]["posted"] is False
+    queue = app.state.hub.subscribe()
+
+    # What ``toolbelt slack link`` does: write the posts to the database.
+    store = StackStore(default_db_path())
+    store.save_slack_posts(
+        rows_for_prs(
+            parse_message_url("https://x.slack.com/archives/DTEST/p1792696217666559"),
+            [("o/r", 1)],
+            ALAN,
+        )
+    )
+    store.close()
+
+    for _ in range(300):
+        slack = branches(client)["a"]["slack"]
+        if slack["posted"]:
+            break
+        time.sleep(0.01)
+    assert slack["posted"] is True and slack["assignee"] == "alan"
+    assert branches(client)["b"]["slack"]["posted"] is False  # another PR is untouched
+    events = []
+    while not queue.empty():
+        events.append(queue.get_nowait())
+    assert any(
+        name == "status"
+        and data["branch_id"] == f"{repo_id}:a"
+        and data["slack"]["posted"]
+        for name, data in events
+    )

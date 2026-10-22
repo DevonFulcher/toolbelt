@@ -63,7 +63,7 @@ Defaults are conservative; override any of them in `agents:` of
 | --- | --- |
 | model | `claude-haiku-5-5` (no escalation, no subagents) |
 | one run | $0.25, 40 turns, 15 minutes |
-| one task | 2 runs per commit, 3 per 24 hours, $0.50 per 24 hours |
+| one task | 2 runs of the same job per commit, 3 per 24 hours, $0.50 per 24 hours |
 | all agents | $3 per 24 hours, $30 per month (separate from the account's own limit) |
 | back-off | 10 minutes after a task's run |
 | one at a time | yes |

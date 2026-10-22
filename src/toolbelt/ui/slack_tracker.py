@@ -69,11 +69,17 @@ class SlackTracker:
         self._notice: dict[tuple[str, int], str] = {}
         self.reload()
 
-    def reload(self) -> None:
+    def reload(self) -> set[tuple[str, int]]:
+        """Reads the posts again; returns the PRs (``(owner/name, number)``)
+        whose posts are not what they were."""
         by_pr: dict[tuple[str, int], list[SlackPostRow]] = {}
         for row in self._posts():
             by_pr.setdefault((row.repo, row.pr_number), []).append(row)
+        before = self._by_pr
         self._by_pr = by_pr
+        return {
+            pr for pr in before.keys() | by_pr.keys() if before.get(pr) != by_pr.get(pr)
+        }
 
     def is_posting(self, slug: str, number: int) -> bool:
         return (slug, number) in self._posting

@@ -236,3 +236,18 @@ def test_running_the_watcher_reports_changes_every_tick():
         pass
 
     assert changes == [{(1, "a")}]
+
+
+def test_reload_says_which_prs_posts_changed():
+    posts = Posts(row(30))
+    t = tracker(posts)
+
+    posts.rows.append(row(2, number=9))
+    changed = t.reload()
+    unchanged = t.reload()
+    posts.rows.clear()
+    removed = t.reload()
+
+    assert changed == {("o/r", 9)}
+    assert unchanged == set()
+    assert removed == {("o/r", 5), ("o/r", 9)}

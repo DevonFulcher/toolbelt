@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 
 from toolbelt.git.stack.store import SlackPostRow
 from toolbelt.ui.slack_compose import Person
-from toolbelt.ui.slack_proxy import Runner, claude_runner, parse_answer
+from toolbelt.ui.slack_proxy import Runner, SlackProxyError, claude_runner, parse_answer
 
 READ_CHANNEL_TOOL = "mcp__claude_ai_Slack__slack_read_channel"
 READ_THREAD_TOOL = "mcp__claude_ai_Slack__slack_read_thread"
@@ -42,6 +42,15 @@ class ChannelRead:
     """The user's messages, and what the session that read them cost."""
 
     messages: list[ChannelMessage]
+    cost_usd: float
+    session_id: str | None
+
+
+@dataclass(frozen=True)
+class MessageRead:
+    """One message, and what the session that read it cost."""
+
+    message: ChannelMessage
     cost_usd: float
     session_id: str | None
 
@@ -71,6 +80,42 @@ class SlackReader:
                 )
         return ChannelRead(messages, session.cost_usd, session.session_id)
 
+    async def read_message(
+        self, *, channel: str, ts: str, thread_ts: str | None = None
+    ) -> MessageRead:
+        """The message at ``ts`` in ``channel``. ``thread_ts`` is the first
+        message of its thread when it is a reply (a reply is found through its
+        thread)."""
+        output = await self._runner(
+            ["--allowedTools", READ_THREAD_TOOL],
+            _read_message_prompt(channel, ts, thread_ts),
+        )
+        session = parse_answer(output)
+        if "error" in session.data:
+            raise SlackProxyError(
+                f"Slack would not show the message: {session.data['error']}"
+            )
+        found_ts = str(session.data.get("ts") or ts)
+        parent = str(session.data.get("thread_ts") or found_ts)
+        return MessageRead(
+            ChannelMessage(
+                found_ts,
+                None if parent == found_ts else parent,
+                str(session.data["text"]),
+            ),
+            session.cost_usd,
+            session.session_id,
+        )
+
+
+def _read_message_prompt(channel: str, ts: str, thread_ts: str | None) -> str:
+    return f"""Read Slack and change nothing. Do exactly these steps.
+
+1. Call the Slack tool slack_read_thread once with channel_id "{channel}" and message_ts "{thread_ts or ts}" (limit 100, response_format "concise").
+2. Find the message whose ts is "{ts}" in what it returned.
+3. Answer with only a JSON object: {{"ts": "<that message's ts>", "thread_ts": "<the ts of the first message of its thread>", "text": "<the message text exactly as Slack returned it, cut to its first {MAX_TEXT} characters>"}}. If you cannot find it, answer {{"error": "<why>"}}.
+"""
+
 
 def _read_prompt(channel: str, user_id: str, oldest: int) -> str:
     return f"""Read Slack and change nothing. Do exactly these steps.
@@ -93,7 +138,8 @@ def rows_from_messages(
         seen: set[tuple[str, int]] = set()
         for line in message.text.split("\n"):
             line_mentions = _MENTION.findall(line)
-            for repo, number in _PR_URL.findall(line):
+            for found_repo, number in _PR_URL.findall(line):
+                repo = found_repo.lower()
                 pr = (repo, int(number))
                 if pr in seen:
                     continue

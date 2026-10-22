@@ -92,6 +92,28 @@ status polling never reads Slack, so it costs nothing. A bump falling due is
 announced by a watcher that checks once a minute. Posts made by hand outside
 toolbelt are not seen until they are imported.
 
+## Linking one message by hand
+
+`toolbelt slack link <message link>` records a Slack message you posted yourself
+as the post of the PRs (tasks) it is about, with the same effect as posting from
+the card: the PR reads posted, its post age counts from the message, and the
+person asked is its Assigned Review. The link is the message's "Copy link"
+(`https://<workspace>.slack.com/archives/<channel>/p<digits>`); a link to a reply
+in a thread (it ends `?thread_ts=...`) is recorded as a bump.
+
+```
+tt slack link https://dbt-labs.slack.com/archives/C0A0TFP0XC6/p1792696217666559
+tt slack link <link> --pr https://github.com/o/r/pull/7 --pr https://github.com/o/r/pull/8 --ask will.james
+```
+
+Without `--pr` the PRs are the ones the message links, read out of it by a
+read-only Slack session (about $0.02). With `--pr` Slack is not read at all.
+`--ask` names who was asked (a `slack.reviewers` name); without it that is the
+person the message mentions on the PR's line. The message may be in any channel or
+a direct message. The posts go into the stack DB, and a running `tt ui` notices
+and updates its cards without a restart. A bump never replies in a channel other
+than the configured one, so a message elsewhere only marks the PR as posted.
+
 ## Importing posts made by hand
 
 `POST /api/slack/import` with `{"days": 5, "channel": null}` records your own

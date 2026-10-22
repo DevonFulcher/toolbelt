@@ -61,13 +61,14 @@ def run(
     ended: datetime | None = None,
     cost=0.01,
     state="succeeded",
+    trigger="fix_ci",
 ) -> AgentRun:
     return AgentRun(
         run_id=f"r-{started.timestamp()}-{task_id}",
         task_id=task_id,
         repo_id=1,
         branch="devon/a",
-        trigger="fix_ci",
+        trigger=trigger,
         head_sha=head,
         model=LIMITS.model,
         state=state,
@@ -181,6 +182,31 @@ def test_the_runs_already_made_on_this_commit_are_limited():
 
     assert reason_code(task(), world(runs)) == "runs_per_head"
     assert reason_code(task(head_sha="new"), world(runs)) is None
+
+
+def test_runs_that_did_another_job_on_this_commit_do_not_count_against_the_limit():
+    ci_runs = [
+        run(started=NOW - timedelta(days=2)),
+        run(started=NOW - timedelta(days=3)),
+    ]
+
+    assert reason_code(task(action_kind="fix_ci"), world(ci_runs)) == "runs_per_head"
+    # The same commit, but the job now is the comments: the CI runs were another job.
+    assert reason_code(task(action_kind="resolve_comments"), world(ci_runs)) is None
+
+
+def test_the_limit_counts_each_job_on_its_own():
+    runs = [
+        run(started=NOW - timedelta(days=2), trigger="resolve_comments"),
+        run(started=NOW - timedelta(days=3), trigger="resolve_comments"),
+        run(started=NOW - timedelta(days=4), trigger="fix_ci"),
+    ]
+
+    assert (
+        reason_code(task(action_kind="resolve_comments"), world(runs))
+        == "runs_per_head"
+    )
+    assert reason_code(task(action_kind="fix_ci"), world(runs)) is None
 
 
 def test_runs_in_24_hours_are_limited_per_task_and_say_when_it_clears():

@@ -178,3 +178,57 @@ def test_prs_of_different_repos_with_the_same_number_are_kept_apart():
     )
 
     assert [(r.repo, r.pr_number) for r in result] == [("o/a", 5), ("o/b", 5)]
+
+
+# ---- reading one message by its link --------------------------------------------------
+
+
+def read_message(output: str, **kwargs):
+    runner = Runner(output)
+    result = asyncio.run(
+        SlackReader(runner).read_message(
+            channel="CREVIEW", ts="1792696217.666559", **kwargs
+        )
+    )
+    return result, runner
+
+
+def test_a_message_is_read_through_its_thread_with_only_the_read_tool():
+    result, runner = read_message(
+        envelope(
+            {
+                "ts": "1792696217.666559",
+                "thread_ts": "1792696217.666559",
+                "text": "hello",
+            }
+        )
+    )
+
+    args, prompt = runner.calls[0]
+    assert args == ["--allowedTools", READ_THREAD_TOOL]
+    assert (
+        'channel_id "CREVIEW"' in prompt and 'message_ts "1792696217.666559"' in prompt
+    )
+    assert result.message == ChannelMessage("1792696217.666559", None, "hello")
+    assert (result.cost_usd, result.session_id) == (0.058, "read-session")
+
+
+def test_a_reply_is_found_through_its_threads_first_message():
+    result, runner = read_message(
+        envelope(
+            {
+                "ts": "1792696217.666559",
+                "thread_ts": "1792600000.000100",
+                "text": "bump",
+            }
+        ),
+        thread_ts="1792600000.000100",
+    )
+
+    assert 'message_ts "1792600000.000100"' in runner.calls[0][1]
+    assert result.message.thread_ts == "1792600000.000100"
+
+
+def test_a_message_slack_would_not_show_is_an_error():
+    with pytest.raises(SlackProxyError, match="would not show the message: not found"):
+        read_message(envelope({"error": "not found"}))

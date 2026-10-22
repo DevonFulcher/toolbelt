@@ -238,11 +238,17 @@ def _reasons(task: TaskFacts, world: World) -> Iterator[Reason]:
             + (f" {task.ci_history}" if task.ci_history else ""),
         )
     mine = [run for run in world.runs if run.task_id == task.task_id]
-    on_head = [run for run in mine if run.head_sha == task.head_sha]
+    # The limit stops the same job being retried on a commit that did not
+    # change: runs that did another job (CI, comments) do not count against it.
+    on_head = [
+        run
+        for run in mine
+        if run.head_sha == task.head_sha and run.trigger == task.action_kind
+    ]
     if len(on_head) >= limits.task_runs_per_head:
         yield Reason(
             "runs_per_head",
-            f"{len(on_head)} runs already tried this commit "
+            f"{len(on_head)} runs already tried this on this commit "
             f"(limit {limits.task_runs_per_head}); a new commit resets it.",
         )
     today = _since(mine, now - timedelta(hours=24))
