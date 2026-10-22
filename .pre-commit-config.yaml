@@ -37,7 +37,8 @@ repos:
         pass_filenames: false
       - id: pytest
         name: pytest
-        entry: uv run pytest
+        # In parallel: the suite is dominated by tests that build real git repos.
+        entry: uv run pytest -n 6
         language: system
         types_or: [python, pyi]
         pass_filenames: false
