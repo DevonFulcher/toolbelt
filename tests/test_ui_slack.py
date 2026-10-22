@@ -16,7 +16,7 @@ from toolbelt.ui.pr_activity import PrFacts
 from toolbelt.ui.pr_fetch import PrSnapshot
 from toolbelt.ui.slack_compose import Person
 from toolbelt.ui.slack_config import AssignRule, SlackConfig
-from toolbelt.ui.slack_import import ChannelMessage
+from toolbelt.ui.slack_import import ChannelMessage, ChannelRead
 from toolbelt.ui.slack_proxy import SentMessage, SlackProxyError
 
 ALAN, WILL = Person("alan", "UA"), Person("will", "UW")
@@ -57,7 +57,7 @@ class FakeReader:
         if self.fail:
             raise SlackProxyError(self.fail)
         self.read.append(kwargs)
-        return self.messages, 0.06
+        return ChannelRead(self.messages, 0.06, "read-session")
 
 
 def facts(number: int, title: str) -> PrFacts:

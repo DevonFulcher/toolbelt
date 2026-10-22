@@ -813,6 +813,27 @@ class AutonomousSpend(Model):
     by_task: list[AutonomousTask]
 
 
+class SlackWindow(Model):
+    label: str
+    start: str
+    sessions: int
+    cost_usd: float
+
+
+class SlackPurpose(Model):
+    purpose: Literal["post", "bump", "import"]
+    sessions: int
+    cost_usd: float
+
+
+class SlackSpend(Model):
+    """What the sessions that read or posted in Slack for toolbelt cost:
+    exactly, from each session's own report. Not in the interactive figures."""
+
+    windows: list[SlackWindow]
+    by_purpose: list[SlackPurpose]
+
+
 class SpendBucket(Model):
     """What one stretch of time cost."""
 
@@ -847,6 +868,7 @@ class Spend(Model):
     #: When claims began to be recorded (``None``: none yet).
     claims_since: str | None
     autonomous: AutonomousSpend
+    slack: SlackSpend
     over_time: SpendOverTime
 
 

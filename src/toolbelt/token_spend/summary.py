@@ -72,6 +72,31 @@ class AutonomousUsage:
     by_task: list[AutonomousTask]
 
 
+@dataclass(frozen=True)
+class SlackWindow:
+    label: str
+    start: datetime
+    sessions: int
+    cost_usd: float
+
+
+@dataclass(frozen=True)
+class SlackPurpose:
+    purpose: str
+    sessions: int
+    cost_usd: float
+
+
+@dataclass(frozen=True)
+class SlackUsage:
+    """What the sessions that read or posted in Slack for toolbelt cost,
+    exactly: each records the cost it reported. Kept apart from the interactive
+    figures, and from the autonomous agents' budget."""
+
+    windows: list[SlackWindow]
+    by_purpose: list[SlackPurpose]
+
+
 #: The autonomous run triggers, in the order the chart stacks them.
 TRIGGERS = ("resolve_conflicts", "resolve_comments", "fix_ci")
 
@@ -107,6 +132,7 @@ class SpendSummary:
     #: unclaimed. None when none has been recorded.
     claims_since: datetime | None
     autonomous: AutonomousUsage
+    slack: SlackUsage
     over_time: SpendOverTime
 
 
@@ -246,6 +272,34 @@ def _autonomous(
     )
 
 
+def _slack(
+    store: StackStore, windows: list[tuple[str, datetime]], breakdown_start: datetime
+) -> SlackUsage:
+    sessions = store.slack_sessions(since=min(start for _, start in windows))
+    purposes: dict[str, list[float]] = {}
+    for session in sessions:
+        if session.at >= breakdown_start:
+            purposes.setdefault(session.purpose, []).append(session.cost_usd)
+    return SlackUsage(
+        windows=[
+            SlackWindow(
+                label=label,
+                start=start,
+                sessions=len(inside := [s for s in sessions if s.at >= start]),
+                cost_usd=sum(s.cost_usd for s in inside),
+            )
+            for label, start in windows
+        ],
+        by_purpose=sorted(
+            (
+                SlackPurpose(purpose, len(costs), sum(costs))
+                for purpose, costs in purposes.items()
+            ),
+            key=lambda row: -row.cost_usd,
+        ),
+    )
+
+
 def summarize(
     store: StackStore, now: datetime | None = None, *, breakdown_days: int = 7
 ) -> SpendSummary:
@@ -269,6 +323,7 @@ def summarize(
         unpriced_models=store.unpriced_models(),
         claims_since=store.first_claim_seen(),
         autonomous=_autonomous(store, starts, start),
+        slack=_slack(store, starts, start),
         over_time=_over_time(
             store, start, end, bucket_hours=1 if breakdown_days == 1 else 24
         ),

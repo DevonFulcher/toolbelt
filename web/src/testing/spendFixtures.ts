@@ -53,6 +53,19 @@ export function spend(parts: Partial<Spend> = {}): Spend {
       ],
       by_task: [{ task_id: "t1", repo: "api", branch: "devon/a", runs: 5, cost_usd: 0.4 }],
     },
+    slack: {
+      windows: [
+        { label: "Last 24 hours", start: "2026-10-12T12:00:00+00:00", sessions: 3, cost_usd: 0.0612 },
+        { label: "Last 7 days", start: "2026-10-06T12:00:00+00:00", sessions: 4, cost_usd: 0.1 },
+        { label: "Last 30 days", start: "2026-09-13T12:00:00+00:00", sessions: 4, cost_usd: 0.1 },
+        { label: "This month (UTC)", start: "2026-10-01T00:00:00+00:00", sessions: 4, cost_usd: 0.1 },
+      ],
+      by_purpose: [
+        { purpose: "post", sessions: 2, cost_usd: 0.04 },
+        { purpose: "import", sessions: 1, cost_usd: 0.036 },
+        { purpose: "bump", sessions: 1, cost_usd: 0.02 },
+      ],
+    },
     ...parts,
   };
 }

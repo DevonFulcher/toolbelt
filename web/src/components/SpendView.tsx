@@ -39,6 +39,8 @@ export function useSpend(days: number, fetchImpl: typeof fetch = fetch): Load | 
 }
 
 /** Runs cost cents or less: four digits under a dollar. */
+const SLACK_PURPOSE_LABEL = { post: "Post in Slack", bump: "Bump in Slack", import: "Import of earlier posts" } as const;
+
 const formatRunCost = (usd: number): string => (usd > 0 && usd < 1 ? `$${usd.toFixed(4)}` : formatUsd(usd));
 
 const totalTokens = (tokens: SpendTokens): number =>
@@ -274,6 +276,44 @@ function SpendBody({ data }: { data: Spend }) {
               </tbody>
             </table>
           </>
+        )}
+      </section>
+      <section className="spend-table" aria-label="Slack">
+        <h2>Slack</h2>
+        <p className="spend-description">
+          What the sessions that read or posted in Slack for toolbelt spent, exactly: each records the cost it reported.
+          Their sessions are not in the figures above or in the autonomous agents' budget.
+        </p>
+        <div className="spend-tiles">
+          {data.slack.windows.map((window) => (
+            <div className="spend-tile" key={window.label}>
+              <span className="spend-tile-label">{window.label}</span>
+              <strong className="spend-tile-cost">{formatRunCost(window.cost_usd)}</strong>
+              <span className="spend-tile-detail">{`${window.sessions} session${window.sessions === 1 ? "" : "s"}`}</span>
+            </div>
+          ))}
+        </div>
+        {data.slack.by_purpose.length === 0 ? (
+          <p className="spend-empty">{`No Slack session in the last ${windowLabel}.`}</p>
+        ) : (
+          <table aria-label="Slack spend by what the session was for">
+            <thead>
+              <tr>
+                <th>{`What it was for, last ${windowLabel}`}</th>
+                <th className="num">Sessions</th>
+                <th className="num">Cost</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.slack.by_purpose.map((row) => (
+                <tr key={row.purpose}>
+                  <td>{SLACK_PURPOSE_LABEL[row.purpose]}</td>
+                  <td className="num">{row.sessions}</td>
+                  <td className="num">{formatRunCost(row.cost_usd)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </section>
       <details className="spend-notes">

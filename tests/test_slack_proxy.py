@@ -14,7 +14,14 @@ LINK = "https://dbtlabs.slack.com/archives/D04460UT8GK/p1792600000123456"
 
 def envelope(answer: dict | str, *, cost: float = 0.045, is_error: bool = False) -> str:
     result = answer if isinstance(answer, str) else json.dumps(answer)
-    return json.dumps({"is_error": is_error, "result": result, "total_cost_usd": cost})
+    return json.dumps(
+        {
+            "is_error": is_error,
+            "result": result,
+            "total_cost_usd": cost,
+            "session_id": "the-session",
+        }
+    )
 
 
 class Runner:
@@ -43,6 +50,7 @@ def test_a_post_returns_its_link_timestamp_and_what_slack_held():
     assert sent.thread_ts == sent.ts  # a top-level post starts its own thread
     assert sent.read_back == "hello <@U1|devon>"
     assert sent.cost_usd == 0.045
+    assert sent.session_id == "the-session"
 
 
 def test_a_reply_keeps_the_thread_it_was_sent_to():

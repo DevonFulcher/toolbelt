@@ -77,6 +77,25 @@ def to_api(summary: SpendSummary, ingested_at: datetime | None) -> api.Spend:
             for model, calls in summary.unpriced_models.items()
         ],
         claims_since=summary.claims_since.isoformat() if summary.claims_since else None,
+        slack=api.SlackSpend(
+            windows=[
+                api.SlackWindow(
+                    label=w.label,
+                    start=w.start.isoformat(),
+                    sessions=w.sessions,
+                    cost_usd=w.cost_usd,
+                )
+                for w in summary.slack.windows
+            ],
+            by_purpose=[
+                api.SlackPurpose(
+                    purpose=row.purpose,  # type: ignore[arg-type]
+                    sessions=row.sessions,
+                    cost_usd=row.cost_usd,
+                )
+                for row in summary.slack.by_purpose
+            ],
+        ),
         over_time=api.SpendOverTime(
             bucket_hours=summary.over_time.bucket_hours,
             buckets=[

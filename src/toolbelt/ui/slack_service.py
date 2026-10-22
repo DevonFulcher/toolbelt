@@ -16,7 +16,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from toolbelt.git.stack.store import Parents, SlackPostRow
+from toolbelt.git.stack.store import Parents, SlackPostRow, SlackSessionRow
 from toolbelt.ui import api_models as api
 from toolbelt.ui.live_status import Fetched, TrackedBranch
 from toolbelt.ui.slack_assignee import choose_assignee
@@ -28,7 +28,7 @@ from toolbelt.ui.slack_compose import (
     to_slack,
 )
 from toolbelt.ui.slack_config import SlackConfig
-from toolbelt.ui.slack_import import ChannelMessage, rows_from_messages
+from toolbelt.ui.slack_import import ChannelRead, rows_from_messages
 from toolbelt.ui.slack_proxy import SentMessage
 from toolbelt.ui.slack_tracker import SlackTracker
 from toolbelt.ui.snapshot import descendants
@@ -57,7 +57,7 @@ class _Pr:
 
 
 Sender = Callable[..., Awaitable[SentMessage]]
-Reader = Callable[..., Awaitable[tuple[list[ChannelMessage], float]]]
+Reader = Callable[..., Awaitable[ChannelRead]]
 
 
 class SlackService:
@@ -75,14 +75,16 @@ class SlackService:
         next_kind: Callable[[int, str], str | None],
         posts: Callable[[], list[SlackPostRow]],
         save: Callable[[list[SlackPostRow]], None],
+        record_session: Callable[[SlackSessionRow], None],
         wall_clock: Callable[[], datetime],
         changed: Callable[[set[tuple[int, str]]], None],
     ) -> None:
         """``send_message(channel=, text=, thread_ts=)`` posts (``SlackProxy.send``);
         ``read_messages(channel=, user_id=, since=)`` reads the user's own
         messages (``SlackReader.own_messages``); ``next_kind`` is a branch's
-        next action; ``changed`` is told which branches' Slack standing
-        changed."""
+        next action; ``record_session`` is given each session that read or
+        posted, for the spend figures; ``changed`` is told which branches'
+        Slack standing changed."""
         self._config = config
         self._tracker = tracker
         self._send = send_message
@@ -94,6 +96,7 @@ class SlackService:
         self._next_kind = next_kind
         self._posts = posts
         self._save = save
+        self._record_session = record_session
         self._wall_clock = wall_clock
         self._changed = changed
 
@@ -275,6 +278,14 @@ class SlackService:
                 f"the configured channel {self._config.channel}."
             )
 
+    def _record(self, session_id: str | None, purpose: str, cost_usd: float) -> None:
+        """Records what a session cost under its id (a session with no id stays
+        in the interactive spend, which counts its calls like any other's)."""
+        if session_id:
+            self._record_session(
+                SlackSessionRow(session_id, self._wall_clock(), purpose, cost_usd)
+            )
+
     # ---- importing -------------------------------------------------------------
 
     async def import_recent(
@@ -286,12 +297,13 @@ class SlackService:
         if not self._config.user_id:
             raise SlackNotApplicable("slack.user_id is not set in the config.")
         channel = channel or self._config.channel
-        messages, cost = await self._read(
+        read = await self._read(
             channel=channel,
             user_id=self._config.user_id,
             since=self._wall_clock() - timedelta(days=days),
         )
-        rows = rows_from_messages(channel, messages, self._config.reviewers)
+        self._record(read.session_id, "import", read.cost_usd)
+        rows = rows_from_messages(channel, read.messages, self._config.reviewers)
         self._save(rows)
         self._tracker.reload()
         posted = {(row.repo, row.pr_number) for row in rows}
@@ -303,7 +315,9 @@ class SlackService:
                 and (pr.repo, pr.number) in posted
             }
         )
-        return api.SlackImported(messages=len(messages), prs=len(posted), cost_usd=cost)
+        return api.SlackImported(
+            messages=len(read.messages), prs=len(posted), cost_usd=read.cost_usd
+        )
 
     # ---- sending ---------------------------------------------------------------
 
@@ -334,6 +348,7 @@ class SlackService:
             text=text,
             thread_ts=request.thread_ts if request.kind == "bump" else None,
         )
+        self._record(sent.session_id, request.kind, sent.cost_usd)
         person = self._person(request.assignee_id)
         self._save(
             [

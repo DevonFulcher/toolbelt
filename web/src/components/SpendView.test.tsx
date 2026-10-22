@@ -87,6 +87,28 @@ describe("the spend view", () => {
     expect(within(section).getByText("api: devon/a")).toBeInTheDocument();
   });
 
+  test("Slack's spend is its own section, from each session's recorded cost", async () => {
+    serve(spend());
+    show();
+    await screen.findByText("$61.67");
+
+    const section = screen.getByRole("region", { name: "Slack" });
+    expect(within(section).getByText("$0.0612")).toBeInTheDocument();
+    expect(within(section).getByText("3 sessions")).toBeInTheDocument();
+    const byPurpose = within(section).getByRole("table", { name: "Slack spend by what the session was for" });
+    expect(within(byPurpose).getByText("Post in Slack")).toBeInTheDocument();
+    expect(within(byPurpose).getByText("Import of earlier posts")).toBeInTheDocument();
+    expect(within(byPurpose).getByText("$0.0400")).toBeInTheDocument();
+  });
+
+  test("says when no Slack session ran", async () => {
+    const empty = spend();
+    serve(spend({ slack: { ...empty.slack, by_purpose: [] } }));
+    show();
+
+    expect(await screen.findByText(/No Slack session in the last 7 days/)).toBeInTheDocument();
+  });
+
   test("says when no agent has run", async () => {
     const empty = spend();
     serve(spend({ autonomous: { ...empty.autonomous, by_trigger: [], by_task: [] } }));

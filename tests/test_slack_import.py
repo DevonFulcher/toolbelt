@@ -29,7 +29,14 @@ STACK_POST = (
 
 def envelope(answer: dict | str, cost: float = 0.058) -> str:
     result = answer if isinstance(answer, str) else json.dumps(answer)
-    return json.dumps({"is_error": False, "result": result, "total_cost_usd": cost})
+    return json.dumps(
+        {
+            "is_error": False,
+            "result": result,
+            "total_cost_usd": cost,
+            "session_id": "read-session",
+        }
+    )
 
 
 class Runner:
@@ -65,7 +72,7 @@ def test_the_session_may_only_read_never_send():
 
 
 def test_posts_and_their_replies_come_back_as_messages_of_their_thread():
-    (messages, cost), _ = read(
+    (read_result), _ = read(
         envelope(
             {
                 "posts": [
@@ -80,12 +87,13 @@ def test_posts_and_their_replies_come_back_as_messages_of_their_thread():
         )
     )
 
-    assert messages == [
+    assert read_result.messages == [
         ChannelMessage(POST_TS, None, "a post"),
         ChannelMessage("1792600000.000200", POST_TS, "a reply"),
         ChannelMessage("1792700000.000100", None, "another"),
     ]
-    assert cost == 0.058
+    assert read_result.cost_usd == 0.058
+    assert read_result.session_id == "read-session"
 
 
 def test_a_session_that_does_not_answer_with_json_is_an_error():

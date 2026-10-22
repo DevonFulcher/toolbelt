@@ -663,6 +663,7 @@ export interface Spend {
   claims_since: string | null;
   ingested_at: string | null;
   over_time: SpendOverTime;
+  slack: SlackSpend;
   unpriced_models: UnpricedModel[];
   windows: SpendWindow[];
 }
@@ -738,6 +739,25 @@ export interface SpendBucket {
   interactive_usd: number;
   resolve_comments_usd: number;
   resolve_conflicts_usd: number;
+  start: string;
+}
+/**
+ * What the sessions that read or posted in Slack for toolbelt cost:
+ * exactly, from each session's own report. Not in the interactive figures.
+ */
+export interface SlackSpend {
+  by_purpose: SlackPurpose[];
+  windows: SlackWindow[];
+}
+export interface SlackPurpose {
+  cost_usd: number;
+  purpose: "post" | "bump" | "import";
+  sessions: number;
+}
+export interface SlackWindow {
+  cost_usd: number;
+  label: string;
+  sessions: number;
   start: string;
 }
 export interface UnpricedModel {

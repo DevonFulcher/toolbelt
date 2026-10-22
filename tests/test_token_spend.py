@@ -8,7 +8,12 @@ from pathlib import Path
 
 import pytest
 
-from toolbelt.git.stack.store import StackStore, TokenCounts, UsageCall
+from toolbelt.git.stack.store import (
+    SlackSessionRow,
+    StackStore,
+    TokenCounts,
+    UsageCall,
+)
 from toolbelt.token_spend import ingest as ingest_module
 from toolbelt.token_spend.ingest import ingest_transcripts
 from toolbelt.token_spend.pricing import price_usage
@@ -419,6 +424,66 @@ def test_the_session_of_an_agent_run_is_not_also_counted_as_interactive_spend(
     assert [(m.calls, m.cost_usd) for m in by_model] == [(1, 2.0)]
     assert [(t.task_id, t.cost_usd) for t in by_task] == [(None, 2.0)]
     assert run_id
+
+
+# ---- Slack sessions ---------------------------------------------------------------------------
+
+
+def test_the_session_that_posted_in_slack_is_not_also_counted_as_interactive_spend(
+    tmp_path: Path,
+):
+    store = StackStore(tmp_path / "stacks.db")
+    store.add_usage_calls(
+        [
+            call("mine", T0 + timedelta(minutes=1), session="interactive", cost=2.0),
+            call("slack", T0 + timedelta(minutes=1), session="slack-session", cost=9.0),
+        ],
+        transcript="t",
+        offset=1,
+    )
+    store.add_slack_session(
+        SlackSessionRow("slack-session", T0 + timedelta(minutes=1), "post", 9.0)
+    )
+    window = (T0 - timedelta(hours=1), T0 + timedelta(hours=1))
+
+    by_model = store.usage_by_model(*window)
+    by_task = store.usage_by_task(*window)
+    by_hour = store.interactive_cost_by_hour(*window)
+
+    assert [(m.calls, m.cost_usd) for m in by_model] == [(1, 2.0)]
+    assert [(t.task_id, t.cost_usd) for t in by_task] == [(None, 2.0)]
+    assert sum(by_hour.values()) == 2.0
+
+
+def test_slack_spend_is_each_sessions_own_cost_by_window_and_purpose(tmp_path: Path):
+    store = StackStore(tmp_path / "stacks.db")
+    now = datetime(2026, 10, 13, 12, 0, tzinfo=UTC)
+    for session_id, hours_ago, purpose, cost in [
+        ("a", 1, "post", 0.02),
+        ("b", 2, "bump", 0.02),
+        ("c", 30, "import", 0.06),  # in the week, not the day
+        ("d", 24 * 40, "post", 0.50),  # before every window
+    ]:
+        store.add_slack_session(
+            SlackSessionRow(session_id, now - timedelta(hours=hours_ago), purpose, cost)
+        )
+
+    from toolbelt.token_spend.summary import summarize
+
+    slack = summarize(store, now, breakdown_days=7).slack
+
+    assert [(w.label, w.sessions, round(w.cost_usd, 2)) for w in slack.windows][:3] == [
+        ("Last 24 hours", 2, 0.04),
+        ("Last 7 days", 3, 0.10),
+        ("Last 30 days", 3, 0.10),
+    ]
+    assert [
+        (p.purpose, p.sessions, round(p.cost_usd, 2)) for p in slack.by_purpose
+    ] == [
+        ("import", 1, 0.06),
+        ("post", 1, 0.02),
+        ("bump", 1, 0.02),
+    ]
 
 
 def test_autonomous_spend_is_the_runs_own_cost_by_window_trigger_and_task(

@@ -63,6 +63,15 @@ Slack's connector adds a "Sent using Claude" line.
 If the session fails or times out, nothing is recorded and the error says to
 check Slack, since the message may have been sent.
 
+## What it costs
+
+Every session that posts, bumps or imports is recorded in `slack_sessions` with
+the exact cost it reported. The spend view shows them in their own Slack section
+(by window, and by what the session was for) and leaves them out of the other
+figures, as it does the autonomous agents' runs; the agents' daily and monthly
+caps do not count them. A session that fails before it answers has no recorded
+cost and stays in the other figures like any other session.
+
 ## What is recorded
 
 Toolbelt records each post (`slack_posts` in the stack DB): PR, message and

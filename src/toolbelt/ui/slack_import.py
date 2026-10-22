@@ -37,22 +37,31 @@ class ChannelMessage:
     text: str
 
 
+@dataclass(frozen=True)
+class ChannelRead:
+    """The user's messages, and what the session that read them cost."""
+
+    messages: list[ChannelMessage]
+    cost_usd: float
+    session_id: str | None
+
+
 class SlackReader:
     def __init__(self, runner: Runner = claude_runner) -> None:
         self._runner = runner
 
     async def own_messages(
         self, *, channel: str, user_id: str, since: datetime
-    ) -> tuple[list[ChannelMessage], float]:
+    ) -> ChannelRead:
         """``user_id``'s messages in ``channel`` since ``since`` (top-level and
         thread replies), and what reading them cost."""
         output = await self._runner(
             ["--allowedTools", READ_CHANNEL_TOOL, READ_THREAD_TOOL],
             _read_prompt(channel, user_id, int(since.timestamp())),
         )
-        answer, cost = parse_answer(output)
+        session = parse_answer(output)
         messages = []
-        for post in answer.get("posts", []):
+        for post in session.data.get("posts", []):
             messages.append(ChannelMessage(str(post["ts"]), None, str(post["text"])))
             for reply in post.get("replies", []):
                 messages.append(
@@ -60,7 +69,7 @@ class SlackReader:
                         str(reply["ts"]), str(post["ts"]), str(reply["text"])
                     )
                 )
-        return messages, cost
+        return ChannelRead(messages, session.cost_usd, session.session_id)
 
 
 def _read_prompt(channel: str, user_id: str, oldest: int) -> str:

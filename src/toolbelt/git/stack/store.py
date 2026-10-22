@@ -327,6 +327,22 @@ _MIGRATIONS: list[tuple[str, ...]] = [
         """,
         "CREATE INDEX slack_posts_by_pr ON slack_posts (repo, pr_number, posted_at)",
     ),
+    (
+        # The sessions that read or posted in Slack for toolbelt (see
+        # ``ui.slack_proxy``), each with the exact cost the session reported.
+        # Their model calls are in ``usage_calls`` like any session's; the
+        # spend figures leave them out of the interactive ones, as they do an
+        # agent run's. ``purpose`` is ``post``, ``bump`` or ``import``.
+        """
+        CREATE TABLE slack_sessions (
+            session_id TEXT PRIMARY KEY,
+            at TEXT NOT NULL,
+            purpose TEXT NOT NULL,
+            cost_usd REAL NOT NULL
+        )
+        """,
+        "CREATE INDEX slack_sessions_by_time ON slack_sessions (at)",
+    ),
 ]
 
 
@@ -369,6 +385,16 @@ class PrLookupRow:
     full_at: datetime
     record: str
     schema: int
+
+
+@dataclass(frozen=True)
+class SlackSessionRow:
+    """One session that read or posted in Slack, and what it cost."""
+
+    session_id: str
+    at: datetime
+    purpose: str
+    cost_usd: float
 
 
 @dataclass(frozen=True)
@@ -1087,8 +1113,9 @@ class StackStore:
 
     def usage_by_model(self, start: datetime, end: datetime) -> list[ModelUsage]:
         """Interactive calls made in ``[start, end)``, per model, biggest
-        spend first. The sessions of autonomous agent runs are not here: an
-        agent's cost is its run's (see ``agent_runs``)."""
+        spend first. The sessions of autonomous agent runs and of Slack are
+        not here: their cost is the run's or session's own (see ``agent_runs``
+        and ``slack_sessions``)."""
         rows = self._conn.execute(
             "SELECT model, COUNT(*) AS calls, SUM(input_tokens) AS input, "
             "SUM(output_tokens) AS output, SUM(cache_read_tokens) AS cache_read, "
@@ -1098,7 +1125,8 @@ class StackStore:
             "SUM(cost_usd IS NULL) AS unpriced FROM usage_calls "
             "WHERE at >= ? AND at < ? "
             "AND session_id NOT IN (SELECT session_id FROM agent_runs "
-            "WHERE session_id IS NOT NULL) "
+            "WHERE session_id IS NOT NULL "
+            "UNION SELECT session_id FROM slack_sessions) "
             "GROUP BY model ORDER BY cost DESC, model",
             (_iso(start), _iso(end)),
         )
@@ -1122,8 +1150,8 @@ class StackStore:
     def interactive_cost_by_hour(
         self, start: datetime, end: datetime
     ) -> dict[str, float]:
-        """Cost of the interactive calls (those of autonomous runs' sessions
-        are not) made in ``[start, end)``, by UTC hour as ``YYYY-MM-DDTHH``.
+        """Cost of the interactive calls (those of autonomous runs' and Slack
+        sessions are not) made in ``[start, end)``, by UTC hour as ``YYYY-MM-DDTHH``.
         Calls with no price count as nothing."""
         rows = self._conn.execute(
             """
@@ -1132,6 +1160,7 @@ class StackStore:
             WHERE at >= ? AND at < ?
               AND session_id NOT IN (
                   SELECT session_id FROM agent_runs WHERE session_id IS NOT NULL
+                  UNION SELECT session_id FROM slack_sessions
               )
             GROUP BY hour
             """,
@@ -1153,6 +1182,7 @@ class StackStore:
                 FROM usage_calls WHERE at >= ? AND at < ?
                 AND session_id NOT IN (
                     SELECT session_id FROM agent_runs WHERE session_id IS NOT NULL
+                    UNION SELECT session_id FROM slack_sessions
                 )
             ),
             claimed AS (
@@ -1415,6 +1445,30 @@ class StackStore:
                     row.schema,
                 ),
             )
+
+    def add_slack_session(self, row: SlackSessionRow) -> None:
+        with self._write() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO slack_sessions "
+                "(session_id, at, purpose, cost_usd) VALUES (?, ?, ?, ?)",
+                (row.session_id, _iso(row.at), row.purpose, row.cost_usd),
+            )
+
+    def slack_sessions(self, *, since: datetime) -> list[SlackSessionRow]:
+        """Sessions made at or after ``since``, newest first."""
+        rows = self._conn.execute(
+            "SELECT * FROM slack_sessions WHERE at >= ? ORDER BY at DESC, session_id",
+            (_iso(since),),
+        )
+        return [
+            SlackSessionRow(
+                session_id=r["session_id"],
+                at=datetime.fromisoformat(r["at"]),
+                purpose=r["purpose"],
+                cost_usd=r["cost_usd"],
+            )
+            for r in rows
+        ]
 
     def slack_posts(self) -> list[SlackPostRow]:
         rows = self._conn.execute(

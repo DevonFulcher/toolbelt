@@ -75,6 +75,7 @@ from toolbelt.git.stack.store import (
     AgentRun,
     Parents,
     SlackPostRow,
+    SlackSessionRow,
     StackStore,
     default_db_path,
     state_dir,
@@ -227,6 +228,14 @@ def _save_slack_posts(rows: list[SlackPostRow]) -> None:
     store = StackStore(default_db_path())
     try:
         store.save_slack_posts(rows)
+    finally:
+        store.close()
+
+
+def _record_slack_session(row: SlackSessionRow) -> None:
+    store = StackStore(default_db_path())
+    try:
+        store.add_slack_session(row)
     finally:
         store.close()
 
@@ -792,6 +801,7 @@ def create_app(
             next_kind=next_kind,
             posts=_slack_posts,
             save=_save_slack_posts,
+            record_session=_record_slack_session,
             wall_clock=wall_clock,
             changed=publish_slack,
         )

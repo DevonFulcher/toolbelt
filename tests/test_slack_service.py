@@ -8,13 +8,13 @@ from pathlib import Path
 import pytest
 
 from toolbelt.git.stack.status import BranchStatus, CiState, PrState, ReviewState
-from toolbelt.git.stack.store import SlackPostRow
+from toolbelt.git.stack.store import SlackPostRow, SlackSessionRow
 from toolbelt.ui import api_models as api
 from toolbelt.ui.live_status import Fetched, TrackedBranch
 from toolbelt.ui.pr_activity import PrFacts
 from toolbelt.ui.slack_compose import ATTRIBUTION, Person
 from toolbelt.ui.slack_config import AssignRule, SlackConfig
-from toolbelt.ui.slack_import import ChannelMessage
+from toolbelt.ui.slack_import import ChannelMessage, ChannelRead
 from toolbelt.ui.slack_proxy import SentMessage
 from toolbelt.ui.slack_service import (
     SlackNotApplicable,
@@ -75,6 +75,7 @@ class Rig:
         self.sent: list[dict] = []
         self.read: list[dict] = []
         self.messages: list[ChannelMessage] = []
+        self.sessions: list[SlackSessionRow] = []
         self.changed: list[set] = []
         self.read_back: str | None = "OK"
         self.tracker = SlackTracker(
@@ -96,13 +97,14 @@ class Rig:
             next_kind=lambda repo_id, name: self.kinds.get(name),
             posts=lambda: list(self.rows),
             save=self.rows.extend,
+            record_session=self.sessions.append,
             wall_clock=lambda: NOW,
             changed=self.changed.append,
         )
 
     async def read_messages(self, **kwargs):
         self.read.append(kwargs)
-        return self.messages, 0.06
+        return ChannelRead(self.messages, 0.06, "read-session")
 
     async def send_message(self, **kwargs) -> SentMessage:
         self.sent.append(kwargs)
@@ -114,6 +116,7 @@ class Rig:
             thread_ts=kwargs.get("thread_ts") or ts,
             read_back=read_back,
             cost_usd=0.05,
+            session_id=f"send-session-{len(self.sent)}",
         )
 
     def post_row(
@@ -442,3 +445,50 @@ def test_a_post_found_in_another_channel_is_not_bumped():
         asyncio.run(rig.service.send(request("bump", thread_ts="1.0")))
 
     assert rig.sent == []
+
+
+# ---- what the sessions cost --------------------------------------------------
+
+
+def test_a_post_records_the_session_that_sent_it_with_its_cost():
+    rig = Rig()
+
+    asyncio.run(rig.service.send(request()))
+
+    assert rig.sessions == [SlackSessionRow("send-session-1", NOW, "post", 0.05)]
+
+
+def test_a_bump_records_its_session_as_a_bump():
+    rig = Rig()
+    rig.post_row(1, hours_ago=30, thread="1.0")
+
+    asyncio.run(rig.service.send(request("bump", thread_ts="1.0")))
+
+    assert [s.purpose for s in rig.sessions] == ["bump"]
+
+
+def test_an_import_records_the_session_that_read_the_channel():
+    rig = Rig()
+
+    asyncio.run(rig.service.import_recent(days=5))
+
+    assert rig.sessions == [SlackSessionRow("read-session", NOW, "import", 0.06)]
+
+
+def test_a_session_with_no_id_is_not_recorded():
+    rig = Rig()
+
+    async def anonymous(**kwargs):
+        return SentMessage(
+            link="https://s.slack.com/archives/DTEST/p1792600000000100",
+            ts="1792600000.000100",
+            thread_ts="1792600000.000100",
+            read_back="x",
+            cost_usd=0.05,
+        )
+
+    rig.service._send = anonymous
+
+    asyncio.run(rig.service.send(request()))
+
+    assert rig.sessions == []

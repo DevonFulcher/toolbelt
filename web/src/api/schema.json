@@ -3313,6 +3313,32 @@
       "title": "SlackPrRef",
       "type": "object"
     },
+    "SlackPurpose": {
+      "additionalProperties": false,
+      "properties": {
+        "cost_usd": {
+          "type": "number"
+        },
+        "purpose": {
+          "enum": [
+            "post",
+            "bump",
+            "import"
+          ],
+          "type": "string"
+        },
+        "sessions": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "purpose",
+        "sessions",
+        "cost_usd"
+      ],
+      "title": "SlackPurpose",
+      "type": "object"
+    },
     "SlackSendRequest": {
       "additionalProperties": false,
       "description": "The body of ``POST /api/slack/send``: post the confirmed (possibly\nedited) message and record it.",
@@ -3399,6 +3425,55 @@
         "cost_usd"
       ],
       "title": "SlackSent",
+      "type": "object"
+    },
+    "SlackSpend": {
+      "additionalProperties": false,
+      "description": "What the sessions that read or posted in Slack for toolbelt cost:\nexactly, from each session's own report. Not in the interactive figures.",
+      "properties": {
+        "by_purpose": {
+          "items": {
+            "$ref": "#/$defs/SlackPurpose"
+          },
+          "type": "array"
+        },
+        "windows": {
+          "items": {
+            "$ref": "#/$defs/SlackWindow"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "windows",
+        "by_purpose"
+      ],
+      "title": "SlackSpend",
+      "type": "object"
+    },
+    "SlackWindow": {
+      "additionalProperties": false,
+      "properties": {
+        "cost_usd": {
+          "type": "number"
+        },
+        "label": {
+          "type": "string"
+        },
+        "sessions": {
+          "type": "integer"
+        },
+        "start": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "start",
+        "sessions",
+        "cost_usd"
+      ],
+      "title": "SlackWindow",
       "type": "object"
     },
     "SlotDimensions": {
@@ -3926,6 +4001,9 @@
         "over_time": {
           "$ref": "#/$defs/SpendOverTime"
         },
+        "slack": {
+          "$ref": "#/$defs/SlackSpend"
+        },
         "unpriced_models": {
           "items": {
             "$ref": "#/$defs/UnpricedModel"
@@ -3949,6 +4027,7 @@
         "unpriced_models",
         "claims_since",
         "autonomous",
+        "slack",
         "over_time"
       ],
       "title": "Spend",

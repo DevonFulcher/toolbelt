@@ -39,6 +39,16 @@ class SlackProxyError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class SessionAnswer:
+    """What a ``claude`` session answered: the JSON object, what the session
+    cost and its id (the key to its transcript and its spend)."""
+
+    data: dict
+    cost_usd: float
+    session_id: str | None
+
+
+@dataclass(frozen=True)
 class SentMessage:
     link: str
     #: The message's own timestamp, and its thread's (the same for a post).
@@ -48,6 +58,7 @@ class SentMessage:
     #: session did not manage to read it).
     read_back: str | None
     cost_usd: float
+    session_id: str | None = None
 
 
 async def claude_runner(args: list[str], prompt: str) -> str:
@@ -95,8 +106,7 @@ END
 """
 
 
-def parse_answer(output: str) -> tuple[dict, float]:
-    """The JSON object a session answered with, and what the session cost."""
+def parse_answer(output: str) -> SessionAnswer:
     try:
         envelope = json.loads(output)
     except json.JSONDecodeError as bad:
@@ -108,8 +118,10 @@ def parse_answer(output: str) -> tuple[dict, float]:
     if start < 0 or end < start:
         raise SlackProxyError(f"the session did not answer with JSON: {answer[:200]}")
     try:
-        return json.loads(answer[start : end + 1]), float(
-            envelope.get("total_cost_usd") or 0.0
+        return SessionAnswer(
+            data=json.loads(answer[start : end + 1]),
+            cost_usd=float(envelope.get("total_cost_usd") or 0.0),
+            session_id=envelope.get("session_id"),
         )
     except json.JSONDecodeError as bad:
         raise SlackProxyError(
@@ -130,7 +142,8 @@ class SlackProxy:
             ["--allowedTools", SEND_TOOL, READ_TOOL],
             _send_prompt(channel, text, thread_ts),
         )
-        answer, cost = parse_answer(output)
+        session = parse_answer(output)
+        answer = session.data
         if "error" in answer:
             raise SlackProxyError(f"Slack refused the message: {answer['error']}")
         link = str(answer.get("link", ""))
@@ -147,5 +160,6 @@ class SlackProxy:
             ts=ts,
             thread_ts=thread_ts or ts,
             read_back=str(read_back) if read_back else None,
-            cost_usd=cost,
+            cost_usd=session.cost_usd,
+            session_id=session.session_id,
         )
