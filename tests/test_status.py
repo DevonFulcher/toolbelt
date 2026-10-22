@@ -15,6 +15,7 @@ from toolbelt.git.stack.status import (
     _ci_state,
     _count_unresolved,
     format_status,
+    is_ai_comment,
     parse_status,
 )
 
@@ -357,3 +358,37 @@ def test_parse_status_without_those_fields_leaves_them_empty():
 
     assert (status.additions, status.deletions) == (0, 0)
     assert status.assignees == () and status.reviewers == ()
+
+
+# ---- comments an AI wrote under a person's account ------------------------------
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "**Codex (AI) review:** This reports the wrong result.",
+        "Codex (AI) review: nit",
+        "🤖 AI-generated on behalf of Devon: replying to this thread",
+        "  \n**Claude (AI):** the loop never ends",
+        "AI-generated: this could be a set",
+        "Copilot review: possible null",
+        "> 🤖 note from the agent",
+    ],
+)
+def test_a_comment_that_begins_by_saying_an_ai_wrote_it_is_one(body):
+    assert is_ai_comment(body)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "",
+        "Why a set here?",
+        "I asked Claude about this and (AI) seems the wrong word",
+        "Please do not use AI-generated names in the tests.",
+        "This is fine.\n\n🤖",
+        "The Codex review earlier said otherwise",
+    ],
+)
+def test_a_person_writing_about_ai_in_passing_is_not_taken_for_one(body):
+    assert not is_ai_comment(body)

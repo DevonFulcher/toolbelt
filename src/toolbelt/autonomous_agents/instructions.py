@@ -123,13 +123,15 @@ _COMMENTS = """\
 Fetch the PR's review threads (GraphQL `reviewThreads`: `id`, `isResolved`, \
 `isOutdated`, the first comment's author and body).
 
-- **Bot comments (Copilot and similar) are your work.** Read the code the \
+- **Bot comments are your work**: those by a bot account (Copilot and \
+similar), and those a person's account posted that an AI wrote, which say so \
+as they begin (for example "**Codex (AI) review:**" or "🤖 AI-generated"). Read the code the \
 comment points at, decide whether it is valid, then fix it (a real bug found \
 in review is critical: fix it on this branch), reply on the thread and resolve \
 it; or reply with why it is invalid and resolve it.
-- An outdated thread by a bot (`isOutdated` true): reply that the comment is \
+- An outdated thread by a bot or an AI-written one (`isOutdated` true): reply that the comment is \
 outdated (the diff it referred to has changed), then resolve it.
-- Human review comments: you are the weaker reviewer here, so be careful. \
+- Human review comments (not written by an AI): you are the weaker reviewer here, so be careful. \
 NEVER resolve a thread a human started. Reply only to a clear nit (a typo, \
 minor style, formatting) and only when you have pushed the fix: say where it \
 is (the commit, or the stacked PR). Leave every substantive comment (design, \

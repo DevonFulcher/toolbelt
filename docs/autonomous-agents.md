@@ -82,7 +82,11 @@ stack, and a case toolbelt cannot handle is reported in `needs_human`, not
 worked around), run the repo's checks before every save, never force-push, resolve conflicts
 with `toolbelt git sync` and never abort them, the full flaky-CI protocol, and
 careful review-thread rules (bot threads may be answered and resolved; a human's
-thread is never resolved, and only a clear nit is replied to). Comments start
+thread is never resolved, and only a clear nit is replied to). A thread counts as
+a bot's when a bot account started it, or when its first comment begins by saying
+an AI wrote it under a person's account (for example "**Codex (AI) review:**" or
+"🤖 AI-generated"): the card counts those as bot comments and the agent treats
+them as its work. Comments start
 with "🤖 AI-generated on behalf of Devon:". It ends with a one-line JSON report.
 
 ## What is recorded

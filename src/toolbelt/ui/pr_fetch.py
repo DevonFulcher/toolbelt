@@ -58,7 +58,7 @@ query($owner: String!, $repo: String!, $branch: String!) {{
         headRefOid baseRefName mergeable reviewDecision additions deletions
         author {{ login }}
         reviewRequests(first: 20) {{ nodes {{ {_REVIEWER} }} }}
-        reviewThreads(first: 100) {{ nodes {{ isResolved comments(first: 1) {{ nodes {{ author {{ __typename login }} }} }} }} }}
+        reviewThreads(first: 100) {{ nodes {{ isResolved comments(first: 1) {{ nodes {{ author {{ __typename login }} body }} }} }} }}
         head: commits(last: 1) {{ nodes {{ commit {{
           statusCheckRollup {{ state contexts(first: 100) {{ nodes {{
             __typename

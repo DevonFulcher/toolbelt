@@ -117,10 +117,14 @@ def test_one_call_returns_the_status_the_table_shows():
     assert status.has_conflicts
 
 
-def _thread(*, resolved: bool, typename: str, login: str) -> dict:
+def _thread(*, resolved: bool, typename: str, login: str, body: str = "") -> dict:
     return {
         "isResolved": resolved,
-        "comments": {"nodes": [{"author": {"__typename": typename, "login": login}}]},
+        "comments": {
+            "nodes": [
+                {"author": {"__typename": typename, "login": login}, "body": body}
+            ]
+        },
     }
 
 
@@ -305,6 +309,47 @@ def test_no_checks_is_no_ci():
     node = pr_node(head={"nodes": [{"commit": {"statusCheckRollup": None}}]})
 
     assert parse_snapshot(response(node)).status.ci is CiState.NONE
+
+
+def test_a_thread_a_person_posted_that_says_an_ai_wrote_it_is_a_bot_comment():
+    node = pr_node(
+        reviewThreads={
+            "nodes": [
+                _thread(
+                    resolved=False,
+                    typename="User",
+                    login="wiggzz",
+                    body="**Codex (AI) review:** This reports the result of the whole workflow.",
+                ),
+                _thread(
+                    resolved=False, typename="User", login="sam", body="Why a set here?"
+                ),
+                _thread(
+                    resolved=True,
+                    typename="User",
+                    login="wiggzz",
+                    body="**Codex (AI) review:** already resolved",
+                ),
+            ]
+        }
+    )
+
+    status = fetch(Graphql(response(node))).status
+
+    assert status.open_comments == 2
+    assert status.bot_comments == 1  # the person's own thread is not
+
+
+def test_the_query_asks_for_the_first_comments_body_to_tell_who_wrote_it():
+    import re
+
+    from toolbelt.ui.pr_fetch import PR_QUERY
+
+    assert re.search(
+        r"reviewThreads\(first: 100\) \{ nodes \{ isResolved comments\(first: 1\) "
+        r"\{ nodes \{ author \{ __typename login \} body \}",
+        PR_QUERY,
+    )
 
 
 def test_requested_reviewers_may_be_users_or_teams():

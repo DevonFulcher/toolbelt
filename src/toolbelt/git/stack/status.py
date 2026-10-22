@@ -156,6 +156,27 @@ def _ci_state(rollup: list[dict]) -> CiState:
     return CiState.SUCCESS
 
 
+#: How a comment says an AI wrote it, at its start (a person's account can post
+#: an AI's review: "**Codex (AI) review:** ...", "🤖 AI-generated on behalf of
+#: ..."). Only the start counts, so a person writing about AI in passing does not.
+_AI_COMMENT_MARKERS = (
+    re.compile(r"^\W{0,6}🤖"),
+    re.compile(r"^\W{0,4}[\w .-]{0,20}\(AI\)", re.IGNORECASE),
+    re.compile(r"^\W{0,4}AI[- ]generated\b", re.IGNORECASE),
+    re.compile(
+        r"^\W{0,4}(?:codex|claude|copilot|chatgpt|gemini)\b[^\n]{0,30}"
+        r"\b(?:review|comment)\b",
+        re.IGNORECASE,
+    ),
+)
+
+
+def is_ai_comment(body: str) -> bool:
+    """``body`` begins by saying an AI wrote it (whoever's account posted it)."""
+    first_line = body.lstrip().split("\n", 1)[0][:200]
+    return any(marker.search(first_line) for marker in _AI_COMMENT_MARKERS)
+
+
 def is_bot(login: str) -> bool:
     folded = login.casefold()
     return folded.endswith("[bot]") or "copilot" in folded
@@ -225,9 +246,17 @@ def count_unresolved_bot_nodes(nodes: list[dict]) -> int:
 
 
 def _thread_started_by_bot(node: dict) -> bool:
+    """A bot account started the thread, or its first comment says an AI wrote
+    it (see ``is_ai_comment``)."""
     comments = (node.get("comments") or {}).get("nodes") or []
-    author = (comments[0].get("author") or {}) if comments else {}
-    return author.get("__typename") == "Bot" or is_bot(author.get("login") or "")
+    if not comments:
+        return False
+    author = comments[0].get("author") or {}
+    return (
+        author.get("__typename") == "Bot"
+        or is_bot(author.get("login") or "")
+        or is_ai_comment(comments[0].get("body") or "")
+    )
 
 
 def _count_unresolved(payload: dict) -> int:
