@@ -66,7 +66,9 @@ claude-plugin/install.sh
 
 That is `claude plugin marketplace add <this folder>` followed by
 `claude plugin install <mod>@toolbelt --scope user` for each of
-`toolbelt-claims` and `toolbelt-usage`, made idempotent (a second run updates). The dotfiles `bootstrap.sh` runs it. It exits 0 with a
+`toolbelt-claims` and `toolbelt-usage`, made idempotent (a second run updates). It also registers the decisions MCP server
+(`claude mcp add --scope user toolbelt-decisions -- toolbelt decisions mcp`, see
+[decisions](../docs/decisions.md)) unless it is already registered. The dotfiles `bootstrap.sh` runs it. It exits 0 with a
 message when `claude` is not on PATH, and honours `CLAUDE_CONFIG_DIR`.
 
 Start a new session afterwards; the mod loads at session start. A user-scope
@@ -78,6 +80,7 @@ install is also what makes it load in the desktop app's Code tab.
 claude plugin uninstall toolbelt-claims@toolbelt
 claude plugin uninstall toolbelt-usage@toolbelt
 claude plugin marketplace remove toolbelt
+claude mcp remove toolbelt-decisions --scope user
 ```
 
 Leftover claim files expire by themselves.

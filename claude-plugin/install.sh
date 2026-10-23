@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Install (or update) the toolbelt Claude Code mods at user scope:
-# toolbelt-claims and toolbelt-usage.
+# toolbelt-claims and toolbelt-usage, and register the toolbelt-decisions MCP
+# server (`toolbelt decisions mcp`, which `toolbelt` must provide on PATH).
 #
 # Idempotent: safe to run from a dotfiles bootstrap on every run. The marketplace
 # folder is this script's own directory, so it follows the checkout wherever it
@@ -45,5 +46,15 @@ for plugin in "${PLUGINS[@]}"; do
   fi
   echo "claude-plugin: ${plugin_id} is installed (user scope)."
 done
+
+# The decisions MCP server is an MCP server, not a mod: registered at user scope
+# once, and left alone when it is already there.
+MCP_SERVER="toolbelt-decisions"
+if claude mcp get "${MCP_SERVER}" >/dev/null 2>&1; then
+  echo "claude-plugin: MCP server ${MCP_SERVER} is registered (user scope)."
+else
+  claude mcp add --scope user "${MCP_SERVER}" -- toolbelt decisions mcp
+  echo "claude-plugin: MCP server ${MCP_SERVER} is registered (user scope)."
+fi
 
 echo "claude-plugin: start a new Claude Code session to load them."
