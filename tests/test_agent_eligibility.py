@@ -281,10 +281,10 @@ def test_an_unread_screen_or_unchecked_sign_in_does_not_block():
     assert decide(task(), world(screen=None, auth_ok=None)) is None
 
 
-def test_only_so_many_runs_work_at_once():
+def test_another_tasks_working_run_does_not_hold_this_task_back():
     runs = [run(task_id="other", state="running")]
 
-    assert reason_code(task(), world(runs)) == "concurrency"
+    assert decide(task(), world(runs)) is None
 
 
 def test_a_task_waits_out_a_back_off_after_its_last_run():
@@ -407,12 +407,10 @@ def test_what_is_unsafe_or_impossible_stays_even_for_a_person(changes, code):
     assert override_code(task(**changes), world()) == code
 
 
-def test_the_spend_caps_sign_in_and_the_run_limit_stay_even_for_a_person():
+def test_the_spend_caps_and_sign_in_stay_even_for_a_person():
     assert override_code(task(), world(auth_ok=False)) == "auth"
     over = [run(cost=LIMITS.global_usd_per_day + 1)]
     assert override_code(task(), world(runs=over)) == "global_usd_per_day"
-    working = [run(task_id="other", state="running")]
-    assert override_code(task(), world(runs=working)) == "concurrency"
     assert override_code(task(), world(enabled=False)) == "disabled"
 
 
@@ -427,9 +425,3 @@ def test_a_task_with_a_run_working_on_it_is_working_whatever_the_run_changed():
 
     assert reason_code(task(worktree_clean=False), world(runs=runs)) == "working"
     assert override_code(task(), world(runs=runs)) == "working"
-
-
-def test_another_tasks_working_run_is_only_a_concurrency_limit_for_this_one():
-    runs = [run(task_id="other", state="running")]
-
-    assert reason_code(task(), world(runs=runs)) == "concurrency"

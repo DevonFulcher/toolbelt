@@ -712,7 +712,7 @@ def test_with_the_start_switch_on_it_is_not_a_dry_run():
     assert r.dispatcher.dry_run is False
 
 
-def test_only_one_run_is_started_per_pass():
+def test_every_task_an_agent_may_take_is_started_in_one_pass():
     r = rig(
         a=PrSnapshot(status(), None),
         b=PrSnapshot(status(), None),
@@ -721,7 +721,45 @@ def test_only_one_run_is_started_per_pass():
 
     r.tick()
 
+    assert r.launched == ["a", "b", "c"]
+
+
+def test_a_run_started_in_a_pass_counts_toward_the_limits_for_the_next_task():
+    r = rig(
+        a=PrSnapshot(status(), None),
+        b=PrSnapshot(status(), None),
+    )
+    limits = r.dispatcher.limits
+
+    async def launch(decision) -> None:
+        r.launched.append(decision.branch)
+        r.runs.append(
+            AgentRun(
+                run_id=f"r-{decision.branch}",
+                task_id=decision.task_id,
+                repo_id=1,
+                branch=decision.branch,
+                trigger=decision.trigger,
+                head_sha="abc",
+                model="m",
+                state="running",
+                started_at=NOW,
+                ended_at=None,
+                session_id=None,
+                turns=0,
+                cost_usd=limits.global_usd_per_day,
+                tokens=TokenCounts(),
+                summary=None,
+                error=None,
+            )
+        )
+
+    r.dispatcher._launch = launch
+
+    r.tick()
+
     assert r.launched == ["a"]
+    assert r.decision("b").reason.code == "global_usd_per_day"  # type: ignore[union-attr]
 
 
 def test_a_draft_pr_is_held_back_with_that_reason_and_never_launched():

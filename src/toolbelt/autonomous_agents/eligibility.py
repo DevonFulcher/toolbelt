@@ -38,7 +38,6 @@ type ReasonCode = Literal[
     "auth",
     "screen_asleep",
     "screen_locked",
-    "concurrency",
     "backoff",
 ]
 
@@ -268,13 +267,6 @@ def _reasons(task: TaskFacts, world: World) -> Iterator[Reason]:
             until=min(run.started_at for run in today) + timedelta(hours=24),
         )
     yield from (b for b in global_blockers(world) if b.code != "disabled")
-    running = [run for run in world.runs if run.state == "running"]
-    if len(running) >= limits.max_concurrent_runs:
-        yield Reason(
-            "concurrency",
-            f"{len(running)} agent run is working already (limit "
-            f"{limits.max_concurrent_runs}).",
-        )
     ended = [run.ended_at for run in mine if run.ended_at is not None]
     if ended:
         resume = max(ended) + timedelta(seconds=limits.backoff_seconds)

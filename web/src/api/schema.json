@@ -267,7 +267,6 @@
         "auth",
         "screen_asleep",
         "screen_locked",
-        "concurrency",
         "backoff"
       ],
       "type": "string"

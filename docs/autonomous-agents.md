@@ -11,8 +11,11 @@ Nothing runs until you turn it on, in two steps in the **Agents** view:
 1. **Autonomous agents: on.** Every few seconds toolbelt decides, for each
    task whose next action is one of the three, whether an agent may take it,
    and why not when not. This is a *dry run*: nothing is started.
-2. **Start runs.** Only then does an agent start, on the first task that may be
-   taken, one run at a time.
+2. **Start runs.** Only then does an agent start, on every task that may be
+   taken. Runs do not queue behind each other: each works in its own task's
+   worktree and holds the task with a claim. When several start in one pass each
+   is decided again after the one before it started, so the spend limits count
+   it.
 
 Both switches are stored (`stacks.db`, `settings`) and off by default.
 
@@ -35,7 +38,7 @@ card (with when it clears, if it clears by itself):
 | global spend | the daily and monthly dollar limits for all agents |
 | signed out | `claude auth status` says it is not signed in |
 | screen asleep / locked | agents only run while you are at the laptop |
-| another run working / back-off | only one at a time, with a pause after a task's run |
+| back-off | a pause after a task's run |
 
 ### Running one by hand
 
@@ -46,8 +49,7 @@ commit / per day, spend per task per day, screen asleep / locked or back-off has
 a **Run an agent anyway** button. It starts a run on that task right away, even
 with "Start runs" off, and the run counts toward the limits like any other.
 Everything else stays: a closed PR, a task someone holds, a missing, dirty or
-mid-merge worktree, the global spend limits, signed out, and the one run at a
-time. If one of those is true the button says which.
+mid-merge worktree, the global spend limits and signed out. If one of those is true the button says which.
 
 A branch an agent holds reads **Autonomous agent** instead of **Needs me** (the
 action it replaced is in the tooltip). An interactive claim on the same task
@@ -66,7 +68,6 @@ Defaults are conservative; override any of them in `agents:` of
 | one task | 2 runs of the same job per commit, 3 per 24 hours, $0.50 per 24 hours |
 | all agents | $3 per 24 hours, $30 per month (separate from the account's own limit) |
 | back-off | 10 minutes after a task's run |
-| one at a time | yes |
 
 A run that reaches its dollar or turn limit ends as *hit its cap*; one that runs
 past the time limit ends as *timed out* (and keeps the cost it had accrued).

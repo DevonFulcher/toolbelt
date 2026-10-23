@@ -21,7 +21,6 @@ export type AgentReasonCode =
   | "auth"
   | "screen_asleep"
   | "screen_locked"
-  | "concurrency"
   | "backoff";
 export type AgentTrigger = "resolve_conflicts" | "resolve_comments" | "fix_ci";
 export type AgentRunState = "running" | "succeeded" | "failed" | "timed_out" | "cap_reached" | "stopped" | "abandoned";

@@ -45,7 +45,6 @@ class AgentLimits(BaseModel):
     global_usd_per_month: float = Field(default=30.0, gt=0)
     #: Wait this long after a task's run ends before starting another.
     backoff_seconds: int = Field(default=10 * 60, ge=0)
-    max_concurrent_runs: int = Field(default=1, gt=0)
     #: A task is picked up only if its branch was committed to within this
     #: many working days (weekends do not count).
     active_working_days: int = Field(default=3, gt=0)

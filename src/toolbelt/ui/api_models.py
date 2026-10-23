@@ -921,7 +921,6 @@ type AgentReasonCode = Literal[
     "auth",
     "screen_asleep",
     "screen_locked",
-    "concurrency",
     "backoff",
 ]
 

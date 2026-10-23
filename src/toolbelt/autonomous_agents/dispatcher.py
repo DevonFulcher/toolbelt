@@ -282,14 +282,37 @@ class Dispatcher:
         self.blockers = global_blockers(world)
         self.ticked_at = now
         if self._launch is not None and self._launching_now:
-            # One at a time: every decision was made against the same runs, so
-            # a second start in this pass would ignore the first.
-            for decision in self.decisions.values():
-                if decision.may_start:
-                    await self._launch(decision)
-                    break
+            await self._launch_ready(tasks)
         if self.on_tick is not None:
             self.on_tick()
+
+    async def _launch_ready(self, tasks: list[DispatchTask]) -> None:
+        """Starts a run on every task an agent may take. Each decision was made
+        against the runs before this pass started, so after a start the next
+        task is decided again against the runs now (the spend limits count the
+        run just started)."""
+        launch = self._launch
+        assert launch is not None
+        by_key = {item.task.key: item for item in tasks}
+        launched = False
+        for key, decision in list(self.decisions.items()):
+            if not decision.may_start:
+                continue
+            if launched:
+                world = await asyncio.to_thread(self._world, self._wall_clock())
+                entry = self._snapshots.get(key)
+                fresh = (
+                    await asyncio.to_thread(self._decide, by_key[key], entry[1], world)
+                    if entry is not None
+                    else None
+                )
+                if fresh is None:
+                    continue
+                self.decisions[key] = decision = fresh
+                if not decision.may_start:
+                    continue
+            await launch(decision)
+            launched = True
 
     def _decide_all(
         self, tasks: list[DispatchTask], world: World
