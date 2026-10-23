@@ -110,3 +110,55 @@ def test_the_session_not_reading_the_message_back_leaves_it_unread():
 def test_anything_but_a_clear_success_is_an_error(output, message):
     with pytest.raises(SlackProxyError, match=message):
         send(output)
+
+
+class TestStalledStdin:
+    """`claude` exits before calling any tool when it is not handed the prompt
+    in time, so that failure alone is run again."""
+
+    @staticmethod
+    def attempts(monkeypatch, results):
+        from toolbelt.ui import slack_proxy
+
+        calls = []
+
+        async def run_claude(args, prompt):
+            calls.append(prompt)
+            return results[len(calls) - 1]
+
+        monkeypatch.setattr(slack_proxy, "_run_claude", run_claude)
+        return calls
+
+    @staticmethod
+    def stalled():
+        from toolbelt.ui.slack_proxy import _Finished
+
+        return _Finished(1, b"", b"Error: no stdin data received in 3s")
+
+    def test_a_stall_is_run_again(self, monkeypatch):
+        from toolbelt.ui.slack_proxy import _Finished, claude_runner
+
+        calls = self.attempts(
+            monkeypatch, [self.stalled(), self.stalled(), _Finished(0, b"{}", b"")]
+        )
+
+        assert asyncio.run(claude_runner([], "p")) == "{}"
+        assert len(calls) == 3
+
+    def test_it_gives_up_after_the_last_attempt(self, monkeypatch):
+        from toolbelt.ui.slack_proxy import STALL_ATTEMPTS, claude_runner
+
+        calls = self.attempts(monkeypatch, [self.stalled()] * STALL_ATTEMPTS)
+
+        with pytest.raises(SlackProxyError, match="no stdin data"):
+            asyncio.run(claude_runner([], "p"))
+        assert len(calls) == STALL_ATTEMPTS
+
+    def test_any_other_failure_is_not_run_again(self, monkeypatch):
+        from toolbelt.ui.slack_proxy import _Finished, claude_runner
+
+        calls = self.attempts(monkeypatch, [_Finished(1, b"", b"boom")])
+
+        with pytest.raises(SlackProxyError, match="boom"):
+            asyncio.run(claude_runner([], "p"))
+        assert len(calls) == 1

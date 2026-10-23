@@ -61,7 +61,21 @@ class SentMessage:
     session_id: str | None = None
 
 
-async def claude_runner(args: list[str], prompt: str) -> str:
+#: ``claude`` gives up with this on stderr when the machine is too busy to hand
+#: it the prompt within a few seconds. It exits before it calls any tool, so
+#: nothing was sent and running it again cannot post twice.
+_STALLED_STDIN = "no stdin data received"
+STALL_ATTEMPTS = 3
+
+
+@dataclass(frozen=True)
+class _Finished:
+    returncode: int | None
+    stdout: bytes
+    stderr: bytes
+
+
+async def _run_claude(args: list[str], prompt: str) -> _Finished:
     process = await logged_process.create_subprocess_exec(
         "claude",
         "-p",
@@ -83,9 +97,21 @@ async def claude_runner(args: list[str], prompt: str) -> str:
         raise SlackProxyError(
             "the Slack session timed out: check Slack, the message may have been sent"
         ) from timeout
-    if process.returncode != 0:
-        raise SlackProxyError(f"claude failed: {stderr.decode().strip()[:300]}")
-    return stdout.decode()
+    return _Finished(process.returncode, stdout, stderr)
+
+
+async def claude_runner(args: list[str], prompt: str) -> str:
+    for attempt in range(1, STALL_ATTEMPTS + 1):
+        finished = await _run_claude(args, prompt)
+        stalled = _STALLED_STDIN in finished.stderr.decode().lower()
+        if finished.returncode != 0 and stalled and attempt < STALL_ATTEMPTS:
+            continue
+        break
+    if finished.returncode != 0:
+        raise SlackProxyError(
+            f"claude failed: {finished.stderr.decode().strip()[:300]}"
+        )
+    return finished.stdout.decode()
 
 
 def _send_prompt(channel: str, text: str, thread_ts: str | None) -> str:
