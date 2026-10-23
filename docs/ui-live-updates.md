@@ -105,9 +105,10 @@ under a PR, so the full GraphQL lookup still runs every 10 minutes per PR
 (`comments_full_interval`), so the count on its card follows a thread being
 resolved. A change the gate does see shows up within one poll (20 s).
 
-The **Refresh PRs** button in the header (`POST /api/refresh`) looks every
-tracked PR up again at once, gate skipped, like a webhook hint for every branch.
-It answers at once; each card's age moves as its lookup arrives.
+The **Refresh** button in a card's PR box (`POST /api/refresh` with the branch's
+id) looks that PR up again at once, gate skipped, like a webhook hint for that
+branch. It answers at once and reads "Refreshing…" until the card's lookup
+arrives.
 
 ## Polling
 

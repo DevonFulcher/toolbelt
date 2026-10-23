@@ -637,6 +637,28 @@ describe("a card while a message is posted in the background", () => {
   });
 });
 
+describe("a card's Refresh button", () => {
+  test("each card has one, and it refreshes only that card's PR", async () => {
+    const sent: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit) => {
+        sent.push(JSON.parse(String(init.body)));
+        return { ok: true, status: 202, json: async () => ({ refreshing: true }) };
+      }),
+    );
+    const open = pr({ pr_number: 8, pr: "open" });
+    showCards([branch(1, "devon/a", { status: open }), branch(1, "devon/b", { status: open })]);
+
+    const buttons = screen.getAllByRole("button", { name: "Refresh" });
+    expect(buttons).toHaveLength(2);
+    fireEvent.click(buttons[1]);
+
+    await waitFor(() => expect(sent).toEqual([{ id: "1:devon/b" }]));
+    vi.unstubAllGlobals();
+  });
+});
+
 describe("a card's Assigned Review", () => {
   const open = pr({ pr_number: 8, pr: "open" });
   const info = (assignee: string | null): SlackInfo => ({

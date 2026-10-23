@@ -6,7 +6,6 @@ import { CardList } from "./CardList";
 import { FilterBar } from "./FilterBar";
 import { FocusBar } from "./FocusBar";
 import { LiveIndicator } from "./LiveIndicator";
-import { RefreshButton } from "./RefreshButton";
 import { AgentsPage } from "./AgentsView";
 import { SpendPage } from "./SpendView";
 import { TableView } from "./TableView";
@@ -31,7 +30,6 @@ export function App({ clock = Date.now }: { clock?: () => number }) {
         <header>
           <h1>toolbelt factory</h1>
           <LiveIndicator />
-          <RefreshButton />
           <UpdateNotice />
         </header>
         <main>

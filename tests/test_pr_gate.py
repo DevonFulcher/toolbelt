@@ -215,17 +215,24 @@ class TestRefresherWithGate:
 
         assert s.lookups == 1
 
-    def test_refreshing_everything_looks_each_branch_up_at_once_without_the_gate(self):
+    def test_refreshing_a_branch_looks_it_up_at_once_without_the_gate(self):
         s = Setup()
         s.pass_after(0)
         s.github.asked.clear()
 
-        assert s.refresher.refresh_all() == 1
+        assert s.refresher.refresh(1, "devon/a") is True
         fetched = s.pass_after(1)
 
         assert fetched == 1
         assert s.lookups == 2
         assert s.github.asked == []
+
+    def test_refreshing_a_branch_that_is_not_tracked_does_nothing(self):
+        s = Setup()
+        s.pass_after(0)
+
+        assert s.refresher.refresh(1, "devon/other") is False
+        assert s.pass_after(1) == 0
 
     def test_a_gate_that_cannot_answer_falls_back_to_the_full_lookup(self):
         s = Setup()

@@ -288,12 +288,13 @@ class StatusRefresher:
         self._hinted |= keys
         self._hinted_wake.set()
 
-    def refresh_all(self) -> int:
-        """Looks every tracked branch up again at once, gate skipped (the
-        Refresh button). Returns how many."""
-        keys = {branch.key for branch in self._branches()}
-        self.hint(keys)
-        return len(keys)
+    def refresh(self, repo_id: int, branch: str) -> bool:
+        """Looks the branch up again at once, gate skipped (the card's Refresh
+        button). ``False`` when the branch is not tracked."""
+        if (repo_id, branch) not in {b.key for b in self._branches()}:
+            return False
+        self.hint({(repo_id, branch)})
+        return True
 
     async def snapshot(self, branch: TrackedBranch, max_age: float) -> PrSnapshot:
         """The branch's PR as last looked up, for a caller that needs it even

@@ -157,11 +157,11 @@ export function queueMerge(id: string, fetchImpl: typeof fetch = fetch): Promise
   return postJson<MergeQueueInfo>("/api/merge/queue", { id }, fetchImpl);
 }
 
-/** Look every tracked branch's PR up again now. The server does it in the
- * background: this resolves once it has accepted the request, and each card's age
- * moves as its lookup arrives. */
-export async function refreshAll(fetchImpl: typeof fetch = fetch): Promise<void> {
-  await postJson<unknown>("/api/refresh", {}, fetchImpl);
+/** Look the branch's PR up again now. The server does it in the background: this
+ * resolves once it has accepted the request, and the card's age moves when the
+ * lookup arrives. */
+export async function refreshBranch(id: string, fetchImpl: typeof fetch = fetch): Promise<void> {
+  await postJson<unknown>("/api/refresh", { id }, fetchImpl);
 }
 
 /** Take the branch's PR off the merge queue. */

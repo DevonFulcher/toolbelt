@@ -1337,8 +1337,11 @@ def create_app(
         return Response(status_code=204)
 
     @app.post("/api/refresh", response_model=api.RefreshAccepted, status_code=202)
-    async def refresh_all() -> api.RefreshAccepted:
-        return api.RefreshAccepted(branches=refresher.refresh_all())
+    async def refresh_branch(body: api.RefreshRequest) -> api.RefreshAccepted:
+        repo_id, name = branch_ref(body.id)
+        if not refresher.refresh(repo_id, name):
+            raise HTTPException(status_code=404, detail="no such branch")
+        return api.RefreshAccepted(refreshing=True)
 
     @app.get("/api/events")
     async def events() -> StreamingResponse:

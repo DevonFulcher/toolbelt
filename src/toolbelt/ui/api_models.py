@@ -1104,11 +1104,18 @@ class MergeQueueRequest(Model):
     id: str
 
 
-class RefreshAccepted(Model):
-    """The answer to ``POST /api/refresh``: every tracked branch is being
-    looked up again in the background (each card's age moves as it arrives)."""
+class RefreshRequest(Model):
+    """The body of ``POST /api/refresh``: look the branch's PR up again now."""
 
-    branches: int
+    #: The branch's row id (see ``Branch.id``).
+    id: str
+
+
+class RefreshAccepted(Model):
+    """The answer to ``POST /api/refresh``: the branch is being looked up again
+    in the background (its card's age moves when the lookup arrives)."""
+
+    refreshing: bool
 
 
 class SlackPerson(Model):

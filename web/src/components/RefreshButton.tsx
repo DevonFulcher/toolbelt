@@ -1,52 +1,55 @@
 import { useEffect, useState } from "react";
-import { refreshAll } from "../api/client";
+import { refreshBranch } from "../api/client";
 import { useApp } from "../store/StoreContext";
 
 /** Longest the button stays on "Refreshing…" when no lookup arrives. */
 const WAIT_MS = 30_000;
 
-/** Looks every PR up again now instead of waiting for the next poll. It says it is
- * refreshing until the server's next lookups arrive (the page's `updatedAt`
- * moves), or the request fails. */
-export function RefreshButton() {
-  const updatedAt = useApp((s) => s.updatedAt);
-  // `updatedAt` when the button was pressed: refreshing until it changes.
-  const [since, setSince] = useState<{ at: number | null } | null>(null);
+/** Looks the card's PR up again now instead of waiting for the next poll. It says it
+ * is refreshing until the lookup arrives (the card's `updated … ago` restarts, or its
+ * error changes), or the request fails. */
+export function RefreshButton({ id }: { id: string }) {
+  const fetchedAt = useApp((s) => s.fetchedAt[id]);
+  const fetchError = useApp((s) => s.fetchError[id]);
+  // What the card showed when the button was pressed: refreshing until it changes.
+  const [before, setBefore] = useState<{ fetchedAt: number | undefined; error: string | undefined } | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
 
   useEffect(() => {
-    if (since === null) return;
-    if (updatedAt !== since.at) {
-      setSince(null);
+    if (before === null) return;
+    if (fetchedAt !== before.fetchedAt || fetchError !== before.error) {
+      setBefore(null);
       return;
     }
-    const timer = window.setTimeout(() => setSince(null), WAIT_MS);
+    const timer = window.setTimeout(() => setBefore(null), WAIT_MS);
     return () => window.clearTimeout(timer);
-  }, [since, updatedAt]);
+  }, [before, fetchedAt, fetchError]);
 
   const press = (): void => {
     setProblem(null);
-    setSince({ at: updatedAt });
-    refreshAll().catch((error: unknown) => {
-      setSince(null);
+    setBefore({ fetchedAt, error: fetchError });
+    refreshBranch(id).catch((error: unknown) => {
+      setBefore(null);
       setProblem(error instanceof Error ? error.message : String(error));
     });
   };
 
   return (
-    <span id="refresh">
+    <>
       <button
         type="button"
-        className="agents-toggle"
-        title="Look every PR up again now instead of waiting for the next poll"
-        disabled={since !== null}
+        className="agents-toggle refresh-pr"
+        title="Look this PR up again now instead of waiting for the next poll"
+        disabled={before !== null}
         onClick={press}
       >
-        {since !== null ? "Refreshing…" : "Refresh PRs"}
+        {before !== null ? "Refreshing…" : "Refresh"}
       </button>
       {problem && (
-        <span className="error" role="alert">{` ${problem}`}</span>
+        <span className="error" role="alert">
+          {` ${problem}`}
+        </span>
       )}
-    </span>
+    </>
   );
 }

@@ -21,6 +21,7 @@ import { useApp, useAppStore } from "../store/StoreContext";
 import { AgentSlots, SpendSlots } from "./CardAgentSlots";
 import { MergeDialog } from "./MergeDialog";
 import { MergeQueueControls } from "./MergeQueueControls";
+import { RefreshButton } from "./RefreshButton";
 import { SlackDialog } from "./SlackDialog";
 import { Timeline } from "./Timeline";
 import { Age, CI_TONE, ExternalLink, PR_TONE, Pill, REVIEW_TONE, WHO_TEXT, WHO_TONE } from "./presentation";
@@ -340,6 +341,8 @@ export const Card = memo(
           id="pr"
           title="PR"
           aside={
+            <>
+            <RefreshButton id={id} />{" "}
             <Freshness
               at={fetchedAt}
               error={fetchError}
@@ -347,6 +350,7 @@ export const Card = memo(
               staleAfter={taskDone || (status.load === "loaded" && status.pr === "closed") ? 900 : 90}
               title="When this PR's status was last looked up on GitHub. It is checked about every 20 seconds while this page is open (every 5 minutes for merged and closed PRs, and for repos whose webhooks are forwarded here). The status shown is kept across restarts."
             />
+            </>
           }
         >
           <PrSlots status={status} note={note} />
