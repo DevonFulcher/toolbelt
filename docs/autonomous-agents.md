@@ -29,6 +29,7 @@ card (with when it clears, if it clears by itself):
 | agents off | the first switch |
 | PR not open | merged and closed PRs are left alone |
 | working | a run is already on the task: it shows under "An agent is on these", whatever else its run changes (a dirty worktree) |
+| deciding | an agent asked a question about the task (or its answer is waiting for the run to be resumed): answer or delete it first, see [decisions](decisions.md) |
 | draft | agents only work on PRs that are ready for review; a draft is left to you, and sits under "No agent is on these" |
 | inactive | the branch was not committed to within 3 working days (weekends do not count) |
 | claimed | a person, or an interactive agent session, holds the task |
@@ -99,6 +100,8 @@ with "🤖 AI-generated on behalf of Devon:". It ends with a one-line JSON repor
   `task-claims.md`); the **Spend** view lists autonomous spend separately, and
   an agent's session is left out of the interactive figures.
 * A **Stop** button on a working run ends it as *stopped*.
+* A run that asked the user a question ends as *waiting for you* (`deciding`)
+  and is resumed with the answer: see [decisions](decisions.md).
 * A **Conversation** button on a run shows what it was asked, what the agent
   said, and each tool it ran with the output (long output is cut). It is read
   from the run's own Claude session transcript, so it fills in live while the

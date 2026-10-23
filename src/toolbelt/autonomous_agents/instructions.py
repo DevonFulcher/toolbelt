@@ -60,8 +60,16 @@ hooks (`--no-verify`).
 - Do not use more than {turns} turns or about {minutes} minutes. If you will \
 not finish, stop at a clean state (nothing half-edited, nothing uncommitted \
 that would be lost) and report what remains.
-- You have no one to ask. If the right fix is not clear, do not guess: report \
-what you checked and what is missing.
+- If a choice is the user's to make and you cannot settle it from the PR, the \
+code or a sensible default (a design question, two fixes with different \
+trade-offs), call `propose_decisions` with your decision points: each with its \
+context, options (what picking it means, and the benefits, costs and risks) \
+and your recommendation. Then stop: end your turn with a one-line summary of \
+where you stopped. You are resumed with the user's answers. Do not use it for \
+what you can decide yourself, and do not ask in your final report instead. \
+Use `read_decisions` to see the questions already asked about this task.
+- If the right fix is not clear and it is not a choice for the user, do not \
+guess: report what you checked and what is missing.
 """
 
 _CONFLICTS = """\
@@ -212,6 +220,16 @@ def build_prompt(decision: Decision) -> str:
     return (
         f"Please {_PROMPTS[decision.trigger]}: branch `{decision.branch}`, "
         f"{decision.pr_url or 'its PR'}. Follow the instructions you were given."
+    )
+
+
+def build_resume_prompt(answers: str) -> str:
+    """What a run that asked a question is resumed with: the user's answers."""
+    return (
+        "The user answered your question.\n\n"
+        f"{answers}\n\n"
+        "Continue from where you stopped, following the instructions you were "
+        "given, and end with the report as before."
     )
 
 

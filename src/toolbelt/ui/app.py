@@ -68,6 +68,7 @@ from toolbelt.autonomous_agents.limits import (
     AGENTS_LAUNCH_SETTING,
     load_limits,
 )
+from toolbelt.autonomous_agents.questions import RunQuestions
 from toolbelt.autonomous_agents.runner import AgentRunner
 from toolbelt.autonomous_agents.screen import read_screen_state
 from toolbelt.decisions.book import AlreadyAnswered, DecisionBook, NoSuchDecision
@@ -424,6 +425,10 @@ async def _start_run(runner: AgentRunner, decision) -> None:
     await runner.start(decision)
 
 
+async def _resume_run(runner: AgentRunner, answered, decision, prior) -> None:
+    await runner.resume(answered, decision, prior)
+
+
 def _abandon_agent_runs(now: datetime) -> None:
     """Runs still marked running belong to a toolbelt that stopped."""
     store = StackStore(default_db_path())
@@ -748,6 +753,10 @@ def create_app(
             wall_clock=wall_clock,
             launch=lambda decision: _start_run(runner, decision),
             launching=_agents_launching,
+            questions=RunQuestions(lambda: StackStore(default_db_path())),
+            resume=lambda answered, decision, prior: _resume_run(
+                runner, answered, decision, prior
+            ),
             explain_ci=ci_explainer(
                 lambda query, variables: requests.graphql(
                     query, variables, caller="ci_history"

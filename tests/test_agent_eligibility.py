@@ -425,3 +425,33 @@ def test_a_task_with_a_run_working_on_it_is_working_whatever_the_run_changed():
 
     assert reason_code(task(worktree_clean=False), world(runs=runs)) == "working"
     assert override_code(task(), world(runs=runs)) == "working"
+
+
+# ---- a question for the user -----------------------------------------------------------------
+
+
+def test_a_task_with_a_question_for_the_user_is_held_whatever_else_is_true():
+    assert reason_code(task(deciding=True), world()) == "deciding"
+    assert reason_code(task(deciding=True, pr_draft=True), world()) == "deciding"
+
+
+def test_a_held_task_cannot_be_started_by_hand():
+    assert override_code(task(deciding=True), world()) == "deciding"
+
+
+def test_a_run_that_resumes_another_is_not_another_try():
+    tries = [
+        replace(
+            run(head="abc", started=NOW - timedelta(hours=20 - i)), resumed_from="r0"
+        )
+        for i in range(LIMITS.task_runs_per_head + LIMITS.task_runs_per_day)
+    ]
+
+    assert decide(task(), world(runs=tries)) is None
+
+
+def test_a_run_that_asked_still_counts_as_a_try():
+    asked = [run(head="abc", started=NOW - timedelta(hours=3), state="deciding")]
+    tries = asked * 1 + [run(head="abc", started=NOW - timedelta(hours=2))]
+
+    assert reason_code(task(), world(runs=tries)) == "runs_per_head"

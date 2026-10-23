@@ -6,6 +6,7 @@ export type AgentReasonCode =
   | "disabled"
   | "pr_not_open"
   | "working"
+  | "deciding"
   | "draft"
   | "inactive"
   | "claimed"
@@ -23,7 +24,8 @@ export type AgentReasonCode =
   | "screen_locked"
   | "backoff";
 export type AgentTrigger = "resolve_conflicts" | "resolve_comments" | "fix_ci";
-export type AgentRunState = "running" | "succeeded" | "failed" | "timed_out" | "cap_reached" | "stopped" | "abandoned";
+export type AgentRunState =
+  "running" | "succeeded" | "failed" | "timed_out" | "cap_reached" | "stopped" | "abandoned" | "deciding";
 export type MixState =
   "working" | "draft" | "ready" | "waiting" | "changes" | "ci_running" | "ci_failing" | "approved" | "blocked";
 export type Tone = "green" | "red" | "amber" | "gray" | "purple" | "accent";

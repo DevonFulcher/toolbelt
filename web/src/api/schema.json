@@ -252,6 +252,7 @@
         "disabled",
         "pr_not_open",
         "working",
+        "deciding",
         "draft",
         "inactive",
         "claimed",
@@ -372,7 +373,8 @@
         "timed_out",
         "cap_reached",
         "stopped",
-        "abandoned"
+        "abandoned",
+        "deciding"
       ],
       "type": "string"
     },

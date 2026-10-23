@@ -27,9 +27,12 @@ from toolbelt.autonomous_agents.eligibility import (
     decide,
     global_blockers,
     is_trigger,
+    resume_blocker,
 )
 from toolbelt.autonomous_agents.limits import AgentLimits
+from toolbelt.autonomous_agents.questions import RunQuestions
 from toolbelt.autonomous_agents.screen import ScreenState
+from toolbelt.decisions.model import Decision as AskedDecision
 from toolbelt.git.stack.status import BranchStatus, PrState, ReviewState
 from toolbelt.git.stack.store import AgentRun
 from toolbelt.logger import logger
@@ -145,7 +148,15 @@ class Dispatcher:
         launch: Callable[[Decision], Awaitable[None]] | None = None,
         launching: Callable[[], bool] = lambda: True,
         explain_ci: CiExplainer | None = None,
+        questions: RunQuestions | None = None,
+        resume: Callable[[AskedDecision, Decision, AgentRun], Awaitable[None]]
+        | None = None,
     ) -> None:
+        self._questions = questions
+        self._resume = resume
+        #: The tasks an agent's question holds (see ``RunQuestions.holding``),
+        #: as of the last pass.
+        self._holding: set[str] = set()
         self._tasks = tasks
         self._fetch = fetch
         self._holders = holders
@@ -278,13 +289,45 @@ class Dispatcher:
         tasks = await asyncio.to_thread(self._tasks)
         await self._refresh(tasks)
         await self._look_into_ci(tasks)
+        if self._questions is not None:
+            await asyncio.to_thread(self._questions.settle_orphans)
+            self._holding = await asyncio.to_thread(self._questions.holding)
         self.decisions = await asyncio.to_thread(self._decide_all, tasks, world)
         self.blockers = global_blockers(world)
         self.ticked_at = now
         if self._launch is not None and self._launching_now:
+            await self._resume_answered(tasks, world)
             await self._launch_ready(tasks)
         if self.on_tick is not None:
             self.on_tick()
+
+    async def _resume_answered(self, tasks: list[DispatchTask], world: World) -> None:
+        """Resumes the runs whose question the user has answered, each with the
+        answer. A run is resumed only when it is safe (``resume_blocker``); the
+        task stays held until then."""
+        if self._questions is None or self._resume is None:
+            return
+        by_task = {item.task.task_id: item for item in tasks}
+        for answered, prior in await asyncio.to_thread(self._questions.answered):
+            item = by_task.get(answered.task_id)
+            entry = self._snapshots.get(item.task.key) if item else None
+            if item is None or entry is None:
+                continue
+            snapshot = entry[1]
+            action = next_action(snapshot.status, None)
+            state = await asyncio.to_thread(self._inspect, item)
+            if not state.exists:
+                continue
+            facts = self._facts(item, snapshot, action.kind, state)
+            if resume_blocker(facts, world) is not None:
+                continue
+            decision = await asyncio.to_thread(
+                self._decide, item, snapshot, world, True
+            )
+            if decision is None:
+                continue
+            await self._resume(answered, decision, prior)
+            world = await asyncio.to_thread(self._world, self._wall_clock())
 
     async def _launch_ready(self, tasks: list[DispatchTask]) -> None:
         """Starts a run on every task an agent may take. Each decision was made
@@ -399,6 +442,32 @@ class Dispatcher:
             return None
         return held[1]
 
+    def _facts(
+        self,
+        item: DispatchTask,
+        snapshot: PrSnapshot,
+        action_kind: str,
+        state: BranchState,
+    ) -> TaskFacts:
+        task = item.task
+        holders = self._holders(task.repo_id, task.branch)
+        return TaskFacts(
+            task_id=task.task_id,
+            action_kind=action_kind,
+            pr_open=pr_is_open(snapshot.status),
+            pr_draft=snapshot.status.pr is PrState.DRAFT,
+            head_sha=state.head_sha,
+            last_commit_at=state.last_commit_at,
+            has_worktree=task.worktree is not None,
+            worktree_clean=state.clean,
+            worktree_busy=state.busy,
+            claimed_by_other=any(h.kind != "autonomous" for h in holders),
+            bot_reviews=bot_reviews(snapshot.facts),
+            failed_ci_commits=failed_ci_commits(snapshot.facts),
+            ci_history=self._ci_history_of(item.task.key, snapshot),
+            deciding=task.task_id in self._holding,
+        )
+
     def _decide(
         self,
         item: DispatchTask,
@@ -426,22 +495,7 @@ class Dispatcher:
                 head_sha="",
                 decided_at=world.now,
             )
-        holders = self._holders(task.repo_id, task.branch)
-        facts = TaskFacts(
-            task_id=task.task_id,
-            action_kind=action.kind,
-            pr_open=pr_is_open(snapshot.status),
-            pr_draft=snapshot.status.pr is PrState.DRAFT,
-            head_sha=state.head_sha,
-            last_commit_at=state.last_commit_at,
-            has_worktree=task.worktree is not None,
-            worktree_clean=state.clean,
-            worktree_busy=state.busy,
-            claimed_by_other=any(h.kind != "autonomous" for h in holders),
-            bot_reviews=bot_reviews(snapshot.facts),
-            failed_ci_commits=failed_ci_commits(snapshot.facts),
-            ci_history=self._ci_history_of(item.task.key, snapshot),
-        )
+        facts = self._facts(item, snapshot, action.kind, state)
         reason = decide(facts, world, override=override)
         return Decision(
             task_id=task.task_id,

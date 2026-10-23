@@ -23,6 +23,7 @@ type ReasonCode = Literal[
     "disabled",
     "pr_not_open",
     "working",
+    "deciding",
     "draft",
     "inactive",
     "claimed",
@@ -76,6 +77,8 @@ class TaskFacts:
     #: Why CI keeps failing, when it has been looked into (see ``ci_history``);
     #: said with the reason a PR that keeps getting re-blocked is left alone.
     ci_history: str | None = None
+    #: A question an agent asked the user about this task is not answered yet.
+    deciding: bool = False
 
 
 @dataclass(frozen=True)
@@ -201,6 +204,13 @@ def _reasons(task: TaskFacts, world: World) -> Iterator[Reason]:
         # to look at.
         yield Reason("working", "An agent is working on this now.")
         return
+    if task.deciding:
+        yield Reason(
+            "deciding",
+            "An agent asked a question about this task: answer it (or delete it) "
+            "first.",
+        )
+        return
     if task.pr_draft:
         yield Reason("draft", "The PR is a draft: agents leave drafts to you.")
     if task.last_commit_at is None:
@@ -242,7 +252,9 @@ def _reasons(task: TaskFacts, world: World) -> Iterator[Reason]:
     on_head = [
         run
         for run in mine
-        if run.head_sha == task.head_sha and run.trigger == task.action_kind
+        if run.head_sha == task.head_sha
+        and run.trigger == task.action_kind
+        and run.resumed_from is None
     ]
     if len(on_head) >= limits.task_runs_per_head:
         yield Reason(
@@ -251,7 +263,11 @@ def _reasons(task: TaskFacts, world: World) -> Iterator[Reason]:
             f"(limit {limits.task_runs_per_head}); a new commit resets it.",
         )
     today = _since(mine, now - timedelta(hours=24))
-    if len(today) >= limits.task_runs_per_day:
+    # A run that resumes one that asked a question is not another try.
+    if (
+        len([run for run in today if run.resumed_from is None])
+        >= limits.task_runs_per_day
+    ):
         yield Reason(
             "task_runs_per_day",
             f"{len(today)} runs on this task in the last 24 hours "
@@ -277,6 +293,29 @@ def _reasons(task: TaskFacts, world: World) -> Iterator[Reason]:
                 "trying again.",
                 until=resume,
             )
+
+
+def resume_blocker(task: TaskFacts, world: World) -> Reason | None:
+    """Why a run that asked a question may not be resumed with the answer now
+    (``None``: it may). Only what makes it unsafe or impossible counts: the
+    run continues a job already taken, so the limits that stop a new attempt
+    (a draft, an old branch, thrash, tries per commit or per day, back-off) do
+    not, and the worktree may hold what the run left there."""
+    if not world.enabled:
+        return Reason("disabled", "Autonomous agents are switched off.")
+    if not task.pr_open:
+        return Reason("pr_not_open", "The PR is not open.")
+    if any(r.task_id == task.task_id and r.state == "running" for r in world.runs):
+        return Reason("working", "An agent is working on this now.")
+    if task.claimed_by_other:
+        return Reason("claimed", "A person or an agent session holds this task.")
+    if not task.has_worktree:
+        return Reason("no_worktree", "The branch has no worktree to work in.")
+    if task.worktree_busy:
+        return Reason(
+            "worktree_busy", "The worktree is in the middle of a merge or rebase."
+        )
+    return next((b for b in global_blockers(world) if b.code != "disabled"), None)
 
 
 def decide(task: TaskFacts, world: World, *, override: bool = False) -> Reason | None:

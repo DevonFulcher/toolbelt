@@ -413,6 +413,12 @@ _MIGRATIONS: list[tuple[str, ...]] = [
         """,
         "CREATE INDEX decisions_by_task ON decisions (task_id, created_at)",
     ),
+    (
+        # A run that continues an earlier run that asked the user a question
+        # (see ``autonomous_agents.runner``): it resumes the earlier run's
+        # session with the answer, and is not another try at the job.
+        "ALTER TABLE agent_runs ADD COLUMN resumed_from TEXT",
+    ),
 ]
 
 
@@ -638,7 +644,9 @@ class TaskUsage:
 #: How a run ended: ``running`` until it does. ``succeeded``: the agent
 #: finished its loop; ``failed``: it errored; ``timed_out``: it ran past the
 #: time limit; ``cap_reached``: it hit its dollar or turn limit; ``stopped``:
-#: someone stopped it; ``abandoned``: toolbelt stopped while it ran.
+#: someone stopped it; ``abandoned``: toolbelt stopped while it ran;
+#: ``deciding``: it asked the user a question and ended, to be resumed with the
+#: answer.
 RUN_STATES = (
     "running",
     "succeeded",
@@ -647,6 +655,7 @@ RUN_STATES = (
     "cap_reached",
     "stopped",
     "abandoned",
+    "deciding",
 )
 
 
@@ -671,6 +680,8 @@ class AgentRun:
     error: str | None
     #: What a working run is doing now (``None``: nothing yet, or it ended).
     activity: str | None = None
+    #: The run this one continues, when it resumes one that asked a question.
+    resumed_from: str | None = None
 
 
 @dataclass(frozen=True)
@@ -711,6 +722,35 @@ def _pr_link(row: sqlite3.Row) -> PrLink | None:
     if row["pr_node_id"] is None or row["pr_number"] is None:
         return None
     return PrLink(number=row["pr_number"], node_id=row["pr_node_id"])
+
+
+def _agent_run(r: sqlite3.Row) -> AgentRun:
+    return AgentRun(
+        run_id=r["run_id"],
+        task_id=r["task_id"],
+        repo_id=r["repo_id"],
+        branch=r["branch"],
+        trigger=r["trigger"],
+        head_sha=r["head_sha"],
+        model=r["model"],
+        state=r["state"],
+        started_at=datetime.fromisoformat(r["started_at"]),
+        ended_at=_optional_time(r["ended_at"]),
+        session_id=r["session_id"],
+        turns=r["turns"],
+        cost_usd=r["cost_usd"],
+        tokens=TokenCounts(
+            input=r["input_tokens"],
+            output=r["output_tokens"],
+            cache_read=r["cache_read_tokens"],
+            cache_write_5m=r["cache_write_5m_tokens"],
+            cache_write_1h=r["cache_write_1h_tokens"],
+        ),
+        summary=r["summary"],
+        error=r["error"],
+        activity=r["activity"],
+        resumed_from=r["resumed_from"],
+    )
 
 
 def _decision(row: sqlite3.Row) -> Decision:
@@ -1335,6 +1375,7 @@ class StackStore:
         model: str,
         at: datetime,
         session_id: str | None = None,
+        resumed_from: str | None = None,
     ) -> str:
         """Record that a run has started; returns its id. ``session_id`` is
         the Claude session it will use, when known up front (so the session's
@@ -1343,8 +1384,8 @@ class StackStore:
         with self._write() as conn:
             conn.execute(
                 "INSERT INTO agent_runs (run_id, task_id, repo_id, branch, "
-                "trigger, head_sha, model, state, started_at, session_id) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)",
+                "trigger, head_sha, model, state, started_at, session_id, "
+                "resumed_from) VALUES (?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)",
                 (
                     run_id,
                     task_id,
@@ -1355,9 +1396,25 @@ class StackStore:
                     model,
                     _iso(at),
                     session_id,
+                    resumed_from,
                 ),
             )
         return run_id
+
+    def settle_deciding_run(
+        self, run_id: str, *, state: str, error: str | None = None
+    ) -> None:
+        """Ends a run that is ``deciding``: it was resumed with the answer
+        (``succeeded``), or its question was deleted and there is none to resume
+        it with. Any other run is left as it is."""
+        if state not in RUN_STATES or state in ("running", "deciding"):
+            raise ValueError(f"a settled run cannot be {state!r}")
+        with self._write() as conn:
+            conn.execute(
+                "UPDATE agent_runs SET state = ?, error = ? "
+                "WHERE run_id = ? AND state = 'deciding'",
+                (state, error, run_id),
+            )
 
     def finish_agent_run(
         self,
@@ -1448,34 +1505,21 @@ class StackStore:
             "ORDER BY started_at DESC, run_id",
             (_iso(since or datetime.min.replace(tzinfo=UTC)),),
         )
-        return [
-            AgentRun(
-                run_id=r["run_id"],
-                task_id=r["task_id"],
-                repo_id=r["repo_id"],
-                branch=r["branch"],
-                trigger=r["trigger"],
-                head_sha=r["head_sha"],
-                model=r["model"],
-                state=r["state"],
-                started_at=datetime.fromisoformat(r["started_at"]),
-                ended_at=_optional_time(r["ended_at"]),
-                session_id=r["session_id"],
-                turns=r["turns"],
-                cost_usd=r["cost_usd"],
-                tokens=TokenCounts(
-                    input=r["input_tokens"],
-                    output=r["output_tokens"],
-                    cache_read=r["cache_read_tokens"],
-                    cache_write_5m=r["cache_write_5m_tokens"],
-                    cache_write_1h=r["cache_write_1h_tokens"],
-                ),
-                summary=r["summary"],
-                error=r["error"],
-                activity=r["activity"],
-            )
-            for r in rows
-        ]
+        return [_agent_run(r) for r in rows]
+
+    def agent_run(self, run_id: str) -> AgentRun | None:
+        row = self._conn.execute(
+            "SELECT * FROM agent_runs WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        return _agent_run(row) if row else None
+
+    def deciding_runs(self) -> list[AgentRun]:
+        """Every run waiting for the user's answer, whenever it started."""
+        rows = self._conn.execute(
+            "SELECT * FROM agent_runs WHERE state = 'deciding' "
+            "ORDER BY started_at, run_id"
+        )
+        return [_agent_run(r) for r in rows]
 
     def aggregate_prs(self) -> list[AggregatePrRow]:
         rows = self._conn.execute(

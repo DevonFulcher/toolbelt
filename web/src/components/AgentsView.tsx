@@ -29,6 +29,7 @@ export const RUN_TONE: Record<AgentRunInfo["state"], Tone> = {
   cap_reached: "amber",
   stopped: "gray",
   abandoned: "gray",
+  deciding: "amber",
 };
 
 export const RUN_TEXT: Record<AgentRunInfo["state"], string> = {
@@ -39,6 +40,7 @@ export const RUN_TEXT: Record<AgentRunInfo["state"], string> = {
   cap_reached: "hit its cap",
   stopped: "stopped",
   abandoned: "abandoned",
+  deciding: "waiting for you",
 };
 
 /** The agents' state: what the server last pushed, else (once) what it says

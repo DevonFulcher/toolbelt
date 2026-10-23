@@ -906,6 +906,7 @@ type AgentReasonCode = Literal[
     "disabled",
     "pr_not_open",
     "working",
+    "deciding",
     "draft",
     "inactive",
     "claimed",
@@ -934,6 +935,7 @@ type AgentRunState = Literal[
     "cap_reached",
     "stopped",
     "abandoned",
+    "deciding",
 ]
 
 

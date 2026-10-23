@@ -22,7 +22,6 @@ from typing import Any
 from mcp.server.apps import Apps
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
-from pydantic import BaseModel
 
 from toolbelt.decisions.book import AlreadyAnswered, DecisionBook, NoSuchDecision
 from toolbelt.decisions.model import (
@@ -31,6 +30,7 @@ from toolbelt.decisions.model import (
     describe_answers,
     points_from_data,
 )
+from toolbelt.decisions.schema import AnswerInput, PointInput
 from toolbelt.decisions.tasks import AmbiguousTask, NoTask, resolve_task
 from toolbelt.git.stack.store import StackStore, default_db_path
 from toolbelt.task_claims.resolution import TrackedTask, git_worktrees, tracked_tasks
@@ -52,35 +52,6 @@ The call waits for the user, however long it takes, and returns their answers: d
 past it, and do not ask the same question in chat. If it is still running when the session \
 seems idle, that is expected. Use read_decisions to see the questions already asked about a \
 task and any answers (a question may have been answered after its session closed)."""
-
-
-class OptionInput(BaseModel):
-    id: str
-    title: str
-    summary: str = ""
-    context: str = ""
-    benefits: str = ""
-    costs: str = ""
-    risks: str = ""
-
-
-class RecommendationInput(BaseModel):
-    option_id: str | None = None
-    reasoning: str = ""
-
-
-class PointInput(BaseModel):
-    id: str
-    title: str
-    context: str = ""
-    options: list[OptionInput] = []
-    recommendation: RecommendationInput | None = None
-
-
-class AnswerInput(BaseModel):
-    point_id: str
-    option_id: str | None = None
-    text: str = ""
 
 
 def _load_tasks() -> list[TrackedTask]:
