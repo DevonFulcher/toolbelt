@@ -30,16 +30,27 @@ class Gh:
     def __init__(self, *, merge_stderr: str, api_responses: list[dict]):
         self.merge_stderr = merge_stderr
         self.api_responses = api_responses
+        self.merge_attempts = []
+        self.merges = 0
         self.api_calls: list[list[str]] = []
         self.synced: list[tuple[Path, str]] = []
 
+    #: Answers of the next merges, in order, before ``merge_stderr``.
+    merge_attempts: list[str]
+    #: What ``gh pr view --json state`` says.
+    state = "OPEN"
+
     def run(self, cmd, **kwargs):
         assert cmd[:3] == ["gh", "pr", "merge"]
-        return subprocess.CompletedProcess(
-            cmd, 1 if self.merge_stderr else 0, "", self.merge_stderr
+        self.merges += 1
+        stderr = (
+            self.merge_attempts.pop(0) if self.merge_attempts else self.merge_stderr
         )
+        return subprocess.CompletedProcess(cmd, 1 if stderr else 0, "", stderr)
 
     def capture(self, cmd, **kwargs):
+        if cmd[:3] == ["gh", "pr", "view"] and "--jq" in cmd:
+            return self.state
         if cmd[:3] == ["gh", "pr", "view"]:
             return json.dumps(VIEWED)
         self.api_calls.append(cmd)
@@ -71,6 +82,7 @@ def _install(monkeypatch: pytest.MonkeyPatch, gh: Gh, worktree: Path) -> None:
     )
     monkeypatch.setattr(workflow, "main_worktree", lambda root: worktree.parent)
     monkeypatch.setattr(workflow, "ensure_not_inside_worktree", lambda *a, **k: None)
+    monkeypatch.setattr(workflow, "_MERGE_RETRY_SECONDS", 0.0)
 
 
 def test_stacked_pr_is_refused_with_the_unstack_command_for_its_stack(
@@ -183,3 +195,59 @@ def test_running_inside_the_branchs_worktree_is_refused_before_merging(
         workflow.git_merge("7")
 
     assert merges == [] and gh.synced == []
+
+
+TRANSIENT_ERROR = (
+    "GraphQL: Something went wrong while executing your query on "
+    "2026-10-23T16:51:06Z. Please include `DCE2:2E969C` when reporting this issue."
+)
+
+
+def test_a_merge_github_failed_on_its_own_is_tried_again(
+    monkeypatch: pytest.MonkeyPatch, worktree: Path
+):
+    gh = Gh(merge_stderr="", api_responses=[])
+    gh.merge_attempts = [TRANSIENT_ERROR, TRANSIENT_ERROR]
+    _install(monkeypatch, gh, worktree)
+
+    workflow.git_merge("7")
+
+    assert gh.merges == 3
+    assert gh.synced == [(worktree.parent, "feature")]
+
+
+def test_it_gives_up_when_github_keeps_failing(
+    monkeypatch: pytest.MonkeyPatch, worktree: Path
+):
+    gh = Gh(merge_stderr=TRANSIENT_ERROR, api_responses=[])
+    _install(monkeypatch, gh, worktree)
+
+    with pytest.raises(typer.Exit):
+        workflow.git_merge("7")
+
+    assert gh.merges == workflow._MERGE_ATTEMPTS
+    assert gh.synced == []
+
+
+def test_a_pr_github_merged_before_it_failed_is_not_merged_twice(
+    monkeypatch: pytest.MonkeyPatch, worktree: Path
+):
+    gh = Gh(merge_stderr="", api_responses=[])
+    gh.merge_attempts = [TRANSIENT_ERROR]
+    gh.state = "MERGED"
+    _install(monkeypatch, gh, worktree)
+
+    workflow.git_merge("7")
+
+    assert gh.merges == 1
+    assert gh.synced == [(worktree.parent, "feature")]
+
+
+def test_a_refusal_is_not_tried_again(monkeypatch: pytest.MonkeyPatch, worktree: Path):
+    gh = Gh(merge_stderr="Pull request is not mergeable", api_responses=[])
+    _install(monkeypatch, gh, worktree)
+
+    with pytest.raises(typer.Exit):
+        workflow.git_merge("7")
+
+    assert gh.merges == 1

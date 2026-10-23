@@ -3,6 +3,7 @@ import json
 import os
 import re
 import subprocess
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -86,6 +87,36 @@ def sync_repo(root: Path | None = None, *, branch: str | None = None) -> None:
 
 _STACKED_MERGE_ERROR = "asynchronous merge REST API"
 
+#: What GitHub answers when its own backend fails a request: nothing is wrong
+#: with the PR, so the merge is tried again.
+_TRANSIENT_GITHUB_ERROR = "Something went wrong while executing your query"
+_MERGE_ATTEMPTS = 3
+_MERGE_RETRY_SECONDS = 3.0
+
+
+def _merge_on_github(pr: str) -> subprocess.CompletedProcess[str]:
+    """``gh pr merge --squash``, again after a failure of GitHub's own backend.
+    GitHub may have merged before it failed, so the PR is looked at first: one
+    already merged counts as merged."""
+    for attempt in range(1, _MERGE_ATTEMPTS + 1):
+        merged = logged_process.run(
+            ["gh", "pr", "merge", "--squash", pr], stderr=subprocess.PIPE, text=True
+        )
+        if (
+            not merged.returncode
+            or _TRANSIENT_GITHUB_ERROR not in merged.stderr
+            or attempt == _MERGE_ATTEMPTS
+        ):
+            return merged
+        logger.warning(
+            f"GitHub failed the merge ({merged.stderr.strip()}): trying again"
+        )
+        state = capture(["gh", "pr", "view", pr, "--json", "state", "--jq", ".state"])
+        if state.strip() == "MERGED":
+            return subprocess.CompletedProcess(merged.args, 0, merged.stdout, "")
+        time.sleep(_MERGE_RETRY_SECONDS)
+    raise AssertionError("unreachable")
+
 
 def _github_stack(number: int) -> dict | None:
     """The GitHub stack PR ``number`` is in (``number``, ``size``, ...), or
@@ -137,9 +168,7 @@ def git_merge(pr: str) -> None:
     ensure_not_inside_worktree(branch, root=main_wt, caller_dirs=[Path.cwd()])
     lineage.link_pr(branch, [candidate_from_json(viewed)], root=root)
     links = lineage.get_links(branch, root=root)
-    merged = logged_process.run(
-        ["gh", "pr", "merge", "--squash", pr], stderr=subprocess.PIPE, text=True
-    )
+    merged = _merge_on_github(pr)
     if merged.returncode and _STACKED_MERGE_ERROR in merged.stderr:
         stack = _github_stack(viewed["number"])
         which = f"stack {stack['number']} ({stack['size']} PRs)" if stack else "a stack"
