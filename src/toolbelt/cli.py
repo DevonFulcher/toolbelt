@@ -84,6 +84,29 @@ def slack_link(
         )
 
 
+decisions_typer = typer.Typer(
+    help="Decisions: questions agents ask you to answer.", no_args_is_help=True
+)
+app.add_typer(decisions_typer, name="decisions")
+
+
+@decisions_typer.command(name="mcp")
+def decisions_mcp():
+    """Serve the decisions MCP server on stdio, for an interactive Claude session
+
+    Register it once with:
+
+        claude mcp add --scope user toolbelt-decisions -- toolbelt decisions mcp
+
+    A session then asks you to decide with propose_decisions: the question shows
+    in Claude (an MCP App) and in `tt ui` as the task's Deciding state, and the
+    call waits for your answer. read_decisions lets any session read a task's
+    questions and answers, even after the session that asked has closed."""
+    from toolbelt.decisions.mcp_server import build_server
+
+    build_server().run()
+
+
 ui_typer = typer.Typer(
     help="Serve a read-only web view of every known repo's stacks on 127.0.0.1",
     invoke_without_command=True,

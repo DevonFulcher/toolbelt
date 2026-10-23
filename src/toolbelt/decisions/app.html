@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Decisions</title>
+<style>
+  :root { color-scheme: light dark; --line: #8884; --muted: #888; --accent: #2f81f7; --green: #2da44e; }
+  body { font: 14px/1.45 system-ui, sans-serif; margin: 0; padding: 12px; }
+  h1 { font-size: 15px; margin: 0 0 4px; }
+  .muted { color: var(--muted); }
+  fieldset { border: 1px solid var(--line); border-radius: 6px; margin: 10px 0; padding: 8px 10px; }
+  legend { font-weight: 600; padding: 0 4px; }
+  .option { margin: 6px 0; }
+  .option details { margin-left: 22px; font-size: 12px; }
+  dl { margin: 4px 0 0; } dt { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  dd { margin: 0 0 4px; }
+  .rec { color: var(--green); font-weight: 600; }
+  textarea { width: 100%; box-sizing: border-box; font: inherit; margin-top: 4px; }
+  button { font: inherit; font-weight: 600; padding: 4px 14px; border-radius: 6px; border: 1px solid var(--line); cursor: pointer; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  .error { color: #cf222e; }
+</style>
+</head>
+<body>
+<div id="root"><p class="muted">Waiting for the question…</p></div>
+<script>
+"use strict";
+// MCP Apps view (https://github.com/modelcontextprotocol/ext-apps): plain postMessage JSON-RPC to the host.
+let nextId = 1;
+const waiting = new Map();
+const call = (method, params) => new Promise((resolve, reject) => {
+  const id = nextId++;
+  waiting.set(id, { resolve, reject });
+  window.parent.postMessage({ jsonrpc: "2.0", id, method, params }, "*");
+});
+const notify = (method, params = {}) => window.parent.postMessage({ jsonrpc: "2.0", method, params }, "*");
+const callTool = async (name, args) => {
+  const result = await call("tools/call", { name, arguments: args });
+  if (result && result.isError) throw new Error((result.content || []).map((c) => c.text).join(" ") || "the tool failed");
+  return JSON.parse(((result.content || []).find((c) => c.type === "text") || { text: "null" }).text);
+};
+
+const root = document.getElementById("root");
+let task = null;
+let loading = false;
+let decision = null;
+
+window.addEventListener("message", (event) => {
+  const message = event.data;
+  if (!message || message.jsonrpc !== "2.0") return;
+  if (message.id !== undefined && waiting.has(message.id)) {
+    const { resolve, reject } = waiting.get(message.id);
+    waiting.delete(message.id);
+    if (message.error) reject(new Error(message.error.message || "request failed"));
+    else resolve(message.result);
+  } else if (message.method === "ui/notifications/tool-input") {
+    task = (message.params && message.params.arguments && message.params.arguments.task) || null;
+    load();
+  } else if (message.method === "ui/notifications/tool-result") {
+    // The tool returned: the question was answered (here or in toolbelt) or deleted.
+    load();
+  }
+});
+
+async function load() {
+  if (loading) return;
+  loading = true;
+  try {
+    for (let attempt = 0; attempt < 20; attempt++) {
+      decision = await callTool("pending_decision", { task });
+      if (decision) break;
+      await new Promise((resolve) => setTimeout(resolve, 750));
+    }
+    render();
+  } catch (error) {
+    root.replaceChildren(el("p", "error", String(error.message || error)));
+  } finally {
+    loading = false;
+  }
+}
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function optionBlock(point, option, recommended, state) {
+  const wrap = el("div", "option");
+  const label = el("label");
+  const radio = document.createElement("input");
+  radio.type = "radio";
+  radio.name = point.id;
+  radio.addEventListener("change", () => { state[point.id].option_id = option.id; refresh(); });
+  label.append(radio, " ", el("strong", "", option.id + ": " + option.title));
+  if (recommended) label.append(el("span", "rec", " (recommended)"));
+  if (option.summary) label.append(el("span", "muted", " — " + option.summary));
+  wrap.append(label);
+  const more = [["Context", option.context], ["Benefits", option.benefits], ["Costs", option.costs], ["Risks", option.risks]].filter((f) => f[1]);
+  if (more.length) {
+    const details = el("details");
+    details.append(el("summary", "", "More context"));
+    const dl = el("dl");
+    for (const [name, text] of more) dl.append(el("dt", "", name), el("dd", "", text));
+    details.append(dl);
+    wrap.append(details);
+  }
+  return wrap;
+}
+
+let refresh = () => {};
+
+function render() {
+  if (!decision) { root.replaceChildren(el("p", "muted", "No question found for this task.")); return; }
+  const frame = el("div");
+  frame.append(el("h1", "", decision.title));
+  if (decision.status !== "pending") {
+    frame.append(el("p", "muted", "Answered. The agent has the answers."));
+    root.replaceChildren(frame);
+    return;
+  }
+  const state = {};
+  for (const point of decision.points) state[point.id] = { option_id: null, text: "" };
+  const submit = el("button", "primary", "Send answers");
+  const problem = el("p", "error");
+  refresh = () => { submit.disabled = !decision.points.every((p) => state[p.id].option_id || state[p.id].text.trim()); };
+  for (const point of decision.points) {
+    const fieldset = el("fieldset");
+    fieldset.append(el("legend", "", point.id + ": " + point.title));
+    if (point.context) fieldset.append(el("p", "muted", point.context));
+    for (const option of point.options) {
+      fieldset.append(optionBlock(point, option, point.recommendation && point.recommendation.option_id === option.id, state));
+    }
+    if (point.recommendation) {
+      const details = el("details");
+      details.append(el("summary", "", "Recommendation" + (point.recommendation.option_id ? ": " + point.recommendation.option_id : "")), el("p", "", point.recommendation.reasoning));
+      fieldset.append(details);
+    }
+    const text = el("textarea");
+    text.rows = 2;
+    text.placeholder = point.options.length ? "Or in your own words" : "Your answer";
+    text.addEventListener("input", () => { state[point.id].text = text.value; refresh(); });
+    fieldset.append(text);
+    frame.append(fieldset);
+  }
+  submit.addEventListener("click", async () => {
+    submit.disabled = true;
+    submit.textContent = "Sending…";
+    problem.textContent = "";
+    try {
+      await callTool("answer_decision", {
+        decision_id: decision.id,
+        answers: decision.points.map((p) => ({ point_id: p.id, option_id: state[p.id].option_id, text: state[p.id].text.trim() })),
+      });
+      frame.replaceChildren(el("h1", "", decision.title), el("p", "muted", "Sent. The agent has your answers."));
+    } catch (error) {
+      problem.textContent = String(error.message || error);
+      submit.textContent = "Send answers";
+      refresh();
+    }
+  });
+  frame.append(problem, submit);
+  root.replaceChildren(frame);
+  refresh();
+}
+
+new ResizeObserver(() => notify("ui/notifications/size-changed", { height: document.documentElement.scrollHeight })).observe(document.body);
+call("ui/initialize", { protocolVersion: "2026-01-26", appCapabilities: { availableDisplayModes: ["inline"] } })
+  .then(() => notify("ui/notifications/initialized"))
+  .catch((error) => root.replaceChildren(el("p", "error", String(error.message || error))));
+</script>
+</body>
+</html>
