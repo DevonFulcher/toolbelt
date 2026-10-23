@@ -611,8 +611,10 @@ def test_a_posted_pr_can_be_reassigned_in_its_thread_before_a_bump_is_due():
     assert draft.assignee is not None and draft.assignee.name != "will"
     assert [pr.number for pr in draft.prs] == [1]
     name = draft.assignee.name
-    assert draft.text.startswith("[r#1](https://github.com/o/r/pull/1) `+100/-10`")
-    assert f"is moving from @will to @{name}. @{name}, would you mind" in draft.text
+    assert draft.text == (
+        f"@{name}, would you mind if I reassign "
+        "[r#1](https://github.com/o/r/pull/1) to you? Thanks!"
+    )
 
 
 def test_a_reassignment_skips_everyone_this_pr_has_been_asked_of():

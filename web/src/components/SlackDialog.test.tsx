@@ -400,7 +400,7 @@ describe("the Post in Slack dialog", () => {
         kind: "reassign",
         thread_ts: "1792500000.000100",
         thread_link: "https://s.slack.com/archives/DTEST/p1792500000000100",
-        text: "[r#1](https://github.com/o/r/pull/1) `+20/-4` is moving from @will to @alan. @alan, would you mind taking a look? Thanks!",
+        text: "@alan, would you mind if I reassign [r#1](https://github.com/o/r/pull/1) to you? Thanks!",
       });
 
     test("asks the server for a reassignment and says it replies in the thread", async () => {

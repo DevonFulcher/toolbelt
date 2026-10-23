@@ -132,21 +132,16 @@ def test_no_line_about_who_wrote_the_message_is_added():
     assert "AI-generated" not in compose_bump([bump_pr(1)], ALAN)
 
 
-def test_a_reassignment_names_the_pr_who_it_moves_from_and_who_is_asked():
-    assert compose_reassign(bump_pr(1795), DANIEL, "will.james") == (
-        "[ai-codegen-api#1795](https://github.com/dbt-labs/ai-codegen-api/pull/1795) `+96/-6` "
-        "is moving from @will.james to @daniel.baptista dias. "
-        "@daniel.baptista dias, would you mind taking a look? Thanks!"
-    )
-
-
-def test_a_reassignment_of_a_pr_nobody_was_asked_about_says_it_has_a_new_reviewer():
-    assert compose_reassign(bump_pr(1795), DANIEL, None).split(" `+96/-6` ")[1] == (
-        "has a new reviewer. @daniel.baptista dias, would you mind taking a look? Thanks!"
+def test_a_reassignment_asks_whether_the_pr_may_be_reassigned_to_the_person():
+    assert compose_reassign(bump_pr(1795), DANIEL) == (
+        "@daniel.baptista dias, would you mind if I reassign "
+        "[ai-codegen-api#1795](https://github.com/dbt-labs/ai-codegen-api/pull/1795) "
+        "to you? Thanks!"
     )
 
 
 def test_a_reassignment_with_nobody_chosen_asks_anyone():
-    assert compose_reassign(bump_pr(1795), None, "will.james").endswith(
-        "has a new reviewer. Would someone mind taking a look? Thanks!"
+    assert compose_reassign(bump_pr(1795), None) == (
+        "Would someone mind taking a look at "
+        "[ai-codegen-api#1795](https://github.com/dbt-labs/ai-codegen-api/pull/1795)? Thanks!"
     )

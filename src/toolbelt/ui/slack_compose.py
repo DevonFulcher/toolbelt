@@ -52,10 +52,14 @@ class BumpPr:
     deletions: int
 
 
+def _plain_link(pr: BumpPr) -> str:
+    """``[repo#number](url)``."""
+    return f"[{pr.repo.rsplit('/', 1)[-1]}#{pr.number}]({pr.url})"
+
+
 def _link(pr: BumpPr) -> str:
     """``[repo#number](url) `+a/-d` ``: how a bump names a PR."""
-    name = pr.repo.rsplit("/", 1)[-1]
-    return f"[{name}#{pr.number}]({pr.url}) `+{pr.additions}/-{pr.deletions}`"
+    return f"{_plain_link(pr)} `+{pr.additions}/-{pr.deletions}`"
 
 
 def short_context(title: str) -> str:
@@ -97,16 +101,15 @@ def compose_bump(prs: list[BumpPr], assignee: Person | None) -> str:
     )
 
 
-def compose_reassign(pr: BumpPr, assignee: Person | None, previous: str | None) -> str:
-    """A threaded reply under the original post moving one PR to another
-    reviewer, before a bump is due."""
-    moved = (
-        f"is moving from @{previous} to @{assignee.name}"
-        if previous and assignee
-        else "has a new reviewer"
+def compose_reassign(pr: BumpPr, assignee: Person | None) -> str:
+    """A threaded reply under the original post asking whether the PR may be
+    reassigned to someone else, before a bump is due."""
+    if assignee is None:
+        return f"Would someone mind taking a look at {_plain_link(pr)}? Thanks!"
+    return (
+        f"@{assignee.name}, would you mind if I reassign {_plain_link(pr)} "
+        "to you? Thanks!"
     )
-    ask = f"@{assignee.name}, would you" if assignee else "Would someone"
-    return f"{_link(pr)} {moved}. {ask} mind taking a look? Thanks!"
 
 
 def to_slack(text: str, mentions: dict[str, str]) -> str:

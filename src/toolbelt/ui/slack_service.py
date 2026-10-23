@@ -306,7 +306,6 @@ class SlackService:
         text = compose_reassign(
             BumpPr(pr.repo, pr.number, pr.url, pr.additions, pr.deletions),
             chosen,
-            last.assignee_name,
         )
         return self._draft_of(
             "reassign",
