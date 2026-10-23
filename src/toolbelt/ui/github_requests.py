@@ -40,6 +40,11 @@ GRAPHQL = "graphql"
 CORE = "core"
 
 
+class GithubUnavailable(RuntimeError):
+    """GitHub answered with a server error (a 5xx): for a heavy query, usually
+    that it took too long."""
+
+
 class RateLimited(RuntimeError):
     """A GitHub budget is used up; ``resource`` is ``graphql`` or ``core``
     and ``wait`` the seconds until it may be used again."""
@@ -248,7 +253,8 @@ class GithubRequests:
             raise self._exhausted(resource, response, caller)
         if response.is_error:
             calls.failed += 1
-            raise RuntimeError(
+            failure = GithubUnavailable if response.status_code >= 500 else RuntimeError
+            raise failure(
                 f"GitHub {method} {url} failed: {response.status_code} "
                 f"{response.text[:200]}"
             )

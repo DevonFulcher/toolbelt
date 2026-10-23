@@ -330,8 +330,99 @@ class TestCallers:
         assert self.sent(server)["variables"] == {"search": SEARCH_QUERY}
         assert json.loads(server.requests[1].content)["variables"] == {
             "search": "is:pr author:@me",
+            "first": 25,
             "after": "cursor",
         }
         callers = github.usage()["callers"]
         assert callers["untracked"]["requests"] == 1
         assert callers["aggregate"]["requests"] == 1
+
+
+class TestHistoryPages:
+    """`page_runner` fetches a page of 25 PRs, in smaller requests once GitHub
+    answers a big one with a 5xx."""
+
+    @staticmethod
+    def found(count: int, *, more: bool = False, start: int = 0) -> dict:
+        return {
+            "data": {
+                "search": {
+                    "nodes": [{"n": start + i} for i in range(count)],
+                    "pageInfo": {"hasNextPage": more, "endCursor": f"c{start + count}"},
+                }
+            }
+        }
+
+    @staticmethod
+    def sizes(server: Server) -> list[int]:
+        return [
+            json.loads(request.content)["variables"]["first"]
+            for request in server.requests
+        ]
+
+    def test_a_page_is_one_request_while_github_answers(self):
+        from toolbelt.ui.aggregate_feed import page_runner
+
+        server = Server()
+        server.queue(json_body=self.found(25, more=True))
+
+        payload = run(page_runner(client(server))("q", None))
+
+        assert self.sizes(server) == [25]
+        assert len(payload["data"]["search"]["nodes"]) == 25
+        assert payload["data"]["search"]["pageInfo"]["endCursor"] == "c25"
+
+    def test_a_timeout_retries_with_a_smaller_request_and_remembers_the_size(self):
+        from toolbelt.ui.aggregate_feed import page_runner
+
+        server = Server()
+        server.queue(504)
+        for start, count in ((0, 10), (10, 10), (20, 5)):
+            server.queue(json_body=self.found(count, more=True, start=start))
+        server.queue(json_body=self.found(10, more=False))
+        github = client(server)
+        runner = page_runner(github)
+
+        payload = run(runner("q", None))
+        run(runner("q", "c25"))
+
+        assert self.sizes(server) == [25, 10, 10, 5, 10]
+        assert [n["n"] for n in payload["data"]["search"]["nodes"]] == list(range(25))
+        assert json.loads(server.requests[2].content)["variables"]["after"] == "c10"
+
+    def test_a_page_ends_where_the_search_does(self):
+        from toolbelt.ui.aggregate_feed import page_runner
+
+        server = Server()
+        server.queue(504)
+        server.queue(json_body=self.found(4, more=False))
+
+        payload = run(page_runner(client(server))("q", None))
+
+        assert self.sizes(server) == [25, 10]
+        assert len(payload["data"]["search"]["nodes"]) == 4
+        assert payload["data"]["search"]["pageInfo"]["hasNextPage"] is False
+
+    def test_it_gives_up_when_even_one_PR_times_out(self):
+        from toolbelt.ui.aggregate_feed import REQUEST_SIZES, page_runner
+        from toolbelt.ui.github_requests import GithubUnavailable
+
+        server = Server()
+        for _ in REQUEST_SIZES:
+            server.queue(504)
+
+        with pytest.raises(GithubUnavailable):
+            run(page_runner(client(server))("q", None))
+
+        assert self.sizes(server) == [25, 10, 5, 2, 1]
+
+    def test_an_error_that_is_not_a_server_error_is_not_retried(self):
+        from toolbelt.ui.aggregate_feed import page_runner
+
+        server = Server()
+        server.queue(400)
+
+        with pytest.raises(RuntimeError):
+            run(page_runner(client(server))("q", None))
+
+        assert self.sizes(server) == [25]

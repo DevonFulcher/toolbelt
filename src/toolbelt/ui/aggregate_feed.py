@@ -45,7 +45,7 @@ from toolbelt.git.stack.store import (
 from toolbelt.logger import logger
 from toolbelt.ui import aggregate
 from toolbelt.ui import api_models as api
-from toolbelt.ui.github_requests import GithubRequests
+from toolbelt.ui.github_requests import GithubRequests, GithubUnavailable
 from toolbelt.ui.pr_activity import PrFacts, facts_from_dict, facts_to_dict
 from toolbelt.ui.pr_fetch import timeline_items
 from toolbelt.ui.repo_visibility import visible_repos
@@ -80,8 +80,8 @@ _REVIEWER = (
 )
 
 PR_QUERY = f"""
-query($search: String!, $after: String) {{
-  search(query: $search, type: ISSUE, first: {PAGE_SIZE}, after: $after) {{
+query($search: String!, $after: String, $first: Int!) {{
+  search(query: $search, type: ISSUE, first: $first, after: $after) {{
     issueCount
     pageInfo {{ hasNextPage endCursor }}
     nodes {{
@@ -127,16 +127,52 @@ query($search: String!, $after: String) {{
 PageRunner = Callable[[str, str | None], Awaitable[dict]]
 
 
+#: How many PRs a request asks for, tried in turn: each PR carries up to a
+#: hundred timeline events, so a page of PRs with long histories (a PR merged
+#: with its parent on every sync has dozens of commits) can be too much for
+#: GitHub to answer in time, and it says 504. A smaller size is kept once it
+#: has worked.
+REQUEST_SIZES = (PAGE_SIZE, 10, 5, 2, 1)
+
+
 def page_runner(requests: GithubRequests) -> PageRunner:
-    """The history search over ``requests``."""
+    """The history search over ``requests``. A page of ``PAGE_SIZE`` PRs is
+    fetched in as many requests as GitHub will answer (see ``REQUEST_SIZES``)."""
+    size = 0  # index into REQUEST_SIZES
 
     async def run(search: str, after: str | None) -> dict:
-        variables = {"search": search}
-        if after:
-            variables["after"] = after
-        return await requests.graphql(
-            PR_QUERY, variables, caller="aggregate", partial="search"
-        )
+        nonlocal size
+        nodes: list = []
+        errors: list = []
+        page: dict = {}
+        cursor = after
+        remaining = PAGE_SIZE
+        while remaining > 0:
+            first = min(REQUEST_SIZES[size], remaining)
+            variables: dict[str, str | int] = {"search": search, "first": first}
+            if cursor:
+                variables["after"] = cursor
+            try:
+                payload = await requests.graphql(
+                    PR_QUERY, variables, caller="aggregate", partial="search"
+                )
+            except GithubUnavailable:
+                if size == len(REQUEST_SIZES) - 1:
+                    raise
+                size += 1
+                continue
+            found = payload["data"]["search"]
+            nodes += found["nodes"]
+            errors += payload.get("errors") or []
+            page = found.get("pageInfo") or {}
+            remaining -= first
+            if not page.get("hasNextPage"):
+                break
+            cursor = page.get("endCursor")
+        return {
+            "data": {"search": {"nodes": nodes, "pageInfo": page}},
+            "errors": errors,
+        }
 
     return run
 
