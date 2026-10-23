@@ -153,6 +153,37 @@ def test_the_draft_is_the_stack_with_the_assignee_the_rules_chose(rig):
     assert "  - [Change b]" in draft["text"]  # b is indented under a
 
 
+def test_a_redraft_covers_only_the_prs_named_and_lists_the_rest_unchecked(rig):
+    _, repo_id, _, client = rig
+
+    draft = client.post(
+        "/api/slack/draft",
+        json={
+            "id": f"{repo_id}:b",
+            "assignee_id": None,
+            "prs": [{"repo": "o/r", "number": 2, "assignee_id": None}],
+        },
+    ).json()
+
+    assert [(pr["number"], pr["included"]) for pr in draft["prs"]] == [
+        (1, False),
+        (2, True),
+    ]
+    assert "pull/1" not in draft["text"] and "pull/2" in draft["text"]
+    assert draft["prs"][0]["ci"] in ("none", "running", "failed", "success")
+
+
+def test_a_redraft_of_no_pr_is_a_409(rig):
+    _, repo_id, _, client = rig
+
+    response = client.post(
+        "/api/slack/draft",
+        json={"id": f"{repo_id}:b", "assignee_id": None, "prs": []},
+    )
+
+    assert response.status_code == 409
+
+
 def test_posting_the_draft_sends_it_records_it_and_changes_the_cards(rig):
     app, repo_id, proxy, client = rig
     draft = client.post(

@@ -416,6 +416,9 @@ main:has(.focus-bar) { --focus-h: 2.6rem; }
 .slack-field { display: grid; gap: 4px; }
 .slack-per-pr { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .slack-pr-name { font-weight: 600; }
+.slack-pr-row { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; justify-content: space-between; }
+.slack-pr-info { margin: 2px 0 0 22px; font-size: 12px; }
+.slack-pr-left-out .slack-pr-name, .slack-pr-left-out .slack-pr-row > label > .muted { opacity: .6; }
 .slack-label { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 .slack-dialog textarea { width: 100%; padding: 8px 10px; font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
                          color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; resize: vertical; }

@@ -5,6 +5,7 @@ import type {
   MergeQueueInfo,
   Snapshot,
   SlackDraft,
+  SlackPrRef,
   SlackSendRequest,
   SlackAccepted,
   Spend,
@@ -125,13 +126,17 @@ async function postJson<T>(path: string, body: unknown, fetchImpl: typeof fetch)
   return (await response.json()) as T;
 }
 
-/** The Slack message toolbelt would post (or bump) for the branch's PR. */
+/** The Slack message toolbelt would post (or bump) for the branch's PR. `prs` names
+ * the PRs of a post's stack to cover, each with who is asked about it (omitted: the
+ * PRs that are ready; the draft lists the others, unchecked). */
 export function fetchSlackDraft(
   id: string,
   assigneeId: string | null = null,
+  prs?: SlackPrRef[],
   fetchImpl: typeof fetch = fetch,
 ): Promise<SlackDraft> {
-  return postJson<SlackDraft>("/api/slack/draft", { id, assignee_id: assigneeId }, fetchImpl);
+  const body = prs === undefined ? { id, assignee_id: assigneeId } : { id, assignee_id: assigneeId, prs };
+  return postJson<SlackDraft>("/api/slack/draft", body, fetchImpl);
 }
 
 /** Post the confirmed message. It is posted in the background: this resolves once

@@ -854,9 +854,16 @@ export interface SlackPerson {
 export interface SlackDraftPr {
   additions: number;
   assignee: SlackPerson | null;
+  ci: CiState;
   deletions: number;
+  has_conflicts: boolean;
+  included: boolean;
+  next: NextActionInfo | null;
   number: number;
+  open_comments: number;
+  pr: PrState;
   repo: string;
+  review: ReviewState;
   title: string;
   url: string;
 }
@@ -867,6 +874,7 @@ export interface SlackDraftPr {
 export interface SlackDraftRequest {
   assignee_id: string | null;
   id: string;
+  prs?: SlackPrRef[] | null;
 }
 /**
  * The body of ``POST /api/slack/send``: post the confirmed (possibly

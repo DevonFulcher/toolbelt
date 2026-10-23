@@ -70,6 +70,9 @@ class Rig:
             "c": fetched(3, "DI-3: Alone"),
         }
         self.kinds = {"a": "post_slack", "b": "post_slack", "c": "post_slack"}
+        #: Branches an agent holds: they read "With an agent", their kind is
+        #: what they would be doing otherwise.
+        self.held: set[str] = set()
         self.sent: list[dict] = []
         self.read: list[dict] = []
         self.sessions: list[SlackSessionRow] = []
@@ -90,13 +93,26 @@ class Rig:
             fetched=lambda repo_id, name: self.looked_up.get(name),
             parents=lambda repo_id: self.parents,
             slug_of=lambda repo_id: "o/r",
-            next_kind=lambda repo_id, name: self.kinds.get(name),
+            next_action=self.next_action,
             posts=lambda: list(self.rows),
             save=self.rows.extend,
             record_session=self.sessions.append,
             wall_clock=lambda: NOW,
             changed=self.changed.append,
         )
+
+    def next_action(self, repo_id: int, name: str) -> api.NextActionInfo | None:
+        kind = self.kinds.get(name)
+        if kind is None:
+            return None
+        if name in self.held:
+            return api.NextActionInfo(
+                label="With an agent",
+                who="agent",
+                kind="claimed",
+                would_be=api.WouldBeAction(label="Post in Slack", who="you", kind=kind),
+            )
+        return api.NextActionInfo(label=kind, who="you", kind=kind)
 
     async def send_message(self, **kwargs) -> SentMessage:
         self.sent.append(kwargs)
@@ -185,6 +201,111 @@ def test_a_post_covers_the_branch_and_its_stack_bottom_first_with_one_assignee()
     ]
     assert draft.thread_ts is None
     assert [c.name for c in draft.candidates] == ["will", "alan", "dan"]
+
+
+def test_a_stack_member_an_agent_holds_is_listed_unchecked_and_left_out_of_the_text():
+    rig = Rig()
+    rig.held.add("a")
+
+    draft = rig.service.draft(1, "b", None)
+
+    assert [(pr.number, pr.included) for pr in draft.prs] == [(1, False), (2, True)]
+    assert "Bottom" not in draft.text and "Top" in draft.text
+    held = draft.prs[0]
+    assert held.next is not None
+    assert (held.next.label, held.next.would_be.label) == (  # type: ignore[union-attr]
+        "With an agent",
+        "Post in Slack",
+    )
+
+
+def test_a_held_member_is_not_listed_when_it_would_do_something_else():
+    rig = Rig()
+    rig.held.add("a")
+    rig.kinds["a"] = "fix_ci"
+
+    draft = rig.service.draft(1, "b", None)
+
+    assert [pr.number for pr in draft.prs] == [2]
+
+
+def test_each_listed_pr_says_where_it_stands():
+    rig = Rig()
+    rig.looked_up["a"] = Fetched(
+        status=BranchStatus(
+            pr=PrState.OPEN,
+            ci=CiState.FAILED,
+            review=ReviewState.APPROVED,
+            url="https://github.com/o/r/pull/1",
+            open_comments=2,
+            has_conflicts=True,
+            additions=100,
+            deletions=10,
+        ),
+        at=0.0,
+        facts=rig.looked_up["a"].facts,
+    )
+
+    bottom = rig.service.draft(1, "b", None).prs[0]
+
+    assert (bottom.pr, bottom.ci, bottom.review) == (
+        PrState.OPEN,
+        CiState.FAILED,
+        ReviewState.APPROVED,
+    )
+    assert (bottom.open_comments, bottom.has_conflicts) == (2, True)
+
+
+def test_a_post_covers_the_prs_asked_for_including_one_an_agent_holds():
+    rig = Rig()
+    rig.held.add("a")
+
+    draft = rig.service.draft(
+        1,
+        "b",
+        None,
+        [api.SlackPrRef(repo="o/r", number=1), api.SlackPrRef(repo="o/r", number=2)],
+    )
+
+    assert [(pr.number, pr.included) for pr in draft.prs] == [(1, True), (2, True)]
+    assert draft.text.splitlines()[0:2] == [
+        "- [Bottom](https://github.com/o/r/pull/1) @alan `+100/-10`",
+        "  - [Top](https://github.com/o/r/pull/2) @alan `+50/-5`",
+    ]
+
+
+def test_unchecking_a_pr_leaves_it_listed_but_out_of_the_text():
+    rig = Rig()
+
+    draft = rig.service.draft(1, "b", None, [api.SlackPrRef(repo="o/r", number=2)])
+
+    assert [(pr.number, pr.included) for pr in draft.prs] == [(1, False), (2, True)]
+    assert draft.text.splitlines()[0].startswith("- [Top]")  # no parent: top level
+
+
+def test_the_person_asked_about_each_pr_of_a_redraft_is_kept():
+    rig = Rig()
+
+    draft = rig.service.draft(
+        1,
+        "b",
+        None,
+        [
+            api.SlackPrRef(repo="o/r", number=1, assignee_id="UW"),
+            api.SlackPrRef(repo="o/r", number=2, assignee_id="UD"),
+        ],
+    )
+
+    assert [pr.assignee.name for pr in draft.prs] == ["will", "dan"]  # type: ignore[union-attr]
+    assert "@will" in draft.text.splitlines()[0]
+    assert "@dan" in draft.text.splitlines()[1]
+
+
+def test_a_post_of_no_pr_is_refused():
+    rig = Rig()
+
+    with pytest.raises(SlackNotApplicable, match="at least one"):
+        rig.service.draft(1, "b", None, [])
 
 
 def test_a_post_leaves_out_stack_members_that_are_not_ready():

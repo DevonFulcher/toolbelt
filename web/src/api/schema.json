@@ -3315,14 +3315,42 @@
             }
           ]
         },
+        "ci": {
+          "$ref": "#/$defs/CiState"
+        },
         "deletions": {
           "type": "integer"
+        },
+        "has_conflicts": {
+          "type": "boolean"
+        },
+        "included": {
+          "type": "boolean"
+        },
+        "next": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NextActionInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "number": {
           "type": "integer"
         },
+        "open_comments": {
+          "type": "integer"
+        },
+        "pr": {
+          "$ref": "#/$defs/PrState"
+        },
         "repo": {
           "type": "string"
+        },
+        "review": {
+          "$ref": "#/$defs/ReviewState"
         },
         "title": {
           "type": "string"
@@ -3338,7 +3366,14 @@
         "title",
         "additions",
         "deletions",
-        "assignee"
+        "assignee",
+        "included",
+        "pr",
+        "ci",
+        "review",
+        "open_comments",
+        "has_conflicts",
+        "next"
       ],
       "title": "SlackDraftPr",
       "type": "object"
@@ -3359,6 +3394,20 @@
         },
         "id": {
           "type": "string"
+        },
+        "prs": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/SlackPrRef"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [

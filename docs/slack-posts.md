@@ -49,7 +49,15 @@ says so, and when it is done the status reads posted and links to the thread. If
 it failed, nothing was recorded and the card says why (the button is there to try
 again); if Slack's copy lacked a link or mention, the card says which. A post covers the branch and the PRs of its stack that are
 ready, bottom first and indented under the PR each is stacked on, with the
-person the rules chose (change it in the dialog). A bump is a threaded reply
+person the rules chose (change it in the dialog).
+
+When the stack has several PRs the dialog lists each with a checkbox, who is
+asked about it and a line on where it stands (`+added/-deleted`, CI, review, open
+comments, conflicts). Unchecking a PR leaves it out of the message; the PRs of
+the stack that an agent holds (they read "With an agent" or "Autonomous agent"
+because the post is what they would do next) are listed unchecked, with that
+note, and can be checked to include them. Checking or unchecking writes the
+message again on the server, so edits to the text are replaced. A bump is a threaded reply
 under the original post, for the PRs of that thread that are due, asking someone
 other than who was asked before. The bump dialog links to the original post
 (needs `workspace`).

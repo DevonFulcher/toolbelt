@@ -74,7 +74,7 @@ class SlackService:
         fetched: Callable[[int, str], Fetched | None],
         parents: Callable[[int], Parents],
         slug_of: Callable[[int], str | None],
-        next_kind: Callable[[int, str], str | None],
+        next_action: Callable[[int, str], api.NextActionInfo | None],
         posts: Callable[[], list[SlackPostRow]],
         save: Callable[[list[SlackPostRow]], None],
         record_session: Callable[[SlackSessionRow], None],
@@ -82,7 +82,7 @@ class SlackService:
         changed: Callable[[set[tuple[int, str]]], None],
     ) -> None:
         """``send_message(channel=, text=, thread_ts=)`` posts (``SlackProxy.send``);
-        ``next_kind`` is a branch's
+        ``next_action`` is a branch's
         next action; ``record_session`` is given each session that read or
         posted, for the spend figures; ``changed`` is told which branches'
         Slack standing changed."""
@@ -93,7 +93,7 @@ class SlackService:
         self._fetched = fetched
         self._parents = parents
         self._slug_of = slug_of
-        self._next_kind = next_kind
+        self._next_action = next_action
         self._posts = posts
         self._save = save
         self._record_session = record_session
@@ -137,12 +137,22 @@ class SlackService:
 
     # ---- the draft -----------------------------------------------------------
 
+    def _next_kind(self, repo_id: int, branch: str) -> str | None:
+        action = self._next_action(repo_id, branch)
+        return action.kind if action else None
+
     def draft(
-        self, repo_id: int, branch: str, assignee_id: str | None
+        self,
+        repo_id: int,
+        branch: str,
+        assignee_id: str | None,
+        include: list[api.SlackPrRef] | None = None,
     ) -> api.SlackDraft:
+        """``include`` names the PRs of a post's stack to cover, each with who
+        is asked about it (``None``: the ones that are ready)."""
         kind = self._next_kind(repo_id, branch)
         if kind == "post_slack":
-            return self._draft_post(repo_id, branch, assignee_id)
+            return self._draft_post(repo_id, branch, assignee_id, include)
         if kind == "bump_slack":
             return self._draft_bump(repo_id, branch, assignee_id)
         raise SlackNotApplicable(
@@ -150,7 +160,11 @@ class SlackService:
         )
 
     def _draft_post(
-        self, repo_id: int, branch: str, assignee_id: str | None
+        self,
+        repo_id: int,
+        branch: str,
+        assignee_id: str | None,
+        include: list[api.SlackPrRef] | None,
     ) -> api.SlackDraft:
         parents = self._parents(repo_id)
         above: list[str] = []
@@ -160,18 +174,35 @@ class SlackService:
             above.append(current)
         order = [*reversed(above)]
         order += descendants(parents, branch)
-        prs = [
-            pr
-            for name in order
-            if self._next_kind(repo_id, name) == "post_slack"
-            and (pr := self._pr(repo_id, name)) is not None
-        ]
+        ready: set[str] = set()
+        candidates: list[_Pr] = []
+        for name in order:
+            action = self._next_action(repo_id, name)
+            if action is None or (pr := self._pr(repo_id, name)) is None:
+                continue
+            if action.kind == "post_slack":
+                ready.add(name)
+            elif not _held_post(action):
+                continue
+            candidates.append(pr)
+        if include is None:
+            wanted: dict[tuple[str, int], str | None] = {
+                (pr.repo, pr.number): None for pr in candidates if pr.branch in ready
+            }
+        else:
+            wanted = {(ref.repo, ref.number): ref.assignee_id for ref in include}
+        prs = [pr for pr in candidates if (pr.repo, pr.number) in wanted]
+        if not prs:
+            raise SlackNotApplicable("Pick at least one PR to post.")
         numbers = {pr.branch: pr.number for pr in prs}
         history = self._posts()
         lines = sum(pr.additions + pr.deletions for pr in prs)
         chosen = self._person(assignee_id) or choose_assignee(
             self._config, repo=prs[0].repo, lines=lines, history=history
         )
+        asked = {
+            key: self._person(person_id) or chosen for key, person_id in wanted.items()
+        }
         text = compose_post(
             [
                 PostPr(
@@ -180,13 +211,21 @@ class SlackService:
                     title=pr.title,
                     additions=pr.additions,
                     deletions=pr.deletions,
-                    assignee=chosen,
+                    assignee=asked[(pr.repo, pr.number)],
                     parent_number=numbers.get(parents.get(pr.branch, "")),
                 )
                 for pr in prs
             ]
         )
-        return self._draft_of("post", text, chosen, prs, None)
+        return self._draft_of(
+            "post",
+            text,
+            chosen,
+            candidates,
+            None,
+            included={(pr.repo, pr.number) for pr in prs},
+            asked=asked,
+        )
 
     def _draft_bump(
         self, repo_id: int, branch: str, assignee_id: str | None
@@ -217,7 +256,14 @@ class SlackService:
             [BumpPr(p.repo, p.number, p.url, p.additions, p.deletions) for p in due],
             chosen,
         )
-        return self._draft_of("bump", text, chosen, due, last.thread_ts)
+        return self._draft_of(
+            "bump",
+            text,
+            chosen,
+            due,
+            last.thread_ts,
+            included={(p.repo, p.number) for p in due},
+        )
 
     def _bump_due_in_thread(
         self, channel: str, thread_ts: str, history: list[SlackPostRow]
@@ -249,7 +295,13 @@ class SlackService:
         chosen: Person | None,
         prs: list[_Pr],
         thread_ts: str | None,
+        *,
+        included: set[tuple[str, int]],
+        asked: dict[tuple[str, int], Person | None] | None = None,
     ) -> api.SlackDraft:
+        """``prs`` is every PR the dialog lists, ``included`` the ones the text
+        is about and ``asked`` who each of them asks about (else ``chosen``)."""
+        asked = asked or {}
         return api.SlackDraft(
             kind=kind,  # type: ignore[arg-type]
             channel=self._config.channel,
@@ -259,14 +311,10 @@ class SlackService:
                 api.SlackPerson(id=p.id, name=p.name) for p in self._config.reviewers
             ],
             prs=[
-                api.SlackDraftPr(
-                    repo=pr.repo,
-                    number=pr.number,
-                    url=pr.url,
-                    title=pr.title,
-                    additions=pr.additions,
-                    deletions=pr.deletions,
-                    assignee=_person_model(chosen),
+                self._draft_pr(
+                    pr,
+                    (pr.repo, pr.number) in included,
+                    asked.get((pr.repo, pr.number), chosen),
                 )
                 for pr in prs
             ],
@@ -276,6 +324,29 @@ class SlackService:
                 if thread_ts
                 else None
             ),
+        )
+
+    def _draft_pr(
+        self, pr: _Pr, included: bool, asked: Person | None
+    ) -> api.SlackDraftPr:
+        fetched = self._fetched(pr.repo_id, pr.branch)
+        assert fetched is not None and fetched.status is not None
+        status = fetched.status
+        return api.SlackDraftPr(
+            repo=pr.repo,
+            number=pr.number,
+            url=pr.url,
+            title=pr.title,
+            additions=pr.additions,
+            deletions=pr.deletions,
+            assignee=_person_model(asked),
+            included=included,
+            pr=status.pr,
+            ci=status.ci,
+            review=status.review,
+            open_comments=status.open_comments,
+            has_conflicts=status.has_conflicts,
+            next=self._next_action(pr.repo_id, pr.branch),
         )
 
     def _require_configured_channel(self, last: SlackPostRow, pr: _Pr) -> None:
@@ -389,6 +460,16 @@ class SlackService:
         )
         self._tracker.reload()
         return _verify(text, sent)
+
+
+def _held_post(action: api.NextActionInfo) -> bool:
+    """An agent holds the task, and the post is what it would be doing next
+    if it did not."""
+    return (
+        action.kind in ("claimed", "autonomous")
+        and action.would_be is not None
+        and action.would_be.kind == "post_slack"
+    )
 
 
 def _last_post(history: list[SlackPostRow], pr: _Pr) -> SlackPostRow | None:

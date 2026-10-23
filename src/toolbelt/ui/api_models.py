@@ -1131,6 +1131,20 @@ class SlackDraftPr(Model):
     deletions: int
     #: Who the draft asks about this PR.
     assignee: SlackPerson | None
+    #: The message is about this PR. A post lists every PR of the stack that
+    #: could be in it; one that is not ``included`` is shown unchecked (an
+    #: agent holds its task: ``next`` says so).
+    included: bool
+    #: Where the PR stands, for the dialog to show beside its checkbox.
+    pr: PrState
+    ci: CiState
+    review: ReviewState
+    open_comments: int
+    has_conflicts: bool
+    #: The branch's next action: "With an agent" or "Autonomous agent" (with
+    #: ``would_be`` the action it replaced) when an agent holds the task.
+    #: ``None`` while its status is not loaded.
+    next: NextActionInfo | None
 
 
 class SlackDraftRequest(Model):
@@ -1141,6 +1155,10 @@ class SlackDraftRequest(Model):
     id: str
     #: Ask this person instead of the one the rules chose (``None``: the rules).
     assignee_id: str | None
+    #: A post of a stack: the PRs to include, each with who is asked about it
+    #: when not ``assignee_id``. ``None``: the PRs that are ready (the draft
+    #: lists the others, unchecked).
+    prs: list[SlackPrRef] | None = None
 
 
 class SlackDraft(Model):

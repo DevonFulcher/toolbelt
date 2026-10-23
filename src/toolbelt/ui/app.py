@@ -898,9 +898,13 @@ def create_app(
 
     watcher.on_change = on_database_change
 
-    def next_kind(repo_id: int, name: str) -> str | None:
+    def branch_next(repo_id: int, name: str) -> api.NextActionInfo | None:
         status = branch_status(repo_id, _all_parents(repo_id), name, wall_clock())
-        return status.next.kind if isinstance(status, api.LoadedStatus) else None
+        return status.next if isinstance(status, api.LoadedStatus) else None
+
+    def next_kind(repo_id: int, name: str) -> str | None:
+        action = branch_next(repo_id, name)
+        return action.kind if action else None
 
     def would_merge(repo_id: int, name: str) -> bool:
         """Its CI is running and, once that passed, Merge would be its next
@@ -980,7 +984,7 @@ def create_app(
             fetched=refresher.get,
             parents=_all_parents,
             slug_of=slug_of_repo,
-            next_kind=next_kind,
+            next_action=branch_next,
             posts=_slack_posts,
             save=_save_slack_posts,
             record_session=_record_slack_session,
@@ -1230,7 +1234,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="no such branch")
         try:
             return await asyncio.to_thread(
-                service.draft, repo_id, name, body.assignee_id
+                service.draft, repo_id, name, body.assignee_id, body.prs
             )
         except SlackNotApplicable as error:
             raise HTTPException(status_code=409, detail=str(error)) from error

@@ -1,10 +1,28 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import type { SlackAccepted, SlackDraft } from "../api/generated";
+import type { SlackAccepted, SlackDraft, SlackDraftPr } from "../api/generated";
 import { SlackDialog } from "./SlackDialog";
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+const draftPr = (number: number, title: string, over: Partial<SlackDraftPr> = {}): SlackDraftPr => ({
+  repo: "o/r",
+  number,
+  url: `https://github.com/o/r/pull/${number}`,
+  title,
+  additions: 20,
+  deletions: 4,
+  assignee: { id: "UA", name: "alan" },
+  included: true,
+  pr: "open",
+  ci: "success",
+  review: "requested",
+  open_comments: 0,
+  has_conflicts: false,
+  next: { label: "Post in Slack", who: "you", kind: "post_slack", would_be: null },
+  ...over,
 });
 
 const draft = (over: Partial<SlackDraft> = {}): SlackDraft => ({
@@ -16,21 +34,22 @@ const draft = (over: Partial<SlackDraft> = {}): SlackDraft => ({
     { id: "UW", name: "will" },
     { id: "UA", name: "alan" },
   ],
-  prs: [
-    {
-      repo: "o/r",
-      number: 1,
-      url: "https://github.com/o/r/pull/1",
-      title: "Bottom",
-      additions: 20,
-      deletions: 4,
-      assignee: { id: "UA", name: "alan" },
-    },
-  ],
+  prs: [draftPr(1, "Bottom")],
   thread_ts: null,
   thread_link: null,
   ...over,
 });
+
+const two = (): SlackDraft =>
+  draft({
+    text: [
+      "- [Bottom](https://github.com/o/r/pull/1) @alan `+20/-4`",
+      "  - [Top](https://github.com/o/r/pull/12) @alan `+5/-1`",
+      "",
+      "Thanks for your time!",
+    ].join("\n"),
+    prs: [draftPr(1, "Bottom"), draftPr(12, "Top", { additions: 5, deletions: 1 })],
+  });
 
 const accepted = (): SlackAccepted => ({ prs: [{ repo: "o/r", number: 1 }] });
 
@@ -152,28 +171,6 @@ describe("the Post in Slack dialog", () => {
   });
 
   describe("a post of several PRs", () => {
-    const two = (): SlackDraft =>
-      draft({
-        text: [
-          "- [Bottom](https://github.com/o/r/pull/1) @alan `+20/-4`",
-          "  - [Top](https://github.com/o/r/pull/12) @alan `+5/-1`",
-          "",
-          "Thanks for your time!",
-        ].join("\n"),
-        prs: [
-          { ...draft().prs[0] },
-          {
-            repo: "o/r",
-            number: 12,
-            url: "https://github.com/o/r/pull/12",
-            title: "Top",
-            additions: 5,
-            deletions: 1,
-            assignee: { id: "UA", name: "alan" },
-          },
-        ],
-      });
-
     test("each PR has its own picker, and the one above them asks everyone", async () => {
       serve({ draft: two() });
       await open();
@@ -227,6 +224,134 @@ describe("the Post in Slack dialog", () => {
         { repo: "o/r", number: 1, assignee_id: "UA" },
         { repo: "o/r", number: 12, assignee_id: "UW" },
       ]);
+    });
+  });
+
+  describe("which PRs the message covers", () => {
+    const held = (): SlackDraft => {
+      const base = draft({
+        text: "- [Top](https://github.com/o/r/pull/12) @alan `+5/-1`\n\nThanks for your time!",
+        prs: [
+          draftPr(1, "Bottom", {
+            included: false,
+            ci: "failed",
+            open_comments: 2,
+            has_conflicts: true,
+            next: {
+              label: "With an agent",
+              who: "agent",
+              kind: "claimed",
+              would_be: { label: "Post in Slack", who: "you", kind: "post_slack" },
+            },
+          }),
+          draftPr(12, "Top", { additions: 5, deletions: 1 }),
+        ],
+      });
+      return base;
+    };
+
+    test("a PR an agent holds starts unchecked and says why, beside what else is known of each PR", async () => {
+      serve({ draft: held() });
+      await open();
+
+      expect(screen.getByRole("checkbox", { name: "Include o/r#1" })).not.toBeChecked();
+      expect(screen.getByRole("checkbox", { name: "Include o/r#12" })).toBeChecked();
+      const list = screen.getByRole("list", { name: "PRs in the message" });
+      expect(within(list).getByText(/CI failed/)).toHaveTextContent(
+        "+20/-4 · CI failed · review requested · 2 open comments · merge conflicts · With an agent (would be: Post in Slack)",
+      );
+      expect(within(list).getByText(/\+5\/-1/)).toHaveTextContent("+5/-1 · CI success · review requested");
+    });
+
+    test("checking it asks the server for the message of the PRs now checked, with who is asked about each", async () => {
+      const calls = serve({ draft: held() });
+      await open();
+      fireEvent.change(screen.getByLabelText("Ask about o/r#12"), { target: { value: "UW" } });
+
+      fireEvent.click(screen.getByRole("checkbox", { name: "Include o/r#1" }));
+
+      await waitFor(() => expect(calls).toHaveLength(2));
+      expect(calls[1]).toEqual({
+        path: "/api/slack/draft",
+        body: {
+          id: "1:a",
+          assignee_id: null,
+          prs: [
+            { repo: "o/r", number: 1, assignee_id: "UA" },
+            { repo: "o/r", number: 12, assignee_id: "UW" },
+          ],
+        },
+      });
+    });
+
+    test("the message becomes what the server wrote for the PRs checked", async () => {
+      const bothText = "- [Bottom](https://github.com/o/r/pull/1) @alan `+20/-4`\n  - [Top](https://github.com/o/r/pull/12) @alan `+5/-1`";
+      let drafts = 0;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => ({
+          ok: true,
+          status: 200,
+          json: async () => (drafts++ === 0 ? held() : { ...held(), text: bothText }),
+        })),
+      );
+      const box = await open();
+
+      fireEvent.click(screen.getByRole("checkbox", { name: "Include o/r#1" }));
+
+      await waitFor(() => expect(box).toHaveValue(bothText));
+      expect(screen.getByRole("checkbox", { name: "Include o/r#1" })).toBeChecked();
+    });
+
+    test("unchecking a PR is sent as a request for the others and Post sends only those", async () => {
+      const calls = serve({ draft: two(), send: { prs: [] } });
+      await open();
+
+      fireEvent.click(screen.getByRole("checkbox", { name: "Include o/r#1" }));
+      await waitFor(() => expect(calls).toHaveLength(2));
+      expect((calls[1].body as { prs: unknown }).prs).toEqual([{ repo: "o/r", number: 12, assignee_id: "UA" }]);
+      await waitFor(() => expect(screen.getByRole("button", { name: "Post" })).toBeEnabled());
+      fireEvent.click(screen.getByRole("button", { name: "Post" }));
+
+      await waitFor(() => expect(calls).toHaveLength(3));
+      expect((calls[2].body as { prs: unknown }).prs).toEqual([{ repo: "o/r", number: 12, assignee_id: "UA" }]);
+    });
+
+    test("with nothing checked there is nothing to post", async () => {
+      const calls = serve({ draft: held() });
+      const box = await open();
+
+      fireEvent.click(screen.getByRole("checkbox", { name: "Include o/r#12" }));
+
+      await waitFor(() => expect(box).toHaveValue(""));
+      expect(screen.getByRole("button", { name: "Post" })).toBeDisabled();
+      expect(calls).toHaveLength(1); // no request for a message about no PR
+    });
+
+    test("a refused rewrite says why and puts the checkbox back", async () => {
+      let drafts = 0;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () =>
+          drafts++ === 0
+            ? { ok: true, status: 200, json: async () => held() }
+            : { ok: false, status: 409, json: async () => ({ detail: "Pick at least one PR to post." }) },
+        ),
+      );
+      await open();
+
+      fireEvent.click(screen.getByRole("checkbox", { name: "Include o/r#1" }));
+
+      expect(await screen.findByRole("alert")).toHaveTextContent("Pick at least one PR");
+      expect(screen.getByRole("checkbox", { name: "Include o/r#1" })).not.toBeChecked();
+    });
+
+    test("a single PR shows what is known of it without a checkbox", async () => {
+      serve({});
+      await open();
+
+      expect(screen.queryByRole("checkbox")).toBeNull();
+      expect(screen.getByText(/CI success/)).toHaveTextContent("+20/-4 · CI success · review requested");
     });
   });
 
