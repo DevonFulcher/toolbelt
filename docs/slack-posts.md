@@ -108,8 +108,9 @@ tt slack link https://dbt-labs.slack.com/archives/C0A0TFP0XC6/p1792696217666559 
 
 Toolbelt reads nothing from Slack and calls no model: whoever runs the command
 (you, or an agent that read the message) names the PRs and who was asked, and
-toolbelt validates the links and writes the posts. `--ask` is a `slack.reviewers`
-name; without it nobody is recorded as asked. The message may be in any channel
+toolbelt validates the links and writes the posts. `--ask` is who was asked: a
+`slack.reviewers` name is recorded with their Slack ID, any other name (a one-off
+recipient) as given; without it nobody is recorded as asked. The message may be in any channel
 or a direct message. The posts go into the stack DB, and a running `tt ui`
 notices and updates its cards without a restart. A bump never replies in a channel
 other than the configured one, so a message elsewhere only marks the PR as posted.

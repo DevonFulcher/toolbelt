@@ -157,11 +157,18 @@ def test_the_prs_must_be_named_because_nothing_is_read_from_slack(store):
     assert store.slack_posts() == []
 
 
-def test_a_person_who_is_not_a_reviewer_is_refused(store):
-    with pytest.raises(LinkError, match="not one of the slack.reviewers"):
-        link(store, ask="nobody.here")
+def test_a_reviewer_is_recorded_with_their_slack_id(store):
+    (row,) = link(store, ask="will.james")
 
-    assert store.slack_posts() == []
+    assert (row.assignee_name, row.assignee_id) == ("will.james", "UW")
+
+
+def test_anyone_else_asked_is_recorded_by_the_name_given_without_an_id(store):
+    (row,) = link(store, ask="matthew.ingle")
+
+    assert (row.assignee_name, row.assignee_id) == ("matthew.ingle", None)
+    (stored,) = store.slack_posts()
+    assert (stored.assignee_name, stored.assignee_id) == ("matthew.ingle", None)
 
 
 def test_a_bad_message_link_or_pr_link_records_nothing(store):

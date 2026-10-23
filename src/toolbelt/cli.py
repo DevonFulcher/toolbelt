@@ -48,7 +48,8 @@ def slack_link(
         str | None,
         typer.Option(
             "--ask",
-            help="Who the message asked, a name from slack.reviewers (default: nobody).",
+            help="Who the message asked: a name from slack.reviewers (recorded with "
+            "their Slack ID) or any other name, recorded as given (default: nobody).",
         ),
     ] = None,
 ):

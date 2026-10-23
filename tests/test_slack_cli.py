@@ -84,7 +84,6 @@ def test_it_says_when_slack_is_not_configured():
             [MESSAGE, "--pr", "https://github.com/o/r/issues/7"],
             "not a link to a GitHub PR",
         ),
-        ([MESSAGE, "--pr", PR, "--ask", "nobody"], "not one of the slack.reviewers"),
     ],
 )
 def test_it_refuses_what_it_cannot_understand_and_records_nothing(
@@ -96,3 +95,17 @@ def test_it_refuses_what_it_cannot_understand_and_records_nothing(
 
     assert result.exit_code == 1 and message in result.output
     assert posts() == []
+
+
+def test_someone_who_is_not_a_reviewer_can_be_named_as_asked(_isolate_config_dir: Path):
+    configure(_isolate_config_dir)
+
+    result = runner.invoke(
+        app, ["slack", "link", MESSAGE, "--pr", PR, "--ask", "matthew.ingle"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "asked: matthew.ingle" in result.output
+    assert [(p.assignee_name, p.assignee_id) for p in posts()] == [
+        ("matthew.ingle", None)
+    ]

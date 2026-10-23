@@ -4,8 +4,8 @@
 a reply, the bump) of each PR it names, so the PR reads as posted, its post age
 counts from the message and the person it asked is its Assigned Review: exactly
 what posting from the card records. The caller names the PRs (``--pr``) and who
-was asked (``--ask``); toolbelt reads nothing from Slack, it validates and
-records. The posts are written to the stack DB; a running ``tt ui`` notices and
+was asked (``--ask``: a ``slack.reviewers`` name, else any name, recorded as
+given); toolbelt reads nothing from Slack, it validates and records. The posts are written to the stack DB; a running ``tt ui`` notices and
 updates its cards.
 """
 
@@ -74,7 +74,7 @@ def rows_for_prs(
             pr_number=number,
             kind="bump" if ref.thread_ts else "post",
             posted_at=datetime.fromtimestamp(float(ref.ts), UTC),
-            assignee_id=asked.id if asked else None,
+            assignee_id=(asked.id or None) if asked else None,
             assignee_name=asked.name if asked else None,
         )
         for repo, number in prs
@@ -96,10 +96,9 @@ def link_message(
         raise LinkError("name the PRs the message is about with --pr <GitHub PR link>")
     asked = None
     if ask is not None:
-        asked = next((p for p in config.reviewers if p.name == ask), None)
-        if asked is None:
-            known = ", ".join(p.name for p in config.reviewers)
-            raise LinkError(f"{ask!r} is not one of the slack.reviewers ({known})")
+        # A configured reviewer is recorded with their Slack ID; anyone else
+        # (a one-off recipient) by the name given.
+        asked = next((p for p in config.reviewers if p.name == ask), Person(ask, ""))
     rows = rows_for_prs(ref, [parse_pr(url) for url in pr_urls], asked)
     store.save_slack_posts(rows)
     return rows
