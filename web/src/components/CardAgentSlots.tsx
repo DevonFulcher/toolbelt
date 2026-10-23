@@ -85,6 +85,9 @@ export function AgentSlots({
         )}
         {(problem ?? agent?.start_error) && <span className="error">{` ${problem ?? agent?.start_error}`}</span>}
       </Slot>
+      <Slot id="agent_runs" label="Number of Autonomous Runs" state={agent && agent.runs > 0 ? "ok" : "na"}>
+        {agent === undefined ? "loading agent info…" : agent.runs}
+      </Slot>
       <Slot id="agent_run" label="Latest agent run" state={run ? "ok" : "na"}>
         {agent === undefined ? (
           "loading agent info…"
@@ -101,7 +104,6 @@ export function AgentSlots({
                 {`, turn ${run.turns}, ${runCost(run.cost_usd)} so far`}
               </span>
             )}
-            {agent.runs > 1 && <span className="muted">{` (${agent.runs} runs in all)`}</span>}
           </>
         )}
       </Slot>

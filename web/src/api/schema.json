@@ -3715,6 +3715,16 @@
             }
           ]
         },
+        "agent_runs": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogDimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "agent_status": {
           "anyOf": [
             {
@@ -4024,6 +4034,7 @@
         "timeline",
         "lines",
         "agent_status",
+        "agent_runs",
         "agent_run",
         "agent_run_summary",
         "cost",

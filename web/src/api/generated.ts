@@ -992,6 +992,7 @@ export interface SlotDimensions {
   agent_cost: CatalogDimension | null;
   agent_run: CatalogDimension | null;
   agent_run_summary: CatalogDimension | null;
+  agent_runs: CatalogDimension | null;
   agent_status: CatalogDimension | null;
   ancestors: CatalogDimension | null;
   assigned_review: CatalogDimension | null;

@@ -40,6 +40,7 @@ const SLOT_LABELS: Record<string, string> = {
   session: "Interactive session",
   agent_status: "Autonomous agent",
   agent_run: "Latest agent run",
+  agent_runs: "Number of Autonomous Runs",
   agent_run_summary: "Latest run summary",
   cost: "Cost",
   agent_cost: "Autonomous agent cost",
@@ -274,7 +275,7 @@ describe("a card's labelled slots", () => {
         ["repo", "branch", "ancestors", "descendants"],
         ["title", "pr", "ci", "review", "comments", "bot_comments", "merge", "conflict_commit", "lines", "pr_age", "in_draft", "review_requested", "ci_failures"],
         ["next", "task_age", "task", "task_title", "task_status", "slack_status", "slack_age", "assigned_review"],
-        ["session", "agent_status", "agent_run", "agent_run_summary"],
+        ["session", "agent_status", "agent_runs", "agent_run", "agent_run_summary"],
         ["cost", "agent_cost"],
       ]);
       // The timeline is its own box, the last child, not one of the groups.
@@ -292,7 +293,7 @@ describe("a card's labelled slots", () => {
 
     expect(labels(found)).toEqual(SLOT_LABELS);
     for (const key of Object.keys(SLOT_LABELS)) {
-      if (["repo", "branch", "ancestors", "descendants", "task", "task_title", "task_status", "slack_status", "slack_age", "assigned_review", "session", "task_age", "agent_status", "agent_run", "agent_run_summary", "cost", "agent_cost"].includes(key)) continue;
+      if (["repo", "branch", "ancestors", "descendants", "task", "task_title", "task_status", "slack_status", "slack_age", "assigned_review", "session", "task_age", "agent_status", "agent_runs", "agent_run", "agent_run_summary", "cost", "agent_cost"].includes(key)) continue;
       expect(found[key].slice(1), key).toEqual(["na", "loading…"]);
     }
   });
@@ -848,6 +849,7 @@ describe("a card's agent and spend slots", () => {
     expect(found.agent_status[2]).toBe("may fix / re-run ci now Run an agent now");
     expect(found.agent_run).toEqual(["Latest agent run", "na", "no run yet"]);
     expect(found.agent_run_summary.slice(1)).toEqual(["na", "–"]);
+    expect(found.agent_runs.slice(1)).toEqual(["na", "0"]);
   });
 
   test("a held-back branch says why, and offers a run only when a person may override it", () => {
@@ -982,7 +984,8 @@ describe("a card's agent and spend slots", () => {
     const found = show(done);
 
     expect(found.agent_status[2]).toBe("nothing for an agent to do");
-    expect(found.agent_run).toEqual(["Latest agent run", "ok", "finished Resolve comments (2 runs in all)"]);
+    expect(found.agent_runs).toEqual(["Number of Autonomous Runs", "ok", "2"]);
+    expect(found.agent_run).toEqual(["Latest agent run", "ok", "finished Resolve comments"]);
     expect(found.agent_run_summary[2]).toContain("Replied to two Copilot threads.");
     expect(found.cost).toEqual(["Cost", "ok", "$1.50"]);
     expect(found.agent_cost).toEqual(["Autonomous agent cost", "ok", "$0.0500 over 2 runs"]);

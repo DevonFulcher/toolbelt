@@ -155,6 +155,7 @@
     "timeline": "pr",
     "lines": null,
     "agent_status": null,
+    "agent_runs": null,
     "agent_run": null,
     "agent_run_summary": null,
     "cost": null,
