@@ -196,6 +196,37 @@ class TestRefresherWithGate:
 
         assert s.lookups == 2
 
+    def test_a_pr_with_unresolved_threads_gets_the_full_lookup_sooner(self):
+        s = Setup(comments_full_interval=60)
+        s.status = replace(OPEN, open_comments=1)
+        s.pass_after(0)
+        s.pass_after(40)
+        assert s.lookups == 1
+
+        s.pass_after(20)  # 60 s after the last full lookup, not 120
+
+        assert s.lookups == 2
+
+    def test_a_pr_without_unresolved_threads_keeps_the_longer_interval(self):
+        s = Setup(comments_full_interval=60)
+        s.pass_after(0)
+
+        s.pass_after(60)
+
+        assert s.lookups == 1
+
+    def test_refreshing_everything_looks_each_branch_up_at_once_without_the_gate(self):
+        s = Setup()
+        s.pass_after(0)
+        s.github.asked.clear()
+
+        assert s.refresher.refresh_all() == 1
+        fetched = s.pass_after(1)
+
+        assert fetched == 1
+        assert s.lookups == 2
+        assert s.github.asked == []
+
     def test_a_gate_that_cannot_answer_falls_back_to_the_full_lookup(self):
         s = Setup()
         s.pass_after(0)

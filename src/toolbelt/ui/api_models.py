@@ -1104,6 +1104,13 @@ class MergeQueueRequest(Model):
     id: str
 
 
+class RefreshAccepted(Model):
+    """The answer to ``POST /api/refresh``: every tracked branch is being
+    looked up again in the background (each card's age moves as it arrives)."""
+
+    branches: int
+
+
 class SlackPerson(Model):
     """Someone who can be asked to review: Slack display name and user ID."""
 

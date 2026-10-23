@@ -1336,6 +1336,10 @@ def create_app(
             refresher.hint(keys)
         return Response(status_code=204)
 
+    @app.post("/api/refresh", response_model=api.RefreshAccepted, status_code=202)
+    async def refresh_all() -> api.RefreshAccepted:
+        return api.RefreshAccepted(branches=refresher.refresh_all())
+
     @app.get("/api/events")
     async def events() -> StreamingResponse:
         async def stream() -> AsyncIterator[str]:

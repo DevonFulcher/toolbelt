@@ -312,7 +312,7 @@ class WebhookForwarders:
                 )
             return
         for slug in administered:
-            if slug not in self._tasks:
+            if slug not in self._tasks or self._tasks[slug].done():
                 self._tasks[slug] = asyncio.create_task(self._forward(slug))
 
     async def cleanup_orphans(self) -> None:
@@ -362,48 +362,67 @@ class WebhookForwarders:
         """Keeps one forwarder process up, restarting it when it exits: after
         ``retry_initial_seconds``, then twice as long each time it fails to come
         up, to at most ``retry_seconds``; a forwarder that was up starts over
-        from the short wait (a dropped connection, a laptop waking)."""
+        from the short wait (a dropped connection, a laptop waking). Whatever
+        goes wrong while supervising it (a network error asking GitHub for the
+        repo's webhooks, say) is waited out the same way: the loop never ends
+        until the repo is no longer wanted."""
         delay = self._retry_initial_seconds
         while True:
-            await self._reclaim(slug)
-            before = await self._hook_ids(slug)
-            process = await self._spawn(slug, self._url)
-            self._ledger.set_pid(slug, process.pid)
-            exited = asyncio.ensure_future(process.wait())
-            ready = asyncio.ensure_future(self._sleep(self._ready_seconds))
             try:
-                await asyncio.wait({ready, exited}, return_when=asyncio.FIRST_COMPLETED)
-                if not exited.done():
-                    self._live.add(slug)
-                    self._set_problem(slug, None)
+                if await self._forward_once(slug):
                     delay = self._retry_initial_seconds
-                    await self._record_created(slug, before)
-                await exited
-                problem = _problem_of(process)
-                if problem.state == "blocked":
-                    problem = await self._who_blocks(slug) or problem
-                else:
-                    # It did not fail because the repo's webhook was taken, so
-                    # one that appeared meanwhile is its own.
-                    await self._record_created(slug, before)
-                self._set_problem(slug, problem)
-                logger.warning(
-                    "webhook forwarder for %s exited with %s: %s",
+                # A webhook of ours that was left inactive is gone now: start
+                # again at once instead of waiting out the retry delay.
+                if await self._reclaim(slug):
+                    continue
+            except Exception as failure:  # noqa: BLE001 - the loop must go on
+                logger.exception("supervising the forwarder of %s failed", slug)
+                self._set_problem(
                     slug,
-                    process.returncode,
-                    problem.text,
+                    Problem("failed", f"The forwarder could not be started: {failure}"),
                 )
-            finally:
-                ready.cancel()
-                exited.cancel()
-                self._live.discard(slug)
-                await _terminate(process)
-                self._ledger.clear_pid(slug)
-            # A webhook of ours that was left inactive is gone now: start again
-            # at once instead of waiting out the retry delay.
-            if not await self._reclaim(slug):
-                await self._sleep(delay)
-                delay = min(delay * 2, self._retry_seconds)
+            await self._sleep(delay)
+            delay = min(delay * 2, self._retry_seconds)
+
+    async def _forward_once(self, slug: str) -> bool:
+        """Runs one forwarder process until it exits. Returns whether it stayed
+        up long enough to count as live."""
+        await self._reclaim(slug)
+        before = await self._hook_ids(slug)
+        process = await self._spawn(slug, self._url)
+        self._ledger.set_pid(slug, process.pid)
+        exited = asyncio.ensure_future(process.wait())
+        ready = asyncio.ensure_future(self._sleep(self._ready_seconds))
+        came_up = False
+        try:
+            await asyncio.wait({ready, exited}, return_when=asyncio.FIRST_COMPLETED)
+            if not exited.done():
+                self._live.add(slug)
+                self._set_problem(slug, None)
+                came_up = True
+                await self._record_created(slug, before)
+            await exited
+            problem = _problem_of(process)
+            if problem.state == "blocked":
+                problem = await self._who_blocks(slug) or problem
+            else:
+                # It did not fail because the repo's webhook was taken, so
+                # one that appeared meanwhile is its own.
+                await self._record_created(slug, before)
+            self._set_problem(slug, problem)
+            logger.warning(
+                "webhook forwarder for %s exited with %s: %s",
+                slug,
+                process.returncode,
+                problem.text,
+            )
+        finally:
+            ready.cancel()
+            exited.cancel()
+            self._live.discard(slug)
+            await _terminate(process)
+            self._ledger.clear_pid(slug)
+        return came_up
 
     async def _who_blocks(self, slug: str) -> Problem | None:
         """Says what holds the repo's one webhook when it is not toolbelt's:

@@ -56,6 +56,10 @@ DEFAULT_INTERVAL_SECONDS = 20.0
 DEFAULT_SETTLED_INTERVAL_SECONDS = 300.0
 DEFAULT_NO_PR_INTERVAL_SECONDS = 60.0
 DEFAULT_FULL_INTERVAL_SECONDS = 600.0
+#: A PR with unresolved review threads gets the full lookup this often: the
+#: ETag gate cannot see a thread being resolved, and the count on the card
+#: should follow it.
+DEFAULT_COMMENTS_FULL_INTERVAL_SECONDS = 120.0
 DEFAULT_PUSHED_INTERVAL_SECONDS = 300.0
 DEFAULT_CONCURRENCY = 4
 DEFAULT_TICK_SECONDS = 2.0
@@ -220,6 +224,7 @@ class StatusRefresher:
         ),
         gate: ChangeGate | None = None,
         full_interval: float = DEFAULT_FULL_INTERVAL_SECONDS,
+        comments_full_interval: float = DEFAULT_COMMENTS_FULL_INTERVAL_SECONDS,
         pushed: Callable[[int], bool] = lambda repo_id: False,
         pushed_interval: float = DEFAULT_PUSHED_INTERVAL_SECONDS,
         no_pr_interval: float = DEFAULT_NO_PR_INTERVAL_SECONDS,
@@ -231,6 +236,7 @@ class StatusRefresher:
         self._no_pr_interval = no_pr_interval
         self._gate = gate
         self._full_interval = full_interval
+        self._comments_full_interval = comments_full_interval
         self._pushed = pushed
         self._pushed_interval = pushed_interval
         #: Branches a webhook said changed: refetched at once, gate skipped.
@@ -281,6 +287,13 @@ class StatusRefresher:
         """Refetch these branches at once (a webhook said they changed)."""
         self._hinted |= keys
         self._hinted_wake.set()
+
+    def refresh_all(self) -> int:
+        """Looks every tracked branch up again at once, gate skipped (the
+        Refresh button). Returns how many."""
+        keys = {branch.key for branch in self._branches()}
+        self.hint(keys)
+        return len(keys)
 
     async def snapshot(self, branch: TrackedBranch, max_age: float) -> PrSnapshot:
         """The branch's PR as last looked up, for a caller that needs it even
@@ -447,7 +460,7 @@ class StatusRefresher:
             # The gate has seen newer ETags than a lookup that failed: only a
             # full lookup can bring the data up to them.
             or previous.error is not None
-            or self._clock() - previous.full_at >= self._full_interval
+            or self._clock() - previous.full_at >= self._full_interval_of(previous)
         ):
             return False
         try:
@@ -455,6 +468,11 @@ class StatusRefresher:
         except Exception:  # noqa: BLE001
             # The gate only saves a lookup: when it cannot answer, do the lookup.
             return False
+
+    def _full_interval_of(self, previous: Fetched) -> float:
+        if previous.status is not None and previous.status.open_comments > 0:
+            return min(self._comments_full_interval, self._full_interval)
+        return self._full_interval
 
     async def _pause(self) -> None:
         """Sleep one tick, or less when a browser connects or a webhook hints

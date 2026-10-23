@@ -638,6 +638,55 @@ class TestOwnedHooks:
 
         asyncio.run(scenario())
 
+    def test_a_network_error_asking_github_for_the_webhooks_does_not_end_the_forwarder(
+        self,
+    ):
+        async def scenario():
+            s, hooks, _ledger = owned()
+            failing = True
+
+            async def listing(slug: str):
+                if failing:
+                    raise ConnectionError("network is unreachable")
+                return []
+
+            hooks.list = listing  # type: ignore[method-assign]
+            await s.forwarders.reconcile()
+            await settle()
+
+            assert s.processes == []  # could not start yet: waiting to try again
+            assert s.forwarders.problem("o/mine").state == "failed"  # type: ignore[union-attr]
+            failing = False
+            s.release_sleep.set()
+            await settle()
+
+            assert len(s.processes) == 1
+            assert s.forwarders.is_live("o/mine")
+            await s.forwarders.stop()
+
+        asyncio.run(scenario())
+
+    def test_a_forwarder_whose_task_has_ended_is_started_again_at_the_next_reconcile(
+        self,
+    ):
+        async def scenario():
+            s, _hooks, _ledger = owned()
+            await s.forwarders.reconcile()
+            await settle()
+            task = s.forwarders._tasks["o/mine"]
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            s.processes[0][2].exit(1)
+
+            await s.forwarders.reconcile()
+            await settle()
+
+            assert s.forwarders._tasks["o/mine"] is not task
+            assert len(s.processes) == 2
+            await s.forwarders.stop()
+
+        asyncio.run(scenario())
+
 
 class TestForwarderPids:
     def test_the_pid_is_recorded_while_it_runs_and_dropped_when_it_ends(self):
@@ -797,6 +846,9 @@ class TestRetryDelay:
                 await asyncio.sleep(3600)
             else:
                 waits.append(seconds)
+                await asyncio.sleep(
+                    0
+                )  # a wait gives the loop a turn, as a real one does
 
         s = Setup({"o/mine"}, admin={"o/mine"})
         s.forwarders._sleep = sleep

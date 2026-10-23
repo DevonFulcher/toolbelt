@@ -874,6 +874,18 @@ class TestGithubWebhookEndpoint:
 
         assert self.due(app) == 1
 
+    def test_the_refresh_button_refetches_every_branch_and_answers_at_once(
+        self, tmp_path
+    ):
+        app, client = self.seed(tmp_path)
+        assert self.due(app) == 0  # nothing is due yet
+
+        response = client.post("/api/refresh")
+
+        assert response.status_code == 202
+        assert response.json() == {"branches": 2}
+        assert self.due(app) == 2
+
     def test_another_repo_or_a_ping_refetches_nothing(self, tmp_path):
         app, client = self.seed(tmp_path)
         other = {

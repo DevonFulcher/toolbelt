@@ -50,7 +50,8 @@ person can use webhook forwarding at a time for each repository and
 organization"). While `tt ui` serves, `webhook_forwarders.py` keeps one
 forwarder running for each tracked repo where `permissions.admin` is true
 (checked once per repo per server start), in its own process group, and
-restarts it when it exits. The extension creates the webhook inactive and
+restarts it when it exits (and keeps trying when something else goes wrong while
+supervising it, such as a network error asking GitHub for the repo's webhooks). The extension creates the webhook inactive and
 activates it once its websocket connects; GitHub removes it when the websocket
 closes. A forwarder that dies before connecting leaves an inactive `cli`
 webhook behind, which blocks that repo ("Hook already exists") until it is
@@ -100,7 +101,13 @@ was just asked.
 
 The gate does not see a review thread being resolved or the base branch moving
 under a PR, so the full GraphQL lookup still runs every 10 minutes per PR
-(`full_interval`). A change the gate does see shows up within one poll (20 s).
+(`full_interval`), and every 2 minutes for a PR with unresolved review threads
+(`comments_full_interval`), so the count on its card follows a thread being
+resolved. A change the gate does see shows up within one poll (20 s).
+
+The **Refresh PRs** button in the header (`POST /api/refresh`) looks every
+tracked PR up again at once, gate skipped, like a webhook hint for every branch.
+It answers at once; each card's age moves as its lookup arrives.
 
 ## Polling
 
