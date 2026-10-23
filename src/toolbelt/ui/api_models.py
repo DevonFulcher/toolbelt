@@ -1118,6 +1118,73 @@ class RefreshAccepted(Model):
     refreshing: bool
 
 
+class DecisionOptionInfo(Model):
+    id: str
+    title: str
+    #: What picking it means: always shown.
+    summary: str
+    #: More context, shown on request.
+    context: str
+    benefits: str
+    costs: str
+    risks: str
+
+
+class DecisionRecommendationInfo(Model):
+    option_id: str | None
+    reasoning: str
+
+
+class DecisionPointInfo(Model):
+    id: str
+    title: str
+    context: str
+    options: list[DecisionOptionInfo]
+    recommendation: DecisionRecommendationInfo | None
+
+
+class DecisionAnswerInfo(Model):
+    point_id: str
+    option_id: str | None
+    text: str
+
+
+class DecisionInfo(Model):
+    """A question an agent asked about a task, and the user's answer once given."""
+
+    id: str
+    branch: str
+    #: ``interactive`` or ``autonomous``.
+    proposer: Literal["interactive", "autonomous"]
+    session_id: str | None
+    title: str
+    points: list[DecisionPointInfo]
+    status: Literal["pending", "answered"]
+    answers: list[DecisionAnswerInfo]
+    created_at: str
+    answered_at: str | None
+    #: When the answer reached the agent (``None``: not yet, or not answered).
+    delivered_at: str | None
+
+
+class DecisionList(Model):
+    """The decisions about one branch's task, oldest first."""
+
+    decisions: list[DecisionInfo]
+
+
+class DecisionAnswerRequest(Model):
+    """The body of ``POST /api/decisions/answer``: one answer per point, each an
+    option, words, or both."""
+
+    decision_id: str
+    answers: list[DecisionAnswerInfo]
+
+
+class DecisionDeleteRequest(Model):
+    decision_id: str
+
+
 class SlackPerson(Model):
     """Someone who can be asked to review: Slack display name and user ID."""
 
@@ -1416,5 +1483,9 @@ class Wire(Model):
     slack_draft: SlackDraft
     slack_send_request: SlackSendRequest
     slack_accepted: SlackAccepted
+    decision_list: DecisionList
+    decision_info: DecisionInfo
+    decision_answer_request: DecisionAnswerRequest
+    decision_delete_request: DecisionDeleteRequest
     agent_conversation: AgentConversation
     agent_start: AgentStart

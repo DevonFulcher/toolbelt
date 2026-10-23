@@ -1683,6 +1683,274 @@
       "title": "ConversationEvent",
       "type": "object"
     },
+    "DecisionAnswerInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "option_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "point_id": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "point_id",
+        "option_id",
+        "text"
+      ],
+      "title": "DecisionAnswerInfo",
+      "type": "object"
+    },
+    "DecisionAnswerRequest": {
+      "additionalProperties": false,
+      "description": "The body of ``POST /api/decisions/answer``: one answer per point, each an\noption, words, or both.",
+      "properties": {
+        "answers": {
+          "items": {
+            "$ref": "#/$defs/DecisionAnswerInfo"
+          },
+          "type": "array"
+        },
+        "decision_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "decision_id",
+        "answers"
+      ],
+      "title": "DecisionAnswerRequest",
+      "type": "object"
+    },
+    "DecisionDeleteRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "decision_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "decision_id"
+      ],
+      "title": "DecisionDeleteRequest",
+      "type": "object"
+    },
+    "DecisionInfo": {
+      "additionalProperties": false,
+      "description": "A question an agent asked about a task, and the user's answer once given.",
+      "properties": {
+        "answered_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "answers": {
+          "items": {
+            "$ref": "#/$defs/DecisionAnswerInfo"
+          },
+          "type": "array"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string"
+        },
+        "delivered_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "points": {
+          "items": {
+            "$ref": "#/$defs/DecisionPointInfo"
+          },
+          "type": "array"
+        },
+        "proposer": {
+          "enum": [
+            "interactive",
+            "autonomous"
+          ],
+          "type": "string"
+        },
+        "session_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "enum": [
+            "pending",
+            "answered"
+          ],
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "branch",
+        "proposer",
+        "session_id",
+        "title",
+        "points",
+        "status",
+        "answers",
+        "created_at",
+        "answered_at",
+        "delivered_at"
+      ],
+      "title": "DecisionInfo",
+      "type": "object"
+    },
+    "DecisionList": {
+      "additionalProperties": false,
+      "description": "The decisions about one branch's task, oldest first.",
+      "properties": {
+        "decisions": {
+          "items": {
+            "$ref": "#/$defs/DecisionInfo"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "decisions"
+      ],
+      "title": "DecisionList",
+      "type": "object"
+    },
+    "DecisionOptionInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "benefits": {
+          "type": "string"
+        },
+        "context": {
+          "type": "string"
+        },
+        "costs": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "risks": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "summary",
+        "context",
+        "benefits",
+        "costs",
+        "risks"
+      ],
+      "title": "DecisionOptionInfo",
+      "type": "object"
+    },
+    "DecisionPointInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "context": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "options": {
+          "items": {
+            "$ref": "#/$defs/DecisionOptionInfo"
+          },
+          "type": "array"
+        },
+        "recommendation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DecisionRecommendationInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "context",
+        "options",
+        "recommendation"
+      ],
+      "title": "DecisionPointInfo",
+      "type": "object"
+    },
+    "DecisionRecommendationInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "option_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reasoning": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "option_id",
+        "reasoning"
+      ],
+      "title": "DecisionRecommendationInfo",
+      "type": "object"
+    },
     "DraftCatalogState": {
       "additionalProperties": false,
       "properties": {
@@ -2575,7 +2843,8 @@
         "post_slack",
         "bump_slack",
         "claimed",
-        "autonomous"
+        "autonomous",
+        "deciding"
       ],
       "type": "string"
     },
@@ -5029,6 +5298,18 @@
     "aggregate": {
       "$ref": "#/$defs/Aggregate"
     },
+    "decision_answer_request": {
+      "$ref": "#/$defs/DecisionAnswerRequest"
+    },
+    "decision_delete_request": {
+      "$ref": "#/$defs/DecisionDeleteRequest"
+    },
+    "decision_info": {
+      "$ref": "#/$defs/DecisionInfo"
+    },
+    "decision_list": {
+      "$ref": "#/$defs/DecisionList"
+    },
     "event": {
       "$ref": "#/$defs/ServerEvent"
     },
@@ -5075,6 +5356,10 @@
     "slack_draft",
     "slack_send_request",
     "slack_accepted",
+    "decision_list",
+    "decision_info",
+    "decision_answer_request",
+    "decision_delete_request",
     "agent_conversation",
     "agent_start"
   ],

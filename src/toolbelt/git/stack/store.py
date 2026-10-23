@@ -28,6 +28,15 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from toolbelt.decisions.model import (
+    Decision,
+    PointAnswer,
+    answers_from_json,
+    answers_to_json,
+    points_from_json,
+    points_to_json,
+)
+
 STATE_DIR_ENV_VAR = "TOOLBELT_HOME"
 DB_FILENAME = "stacks.db"
 _BUSY_TIMEOUT_MS = 30_000
@@ -379,6 +388,31 @@ _MIGRATIONS: list[tuple[str, ...]] = [
         # cost so far, so a card can show a run that has not finished.
         "ALTER TABLE agent_runs ADD COLUMN activity TEXT",
     ),
+    (
+        # Decisions an agent asked the user to make about a task (see
+        # ``decisions``). ``points`` and ``answers`` are JSON; a decision is
+        # deleted when the user deletes it. ``delivered_at`` is when the answer
+        # reached the agent.
+        """
+        CREATE TABLE decisions (
+            id TEXT PRIMARY KEY,
+            task_id TEXT NOT NULL,
+            repo_id INTEGER NOT NULL,
+            branch TEXT NOT NULL,
+            proposer TEXT NOT NULL,
+            session_id TEXT,
+            run_id TEXT,
+            title TEXT NOT NULL,
+            points TEXT NOT NULL,
+            status TEXT NOT NULL,
+            answers TEXT,
+            created_at TEXT NOT NULL,
+            answered_at TEXT,
+            delivered_at TEXT
+        )
+        """,
+        "CREATE INDEX decisions_by_task ON decisions (task_id, created_at)",
+    ),
 ]
 
 
@@ -677,6 +711,25 @@ def _pr_link(row: sqlite3.Row) -> PrLink | None:
     if row["pr_node_id"] is None or row["pr_number"] is None:
         return None
     return PrLink(number=row["pr_number"], node_id=row["pr_node_id"])
+
+
+def _decision(row: sqlite3.Row) -> Decision:
+    return Decision(
+        id=row["id"],
+        task_id=row["task_id"],
+        repo_id=row["repo_id"],
+        branch=row["branch"],
+        proposer=row["proposer"],
+        session_id=row["session_id"],
+        run_id=row["run_id"],
+        title=row["title"],
+        points=points_from_json(row["points"]),
+        status=row["status"],
+        answers=answers_from_json(row["answers"]),
+        created_at=row["created_at"],
+        answered_at=row["answered_at"],
+        delivered_at=row["delivered_at"],
+    )
 
 
 def _optional_time(value: str | None) -> datetime | None:
@@ -1561,6 +1614,78 @@ class StackStore:
                 "DELETE FROM merge_queue WHERE repo_id = ? AND branch = ?",
                 (repo_id, branch),
             )
+
+    # ---- decisions ---------------------------------------------------------
+
+    def add_decision(self, decision: Decision) -> None:
+        with self._write() as conn:
+            conn.execute(
+                "INSERT INTO decisions (id, task_id, repo_id, branch, proposer, "
+                "session_id, run_id, title, points, status, answers, created_at, "
+                "answered_at, delivered_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    decision.id,
+                    decision.task_id,
+                    decision.repo_id,
+                    decision.branch,
+                    decision.proposer,
+                    decision.session_id,
+                    decision.run_id,
+                    decision.title,
+                    points_to_json(decision.points),
+                    decision.status,
+                    answers_to_json(decision.answers) if decision.answers else None,
+                    decision.created_at,
+                    decision.answered_at,
+                    decision.delivered_at,
+                ),
+            )
+
+    def decisions(self, *, task_id: str | None = None) -> list[Decision]:
+        """Every decision (of one task, when given), oldest first."""
+        if task_id is None:
+            rows = self._conn.execute("SELECT * FROM decisions ORDER BY created_at, id")
+        else:
+            rows = self._conn.execute(
+                "SELECT * FROM decisions WHERE task_id = ? ORDER BY created_at, id",
+                (task_id,),
+            )
+        return [_decision(r) for r in rows]
+
+    def decision(self, decision_id: str) -> Decision | None:
+        row = self._conn.execute(
+            "SELECT * FROM decisions WHERE id = ?", (decision_id,)
+        ).fetchone()
+        return _decision(row) if row else None
+
+    def answer_decision(
+        self, decision_id: str, answers: tuple[PointAnswer, ...], at: datetime
+    ) -> bool:
+        """Records the answers of a pending decision. ``False`` when there is
+        no such decision, or it was answered already."""
+        with self._write() as conn:
+            changed = conn.execute(
+                "UPDATE decisions SET status = 'answered', answers = ?, "
+                "answered_at = ? WHERE id = ? AND status = 'pending'",
+                (answers_to_json(answers), _iso(at), decision_id),
+            ).rowcount
+        return changed > 0
+
+    def mark_decision_delivered(self, decision_id: str, at: datetime) -> None:
+        with self._write() as conn:
+            conn.execute(
+                "UPDATE decisions SET delivered_at = ? "
+                "WHERE id = ? AND delivered_at IS NULL",
+                (_iso(at), decision_id),
+            )
+
+    def delete_decision(self, decision_id: str) -> bool:
+        with self._write() as conn:
+            deleted = conn.execute(
+                "DELETE FROM decisions WHERE id = ?", (decision_id,)
+            ).rowcount
+        return deleted > 0
 
     def task_status_moved(
         self, repo_id: int, branch: str, stage: str, pr_number: int

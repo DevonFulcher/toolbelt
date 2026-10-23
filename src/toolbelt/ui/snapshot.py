@@ -95,6 +95,8 @@ class ClaimLookup(Protocol):
 
     def autonomous(self, repo_id: int, branch: str) -> bool: ...
 
+    def deciding(self, repo_id: int, branch: str) -> bool: ...
+
 
 class _NoClaims:
     def holders(self, repo_id: int, branch: str) -> tuple[BranchHolder, ...]:
@@ -104,6 +106,9 @@ class _NoClaims:
         return False
 
     def autonomous(self, repo_id: int, branch: str) -> bool:
+        return False
+
+    def deciding(self, repo_id: int, branch: str) -> bool:
         return False
 
 
@@ -183,6 +188,7 @@ def parent_context(
         claims.working(repo_id, parent),
         claims.autonomous(repo_id, parent),
         slack.context(repo_id, parent, fetched, now),
+        claims.deciding(repo_id, parent),
     )
     return ParentContext(name=parent, pr=fetched.status.pr, next_who=parent_action.who)
 
@@ -275,6 +281,7 @@ def loaded_status(
     autonomous: bool = False,
     conflict: ConflictCommit | None = None,
     slack: SlackContext | None = None,
+    deciding: bool = False,
 ) -> api.LoadedStatus:
     """``parent`` is the stack context for the next action; ``facts`` (with
     ``now``) adds the PR's history as ``detail``; ``claimed``: a live working
@@ -287,7 +294,7 @@ def loaded_status(
         merge = "conflicts" if status.has_conflicts else "clean"
     open_comments = status.open_comments if has_pr else 0
     open_comments_bot = status.bot_comments if has_pr else 0
-    action = next_action(status, parent, claimed, autonomous, slack)
+    action = next_action(status, parent, claimed, autonomous, slack, deciding)
     chips = pr_states.current_states(
         pr=status.pr.value,
         ci=status.ci.value,
@@ -339,6 +346,7 @@ def live_status(
     claimed: bool = False,
     autonomous: bool = False,
     slack: SlackContext | None = None,
+    deciding: bool = False,
 ) -> api.LoadingStatus | api.FailedStatus | api.LoadedStatus:
     if fetched is None:
         return api.LoadingStatus(load="loading")
@@ -353,6 +361,7 @@ def live_status(
         autonomous=autonomous,
         conflict=fetched.conflict,
         slack=slack,
+        deciding=deciding,
     )
 
 
@@ -466,6 +475,7 @@ def build_snapshot(
                             claims.working(repo.id, name),
                             claims.autonomous(repo.id, name),
                             slack.context(repo.id, name, looked_up, now),
+                            claims.deciding(repo.id, name),
                         ),
                     )
                 )

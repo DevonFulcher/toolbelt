@@ -3,6 +3,7 @@ import type {
   BranchClaim,
   Catalog,
   HolderState,
+  Link,
   LiveStatus,
   LoadedStatus,
   MergeQueueInfo,
@@ -21,6 +22,7 @@ import { useApp, useAppStore } from "../store/StoreContext";
 import { AgentSlots, SpendSlots } from "./CardAgentSlots";
 import { MergeDialog } from "./MergeDialog";
 import { MergeQueueControls } from "./MergeQueueControls";
+import { DecisionsDialog } from "./DecisionsDialog";
 import { RefreshButton } from "./RefreshButton";
 import { SlackDialog } from "./SlackDialog";
 import { Timeline } from "./Timeline";
@@ -356,7 +358,15 @@ export const Card = memo(
           <PrSlots status={status} note={note} />
         </Group>
         <Group id="task" title="Task">
-          <NextSlot id={id} status={status} note={note} claim={claim} slackPosting={slack?.posting ?? false} queue={mergeQueue} />
+          <NextSlot
+            id={id}
+            status={status}
+            note={note}
+            claim={claim}
+            session={sessionLink(claim, branch.agent)}
+            slackPosting={slack?.posting ?? false}
+            queue={mergeQueue}
+          />
           <Slot
             id="task_age"
             label="Task age"
@@ -498,6 +508,7 @@ function NextSlot({
   status,
   note,
   claim,
+  session,
   slackPosting,
   queue,
 }: {
@@ -505,6 +516,8 @@ function NextSlot({
   status: LiveStatus;
   note: ReactNode;
   claim: BranchClaim;
+  /** The task's interactive session, when it has one. */
+  session: Link | null;
   /** A message about the PR is being posted in Slack in the background. */
   slackPosting: boolean;
   /** Where the PR stands in the merge queue (``null``: nothing to say). */
@@ -527,6 +540,8 @@ function NextSlot({
         </Pill>
       ) : status.next.kind === "merge" ? (
         <MergeButton id={id} status={status} />
+      ) : status.next.kind === "deciding" ? (
+        <DecisionsButton id={id} label={status.next.label} session={session} />
       ) : status.next.kind === "post_slack" || status.next.kind === "bump_slack" ? (
         <SlackButton id={id} status={status} posting={slackPosting} />
       ) : (
@@ -609,6 +624,26 @@ function ReassignButton({ id }: { id: string }) {
         Reassign
       </button>
       {open && <SlackDialog id={id} reassign onClose={() => setOpen(false)} />}
+    </>
+  );
+}
+
+/** Next is Deciding: a button that opens the questions an agent asked, to answer or
+ * delete. */
+function DecisionsButton({ id, label, session }: { id: string; label: string; session: Link | null }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        className="merge-button"
+        aria-haspopup="dialog"
+        title="An agent asked a question about this task: answer it (or delete it)"
+        onClick={() => setOpen(true)}
+      >
+        {label}
+      </button>
+      {open && <DecisionsDialog id={id} session={session} onClose={() => setOpen(false)} />}
     </>
   );
 }

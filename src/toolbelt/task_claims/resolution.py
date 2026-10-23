@@ -108,7 +108,11 @@ def resolve_claim(claim: Claim, tasks: list[TrackedTask]) -> list[TrackedTask]:
             for task in tasks
             if task.worktree is not None and _same_path(str(task.worktree)) == wanted
         ]
-    ref = claim.ref
+    return tasks_named(claim.ref, tasks)
+
+
+def tasks_named(ref: str, tasks: list[TrackedTask]) -> list[TrackedTask]:
+    """The tracked tasks ``ref`` names: by branch name, task id or ticket."""
     folded = ref.casefold()
     return [
         task

@@ -637,6 +637,33 @@ describe("a card while a message is posted in the background", () => {
   });
 });
 
+describe("a card with a question for the user", () => {
+  test("its Next says Deciding, as a button that opens the questions", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ decisions: [] }) })),
+    );
+    const deciding = pr({
+      pr_number: 8,
+      pr: "open",
+      next: {
+        label: "Deciding",
+        who: "you",
+        kind: "deciding",
+        would_be: { label: "Fix / re-run CI", who: "you", kind: "fix_ci" },
+      },
+    });
+    showCards([branch(1, "devon/a", { status: deciding })]);
+
+    expect(slotsOf("devon/a").next[2]).toContain("would be: Fix / re-run CI");
+    fireEvent.click(screen.getByRole("button", { name: "Deciding" }));
+
+    expect(await screen.findByRole("dialog", { name: "Decisions" })).toBeInTheDocument();
+    expect(vi.mocked(fetch).mock.calls[0][0]).toBe("/api/decisions?id=1%3Adevon%2Fa");
+    vi.unstubAllGlobals();
+  });
+});
+
 describe("a card's Refresh button", () => {
   test("each card has one, and it refreshes only that card's PR", async () => {
     const sent: unknown[] = [];

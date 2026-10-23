@@ -223,7 +223,7 @@ class MergeQueue:
             kind = self._next_kind(*key)
             if kind == "merge":
                 self._start_merge(key, queued=True)
-            elif kind in ("wait_ci", "claimed", "autonomous"):
+            elif kind in ("wait_ci", "claimed", "autonomous", "deciding"):
                 continue  # still waiting (a claimed branch is left to its agent)
             else:
                 why = _DROPPED_BECAUSE.get(kind or "", f"its next action became {kind}")

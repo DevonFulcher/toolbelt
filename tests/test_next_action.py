@@ -452,3 +452,27 @@ class TestSlackRules:
 
         assert action.kind == "claimed"
         assert action.would_be is not None and action.would_be.kind == "post_slack"
+
+
+DECIDING = ("Deciding", "you", "deciding")
+
+
+def test_a_question_for_the_user_replaces_the_action_and_keeps_it_as_would_be():
+    branch = status(ci=CiState.FAILED)
+
+    action = next_action(branch, None, deciding=True)
+
+    assert (action.label, action.who, action.kind) == DECIDING
+    assert action.would_be == next_action(branch, None)
+
+
+def test_a_question_comes_before_whoever_holds_the_task():
+    action = next_action(status(), None, claimed=True, autonomous=True, deciding=True)
+
+    assert action.kind == "deciding"
+    assert action.would_be is not None and action.would_be.kind != "claimed"
+
+
+@pytest.mark.parametrize("pr", [PrState.MERGED, PrState.CLOSED])
+def test_a_question_on_a_finished_pr_is_ignored(pr):
+    assert next_action(status(pr=pr), None, deciding=True).kind == "done"

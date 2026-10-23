@@ -48,7 +48,7 @@ import functools
 import json
 import time
 from collections.abc import AsyncIterator, Callable
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -70,6 +70,8 @@ from toolbelt.autonomous_agents.limits import (
 )
 from toolbelt.autonomous_agents.runner import AgentRunner
 from toolbelt.autonomous_agents.screen import read_screen_state
+from toolbelt.decisions.book import AlreadyAnswered, DecisionBook, NoSuchDecision
+from toolbelt.decisions.model import Decision, InvalidDecision
 from toolbelt.git.repo_pull import default_config_path
 from toolbelt.git.stack.status import CiState, PrState
 from toolbelt.git.stack.store import (
@@ -505,6 +507,7 @@ def create_app(
     full_refresh_interval: float = DEFAULT_FULL_INTERVAL_SECONDS,
     webhook_url: str | None = None,
     forwarders: WebhookForwarders | None = None,
+    decisions: DecisionBook | None = None,
 ) -> FastAPI:
     """``cwd_root``: the repo `tt ui` was launched from; its checked-out
     branch is marked current, as `tt g tree` does. ``fetch`` looks up a
@@ -560,6 +563,7 @@ def create_app(
             claims.working(repo_id, name),
             claims.autonomous(repo_id, name),
             slack.context(repo_id, name, fetched, now),
+            claims.deciding(repo_id, name),
         )
 
     def publish_claims(changed: set[BranchKey]) -> None:
@@ -626,6 +630,30 @@ def create_app(
             parents = _all_parents(repo_id)
             publish_branches(repo_id, parents, descendants(parents, branch))
 
+    decision_book = decisions or DecisionBook(wall_clock=wall_clock)
+    #: The branches that have a question the user has not answered.
+    deciding_keys: set[BranchKey] = set()
+
+    def reload_decisions() -> set[BranchKey]:
+        """Reads which branches have an unanswered question; returns those
+        that changed."""
+        pending = {
+            (d.repo_id, d.branch) for d in decision_book.all() if d.status == "pending"
+        }
+        changed = pending ^ deciding_keys
+        deciding_keys.clear()
+        deciding_keys.update(pending)
+        return changed
+
+    def refresh_decisions() -> None:
+        """Updates the cards of the branches whose questions changed (a decision
+        was proposed, answered or deleted, here or by another process)."""
+        changed = reload_decisions()
+        if changed:
+            publish_slack(changed)
+
+    reload_decisions()
+
     claims = ClaimsFeed(
         directory=claims_dir,
         tasks=claim_tasks,
@@ -633,6 +661,7 @@ def create_app(
         record=record_claim,
         wall_clock=wall_clock,
         tick=min(tick, CLAIMS_TICK_SECONDS) if claims_tick is None else claims_tick,
+        deciding=lambda repo_id, branch: (repo_id, branch) in deciding_keys,
     )
 
     spend = spend_module.SpendFeed(
@@ -895,6 +924,7 @@ def create_app(
     def on_database_change() -> None:
         views.notify("agents", "extras")
         reload_slack_posts()
+        refresh_decisions()
 
     watcher.on_change = on_database_change
 
@@ -917,6 +947,7 @@ def create_app(
             or looked_up.status.ci is not CiState.RUNNING
             or claims.working(repo_id, name)
             or claims.autonomous(repo_id, name)
+            or claims.deciding(repo_id, name)
         ):
             return False
         now = wall_clock()
@@ -1115,6 +1146,9 @@ def create_app(
         # loop, where the feed lives; a change is published before the
         # version is read, so it is in this snapshot).
         claims.poll()
+        # Questions asked by another process are read from the database here
+        # too: its watcher only runs while a page is connected.
+        await asyncio.to_thread(reload_decisions)
         # Read before the branches: an event published meanwhile then makes
         # the snapshot look stale to /api/events, never the other way round.
         version = hub.version
@@ -1224,6 +1258,78 @@ def create_app(
         if slack_service is None:
             raise HTTPException(status_code=404, detail="Slack is not configured.")
         return slack_service
+
+    def decision_info(decision: Decision) -> api.DecisionInfo:
+        return api.DecisionInfo(
+            id=decision.id,
+            branch=decision.branch,
+            proposer=decision.proposer,  # type: ignore[arg-type]
+            session_id=decision.session_id,
+            title=decision.title,
+            points=[
+                api.DecisionPointInfo(
+                    id=point.id,
+                    title=point.title,
+                    context=point.context,
+                    options=[
+                        api.DecisionOptionInfo(**asdict(option))
+                        for option in point.options
+                    ],
+                    recommendation=api.DecisionRecommendationInfo(
+                        option_id=point.recommendation.option_id,
+                        reasoning=point.recommendation.reasoning,
+                    )
+                    if point.recommendation
+                    else None,
+                )
+                for point in decision.points
+            ],
+            status=decision.status,  # type: ignore[arg-type]
+            answers=[api.DecisionAnswerInfo(**asdict(a)) for a in decision.answers],
+            created_at=decision.created_at,
+            answered_at=decision.answered_at,
+            delivered_at=decision.delivered_at,
+        )
+
+    @app.get("/api/decisions", response_model=api.DecisionList)
+    async def list_decisions(id: str) -> api.DecisionList:
+        repo_id, name = branch_ref(id)
+        found = await asyncio.to_thread(decision_book.all)
+        return api.DecisionList(
+            decisions=[
+                decision_info(d)
+                for d in found
+                if (d.repo_id, d.branch) == (repo_id, name)
+            ]
+        )
+
+    @app.post("/api/decisions/answer", response_model=api.DecisionInfo)
+    async def answer_decision(body: api.DecisionAnswerRequest) -> api.DecisionInfo:
+        try:
+            answered = await asyncio.to_thread(
+                decision_book.answer,
+                body.decision_id,
+                [a.model_dump() for a in body.answers],
+            )
+        except NoSuchDecision as error:
+            raise HTTPException(status_code=404, detail="no such decision") from error
+        except AlreadyAnswered as error:
+            raise HTTPException(
+                status_code=409, detail="This decision was answered already."
+            ) from error
+        except InvalidDecision as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        refresh_decisions()
+        return decision_info(answered)
+
+    @app.post("/api/decisions/delete", response_model=api.DecisionInfo)
+    async def delete_decision(body: api.DecisionDeleteRequest) -> api.DecisionInfo:
+        try:
+            deleted = await asyncio.to_thread(decision_book.delete, body.decision_id)
+        except NoSuchDecision as error:
+            raise HTTPException(status_code=404, detail="no such decision") from error
+        refresh_decisions()
+        return decision_info(deleted)
 
     @app.post("/api/slack/draft", response_model=api.SlackDraft)
     async def slack_draft(body: api.SlackDraftRequest) -> api.SlackDraft:

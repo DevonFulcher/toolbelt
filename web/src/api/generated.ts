@@ -73,7 +73,8 @@ export type NextKind =
   | "post_slack"
   | "bump_slack"
   | "claimed"
-  | "autonomous";
+  | "autonomous"
+  | "deciding";
 export type Who = "you" | "agent" | "auto" | "others" | "ci" | "none";
 export type Chip = PrChip | CiChip | ReviewChip | CommentsChip | MergeChip | NextChip;
 export type PrState = "none" | "draft" | "open" | "merged" | "closed";
@@ -129,6 +130,10 @@ export interface Wire {
   agents_enabled: AgentsEnabled;
   agents_launching: AgentsLaunching;
   aggregate: Aggregate;
+  decision_answer_request: DecisionAnswerRequest;
+  decision_delete_request: DecisionDeleteRequest;
+  decision_info: DecisionInfo;
+  decision_list: DecisionList;
   event: ServerEvent;
   merge_queue_info: MergeQueueInfo;
   merge_queue_request: MergeQueueRequest;
@@ -326,6 +331,64 @@ export interface PrMilestones {
   task_started: string | null;
   title: string;
   url: string;
+}
+/**
+ * The body of ``POST /api/decisions/answer``: one answer per point, each an
+ * option, words, or both.
+ */
+export interface DecisionAnswerRequest {
+  answers: DecisionAnswerInfo[];
+  decision_id: string;
+}
+export interface DecisionAnswerInfo {
+  option_id: string | null;
+  point_id: string;
+  text: string;
+}
+export interface DecisionDeleteRequest {
+  decision_id: string;
+}
+/**
+ * A question an agent asked about a task, and the user's answer once given.
+ */
+export interface DecisionInfo {
+  answered_at: string | null;
+  answers: DecisionAnswerInfo[];
+  branch: string;
+  created_at: string;
+  delivered_at: string | null;
+  id: string;
+  points: DecisionPointInfo[];
+  proposer: "interactive" | "autonomous";
+  session_id: string | null;
+  status: "pending" | "answered";
+  title: string;
+}
+export interface DecisionPointInfo {
+  context: string;
+  id: string;
+  options: DecisionOptionInfo[];
+  recommendation: DecisionRecommendationInfo | null;
+  title: string;
+}
+export interface DecisionOptionInfo {
+  benefits: string;
+  context: string;
+  costs: string;
+  id: string;
+  risks: string;
+  summary: string;
+  title: string;
+}
+export interface DecisionRecommendationInfo {
+  option_id: string | null;
+  reasoning: string;
+}
+/**
+ * The decisions about one branch's task, oldest first.
+ */
+export interface DecisionList {
+  decisions: DecisionInfo[];
 }
 /**
  * Sent on connect: the current version (a client that last saw another

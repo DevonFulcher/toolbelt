@@ -519,7 +519,7 @@ def _held_post(action: api.NextActionInfo) -> bool:
     """An agent holds the task, and the post is what it would be doing next
     if it did not."""
     return (
-        action.kind in ("claimed", "autonomous")
+        action.kind in ("claimed", "autonomous", "deciding")
         and action.would_be is not None
         and action.would_be.kind == "post_slack"
     )

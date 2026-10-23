@@ -251,6 +251,13 @@ _NEXT_TONES = {
             "claim file; the action it replaced is in the tooltip)."
         ),
     ),
+    na.DECIDING: (
+        AMBER,
+        (
+            "An agent asked a question about this task and is waiting for the "
+            "answer (the action it replaced is in the tooltip)."
+        ),
+    ),
     na.AUTONOMOUS: (
         PURPLE,
         (
@@ -277,6 +284,7 @@ _NEXT_LABELS = {
     na.BUMP_SLACK: "Bump in Slack",
     na.CLAIMED: "With an agent",
     na.AUTONOMOUS: "Autonomous agent",
+    na.DECIDING: "Deciding",
 }
 
 STATES: tuple[StateValue, ...] = (

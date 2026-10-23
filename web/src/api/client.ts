@@ -1,6 +1,9 @@
 import type {
   Aggregate,
   AgentConversation,
+  DecisionAnswerInfo,
+  DecisionInfo,
+  DecisionList,
   Agents,
   MergeQueueInfo,
   Snapshot,
@@ -155,6 +158,30 @@ export function sendSlack(request: SlackSendRequest, fetchImpl: typeof fetch = f
  * reason when it is not approved and waiting on nothing but CI. */
 export function queueMerge(id: string, fetchImpl: typeof fetch = fetch): Promise<MergeQueueInfo> {
   return postJson<MergeQueueInfo>("/api/merge/queue", { id }, fetchImpl);
+}
+
+/** The questions agents asked about the branch's task, oldest first. */
+export async function fetchDecisions(id: string, fetchImpl: typeof fetch = fetch): Promise<DecisionList> {
+  const response = await fetchImpl(`/api/decisions?id=${encodeURIComponent(id)}`, {
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) throw new Error(`/api/decisions: HTTP ${response.status}`);
+  return (await response.json()) as DecisionList;
+}
+
+/** Answer a question: one answer per point (an option, words, or both). Rejects
+ * with the server's reason when the answers do not fit or it was answered already. */
+export function answerDecision(
+  decisionId: string,
+  answers: DecisionAnswerInfo[],
+  fetchImpl: typeof fetch = fetch,
+): Promise<DecisionInfo> {
+  return postJson<DecisionInfo>("/api/decisions/answer", { decision_id: decisionId, answers }, fetchImpl);
+}
+
+/** Delete a question (an orphaned one, or one that is no longer wanted). */
+export function deleteDecision(decisionId: string, fetchImpl: typeof fetch = fetch): Promise<DecisionInfo> {
+  return postJson<DecisionInfo>("/api/decisions/delete", { decision_id: decisionId }, fetchImpl);
 }
 
 /** Look the branch's PR up again now. The server does it in the background: this

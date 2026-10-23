@@ -35,6 +35,10 @@ posting a ready PR in the review channel is how a review gets asked for. They
 come after CI failed so an agent still sees a failing CI first, and before CI
 running so a PR is posted while its checks run.
 
+A branch with a question an agent asked the user (``deciding=True``) reads
+**Deciding**, whatever else holds it: the agent cannot go on until the user
+answers. The action it replaced travels with it as ``would_be``.
+
 A branch an agent has claimed (``claimed=True``: a live ``working`` holder in
 the claims directory, see ``task_claims``) reads **With an agent** instead,
 whatever the table says, except when its PR is merged/closed (Done: the claim
@@ -94,6 +98,7 @@ POST_SLACK = "post_slack"
 BUMP_SLACK = "bump_slack"
 CLAIMED = "claimed"
 AUTONOMOUS = "autonomous"
+DECIDING = "deciding"
 KINDS = (
     OPEN_PR,
     DONE,
@@ -111,6 +116,7 @@ KINDS = (
     BUMP_SLACK,
     CLAIMED,
     AUTONOMOUS,
+    DECIDING,
 )
 
 #: ``KINDS`` as a type, for the API's wire models (a test keeps the two in
@@ -132,6 +138,7 @@ type NextKind = Literal[
     "bump_slack",
     "claimed",
     "autonomous",
+    "deciding",
 ]
 
 
@@ -173,15 +180,20 @@ def next_action(
     claimed: bool = False,
     autonomous: bool = False,
     slack: SlackContext | None = None,
+    deciding: bool = False,
 ) -> NextAction:
     """``parent`` is ``None`` for a branch on the base branch (or whose
     parent's status is not known yet). ``claimed``: a live working holder has
     claimed the branch; ``autonomous``: a live working autonomous agent
     holds it. ``slack``: where the PR stands in Slack (``None``: Slack is not
-    configured, so it plays no part)."""
+    configured, so it plays no part). ``deciding``: an agent asked the user a
+    question about the task that is not answered yet: nothing can go on until
+    it is, so it comes before whoever holds the task."""
     underlying = _underlying_action(status, parent, slack)
     if underlying.kind == DONE:
         return underlying
+    if deciding:
+        return NextAction("Deciding", WHO_YOU, DECIDING, would_be=underlying)
     if claimed:
         return NextAction("With an agent", WHO_AGENT, CLAIMED, would_be=underlying)
     if autonomous:

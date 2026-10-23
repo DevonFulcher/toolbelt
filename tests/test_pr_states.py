@@ -65,14 +65,21 @@ def test_next_action_kinds_are_exactly_the_catalogued_ones():
             na.ParentContext("p", PrState.OPEN, na.WHO_CI),
             na.ParentContext("p", PrState.MERGED),
         ):
-            for claimed, autonomous in ((False, False), (True, False), (False, True)):
+            for claimed, autonomous, deciding in (
+                (False, False, False),
+                (True, False, False),
+                (False, True, False),
+                (False, False, True),
+            ):
                 for slack in (
                     None,
                     na.SlackContext(posted=False),
                     na.SlackContext(posted=True, bump_due=True),
                 ):
                     produced.add(
-                        na.next_action(status, parent, claimed, autonomous, slack).kind
+                        na.next_action(
+                            status, parent, claimed, autonomous, slack, deciding
+                        ).kind
                     )
 
     assert produced == set(na.KINDS)
