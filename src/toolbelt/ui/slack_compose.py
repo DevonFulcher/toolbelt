@@ -97,6 +97,18 @@ def compose_bump(prs: list[BumpPr], assignee: Person | None) -> str:
     )
 
 
+def compose_reassign(pr: BumpPr, assignee: Person | None, previous: str | None) -> str:
+    """A threaded reply under the original post moving one PR to another
+    reviewer, before a bump is due."""
+    moved = (
+        f"is moving from @{previous} to @{assignee.name}"
+        if previous and assignee
+        else "has a new reviewer"
+    )
+    ask = f"@{assignee.name}, would you" if assignee else "Would someone"
+    return f"{_link(pr)} {moved}. {ask} mind taking a look? Thanks!"
+
+
 def to_slack(text: str, mentions: dict[str, str]) -> str:
     """``text`` with each ``@name`` (a key of ``mentions``) as Slack's ``<@id>``."""
     for name in sorted(mentions, key=len, reverse=True):

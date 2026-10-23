@@ -369,7 +369,7 @@ export interface SlackInfo {
   assignee: string | null;
   bump_due: boolean;
   last_at: string | null;
-  last_kind: ("post" | "bump") | null;
+  last_kind: ("post" | "bump" | "reassign") | null;
   notice: string | null;
   posted: boolean;
   posting: boolean;
@@ -773,7 +773,7 @@ export interface SlackSpend {
 }
 export interface SlackPurpose {
   cost_usd: number;
-  purpose: "post" | "bump" | "import";
+  purpose: "post" | "bump" | "reassign" | "import";
   sessions: number;
 }
 export interface SlackWindow {
@@ -838,7 +838,7 @@ export interface SlackDraft {
   assignee: SlackPerson | null;
   candidates: SlackPerson[];
   channel: string;
-  kind: "post" | "bump";
+  kind: "post" | "bump" | "reassign";
   prs: SlackDraftPr[];
   text: string;
   thread_link: string | null;
@@ -875,6 +875,7 @@ export interface SlackDraftRequest {
   assignee_id: string | null;
   id: string;
   prs?: SlackPrRef[] | null;
+  reassign?: boolean;
 }
 /**
  * The body of ``POST /api/slack/send``: post the confirmed (possibly
@@ -883,7 +884,7 @@ export interface SlackDraftRequest {
 export interface SlackSendRequest {
   assignee_id: string | null;
   id: string;
-  kind: "post" | "bump";
+  kind: "post" | "bump" | "reassign";
   prs: SlackPrRef[];
   text: string;
   thread_ts: string | null;

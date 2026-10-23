@@ -1,5 +1,6 @@
 // Post (or bump) a PR in Slack: the message toolbelt would send, for the user to
-// read, edit and confirm. Opened by the Post in Slack / Bump in Slack button of a
+// read, edit and confirm. Opened by the Post in Slack / Bump in Slack button (or the
+// Reassign button of a posted PR) of a
 // card; nothing is sent until Send is pressed.
 import { useEffect, useState } from "react";
 import { fetchSlackDraft, sendSlack } from "../api/client";
@@ -14,7 +15,24 @@ type Phase =
   | { name: "rewriting"; draft: SlackDraft }
   | { name: "sending"; draft: SlackDraft };
 
-export function SlackDialog({ id, onClose }: { id: string; onClose: () => void }) {
+const TITLES: Record<SlackDraft["kind"], string> = {
+  post: "Post in Slack",
+  bump: "Bump in Slack",
+  reassign: "Reassign in Slack",
+};
+const SEND_LABELS: Record<SlackDraft["kind"], string> = { post: "Post", bump: "Send bump", reassign: "Send reassignment" };
+
+export function SlackDialog({
+  id,
+  onClose,
+  reassign = false,
+}: {
+  id: string;
+  onClose: () => void;
+  /** Ask someone else to review the PR in the thread it was posted in, instead of the
+   * post or bump the branch's next action calls for. */
+  reassign?: boolean;
+}) {
   const [phase, setPhase] = useState<Phase>({ name: "loading" });
   const [text, setText] = useState("");
   // Who is asked about each PR of the draft, in its order (a bump asks one person about all).
@@ -26,7 +44,7 @@ export function SlackDialog({ id, onClose }: { id: string; onClose: () => void }
 
   useEffect(() => {
     let current = true;
-    fetchSlackDraft(id)
+    fetchSlackDraft(id, { reassign })
       .then((draft) => {
         if (!current) return;
         setText(draft.text);
@@ -40,10 +58,10 @@ export function SlackDialog({ id, onClose }: { id: string; onClose: () => void }
     return () => {
       current = false;
     };
-  }, [id]);
+  }, [id, reassign]);
 
   const draft = phase.name === "loading" || phase.name === "failed" ? null : phase.draft;
-  const title = draft ? (draft.kind === "post" ? "Post in Slack" : "Bump in Slack") : "Slack";
+  const title = draft ? TITLES[draft.kind] : "Slack";
 
   const nameOf = (personId: string | null): string | undefined =>
     draft?.candidates.find((person) => person.id === personId)?.name;
@@ -66,13 +84,11 @@ export function SlackDialog({ id, onClose }: { id: string; onClose: () => void }
       return;
     }
     setPhase({ name: "rewriting", draft: current });
-    fetchSlackDraft(
-      id,
-      null,
-      current.prs.flatMap((pr, i) =>
+    fetchSlackDraft(id, {
+      prs: current.prs.flatMap((pr, i) =>
         next[i] ? [{ repo: pr.repo, number: pr.number, assignee_id: assignees[i] ?? null }] : [],
       ),
-    )
+    })
       .then((rewritten) => {
         setText(rewritten.text);
         setAssignees((before) => before.map((who, i) => who ?? rewritten.prs[i]?.assignee?.id ?? null));
@@ -251,7 +267,7 @@ export function SlackDialog({ id, onClose }: { id: string; onClose: () => void }
               disabled={phase.name !== "ready" || text.trim() === "" || covered.length === 0}
               onClick={send}
             >
-              {phase.name === "sending" ? "Sending…" : draft.kind === "post" ? "Post" : "Send bump"}
+              {phase.name === "sending" ? "Sending…" : SEND_LABELS[draft.kind]}
             </button>{" "}
             <span className="muted">
               Sends exactly this text, with @names turned into mentions. It posts in the background: the card shows when

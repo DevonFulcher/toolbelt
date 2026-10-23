@@ -128,14 +128,19 @@ async function postJson<T>(path: string, body: unknown, fetchImpl: typeof fetch)
 
 /** The Slack message toolbelt would post (or bump) for the branch's PR. `prs` names
  * the PRs of a post's stack to cover, each with who is asked about it (omitted: the
- * PRs that are ready; the draft lists the others, unchecked). */
+ * PRs that are ready; the draft lists the others, unchecked). `reassign` drafts
+ * asking someone else to review the PR, in the thread it was posted in. */
 export function fetchSlackDraft(
   id: string,
-  assigneeId: string | null = null,
-  prs?: SlackPrRef[],
+  options: { assigneeId?: string | null; prs?: SlackPrRef[]; reassign?: boolean } = {},
   fetchImpl: typeof fetch = fetch,
 ): Promise<SlackDraft> {
-  const body = prs === undefined ? { id, assignee_id: assigneeId } : { id, assignee_id: assigneeId, prs };
+  const body = {
+    id,
+    assignee_id: options.assigneeId ?? null,
+    ...(options.prs === undefined ? {} : { prs: options.prs }),
+    ...(options.reassign ? { reassign: true } : {}),
+  };
   return postJson<SlackDraft>("/api/slack/draft", body, fetchImpl);
 }
 

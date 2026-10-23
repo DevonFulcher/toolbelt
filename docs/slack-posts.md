@@ -62,6 +62,15 @@ under the original post, for the PRs of that thread that are due, asking someone
 other than who was asked before. The bump dialog links to the original post
 (needs `workspace`).
 
+**Reassign.** A posted PR that is still open has a **Reassign** button beside its
+Assigned Review, available any time rather than only once a bump is due. It
+opens a threaded reply under the original post that moves that one PR to
+someone who has not been asked about it yet (change them in the dialog): "[PR]
+is moving from @old to @new. @new, would you mind taking a look?". Sending it
+records a `reassign` row, so Assigned Review follows to the new person, the
+card reads "Reassigned in Slack", and the 24-hour window for a bump starts
+again from the reassignment.
+
 A bump names each PR as `[repo#number](link)` followed by its `+added/-deleted`
 lines, as the post does, and asks "would you mind taking a look?".
 

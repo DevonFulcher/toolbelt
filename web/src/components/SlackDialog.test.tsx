@@ -394,6 +394,54 @@ describe("the Post in Slack dialog", () => {
     expect(calls[1].body).toMatchObject({ kind: "bump", thread_ts: "1792500000.000100" });
   });
 
+  describe("reassigning a posted PR", () => {
+    const reassignDraft = (): SlackDraft =>
+      draft({
+        kind: "reassign",
+        thread_ts: "1792500000.000100",
+        thread_link: "https://s.slack.com/archives/DTEST/p1792500000000100",
+        text: "[r#1](https://github.com/o/r/pull/1) `+20/-4` is moving from @will to @alan. @alan, would you mind taking a look? Thanks!",
+      });
+
+    test("asks the server for a reassignment and says it replies in the thread", async () => {
+      const calls = serve({ draft: reassignDraft() });
+      render(<SlackDialog id="1:a" reassign onClose={() => undefined} />);
+      await screen.findByRole("textbox");
+
+      expect(calls[0]).toEqual({ path: "/api/slack/draft", body: { id: "1:a", assignee_id: null, reassign: true } });
+      expect(screen.getByRole("dialog", { name: "Reassign in Slack" })).toBeInTheDocument();
+      expect(screen.getByText(/Replies in a thread of/)).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Original post in Slack" })).toBeInTheDocument();
+    });
+
+    test("asking someone else renames the new reviewer in the text", async () => {
+      serve({ draft: reassignDraft() });
+      render(<SlackDialog id="1:a" reassign onClose={() => undefined} />);
+      const box = await screen.findByRole("textbox");
+
+      fireEvent.change(screen.getByRole("combobox"), { target: { value: "UW" } });
+
+      expect(box).toHaveValue(reassignDraft().text.replaceAll("@alan", "@will"));
+    });
+
+    test("Send reassignment sends it as a reassignment in that thread", async () => {
+      const calls = serve({ draft: reassignDraft() });
+      const onClose = vi.fn();
+      render(<SlackDialog id="1:a" reassign onClose={onClose} />);
+      await screen.findByRole("textbox");
+
+      fireEvent.click(screen.getByRole("button", { name: "Send reassignment" }));
+
+      await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+      expect(calls[1].body).toMatchObject({
+        kind: "reassign",
+        thread_ts: "1792500000.000100",
+        assignee_id: "UA",
+        prs: [{ repo: "o/r", number: 1, assignee_id: "UA" }],
+      });
+    });
+  });
+
   test("Close closes it", async () => {
     serve({});
     const onClose = vi.fn();

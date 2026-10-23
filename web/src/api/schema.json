@@ -3252,7 +3252,8 @@
         "kind": {
           "enum": [
             "post",
-            "bump"
+            "bump",
+            "reassign"
           ],
           "type": "string"
         },
@@ -3408,6 +3409,10 @@
             }
           ],
           "default": null
+        },
+        "reassign": {
+          "default": false,
+          "type": "boolean"
         }
       },
       "required": [
@@ -3449,7 +3454,8 @@
             {
               "enum": [
                 "post",
-                "bump"
+                "bump",
+                "reassign"
               ],
               "type": "string"
             },
@@ -3555,6 +3561,7 @@
           "enum": [
             "post",
             "bump",
+            "reassign",
             "import"
           ],
           "type": "string"
@@ -3591,7 +3598,8 @@
         "kind": {
           "enum": [
             "post",
-            "bump"
+            "bump",
+            "reassign"
           ],
           "type": "string"
         },

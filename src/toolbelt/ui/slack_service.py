@@ -18,6 +18,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 
+from toolbelt.git.stack.status import PrState
 from toolbelt.git.stack.store import Parents, SlackPostRow, SlackSessionRow
 from toolbelt.ui import api_models as api
 from toolbelt.ui.live_status import Fetched, TrackedBranch
@@ -28,6 +29,7 @@ from toolbelt.ui.slack_compose import (
     PostPr,
     compose_bump,
     compose_post,
+    compose_reassign,
     to_slack,
 )
 from toolbelt.ui.slack_config import SlackConfig
@@ -147,9 +149,13 @@ class SlackService:
         branch: str,
         assignee_id: str | None,
         include: list[api.SlackPrRef] | None = None,
+        reassign: bool = False,
     ) -> api.SlackDraft:
         """``include`` names the PRs of a post's stack to cover, each with who
-        is asked about it (``None``: the ones that are ready)."""
+        is asked about it (``None``: the ones that are ready). ``reassign``
+        drafts moving the posted PR to another reviewer."""
+        if reassign:
+            return self._draft_reassign(repo_id, branch, assignee_id)
         kind = self._next_kind(repo_id, branch)
         if kind == "post_slack":
             return self._draft_post(repo_id, branch, assignee_id, include)
@@ -263,6 +269,52 @@ class SlackService:
             due,
             last.thread_ts,
             included={(p.repo, p.number) for p in due},
+        )
+
+    def _draft_reassign(
+        self, repo_id: int, branch: str, assignee_id: str | None
+    ) -> api.SlackDraft:
+        """Asks someone else about the posted PR, in its thread, at any time
+        while the PR is open: not only once its bump is due."""
+        pr = self._pr(repo_id, branch)
+        fetched = self._fetched(repo_id, branch)
+        if pr is None:
+            raise SlackNotApplicable("The branch has no PR to reassign.")
+        assert fetched is not None and fetched.status is not None
+        if fetched.status.pr not in (PrState.OPEN, PrState.DRAFT):
+            raise SlackNotApplicable(f"{pr.repo}#{pr.number} is not open.")
+        history = self._posts()
+        last = _last_post(history, pr)
+        if last is None:
+            raise SlackNotApplicable(
+                f"{pr.repo}#{pr.number} is not posted in Slack: post it first."
+            )
+        self._require_configured_channel(last, pr)
+        asked = frozenset(
+            row.assignee_name
+            for row in history
+            if (row.repo, row.pr_number) == (pr.repo, pr.number) and row.assignee_name
+        )
+        chosen = self._person(assignee_id) or choose_assignee(
+            self._config,
+            repo=pr.repo,
+            lines=pr.additions + pr.deletions,
+            history=history,
+            bump=True,
+            exclude=asked,
+        )
+        text = compose_reassign(
+            BumpPr(pr.repo, pr.number, pr.url, pr.additions, pr.deletions),
+            chosen,
+            last.assignee_name,
+        )
+        return self._draft_of(
+            "reassign",
+            text,
+            chosen,
+            [pr],
+            last.thread_ts,
+            included={(pr.repo, pr.number)},
         )
 
     def _bump_due_in_thread(
@@ -388,14 +440,16 @@ class SlackService:
                 raise SlackNotApplicable(
                     f"{pr.repo}#{pr.number} is already posted in Slack."
                 )
-            if request.kind == "bump" and (
+            if request.kind != "post" and (
                 last is None or last.thread_ts != request.thread_ts
             ):
                 raise SlackNotApplicable(
                     f"{pr.repo}#{pr.number} was not posted in that thread."
                 )
-            if request.kind == "bump" and last is not None:
+            if request.kind != "post" and last is not None:
                 self._require_configured_channel(last, pr)
+        if request.kind == "reassign" and len(prs) != 1:
+            raise SlackNotApplicable("A reassignment is about one PR.")
         keys = [(pr.repo, pr.number) for pr in prs]
         branches = {(pr.repo_id, pr.branch) for pr in prs}
         self._tracker.begin_posting(keys)
@@ -432,7 +486,7 @@ class SlackService:
         sent = await self._send(
             channel=self._config.channel,
             text=text,
-            thread_ts=request.thread_ts if request.kind == "bump" else None,
+            thread_ts=request.thread_ts if request.kind != "post" else None,
         )
         self._record(sent.session_id, request.kind, sent.cost_usd)
         asked = {(ref.repo, ref.number): ref.assignee_id for ref in request.prs}

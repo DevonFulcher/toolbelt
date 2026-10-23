@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
 import type { Branch, BranchClaim, BranchExtras, LoadedStatus, MergeQueueInfo, SlackInfo } from "../api/generated";
 import { branch, catalog, detail, event, noPr, pr, repo, snapshot, DAY, NOW } from "../testing/fixtures";
@@ -652,7 +652,7 @@ describe("a card's Assigned Review", () => {
   test("names who the latest Slack post or bump asked to review it", () => {
     showCards([branch(1, "devon/a", { status: open, slack: info("will.james") })]);
 
-    expect(slotsOf("devon/a").assigned_review).toEqual(["Assigned Review", "ok", "will.james"]);
+    expect(slotsOf("devon/a").assigned_review).toEqual(["Assigned Review", "ok", "will.james Reassign"]);
   });
 
   test("says nobody is assigned until it is posted", () => {
@@ -672,7 +672,51 @@ describe("a card's Assigned Review", () => {
 
     act(() => store.getState().statusChanged("1:devon/a", open, 1, info("will.james")));
 
-    expect(slotsOf("devon/a").assigned_review[2]).toBe("will.james");
+    expect(slotsOf("devon/a").assigned_review[2]).toBe("will.james Reassign");
+  });
+
+  describe("Reassign", () => {
+    const reassign = () => screen.queryByRole("button", { name: "Reassign" });
+
+    test("a posted open PR can be reassigned, before a bump is due", () => {
+      showCards([branch(1, "devon/a", { status: open, slack: info("will.james") })]);
+
+      expect(reassign()).toBeInTheDocument();
+    });
+
+    test("a draft PR can be reassigned too", () => {
+      showCards([branch(1, "devon/a", { status: pr({ pr_number: 8, pr: "draft" }), slack: info("will.james") })]);
+
+      expect(reassign()).toBeInTheDocument();
+    });
+
+    test("a PR that is not posted, being posted, or no longer open has nothing to reassign", () => {
+      showCards([
+        branch(1, "devon/a", { status: open, slack: info(null) }),
+        branch(1, "devon/b", { status: open, slack: { ...info("will.james"), posting: true } }),
+        branch(1, "devon/c", { status: pr({ pr_number: 9, pr: "merged" }), slack: info("will.james") }),
+      ]);
+
+      expect(reassign()).toBeNull();
+    });
+
+    test("it opens the reassignment message to confirm", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => ({ ok: false, status: 409, json: async () => ({ detail: "nothing here" }) })),
+      );
+      showCards([branch(1, "devon/a", { status: open, slack: info("will.james") })]);
+
+      fireEvent.click(screen.getByRole("button", { name: "Reassign" }));
+
+      expect(await screen.findByRole("alert")).toHaveTextContent("nothing here");
+      expect(JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body))).toEqual({
+        id: "1:devon/a",
+        assignee_id: null,
+        reassign: true,
+      });
+      vi.unstubAllGlobals();
+    });
   });
 
   test("the old Reviewers slot is gone", () => {

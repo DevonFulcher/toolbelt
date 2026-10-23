@@ -1234,7 +1234,12 @@ def create_app(
             raise HTTPException(status_code=404, detail="no such branch")
         try:
             return await asyncio.to_thread(
-                service.draft, repo_id, name, body.assignee_id, body.prs
+                service.draft,
+                repo_id,
+                name,
+                body.assignee_id,
+                body.prs,
+                body.reassign,
             )
         except SlackNotApplicable as error:
             raise HTTPException(status_code=409, detail=str(error)) from error

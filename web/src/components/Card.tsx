@@ -413,7 +413,16 @@ export const Card = memo(
             {slack?.last_at ? <Age text={formatElapsed((now - Date.parse(slack.last_at)) / 1000)} since={slack.last_at} /> : "–"}
           </Slot>
           <Slot id="assigned_review" label="Assigned Review" state={slack?.assignee ? "ok" : "na"}>
-            {slack ? (slack.assignee ?? <Pill tone="gray">not assigned</Pill>) : "–"}
+            {slack ? (
+              <>
+                {slack.assignee ?? <Pill tone="gray">not assigned</Pill>}
+                {slack.posted && !slack.posting && (status.load === "loaded" && (status.pr === "open" || status.pr === "draft")) && (
+                  <ReassignButton id={id} />
+                )}
+              </>
+            ) : (
+              "–"
+            )}
           </Slot>
         </Group>
         <Group
@@ -552,11 +561,13 @@ function MergeButton({ id, status }: { id: string; status: LoadedStatus }) {
   );
 }
 
+const LAST_KIND_LABEL = { post: "Posted in Slack", bump: "Bumped in Slack", reassign: "Reassigned in Slack" } as const;
+
 /** Where the PR stands in Slack: a link to the thread once posted, "Posting…"
  * while a post is in the background, and why the last one failed or what Slack's
  * copy lacked. */
 function SlackStatus({ slack }: { slack: SlackInfo }) {
-  const label = slack.posted ? (slack.last_kind === "bump" ? "Bumped in Slack" : "Posted in Slack") : "Not posted in Slack";
+  const label = slack.posted ? LAST_KIND_LABEL[slack.last_kind ?? "post"] : "Not posted in Slack";
   return (
     <>
       {slack.posting ? (
@@ -573,6 +584,27 @@ function SlackStatus({ slack }: { slack: SlackInfo }) {
           {` ${slack.notice}`}
         </span>
       )}
+    </>
+  );
+}
+
+/** A posted PR: asks someone else to review it, in its Slack thread, without waiting
+ * for its bump to be due. Opens the message to confirm; nothing is sent until then. */
+function ReassignButton({ id }: { id: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      {" "}
+      <button
+        type="button"
+        className="link-button"
+        aria-haspopup="dialog"
+        title="Ask someone else to review it, in its Slack thread"
+        onClick={() => setOpen(true)}
+      >
+        Reassign
+      </button>
+      {open && <SlackDialog id={id} reassign onClose={() => setOpen(false)} />}
     </>
   );
 }

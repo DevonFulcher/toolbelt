@@ -250,6 +250,51 @@ def test_it_cannot_be_posted_twice(rig):
     assert len(proxy.sent) == 1
 
 
+def test_a_posted_pr_is_reassigned_in_its_thread_before_a_bump_is_due(rig):
+    _, repo_id, proxy, client = rig
+    reassign = {"id": f"{repo_id}:a", "assignee_id": None, "reassign": True}
+    assert (
+        client.post("/api/slack/draft", json=reassign).status_code == 409
+    )  # not posted
+    client.post(
+        "/api/slack/send",
+        json={
+            "id": f"{repo_id}:a",
+            "kind": "post",
+            "text": "hello https://github.com/o/r/pull/1 @alan",
+            "assignee_id": "UA",
+            "thread_ts": None,
+            "prs": [{"repo": "o/r", "number": 1, "assignee_id": "UA"}],
+        },
+    )
+    wait_until_posted(client, f"{repo_id}:a")
+    thread = proxy.sent[0]
+
+    draft = client.post("/api/slack/draft", json=reassign).json()
+    assert (
+        branches(client)["a"]["slack"]["bump_due"] is False
+    )  # a bump is not an option yet
+    assert draft["kind"] == "reassign" and draft["assignee"]["name"] != "alan"
+    client.post(
+        "/api/slack/send",
+        json={
+            "id": f"{repo_id}:a",
+            "kind": "reassign",
+            "text": draft["text"],
+            "assignee_id": draft["assignee"]["id"],
+            "thread_ts": draft["thread_ts"],
+            "prs": [{"repo": "o/r", "number": 1}],
+        },
+    )
+    slack = wait_until_posted(client, f"{repo_id}:a")
+
+    assert slack["last_kind"] == "reassign"
+    assert slack["assignee"] == draft["assignee"]["name"]
+    assert (
+        proxy.sent[1]["thread_ts"] == draft["thread_ts"] and thread is not proxy.sent[1]
+    )
+
+
 def test_a_branch_with_nothing_to_post_has_no_draft(rig):
     _, repo_id, _, client = rig
     client.post(

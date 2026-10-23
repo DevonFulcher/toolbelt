@@ -39,7 +39,12 @@ export function useSpend(days: number, fetchImpl: typeof fetch = fetch): Load | 
 }
 
 /** Runs cost cents or less: four digits under a dollar. */
-const SLACK_PURPOSE_LABEL = { post: "Post in Slack", bump: "Bump in Slack", import: "Import of earlier posts" } as const;
+const SLACK_PURPOSE_LABEL = {
+  post: "Post in Slack",
+  bump: "Bump in Slack",
+  reassign: "Reassign in Slack",
+  import: "Import of earlier posts",
+} as const;
 
 const formatRunCost = (usd: number): string => (usd > 0 && usd < 1 ? `$${usd.toFixed(4)}` : formatUsd(usd));
 

@@ -558,7 +558,7 @@ class SlackInfo(Model):
 
     posted: bool
     #: What the latest post was (``None`` while not posted).
-    last_kind: Literal["post", "bump"] | None
+    last_kind: Literal["post", "bump", "reassign"] | None
     #: ISO time of the latest post or bump: what the post age counts from.
     last_at: str | None
     #: Posted a day ago or more, and nobody has looked since.
@@ -848,7 +848,7 @@ class SlackWindow(Model):
 
 
 class SlackPurpose(Model):
-    purpose: Literal["post", "bump", "import"]
+    purpose: Literal["post", "bump", "reassign", "import"]
     sessions: int
     cost_usd: float
 
@@ -1159,13 +1159,16 @@ class SlackDraftRequest(Model):
     #: when not ``assignee_id``. ``None``: the PRs that are ready (the draft
     #: lists the others, unchecked).
     prs: list[SlackPrRef] | None = None
+    #: Ask someone else to review the branch's PR, in the thread it was posted
+    #: in: allowed whenever it has been posted, not only once a bump is due.
+    reassign: bool = False
 
 
 class SlackDraft(Model):
     """A message waiting for the user to confirm. The text shows a person as
     ``@name``; it becomes a real Slack mention when sent."""
 
-    kind: Literal["post", "bump"]
+    kind: Literal["post", "bump", "reassign"]
     #: Where it will be posted (from the config, never from the client).
     channel: str
     text: str
@@ -1186,7 +1189,7 @@ class SlackSendRequest(Model):
     edited) message and record it."""
 
     id: str
-    kind: Literal["post", "bump"]
+    kind: Literal["post", "bump", "reassign"]
     text: str
     assignee_id: str | None
     thread_ts: str | None

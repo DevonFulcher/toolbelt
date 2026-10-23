@@ -382,6 +382,8 @@ main:has(.focus-bar) { --focus-h: 2.6rem; }
 /* Next is Merge: a button, not a pill. */
 .merge-button { font: inherit; font-size: 12px; font-weight: 600; padding: 1px 12px; cursor: pointer;
                 color: #fff; background: var(--green); border: 1px solid var(--green); border-radius: 12px; }
+.link-button { font: inherit; font-size: 12px; padding: 0; border: 0; background: none; color: var(--accent, #58a6ff);
+               cursor: pointer; text-decoration: underline; }
 .merge-button:hover:not(:disabled) { filter: brightness(1.1); }
 .merge-button:disabled { opacity: .6; cursor: progress; }
 .merge-error { margin: 4px 0 0; max-height: 10rem; overflow: auto; white-space: pre-wrap; font-size: 11px;

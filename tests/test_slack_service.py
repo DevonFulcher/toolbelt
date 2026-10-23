@@ -598,6 +598,102 @@ def test_a_session_with_no_id_is_not_recorded():
     assert rig.sessions == []
 
 
+# ---- reassigning a posted PR before its bump is due ---------------------------
+
+
+def test_a_posted_pr_can_be_reassigned_in_its_thread_before_a_bump_is_due():
+    rig = Rig()
+    rig.post_row(1, hours_ago=2, thread="1.0", assignee="will")  # not yet bump_due
+
+    draft = rig.service.draft(1, "a", None, reassign=True)
+
+    assert draft.kind == "reassign" and draft.thread_ts == "1.0"
+    assert draft.assignee is not None and draft.assignee.name != "will"
+    assert [pr.number for pr in draft.prs] == [1]
+    name = draft.assignee.name
+    assert draft.text.startswith("[r#1](https://github.com/o/r/pull/1) `+100/-10`")
+    assert f"is moving from @will to @{name}. @{name}, would you mind" in draft.text
+
+
+def test_a_reassignment_skips_everyone_this_pr_has_been_asked_of():
+    rig = Rig()
+    rig.post_row(1, hours_ago=3, thread="1.0", assignee="will")
+    rig.post_row(1, hours_ago=2, thread="1.0", assignee="alan", kind="reassign")
+
+    draft = rig.service.draft(1, "a", None, reassign=True)
+
+    assert draft.assignee is not None and draft.assignee.name == "dan"
+
+
+def test_a_reassignment_can_name_who_to_ask():
+    rig = Rig()
+    rig.post_row(1, hours_ago=2, thread="1.0", assignee="will")
+
+    draft = rig.service.draft(1, "a", "UD", reassign=True)
+
+    assert draft.assignee == api.SlackPerson(id="UD", name="dan")
+    assert "@dan, would you mind" in draft.text
+
+
+@pytest.mark.parametrize(
+    ("branch", "message"),
+    [("c", "not posted in Slack"), ("zzz", "no PR")],
+)
+def test_a_pr_that_is_not_posted_cannot_be_reassigned(branch, message):
+    rig = Rig()
+    rig.post_row(1, hours_ago=2, thread="1.0")
+
+    with pytest.raises(SlackNotApplicable, match=message):
+        rig.service.draft(1, branch, None, reassign=True)
+
+
+def test_a_merged_pr_cannot_be_reassigned():
+    rig = Rig()
+    rig.post_row(1, hours_ago=2, thread="1.0")
+    looked = rig.looked_up["a"]
+    assert looked.status is not None
+    rig.looked_up["a"] = Fetched(
+        status=BranchStatus(
+            pr=PrState.MERGED,
+            ci=looked.status.ci,
+            review=looked.status.review,
+            url=looked.status.url,
+        ),
+        at=0.0,
+        facts=looked.facts,
+    )
+
+    with pytest.raises(SlackNotApplicable, match="not open"):
+        rig.service.draft(1, "a", None, reassign=True)
+
+
+def test_a_reassignment_replies_in_the_thread_records_who_was_asked_and_restarts_the_window():
+    rig = Rig()
+    rig.post_row(1, hours_ago=20, thread="1.0", assignee="will")
+
+    post(rig, request("reassign", thread_ts="1.0", assignee_id="UA", text="@alan hi"))
+
+    assert rig.sent[0]["thread_ts"] == "1.0"
+    row = rig.rows[-1]
+    assert (row.kind, row.assignee_name, row.thread_ts) == ("reassign", "alan", "1.0")
+    assert [s.purpose for s in rig.sessions] == ["reassign"]
+    info = rig.tracker.info(1, "a", rig.looked_up["a"], NOW)
+    assert info is not None
+    assert (info.last_kind, info.assignee, info.bump_due) == ("reassign", "alan", False)
+
+
+def test_a_reassignment_is_about_one_pr_in_the_thread_it_was_posted_in():
+    rig = Rig()
+    rig.post_row(1, hours_ago=2, thread="1.0")
+    rig.post_row(2, hours_ago=2, thread="1.0")
+
+    with pytest.raises(SlackNotApplicable, match="one PR"):
+        post(rig, request("reassign", numbers=(1, 2), thread_ts="1.0"))
+    with pytest.raises(SlackNotApplicable, match="not posted in that thread"):
+        post(rig, request("reassign", thread_ts="2.0"))
+    assert rig.sent == []
+
+
 # ---- the link to the original post -------------------------------------------
 
 
