@@ -17,17 +17,10 @@ from urllib.parse import urlparse
 from urllib.request import url2pathname
 
 from toolbelt import logged_process
+from toolbelt.diff_review.language_servers import LanguageServer
 from toolbelt.diff_review.revisions import RevisionError, RevisionPair, Side
 from toolbelt.ui import api_models as api
 
-#: The Python language server, started with ``uvx`` so nothing is installed.
-PYTHON_SERVER = (
-    "uvx",
-    "--from",
-    "basedpyright",
-    "basedpyright-langserver",
-    "--stdio",
-)
 REQUEST_TIMEOUT_SECONDS = 120
 #: Sessions kept alive (one language server each); the least recently used is
 #: stopped to start another.
@@ -40,9 +33,11 @@ class LspError(Exception):
 
 
 class LspClient:
-    def __init__(self, command: Sequence[str], root: Path) -> None:
+    def __init__(self, server: LanguageServer, *, repo: Path, root: Path) -> None:
+        self._server = server
+        self._repo = repo
         self._process = logged_process.Popen(
-            list(command),
+            list(server.command),
             cwd=root,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -106,7 +101,7 @@ class LspClient:
             {
                 "textDocument": {
                     "uri": uri,
-                    "languageId": "python",
+                    "languageId": self._server.language,
                     "version": 1,
                     "text": text,
                 }
@@ -155,7 +150,10 @@ class LspClient:
             # The server's own request; some servers stall until answered.
             result: Any = None
             if message["method"] == "workspace/configuration":
-                result = [None] * len(message["params"]["items"])
+                result = [
+                    self._server.setting(item.get("section", ""), repo=self._repo)
+                    for item in message["params"]["items"]
+                ]
             self._send({"jsonrpc": "2.0", "id": message_id, "result": result})
             return
         with self._pending_lock:
@@ -175,12 +173,12 @@ class LspClient:
 class LspSession:
     """A language server on a checkout of one commit."""
 
-    def __init__(self, command: Sequence[str], repo: Path, commit: str) -> None:
+    def __init__(self, server: LanguageServer, repo: Path, commit: str) -> None:
         self._checkout = tempfile.TemporaryDirectory()
         try:
             self.root = Path(self._checkout.name).resolve()
             self._extract(repo, commit)
-            self._client = LspClient(command, self.root)
+            self._client = LspClient(server, repo=repo, root=self.root)
         except BaseException:
             self._checkout.cleanup()
             raise
@@ -252,22 +250,29 @@ class LspSession:
 
 
 class LspSessions:
-    """The running sessions, by repo and commit."""
+    """The running sessions, by repo, commit and language."""
 
-    def __init__(self, command: Sequence[str]) -> None:
-        self._command = command
+    def __init__(self, servers: Sequence[LanguageServer]) -> None:
+        self._servers = servers
         self._lock = threading.Lock()
-        self._sessions: collections.OrderedDict[tuple[Path, str], LspSession] = (
+        self._sessions: collections.OrderedDict[tuple[Path, str, str], LspSession] = (
             collections.OrderedDict()
         )
 
-    def session(self, pair: RevisionPair, side: Side) -> LspSession:
-        key = (pair.repo, pair.commit(side))
+    def server_for(self, path: str) -> LanguageServer | None:
+        """The configured server that handles ``path`` (``None``: none does)."""
+        return next((server for server in self._servers if server.handles(path)), None)
+
+    def session(self, pair: RevisionPair, side: Side, path: str) -> LspSession:
+        server = self.server_for(path)
+        if server is None:
+            raise LspError(f"no language server is configured for {path}")
+        key = (pair.repo, pair.commit(side), server.language)
         with self._lock:
             if key in self._sessions:
                 self._sessions.move_to_end(key)
                 return self._sessions[key]
-            session = LspSession(self._command, *key)
+            session = LspSession(server, pair.repo, key[1])
             self._sessions[key] = session
             if len(self._sessions) > MAX_SESSIONS:
                 self._sessions.popitem(last=False)[1].close()

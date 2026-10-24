@@ -73,7 +73,8 @@ from toolbelt.autonomous_agents.runner import AgentRunner
 from toolbelt.autonomous_agents.screen import read_screen_state
 from toolbelt.decisions.book import AlreadyAnswered, DecisionBook, NoSuchDecision
 from toolbelt.decisions.model import Decision, InvalidDecision
-from toolbelt.diff_review.lsp import PYTHON_SERVER, LspSessions
+from toolbelt.diff_review.language_servers import PYTHON_SERVER, LanguageServer
+from toolbelt.diff_review.lsp import LspSessions
 from toolbelt.git.repo_pull import default_config_path
 from toolbelt.git.stack.status import CiState, PrState
 from toolbelt.git.stack.store import (
@@ -517,7 +518,7 @@ def create_app(
     webhook_url: str | None = None,
     forwarders: WebhookForwarders | None = None,
     decisions: DecisionBook | None = None,
-    review_lsp_command: Sequence[str] = PYTHON_SERVER,
+    review_servers: Sequence[LanguageServer] = (PYTHON_SERVER,),
 ) -> FastAPI:
     """``cwd_root``: the repo `tt ui` was launched from; its checked-out
     branch is marked current, as `tt g tree` does. ``fetch`` looks up a
@@ -563,9 +564,9 @@ def create_app(
     ``spend_feed.py``. ``dispatcher`` decides which tasks an autonomous agent
     should be on (default: one over the real PR lookups, git, claims, screen
     and sign-in; it only decides, see ``autonomous_agents``).
-    ``review_lsp_command`` starts the language server the diff review's hover
-    and go-to-definition ask (see ``diff_review.lsp``)."""
-    review_sessions = LspSessions(review_lsp_command)
+    ``review_servers`` are the language servers the diff review's hover and
+    go-to-definition ask (see ``diff_review.language_servers``)."""
+    review_sessions = LspSessions(review_servers)
     task_cache = TaskInfoCache(ttl_seconds=task_ttl_seconds, clock=clock)
     hub = EventHub(clock=clock, grace=grace_seconds)
 

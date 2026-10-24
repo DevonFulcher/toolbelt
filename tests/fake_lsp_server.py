@@ -27,6 +27,7 @@ def send(message: dict) -> None:
 
 
 def main() -> None:
+    python_path = "unanswered"
     while (message := read()) is not None:
         method = message.get("method")
         match method:
@@ -37,7 +38,7 @@ def main() -> None:
                         "jsonrpc": "2.0",
                         "id": 1000,
                         "method": "workspace/configuration",
-                        "params": {"items": [{}]},
+                        "params": {"items": [{"section": "python"}]},
                     }
                 )
                 send(
@@ -49,7 +50,7 @@ def main() -> None:
                 )
             case "textDocument/hover":
                 position = message["params"]["position"]
-                text = f"hover {position['line']}:{position['character']}"
+                text = f"hover {position['line']}:{position['character']} {python_path}"
                 send(
                     {
                         "jsonrpc": "2.0",
@@ -71,6 +72,9 @@ def main() -> None:
                 )
             case "exit":
                 return
+            case None if message.get("id") == 1000:
+                # The client's answer to the settings request above.
+                python_path = message["result"][0]["pythonPath"]
             case _:
                 if "id" in message and "result" not in message:
                     send({"jsonrpc": "2.0", "id": message["id"], "result": None})

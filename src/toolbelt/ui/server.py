@@ -9,6 +9,7 @@ from urllib.parse import quote
 import typer
 import uvicorn
 
+from toolbelt.diff_review.language_servers import language_servers
 from toolbelt.git.repo_pull import default_config_path
 from toolbelt.ui.app import create_app
 from toolbelt.ui.lookup_cache import LookupCache
@@ -34,6 +35,7 @@ def serve(*, port: int, cwd_root: Path | None) -> None:
             cwd_root,
             change_gate=True,
             slack_settings=slack_config(default_config_path()),
+            review_servers=language_servers(default_config_path()),
             lookup_cache=LookupCache(),
             transitions=StatusTransitionRecorder(),
             webhook_url=f"http://{HOST}:{bound_port}/api/github-webhook",

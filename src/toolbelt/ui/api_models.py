@@ -1581,13 +1581,10 @@ Snapshot.model_rebuild()
 
 # --- Diff review ------------------------------------------------------------
 
-type ReviewStatus = Literal["A", "M", "D", "R"]
-type ReviewSide = Literal["old", "new"]
-type DifftasticStatus = Literal["changed", "created", "deleted", "unchanged"]
-
 
 class ReviewChangedFile(Model):
-    status: ReviewStatus
+    #: Added, modified, deleted or renamed.
+    status: Literal["A", "M", "D", "R"]
     path: str
     #: Where a renamed file was (``None``: it was not renamed).
     old_path: str | None
@@ -1622,7 +1619,7 @@ class DifftasticLinePair(DifftasticModel):
 class DifftasticFile(DifftasticModel):
     language: str
     path: str
-    status: DifftasticStatus
+    status: Literal["changed", "created", "deleted", "unchanged"]
     #: The line pairs that line up the two sides (``None`` for a created,
     #: deleted or unchanged file).
     aligned_lines: list[tuple[int | None, int | None]] | None = None
@@ -1633,10 +1630,13 @@ class DifftasticFile(DifftasticModel):
 class ReviewFile(Model):
     path: str
     old_path: str | None
-    status: ReviewStatus
+    status: Literal["A", "M", "D", "R"]
     old_text: str
     new_text: str
     difftastic: DifftasticFile
+    #: The language id of the configured language server that answers for this
+    #: file (``None``: none is configured for its extension, so no hover).
+    language_server: str | None
 
 
 class ReviewHover(Model):

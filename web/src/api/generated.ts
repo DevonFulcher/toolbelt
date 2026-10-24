@@ -120,8 +120,6 @@ export type TaskLive = TaskLoading | TaskDetails | TaskUnavailable;
 export type HolderKind = "agent" | "human" | "autonomous";
 export type HolderState = "working" | "idle" | "blocked";
 export type UntrackedPrs = UntrackedLoading | UntrackedLoaded | UntrackedFailed;
-export type DifftasticStatus = "changed" | "created" | "deleted" | "unchanged";
-export type ReviewStatus = "A" | "M" | "D" | "R";
 export type CatalogDimension =
   "pr" | "ci" | "review" | "comments" | "merge" | "task" | "draft" | "reviewers" | "blocked" | "next";
 export type CatalogState =
@@ -976,18 +974,19 @@ export interface ReviewDefinitionTarget {
 }
 export interface ReviewFile {
   difftastic: DifftasticFile;
+  language_server: string | null;
   new_text: string;
   old_path: string | null;
   old_text: string;
   path: string;
-  status: ReviewStatus;
+  status: "A" | "M" | "D" | "R";
 }
 export interface DifftasticFile {
   aligned_lines?: [unknown, unknown][] | null;
   chunks?: DifftasticLinePair[][] | null;
   language: string;
   path: string;
-  status: DifftasticStatus;
+  status: "changed" | "created" | "deleted" | "unchanged";
 }
 export interface DifftasticLinePair {
   lhs?: DifftasticSide | null;
@@ -1006,7 +1005,7 @@ export interface DifftasticSpan {
 export interface ReviewChangedFile {
   old_path: string | null;
   path: string;
-  status: ReviewStatus;
+  status: "A" | "M" | "D" | "R";
 }
 export interface ReviewHover {
   text: string | null;

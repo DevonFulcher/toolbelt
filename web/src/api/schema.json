@@ -2133,7 +2133,13 @@
           "type": "string"
         },
         "status": {
-          "$ref": "#/$defs/DifftasticStatus"
+          "enum": [
+            "changed",
+            "created",
+            "deleted",
+            "unchanged"
+          ],
+          "type": "string"
         }
       },
       "required": [
@@ -2214,15 +2220,6 @@
       ],
       "title": "DifftasticSpan",
       "type": "object"
-    },
-    "DifftasticStatus": {
-      "enum": [
-        "changed",
-        "created",
-        "deleted",
-        "unchanged"
-      ],
-      "type": "string"
     },
     "DraftCatalogState": {
       "additionalProperties": false,
@@ -3893,7 +3890,13 @@
           "type": "string"
         },
         "status": {
-          "$ref": "#/$defs/ReviewStatus"
+          "enum": [
+            "A",
+            "M",
+            "D",
+            "R"
+          ],
+          "type": "string"
         }
       },
       "required": [
@@ -3980,6 +3983,16 @@
         "difftastic": {
           "$ref": "#/$defs/DifftasticFile"
         },
+        "language_server": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "new_text": {
           "type": "string"
         },
@@ -4000,7 +4013,13 @@
           "type": "string"
         },
         "status": {
-          "$ref": "#/$defs/ReviewStatus"
+          "enum": [
+            "A",
+            "M",
+            "D",
+            "R"
+          ],
+          "type": "string"
         }
       },
       "required": [
@@ -4009,7 +4028,8 @@
         "status",
         "old_text",
         "new_text",
-        "difftastic"
+        "difftastic",
+        "language_server"
       ],
       "title": "ReviewFile",
       "type": "object"
@@ -4042,15 +4062,6 @@
         "reviewed"
       ],
       "title": "ReviewState",
-      "type": "string"
-    },
-    "ReviewStatus": {
-      "enum": [
-        "A",
-        "M",
-        "D",
-        "R"
-      ],
       "type": "string"
     },
     "ReviewersCatalogState": {

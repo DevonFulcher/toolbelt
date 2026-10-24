@@ -18,7 +18,7 @@ import { buildChanges } from "../logic/diffChanges";
 import type { Counts } from "../store/selectors";
 import { useApp, useAppStore } from "../store/StoreContext";
 import { FilterBar } from "./FilterBar";
-import { isPython, lspExtensions, readOnlyExtensions } from "./reviewEditor";
+import { lspExtensions, readOnlyExtensions } from "./reviewEditor";
 import "./review.css";
 
 type Load<T> = { state: "ready"; data: T } | { state: "error"; message: string };
@@ -72,7 +72,10 @@ function DiffPane({
     const oldPath = diff.old_path ?? diff.path;
     const extensions = (side: ReviewSide, path: string) => [
       readOnlyExtensions(path),
-      isPython(path) ? lspExtensions({ revisions, side, path, onDefinition: (t) => onDefinition(side, t), onError }) : [],
+      // Only files a configured language server handles have hover and definitions.
+      diff.language_server === null
+        ? []
+        : lspExtensions({ revisions, side, path, onDefinition: (t) => onDefinition(side, t), onError }),
     ];
     const view = new MergeView({
       a: { doc: a, extensions: extensions("old", oldPath) },
