@@ -388,5 +388,6 @@ NOT_TIMELINE_STATUS: dict[str, str] = {
     "WaitingOnKey": "A grouping of the next lane by who its next action waits on, not a status of its own.",
     "CiResult": "A commit's CI result: drawn by the PR track's commit markers.",
     "Tone": "A colour token, not a status.",
+    "SiblingConflictState": "Whether two open tasks' heads merge cleanly is a pure function of the two commits, recomputed whenever a head moves: the card shows the latest result and nothing is recorded, so there is no history to draw.",
     "Who": "Who a next action waits on: a property of the next lane's kinds, shown as the card's Next chip.",
 }

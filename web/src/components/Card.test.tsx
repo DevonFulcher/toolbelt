@@ -1,6 +1,6 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
-import type { Branch, BranchClaim, BranchExtras, LoadedStatus, MergeQueueInfo, SlackInfo } from "../api/generated";
+import type { Branch, BranchClaim, BranchExtras, LoadedStatus, MergeQueueInfo, SiblingConflict, SiblingConflictsInfo, SlackInfo } from "../api/generated";
 import { branch, catalog, detail, event, noPr, pr, repo, snapshot, DAY, NOW } from "../testing/fixtures";
 import { renderWith } from "../testing/render";
 import { App } from "./App";
@@ -1382,5 +1382,61 @@ describe("a card says how old its data is", () => {
     act(() => fresh(null));
 
     expect(pill("pr")).toHaveTextContent("not read yet");
+  });
+});
+
+describe("a card whose branch conflicts with other open tasks", () => {
+  const sibling = (name: string, over: Partial<SiblingConflict> = {}): SiblingConflict => ({
+    branch_id: `1:${name}`,
+    name,
+    state: "conflict",
+    files: ["src/a.py", "src/b.py"],
+    more: 0,
+    ...over,
+  });
+  const info = (conflicts: SiblingConflict[], over: Partial<SiblingConflictsInfo> = {}): SiblingConflictsInfo => ({
+    head_known: true,
+    prominent: true,
+    conflicts,
+    ...over,
+  });
+  const show = (siblings: SiblingConflictsInfo) =>
+    showCards([branch(1, "devon/a", { status: pr({ pr_number: 8 }), sibling_conflicts: siblings })]);
+
+  test("names the task and the files it conflicts in, with the rest counted", () => {
+    show(info([sibling("devon/b", { files: ["a", "b", "c", "d"], more: 2 })]));
+
+    expect(screen.getByText("conflicts with devon/b: a, b, c (+3)")).toBeInTheDocument();
+  });
+
+  test("more than three tasks collapse into a count", () => {
+    show(info(["b", "c", "d", "e"].map((name) => sibling(`devon/${name}`))));
+
+    expect(screen.getByText("conflicts with 4 tasks")).toBeInTheDocument();
+    expect(screen.queryByText(/conflicts with devon\/b/)).toBeNull();
+  });
+
+  test("a head that is not fetched is unknown, never clean", () => {
+    show(info([], { head_known: false }));
+
+    expect(screen.getByText("conflicts unknown, head not fetched")).toBeInTheDocument();
+  });
+
+  test("another task whose head is not fetched is unknown too", () => {
+    show(info([sibling("devon/b", { state: "unknown", files: [] })]));
+
+    expect(screen.getByText("devon/b: unknown, head not fetched")).toBeInTheDocument();
+  });
+
+  test("an inherited conflict says it comes through the parents", () => {
+    show(info([sibling("devon/b", { state: "inherited" })]));
+
+    expect(screen.getByText("conflicts with devon/b through their parents: src/a.py, src/b.py")).toBeInTheDocument();
+  });
+
+  test("a task that merges cleanly shows nothing", () => {
+    showCards([branch(1, "devon/a", { status: pr({ pr_number: 8 }), sibling_conflicts: null })]);
+
+    expect(screen.queryByText(/conflicts with/)).toBeNull();
   });
 });

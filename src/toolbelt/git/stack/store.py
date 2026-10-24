@@ -538,6 +538,22 @@ _MIGRATIONS: list[tuple[str, ...]] = [
         )
         """,
     ),
+    (
+        # Whether two commits of a repo conflict when merged (see
+        # ``sibling_conflicts``): a pure function of the two commits, so the
+        # answer is kept for as long as either is some branch's head. ``oid_a``
+        # sorts before ``oid_b``; ``files`` is a JSON list of the conflicted
+        # paths ([] when the merge is clean).
+        """
+        CREATE TABLE sibling_conflicts (
+            repo_id INTEGER NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
+            oid_a TEXT NOT NULL,
+            oid_b TEXT NOT NULL,
+            files TEXT NOT NULL,
+            PRIMARY KEY (repo_id, oid_a, oid_b)
+        )
+        """,
+    ),
 ]
 
 
@@ -2273,6 +2289,42 @@ class StackStore:
             )
             for r in rows
         ]
+
+    def sibling_conflicts(self, repo_id: int) -> dict[tuple[str, str], tuple[str, ...]]:
+        """The conflicted files of each pair of commits tried so far, keyed by
+        the two oids in sorted order (empty: the merge is clean)."""
+        rows = self._conn.execute(
+            "SELECT oid_a, oid_b, files FROM sibling_conflicts WHERE repo_id = ?",
+            (repo_id,),
+        )
+        return {(r["oid_a"], r["oid_b"]): tuple(json.loads(r["files"])) for r in rows}
+
+    def save_sibling_conflicts(
+        self, repo_id: int, pairs: dict[tuple[str, str], tuple[str, ...]]
+    ) -> None:
+        with self._write() as conn:
+            conn.executemany(
+                "INSERT OR REPLACE INTO sibling_conflicts "
+                "(repo_id, oid_a, oid_b, files) VALUES (?, ?, ?, ?)",
+                [
+                    (repo_id, a, b, json.dumps(list(files)))
+                    for (a, b), files in pairs.items()
+                ],
+            )
+
+    def prune_sibling_conflicts(self, repo_id: int, heads: set[str]) -> None:
+        """Forgets the pairs in which a commit is no longer any branch's head."""
+        with self._write() as conn:
+            stale = [
+                (repo_id, a, b)
+                for (a, b) in self.sibling_conflicts(repo_id)
+                if a not in heads or b not in heads
+            ]
+            conn.executemany(
+                "DELETE FROM sibling_conflicts "
+                "WHERE repo_id = ? AND oid_a = ? AND oid_b = ?",
+                stale,
+            )
 
     def slack_posts(self) -> list[SlackPostRow]:
         rows = self._conn.execute(

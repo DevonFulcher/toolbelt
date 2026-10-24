@@ -209,3 +209,51 @@ def test_the_seeded_agent_activity_is_readable_and_adds_up(tmp_path: Path):
         assert totals.model_ms >= 0
         for recorded in chunk.calls:
             assert classify(recorded.tool, recorded.detail).category in CATEGORIES
+
+
+def test_the_seeded_search_tasks_really_conflict_and_the_others_are_unknown(
+    tmp_path: Path,
+):
+    """The demo's sibling-conflict chips (docs/sibling-conflicts.md) need two
+    tasks whose heads conflict in a real repo."""
+    from toolbelt.git.stack.store import StackStore, default_db_path
+    from toolbelt.ui.sibling_conflicts import compute_repo
+
+    spec = importlib.util.spec_from_file_location("ui_demo_seed3", DEMO / "seed.py")
+    assert spec and spec.loader
+    seed = importlib.util.module_from_spec(spec)
+    sys.path.insert(0, str(DEMO))
+    try:
+        spec.loader.exec_module(seed)
+    finally:
+        sys.path.remove(str(DEMO))
+    seed.seed(tmp_path, 0)
+
+    store = StackStore(default_db_path())
+    try:
+        repo = next(r for r in store.repos() if r.name == "demo-search")
+        parents = store.all_parents(repo.id)
+    finally:
+        store.close()
+
+    class Memory:
+        def __init__(self) -> None:
+            self.rows: dict = {}
+
+        def load(self, repo_id):
+            return dict(self.rows)
+
+        def save(self, repo_id, pairs):
+            self.rows.update(pairs)
+
+        def prune(self, repo_id, heads):
+            pass
+
+    heads, conflicts = compute_repo(
+        repo.path, repo.id, parents, dict.fromkeys(parents, ""), Memory()
+    )
+
+    assert [(c.other, c.state, c.files) for c in conflicts["devon/search-index"]] == [
+        ("devon/search-cache", "conflict", ("search/weights.py",)),
+    ]
+    assert heads["devon/search-ranking"] is None

@@ -553,6 +553,9 @@ class Branch(Model):
     slack: SlackInfo | None
     #: Where its PR stands in the merge queue (``None``: nothing to say).
     merge_queue: MergeQueueInfo | None
+    #: How its head merges with the other open tasks' (``None``: not worked
+    #: out yet, or nothing to say).
+    sibling_conflicts: SiblingConflictsInfo | None
     #: ISO time the task started (the branch was registered); ``None`` only
     #: if the database has none for it.
     started_at: str | None
@@ -661,6 +664,37 @@ class MergeQueueInfo(Model):
     queued_at: str | None
     #: Why it left the queue without merging (until it is queued again).
     notice: str | None
+
+
+type SiblingConflictState = Literal["conflict", "inherited", "unknown"]
+
+
+class SiblingConflict(Model):
+    """Another open task whose branch does not merge cleanly with this one's."""
+
+    branch_id: str
+    name: str
+    #: ``conflict``: merging the two heads conflicts; ``inherited``: it does,
+    #: but only in files their parents already conflict in; ``unknown``: the
+    #: other branch's head is not in the local repo (not fetched), so the
+    #: merge could not be tried.
+    state: SiblingConflictState
+    #: The conflicted files, at most ten; ``more`` counts the rest.
+    files: list[str]
+    more: int
+
+
+class SiblingConflictsInfo(Model):
+    """How a branch's head merges with the other open tasks' of its repo (see
+    ``sibling_conflicts``). ``None`` on a branch when there is nothing to say."""
+
+    #: The branch's own head is in the local repo. When it is not (a PR not
+    #: fetched), nothing could be tried.
+    head_known: bool
+    #: Its PR is in review or ready to merge: the card says so loudly; for other
+    #: tasks it is a quiet chip.
+    prominent: bool
+    conflicts: list[SiblingConflict]
 
 
 class FetchedBranch(Model):
@@ -1498,6 +1532,9 @@ class StatusEvent(Model):
     #: Its PR's standing in the merge queue, which changes with its CI and
     #: reviews: ``None`` when there is nothing to say.
     merge_queue: MergeQueueInfo | None
+    #: Its merge conflicts with the other open tasks, which change with their
+    #: heads.
+    sibling_conflicts: SiblingConflictsInfo | None
 
 
 class TaskEvent(Model):

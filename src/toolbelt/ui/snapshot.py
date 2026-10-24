@@ -33,6 +33,7 @@ from toolbelt.ui.next_action import (
 )
 from toolbelt.ui.pr_activity import PrFacts, derive_activity, format_age
 from toolbelt.ui.repo_visibility import visible_repos
+from toolbelt.ui.sibling_conflicts import NO_SIBLING_CONFLICTS, SiblingConflictLookup
 from toolbelt.ui.slack_tracker import NO_SLACK, SlackLookup
 from toolbelt.ui.task_feed import TaskFeed
 
@@ -384,6 +385,7 @@ def build_snapshot(
     webhooks: list[api.RepoWebhook] | None = None,
     slack: SlackLookup = NO_SLACK,
     merge_queue: MergeQueueLookup = NO_MERGE_QUEUE,
+    sibling_conflicts: SiblingConflictLookup = NO_SIBLING_CONFLICTS,
 ) -> api.Snapshot:
     """Every repo with tracked branches, and all their branches: repos in
     name order, each repo's branches depth-first."""
@@ -465,6 +467,7 @@ def build_snapshot(
                         claim=branch_claim(claims.holders(repo.id, name), now),
                         slack=slack.info(repo.id, name, looked_up, now),
                         merge_queue=merge_queue.info(repo.id, name),
+                        sibling_conflicts=sibling_conflicts.info(repo.id, name),
                         started_at=_iso(started_at) if started_at else None,
                         status=live_status(
                             looked_up,

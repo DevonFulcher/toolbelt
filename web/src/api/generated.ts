@@ -82,6 +82,7 @@ export type ServerEvent =
   | AgentsEvent
   | SpendEvent
   | ConversationEvent;
+export type SiblingConflictState = "conflict" | "inherited" | "unknown";
 export type SlackPostKind = "post" | "bump" | "reassign";
 export type LiveStatus = LoadingStatus | FailedStatus | LoadedStatus;
 export type CiState = "none" | "running" | "failed" | "success";
@@ -503,6 +504,7 @@ export interface HelloEvent {
 export interface StatusEvent {
   branch_id: string;
   merge_queue: MergeQueueInfo | null;
+  sibling_conflicts: SiblingConflictsInfo | null;
   slack: SlackInfo | null;
   status: LiveStatus;
   type: "status";
@@ -518,6 +520,25 @@ export interface MergeQueueInfo {
   notice: string | null;
   queued: boolean;
   queued_at: string | null;
+}
+/**
+ * How a branch's head merges with the other open tasks' of its repo (see
+ * ``sibling_conflicts``). ``None`` on a branch when there is nothing to say.
+ */
+export interface SiblingConflictsInfo {
+  conflicts: SiblingConflict[];
+  head_known: boolean;
+  prominent: boolean;
+}
+/**
+ * Another open task whose branch does not merge cleanly with this one's.
+ */
+export interface SiblingConflict {
+  branch_id: string;
+  files: string[];
+  more: number;
+  name: string;
+  state: SiblingConflictState;
 }
 /**
  * Where a branch's PR stands in Slack, from the posts toolbelt recorded
@@ -1154,6 +1175,7 @@ export interface Branch {
   parent: string | null;
   parent_id: string | null;
   repo_id: number;
+  sibling_conflicts: SiblingConflictsInfo | null;
   slack: SlackInfo | null;
   stack_height: number;
   stack_pos: number;
