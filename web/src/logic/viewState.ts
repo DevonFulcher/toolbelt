@@ -8,7 +8,7 @@
 // bare URL.
 import type { FilterKey } from "../api/generated";
 
-export const VIEWS = ["priorities", "table", "stacked", "grouped", "aggregate", "spend", "agents"] as const;
+export const VIEWS = ["priorities", "table", "stacked", "grouped", "aggregate", "spend", "agents", "review"] as const;
 export type View = (typeof VIEWS)[number];
 
 // The aggregate view's time windows, in weeks (the server's `WINDOWS`).
@@ -77,6 +77,10 @@ export interface ViewState {
    * show only its subtree); "" shows every stack from its root.
    */
   root: string;
+  /** Review view only: the revisions `base...head` it shows the changes of, and the open file. */
+  base: string;
+  head: string;
+  file: string;
 }
 
 export const DEFAULT_STATE: ViewState = {
@@ -99,6 +103,9 @@ export const DEFAULT_STATE: ViewState = {
   weekends: "",
   compact: "",
   root: "",
+  base: "",
+  head: "",
+  file: "",
 };
 
 const isOneOf = <T extends string>(list: readonly T[], value: string | null): value is T =>
@@ -140,6 +147,9 @@ export function parseState(search: string): ViewState {
   if ((SPEND_DAYS as readonly number[]).includes(days)) state.days = days as SpendDays;
   if (params.get("weekends") === "exclude") state.weekends = "exclude";
   state.root = params.get("root") ?? "";
+  state.base = params.get("base") ?? "";
+  state.head = params.get("head") ?? "";
+  state.file = params.get("file") ?? "";
   return state;
 }
 
@@ -185,6 +195,11 @@ export function serializeState(state: ViewState): string {
   // The views that draw a tree; the grouped view and the flat table ignore it.
   if (state.root && (state.view === "stacked" || (state.view === "table" && state.mode === "tree"))) {
     params.set("root", state.root);
+  }
+  if (state.view === "review") {
+    if (state.base) params.set("base", state.base);
+    if (state.head) params.set("head", state.head);
+    if (state.file) params.set("file", state.file);
   }
   const text = params.toString();
   return text ? `?${text}` : "";

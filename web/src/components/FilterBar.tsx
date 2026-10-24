@@ -13,7 +13,7 @@ import type { Counts } from "../store/selectors";
 import { useApp, useAppStore } from "../store/StoreContext";
 
 // The default view first.
-const ORDER: View[] = ["priorities", "grouped", "stacked", "table", "aggregate", "spend", "agents"];
+const ORDER: View[] = ["priorities", "grouped", "stacked", "table", "aggregate", "spend", "agents", "review"];
 
 const VIEW_LABELS: Record<View, { label: string; title: string }> = {
   priorities: { label: "Priorities", title: "Tasks that need me without a parent task that needs me" },
@@ -32,6 +32,10 @@ const VIEW_LABELS: Record<View, { label: string; title: string }> = {
     label: "Agents",
     title: "Autonomous agents: what they are on, what they may take next, and why they are not on the rest",
   },
+  review: {
+    label: "Review",
+    title: "The changes between two revisions of a repo, as a structural diff with hover and go to definition",
+  },
 };
 
 const COLUMN_LABELS: Record<Column, string> = {
@@ -46,6 +50,33 @@ const COLUMN_LABELS: Record<Column, string> = {
   task: "Task",
   session: "Session",
 };
+
+/** A text field that applies its value on Enter or blur: changing a revision loads a whole diff. */
+function RevisionInput({
+  label,
+  value,
+  placeholder,
+  onCommit,
+}: {
+  label: string;
+  value: string;
+  placeholder: string;
+  onCommit: (value: string) => void;
+}) {
+  return (
+    <label>
+      {label}
+      <input
+        key={value}
+        type="text"
+        defaultValue={value}
+        placeholder={placeholder}
+        onBlur={(event) => event.target.value !== value && onCommit(event.target.value.trim())}
+        onKeyDown={(event) => event.key === "Enter" && event.currentTarget.blur()}
+      />
+    </label>
+  );
+}
 
 /**
  * The top controls, in two rows that keep their place across views: the view
@@ -64,6 +95,7 @@ export function FilterBar({ counts, aggregate }: { counts: Counts; aggregate?: R
   const isAggregate = view.view === "aggregate";
   const isSpend = view.view === "spend";
   const isAgents = view.view === "agents";
+  const isReview = view.view === "review";
 
   return (
     <form id="controls" onSubmit={(event) => event.preventDefault()}>
@@ -97,7 +129,12 @@ export function FilterBar({ counts, aggregate }: { counts: Counts; aggregate?: R
             </select>
           </label>
         )}
-        {isAgents ? null : isSpend ? (
+        {isAgents ? null : isReview ? (
+          <>
+            <RevisionInput label="Base" value={view.base} placeholder="main" onCommit={(base) => set({ base, file: "" })} />
+            <RevisionInput label="Head" value={view.head} placeholder="branch" onCommit={(head) => set({ head, file: "" })} />
+          </>
+        ) : isSpend ? (
           <span className="seg" role="group" aria-label="Breakdown window">
             {SPEND_DAYS.map((days) => (
               <button

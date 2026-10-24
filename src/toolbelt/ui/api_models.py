@@ -1579,6 +1579,86 @@ type ServerEvent = Annotated[
 Snapshot.model_rebuild()
 
 
+# --- Diff review ------------------------------------------------------------
+
+type ReviewStatus = Literal["A", "M", "D", "R"]
+type ReviewSide = Literal["old", "new"]
+type DifftasticStatus = Literal["changed", "created", "deleted", "unchanged"]
+
+
+class ReviewChangedFile(Model):
+    status: ReviewStatus
+    path: str
+    #: Where a renamed file was (``None``: it was not renamed).
+    old_path: str | None
+
+
+class DifftasticModel(Model):
+    """difftastic's JSON output: its format is not stable, so keys this client
+    does not read are ignored."""
+
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
+
+class DifftasticSpan(DifftasticModel):
+    #: Columns in UTF-8 bytes from the start of the line.
+    start: int
+    end: int
+    content: str
+    highlight: str
+
+
+class DifftasticSide(DifftasticModel):
+    #: 0-indexed.
+    line_number: int
+    changes: list[DifftasticSpan]
+
+
+class DifftasticLinePair(DifftasticModel):
+    lhs: DifftasticSide | None = None
+    rhs: DifftasticSide | None = None
+
+
+class DifftasticFile(DifftasticModel):
+    language: str
+    path: str
+    status: DifftasticStatus
+    #: The line pairs that line up the two sides (``None`` for a created,
+    #: deleted or unchanged file).
+    aligned_lines: list[tuple[int | None, int | None]] | None = None
+    #: The changed line pairs, in groups (``None`` as ``aligned_lines``).
+    chunks: list[list[DifftasticLinePair]] | None = None
+
+
+class ReviewFile(Model):
+    path: str
+    old_path: str | None
+    status: ReviewStatus
+    old_text: str
+    new_text: str
+    difftastic: DifftasticFile
+
+
+class ReviewHover(Model):
+    #: ``None``: the language server has nothing at that position.
+    text: str | None
+
+
+class ReviewDefinitionTarget(Model):
+    #: Relative to the revision's checkout; ``None`` when the target is
+    #: outside it (the standard library, installed packages).
+    path: str | None
+    uri: str
+    #: 0-indexed; the character is in UTF-16 code units.
+    line: int
+    character: int
+
+
+class ReviewDefinition(Model):
+    #: ``None``: the language server found no definition.
+    target: ReviewDefinitionTarget | None
+
+
 class Wire(Model):
     """The schema root: lists everything the client reads (never
     instantiated)."""
@@ -1592,6 +1672,10 @@ class Wire(Model):
     agents_launching: AgentsLaunching
     merge_request: MergeRequest
     merge_queue_request: MergeQueueRequest
+    review_files: list[ReviewChangedFile]
+    review_file: ReviewFile
+    review_hover: ReviewHover
+    review_definition: ReviewDefinition
     merge_queue_info: MergeQueueInfo
     slack_draft_request: SlackDraftRequest
     slack_draft: SlackDraft

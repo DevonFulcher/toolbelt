@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { useCounts, useRows } from "../store/selectors";
 import { useApp } from "../store/StoreContext";
 import { AggregatePage } from "./AggregateView";
@@ -13,6 +13,9 @@ import { TooltipProvider } from "./Tooltip";
 import { UntrackedCallout } from "./UntrackedCallout";
 import { UpdateNotice } from "./UpdateNotice";
 import { ClockContext, NowContext } from "./useNow";
+
+// CodeMirror is most of the review view's size: load it when the view is opened.
+const ReviewPage = lazy(() => import("./ReviewView").then((module) => ({ default: module.ReviewPage })));
 
 /** How often ages and timeline tracks are re-drawn between server updates. */
 const CLOCK_MS = 30_000;
@@ -69,6 +72,14 @@ function Content() {
   }
   if (view === "agents") {
     return <AgentsPage counts={counts} />;
+  }
+  if (view === "review") {
+    // Review reads git directly: it does not need tracked stacks either.
+    return (
+      <Suspense fallback={<div className="empty">Loading…</div>}>
+        <ReviewPage counts={counts} />
+      </Suspense>
+    );
   }
   if (rows.length === 0) {
     return (

@@ -120,6 +120,8 @@ export type TaskLive = TaskLoading | TaskDetails | TaskUnavailable;
 export type HolderKind = "agent" | "human" | "autonomous";
 export type HolderState = "working" | "idle" | "blocked";
 export type UntrackedPrs = UntrackedLoading | UntrackedLoaded | UntrackedFailed;
+export type DifftasticStatus = "changed" | "created" | "deleted" | "unchanged";
+export type ReviewStatus = "A" | "M" | "D" | "R";
 export type CatalogDimension =
   "pr" | "ci" | "review" | "comments" | "merge" | "task" | "draft" | "reviewers" | "blocked" | "next";
 export type CatalogState =
@@ -174,6 +176,10 @@ export interface Wire {
   merge_queue_info: MergeQueueInfo;
   merge_queue_request: MergeQueueRequest;
   merge_request: MergeRequest;
+  review_definition: ReviewDefinition;
+  review_file: ReviewFile;
+  review_files: ReviewChangedFile[];
+  review_hover: ReviewHover;
   slack_accepted: SlackAccepted;
   slack_draft: SlackDraft;
   slack_draft_request: SlackDraftRequest;
@@ -958,6 +964,52 @@ export interface MergeQueueRequest {
  */
 export interface MergeRequest {
   id: string;
+}
+export interface ReviewDefinition {
+  target: ReviewDefinitionTarget | null;
+}
+export interface ReviewDefinitionTarget {
+  character: number;
+  line: number;
+  path: string | null;
+  uri: string;
+}
+export interface ReviewFile {
+  difftastic: DifftasticFile;
+  new_text: string;
+  old_path: string | null;
+  old_text: string;
+  path: string;
+  status: ReviewStatus;
+}
+export interface DifftasticFile {
+  aligned_lines?: [unknown, unknown][] | null;
+  chunks?: DifftasticLinePair[][] | null;
+  language: string;
+  path: string;
+  status: DifftasticStatus;
+}
+export interface DifftasticLinePair {
+  lhs?: DifftasticSide | null;
+  rhs?: DifftasticSide | null;
+}
+export interface DifftasticSide {
+  changes: DifftasticSpan[];
+  line_number: number;
+}
+export interface DifftasticSpan {
+  content: string;
+  end: number;
+  highlight: string;
+  start: number;
+}
+export interface ReviewChangedFile {
+  old_path: string | null;
+  path: string;
+  status: ReviewStatus;
+}
+export interface ReviewHover {
+  text: string | null;
 }
 /**
  * The answer to ``POST /api/slack/send``: the message is being posted in

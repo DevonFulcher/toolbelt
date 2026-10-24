@@ -11,6 +11,10 @@ import type {
   SlackPrRef,
   SlackSendRequest,
   SlackAccepted,
+  ReviewChangedFile,
+  ReviewDefinition,
+  ReviewFile,
+  ReviewHover,
   Spend,
 } from "./generated";
 
@@ -207,3 +211,70 @@ export async function unqueueMerge(id: string, fetchImpl: typeof fetch = fetch):
 export async function mergeBranch(id: string, fetchImpl: typeof fetch = fetch): Promise<void> {
   await postJson<unknown>("/api/merge", { id }, fetchImpl);
 }
+
+export const REVIEW_URL = "/api/review";
+
+/** The revisions a review compares: `base...head` in one tracked repo. */
+export interface ReviewRevisions {
+  repo: number;
+  base: string;
+  head: string;
+}
+
+export type ReviewSide = "old" | "new";
+
+/** A position in a file on one side of the review (0-indexed; UTF-16 characters). */
+export interface ReviewPosition {
+  side: ReviewSide;
+  path: string;
+  line: number;
+  character: number;
+}
+
+async function reviewGet<T>(
+  route: string,
+  query: Record<string, string | number>,
+  fetchImpl: typeof fetch,
+): Promise<T> {
+  const params = new URLSearchParams(Object.entries(query).map(([key, value]) => [key, String(value)]));
+  const response = await fetchImpl(`${REVIEW_URL}/${route}?${params}`, { headers: { Accept: "application/json" } });
+  if (!response.ok) {
+    // The server says why (an unknown revision, a language server that failed).
+    const body = (await response.json().catch(() => null)) as { detail?: string } | null;
+    throw new Error(body?.detail ?? `${REVIEW_URL}/${route}: HTTP ${response.status}`);
+  }
+  return (await response.json()) as T;
+}
+
+export const fetchReviewFiles = (revisions: ReviewRevisions, fetchImpl: typeof fetch = fetch) =>
+  reviewGet<ReviewChangedFile[]>("files", { ...revisions }, fetchImpl);
+
+export const fetchReviewFile = (
+  revisions: ReviewRevisions,
+  file: ReviewChangedFile,
+  fetchImpl: typeof fetch = fetch,
+) =>
+  reviewGet<ReviewFile>(
+    "file",
+    { ...revisions, status: file.status, path: file.path, ...(file.old_path === null ? {} : { old_path: file.old_path }) },
+    fetchImpl,
+  );
+
+export const fetchReviewText = (
+  revisions: ReviewRevisions,
+  side: ReviewSide,
+  path: string,
+  fetchImpl: typeof fetch = fetch,
+) => reviewGet<string>("text", { ...revisions, side, path }, fetchImpl);
+
+export const fetchReviewHover = (
+  revisions: ReviewRevisions,
+  position: ReviewPosition,
+  fetchImpl: typeof fetch = fetch,
+) => reviewGet<ReviewHover>("hover", { ...revisions, ...position }, fetchImpl);
+
+export const fetchReviewDefinition = (
+  revisions: ReviewRevisions,
+  position: ReviewPosition,
+  fetchImpl: typeof fetch = fetch,
+) => reviewGet<ReviewDefinition>("definition", { ...revisions, ...position }, fetchImpl);

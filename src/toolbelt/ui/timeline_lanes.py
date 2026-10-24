@@ -325,4 +325,7 @@ NOT_TIMELINE_STATUS: dict[str, str] = {
     "CiResult": "A commit's CI result: drawn by the PR track's commit markers.",
     "Tone": "A colour token, not a status.",
     "Who": "Who a next action waits on: shown as the card's Next chip.",
+    "ReviewStatus": "How a file changed between two revisions in the diff review: git, not a task's history.",
+    "ReviewSide": "Which side of a diff a position is on: not a status.",
+    "DifftasticStatus": "How difftastic classed a file pair in the diff review: not a task's history.",
 }

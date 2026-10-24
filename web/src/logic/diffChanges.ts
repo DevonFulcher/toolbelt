@@ -1,12 +1,13 @@
+// difftastic's changed spans as the changes `@codemirror/merge` draws.
 import { Change } from "@codemirror/merge";
 import { Text } from "@codemirror/state";
-import { changedSpansByLine, splitLines, type DifftasticFile, type LineSpan } from "./difftastic";
+import type { DifftasticFile } from "../api/generated";
+import { alignedLines, changedSpansByLine, splitLines, type LineSpan } from "./difftastic";
 
 /**
- * difftastic's changed spans as CodeMirror merge changes. Entries are walked in
- * `aligned_lines` order so the A and B ranges both stay increasing; a side with
- * no line in an entry gets a zero-length range where the other side's change
- * would be inserted.
+ * Entries are walked in `aligned_lines` order so the A and B ranges both stay
+ * increasing; a side with no line in an entry gets a zero-length range where
+ * the other side's change would be inserted.
  */
 export function buildChanges(file: DifftasticFile, aText: string, bText: string): Change[] {
   const aLines = splitLines(aText);
@@ -23,10 +24,10 @@ export function buildChanges(file: DifftasticFile, aText: string, bText: string)
   let nextB = 0;
   const range = (lineFrom: number | null, spans: LineSpan[] | undefined, insertAt: number): [number, number] => {
     if (lineFrom === null || !spans) return [insertAt, insertAt];
-    if (!spans.length) return [lineFrom, lineFrom];
+    if (spans.length === 0) return [lineFrom, lineFrom];
     return [lineFrom + Math.min(...spans.map((s) => s.from)), lineFrom + Math.max(...spans.map((s) => s.to))];
   };
-  for (const [l, r] of file.aligned_lines ?? []) {
+  for (const [l, r] of alignedLines(file)) {
     const aLine = l !== null && l < aDoc.lines ? aDoc.line(l + 1) : null;
     const bLine = r !== null && r < bDoc.lines ? bDoc.line(r + 1) : null;
     const ls = l !== null ? lhs.get(l) : undefined;

@@ -47,7 +47,7 @@ import dataclasses
 import functools
 import json
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -73,6 +73,7 @@ from toolbelt.autonomous_agents.runner import AgentRunner
 from toolbelt.autonomous_agents.screen import read_screen_state
 from toolbelt.decisions.book import AlreadyAnswered, DecisionBook, NoSuchDecision
 from toolbelt.decisions.model import Decision, InvalidDecision
+from toolbelt.diff_review.lsp import PYTHON_SERVER, LspSessions
 from toolbelt.git.repo_pull import default_config_path
 from toolbelt.git.stack.status import CiState, PrState
 from toolbelt.git.stack.store import (
@@ -148,6 +149,7 @@ from toolbelt.ui.pr_fetch import (
 from toolbelt.ui.pr_gate import GithubChangeGate, PrGate
 from toolbelt.ui.pushed_views import PushedViews, conversation_of
 from toolbelt.ui.repo_visibility import visible_repos
+from toolbelt.ui.review_routes import review_router
 from toolbelt.ui.slack_config import SlackConfig
 from toolbelt.ui.slack_proxy import SlackProxy
 from toolbelt.ui.slack_service import SlackNotApplicable, SlackService, SlackUnknown
@@ -515,6 +517,7 @@ def create_app(
     webhook_url: str | None = None,
     forwarders: WebhookForwarders | None = None,
     decisions: DecisionBook | None = None,
+    review_lsp_command: Sequence[str] = PYTHON_SERVER,
 ) -> FastAPI:
     """``cwd_root``: the repo `tt ui` was launched from; its checked-out
     branch is marked current, as `tt g tree` does. ``fetch`` looks up a
@@ -559,7 +562,10 @@ def create_app(
     every ``spend_interval`` seconds for the spend view: see
     ``spend_feed.py``. ``dispatcher`` decides which tasks an autonomous agent
     should be on (default: one over the real PR lookups, git, claims, screen
-    and sign-in; it only decides, see ``autonomous_agents``)."""
+    and sign-in; it only decides, see ``autonomous_agents``).
+    ``review_lsp_command`` starts the language server the diff review's hover
+    and go-to-definition ask (see ``diff_review.lsp``)."""
+    review_sessions = LspSessions(review_lsp_command)
     task_cache = TaskInfoCache(ttl_seconds=task_ttl_seconds, clock=clock)
     hub = EventHub(clock=clock, grace=grace_seconds)
 
@@ -1090,6 +1096,7 @@ def create_app(
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+            await asyncio.to_thread(review_sessions.close)
             for store in held_store:
                 store.close()
 
@@ -1115,6 +1122,7 @@ def create_app(
     app.state.merge_queue = merge_queue
     app.state.github = requests
     app.state.views = views
+    app.include_router(review_router(review_sessions))
 
     @app.get("/assets/{path:path}", include_in_schema=False, response_model=None)
     def asset(path: str) -> FileResponse:

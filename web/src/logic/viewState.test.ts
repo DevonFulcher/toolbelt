@@ -68,7 +68,14 @@ describe("the URL state", () => {
     const parsed = parseState("?view=timeline&kind=review&order=oldest&next=you");
     expect(parsed).toEqual({ ...DEFAULT_STATE, next: "you" });
     expect(serializeState(parsed)).toBe("?next=you");
-    expect(VIEWS).toEqual(["priorities", "table", "stacked", "grouped", "aggregate", "spend", "agents"]);
+    expect(VIEWS).toEqual(["priorities", "table", "stacked", "grouped", "aggregate", "spend", "agents", "review"]);
+  });
+
+  test("the review view's revisions and open file are in the URL only on that view", () => {
+    const review = state({ view: "review", repo: "3", base: "main", head: "feature", file: "src/a.py" });
+    expect(serializeState(review)).toBe("?view=review&repo=3&base=main&head=feature&file=src%2Fa.py");
+    expect(parseState(serializeState(review))).toEqual(review);
+    expect(serializeState({ ...review, view: "table" })).toBe("?view=table&repo=3");
   });
 
   test("old links map onto the current views", () => {

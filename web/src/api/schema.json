@@ -2069,6 +2069,161 @@
       ],
       "type": "string"
     },
+    "DifftasticFile": {
+      "properties": {
+        "aligned_lines": {
+          "anyOf": [
+            {
+              "items": {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "anyOf": [
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  {
+                    "anyOf": [
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                ],
+                "type": "array"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "chunks": {
+          "anyOf": [
+            {
+              "items": {
+                "items": {
+                  "$ref": "#/$defs/DifftasticLinePair"
+                },
+                "type": "array"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "language": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/DifftasticStatus"
+        }
+      },
+      "required": [
+        "language",
+        "path",
+        "status"
+      ],
+      "title": "DifftasticFile",
+      "type": "object"
+    },
+    "DifftasticLinePair": {
+      "properties": {
+        "lhs": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DifftasticSide"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "rhs": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DifftasticSide"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "DifftasticLinePair",
+      "type": "object"
+    },
+    "DifftasticSide": {
+      "properties": {
+        "changes": {
+          "items": {
+            "$ref": "#/$defs/DifftasticSpan"
+          },
+          "type": "array"
+        },
+        "line_number": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "line_number",
+        "changes"
+      ],
+      "title": "DifftasticSide",
+      "type": "object"
+    },
+    "DifftasticSpan": {
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "end": {
+          "type": "integer"
+        },
+        "highlight": {
+          "type": "string"
+        },
+        "start": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "start",
+        "end",
+        "content",
+        "highlight"
+      ],
+      "title": "DifftasticSpan",
+      "type": "object"
+    },
+    "DifftasticStatus": {
+      "enum": [
+        "changed",
+        "created",
+        "deleted",
+        "unchanged"
+      ],
+      "type": "string"
+    },
     "DraftCatalogState": {
       "additionalProperties": false,
       "properties": {
@@ -3721,6 +3876,34 @@
       "title": "ReviewCatalogState",
       "type": "object"
     },
+    "ReviewChangedFile": {
+      "additionalProperties": false,
+      "properties": {
+        "old_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ReviewStatus"
+        }
+      },
+      "required": [
+        "status",
+        "path",
+        "old_path"
+      ],
+      "title": "ReviewChangedFile",
+      "type": "object"
+    },
     "ReviewChip": {
       "additionalProperties": false,
       "properties": {
@@ -3739,6 +3922,118 @@
       "title": "ReviewChip",
       "type": "object"
     },
+    "ReviewDefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReviewDefinitionTarget"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "target"
+      ],
+      "title": "ReviewDefinition",
+      "type": "object"
+    },
+    "ReviewDefinitionTarget": {
+      "additionalProperties": false,
+      "properties": {
+        "character": {
+          "type": "integer"
+        },
+        "line": {
+          "type": "integer"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "uri": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "uri",
+        "line",
+        "character"
+      ],
+      "title": "ReviewDefinitionTarget",
+      "type": "object"
+    },
+    "ReviewFile": {
+      "additionalProperties": false,
+      "properties": {
+        "difftastic": {
+          "$ref": "#/$defs/DifftasticFile"
+        },
+        "new_text": {
+          "type": "string"
+        },
+        "old_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "old_text": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ReviewStatus"
+        }
+      },
+      "required": [
+        "path",
+        "old_path",
+        "status",
+        "old_text",
+        "new_text",
+        "difftastic"
+      ],
+      "title": "ReviewFile",
+      "type": "object"
+    },
+    "ReviewHover": {
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "ReviewHover",
+      "type": "object"
+    },
     "ReviewState": {
       "enum": [
         "none",
@@ -3747,6 +4042,15 @@
         "reviewed"
       ],
       "title": "ReviewState",
+      "type": "string"
+    },
+    "ReviewStatus": {
+      "enum": [
+        "A",
+        "M",
+        "D",
+        "R"
+      ],
       "type": "string"
     },
     "ReviewersCatalogState": {
@@ -5723,6 +6027,21 @@
     "merge_request": {
       "$ref": "#/$defs/MergeRequest"
     },
+    "review_definition": {
+      "$ref": "#/$defs/ReviewDefinition"
+    },
+    "review_file": {
+      "$ref": "#/$defs/ReviewFile"
+    },
+    "review_files": {
+      "items": {
+        "$ref": "#/$defs/ReviewChangedFile"
+      },
+      "type": "array"
+    },
+    "review_hover": {
+      "$ref": "#/$defs/ReviewHover"
+    },
     "slack_accepted": {
       "$ref": "#/$defs/SlackAccepted"
     },
@@ -5752,6 +6071,10 @@
     "agents_launching",
     "merge_request",
     "merge_queue_request",
+    "review_files",
+    "review_file",
+    "review_hover",
+    "review_definition",
     "merge_queue_info",
     "slack_draft_request",
     "slack_draft",
