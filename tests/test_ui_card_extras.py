@@ -250,3 +250,45 @@ def test_a_task_with_a_pr_cannot_be_validated():
     ).branches
 
     assert branch.agent.validation.can_validate is False
+
+
+def test_a_card_with_a_pr_carries_when_it_will_be_finished():
+    from test_ui_aggregate import at, pr, request
+    from test_ui_estimate import HOURS, day_at, history_records, run_job
+
+    r = rig(a=PrSnapshot(status(), None))
+    store, _, _ = tracked_store()
+    now = at(day_at(61, 11))
+    run_job(default_db_path(), history_records(60), now)
+    opened = day_at(61, 10)
+    record = pr(
+        1,
+        created=opened,
+        items=(request(opened + 0.25, "bob"),),
+        review_now="requested",
+    )
+
+    (extras,) = build_card_extras(
+        r.dispatcher,
+        store,
+        now,
+        pr_facts=lambda rid, name: (record.facts, "requested"),
+        working_hours=HOURS,
+    ).branches
+
+    estimate = extras.estimate
+    assert estimate is not None and estimate.known
+    assert estimate.stage == "wait_review"
+    assert "waiting on bob" in estimate.explanation
+    assert estimate.finish_p50 is not None and estimate.finish_p80 is not None
+    assert estimate.finish_p50 <= estimate.finish_p80
+    assert estimate.finish_p50 > now.isoformat()
+
+
+def test_a_card_without_a_pr_has_no_estimate():
+    r = rig(a=PrSnapshot(status(), None))
+    store, _, _ = tracked_store()
+
+    (extras,) = build_card_extras(r.dispatcher, store, NOW).branches
+
+    assert extras.estimate is None

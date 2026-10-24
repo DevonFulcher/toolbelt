@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from toolbelt.autonomous_agents.conversation import find_transcript, read_conversation
 from toolbelt.autonomous_agents.dispatcher import Dispatcher
 from toolbelt.autonomous_agents.runner import AgentRunner
+from toolbelt.finish_estimate.working_hours import WorkingHours
 from toolbelt.git.stack.store import StackStore
 from toolbelt.ui import api_models as api
 from toolbelt.ui.agents_view import build_agents
@@ -78,8 +79,10 @@ class PushedViews:
             False,
             None,
         ),
+        working_hours: Callable[[], WorkingHours] = WorkingHours,
     ) -> None:
         self._opening_pr = opening_pr
+        self._working_hours = working_hours
         self._repo_slug = repo_slug
         self._pr_facts = pr_facts
         self._hub = hub
@@ -114,6 +117,7 @@ class PushedViews:
                 self._repo_slug,
                 self._pr_facts,
                 self._opening_pr,
+                self._working_hours(),
             )
         finally:
             store.close()

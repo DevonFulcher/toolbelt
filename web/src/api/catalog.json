@@ -535,6 +535,7 @@
     "branch": null,
     "task": null,
     "task_title": null,
+    "estimate": null,
     "task_status": null,
     "session": null,
     "ancestors": null,

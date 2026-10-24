@@ -79,6 +79,8 @@ from toolbelt.decisions.model import Decision, InvalidDecision
 from toolbelt.diff_review.language_servers import PYTHON_SERVER, LanguageServer
 from toolbelt.diff_review.lsp import LspSessions
 from toolbelt.diff_review.revisions import FileDiff, RevisionPair
+from toolbelt.finish_estimate.config import configured_working_hours
+from toolbelt.finish_estimate.working_hours import WorkingHours
 from toolbelt.git.repo_pull import default_config_path
 from toolbelt.git.stack.status import CiState, PrState
 from toolbelt.git.stack.store import (
@@ -118,6 +120,8 @@ from toolbelt.ui.claims_feed import (
 )
 from toolbelt.ui.client_build import CLIENT_DIST, served_build
 from toolbelt.ui.conflict_commit import conflict_for
+from toolbelt.ui.estimate_feed import EstimateJob
+from toolbelt.ui.estimate_feed import accuracy as estimate_track_record
 from toolbelt.ui.forwarder_ledger import SettingsLedger
 from toolbelt.ui.github_requests import (
     ConditionalAnswer,
@@ -874,6 +878,9 @@ def create_app(
             ),
         )
 
+    def working_hours() -> WorkingHours:
+        return configured_working_hours(default_config_path())
+
     views = PushedViews(
         hub=hub,
         dispatcher=dispatcher,
@@ -890,6 +897,7 @@ def create_app(
             (repo_id, name) in personal_review.opening,
             personal_review.notices.get((repo_id, name)),
         ),
+        working_hours=working_hours,
     )
     dispatcher.on_tick = lambda: views.notify("agents", "extras")
     runner.on_change = lambda: views.notify("agents", "extras")
@@ -1001,12 +1009,27 @@ def create_app(
             and fetched.status.pr in (PrState.MERGED, PrState.CLOSED)
         )
 
+    def estimate_accuracy() -> api.EstimateAccuracy:
+        store = StackStore(default_db_path())
+        try:
+            return estimate_track_record(store, working_hours())
+        finally:
+            store.close()
+
     aggregates = AggregateService(
         search=search_history,
         history=stored_history,
         remote_of=remote_of,
         finished=pr_finished,
         wall_clock=wall_clock,
+        estimate_accuracy=estimate_accuracy,
+    )
+    estimate_job = EstimateJob(
+        db_path=default_db_path,
+        lives=aggregates.lives,
+        hours=working_hours,
+        wall_clock=wall_clock,
+        changed=lambda: views.notify("extras"),
     )
 
     # The default change signal needs a connection held for as long as the app
@@ -1262,6 +1285,7 @@ def create_app(
             asyncio.create_task(untracked_feed.run()),
             asyncio.create_task(watcher.run()),
             asyncio.create_task(aggregates.run()),
+            asyncio.create_task(estimate_job.run()),
             asyncio.create_task(views.run()),
         ]
         if forwarders is not None:

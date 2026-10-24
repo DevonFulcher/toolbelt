@@ -880,6 +880,67 @@ class AggregateActivity(Model):
     since: str | None
 
 
+class EstimateParams(Model):
+    """The estimator's hyperparameters (what backtesting tunes)."""
+
+    half_life_weeks: float
+    min_samples: int
+    shrinkage: float
+
+
+class EstimateStageAccuracy(Model):
+    """How a backtest's predictions fared for one stage (``all`` for every)."""
+
+    stage: str
+    #: Predictions made, and how many were "unknown".
+    n: int
+    unknown: int
+    #: The share of known predictions whose actual time left was at or under
+    #: the p80 (the target is 0.8).
+    coverage: float | None
+    median_abs_error_seconds: float | None
+    #: Median of p80 - p50, in working seconds.
+    median_width_seconds: float | None
+
+
+class EstimateRegime(Model):
+    """A stage whose median duration moved between two windows."""
+
+    stage: str
+    weeks: int
+    #: Recent median over the prior one, minus one (-0.4: 40% shorter).
+    change: float
+    recent_median_seconds: float
+    prior_median_seconds: float
+    n_recent: int
+    n_prior: int
+
+
+class EstimateBacktest(Model):
+    ran_at: str
+    params: EstimateParams
+    overall: EstimateStageAccuracy
+    by_stage: list[EstimateStageAccuracy]
+    regime: list[EstimateRegime]
+
+
+class EstimateAccuracy(Model):
+    """The finish estimate's track record: the stored backtests, oldest
+    first, and the shown estimates compared with the actual finishes."""
+
+    #: The length of one working day, to show working seconds as days.
+    working_day_seconds: float
+    #: The parameters the live estimates use now (``None``: the defaults, no
+    #: backtest yet).
+    current: EstimateParams | None
+    backtests: list[EstimateBacktest]
+    #: Estimates shown so far, those whose task has finished since, and the
+    #: share of those finished at or before their p80 instant.
+    live_made: int
+    live_finished: int
+    live_coverage: float | None
+
+
 class Aggregate(Model):
     weeks: int
     window_start: str
@@ -904,6 +965,8 @@ class Aggregate(Model):
     coverage: AggregateCoverage
     #: What could not be reconstructed or is approximated.
     notes: list[AggregateNote]
+    #: The finish estimate's track record (``None`` where not computed).
+    estimate: EstimateAccuracy | None = None
 
 
 # ---- spend ------------------------------------------------------------------------
@@ -1276,6 +1339,28 @@ class TimelineLane(Model):
     phases: list[LanePhase]
 
 
+class CardEstimate(Model):
+    """When a task is estimated to be finished (merged): a median and a p80
+    as UTC instants, or unknown. Working-time arithmetic is the server's (the
+    working hours are in its config); the client formats the instants."""
+
+    #: ``False``: not enough history; no instant is given.
+    known: bool
+    #: The stage the task is in (a kind of its Next).
+    stage: str
+    finish_p50: str | None
+    finish_p80: str | None
+    #: The stage has lasted longer than any in the history.
+    overdue: bool
+    #: The stages after this one are not in the estimate.
+    partial: bool
+    #: Which fallback answered (``reviewer+size``, ``stage``, ``global``, ...).
+    level: str
+    #: The history samples it is based on.
+    n: int
+    explanation: str
+
+
 class BranchExtras(Model):
     """The parts of a task card that do not come with its PR status."""
 
@@ -1285,6 +1370,8 @@ class BranchExtras(Model):
     lanes: list[TimelineLane]
     agent: CardAgent
     spend: CardSpend
+    #: When the task is estimated to finish (``None``: no PR to estimate).
+    estimate: CardEstimate | None = None
 
 
 class CardExtras(Model):

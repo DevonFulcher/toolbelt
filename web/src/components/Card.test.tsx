@@ -47,6 +47,7 @@ const SLOT_LABELS: Record<string, string> = {
   ancestors: "Ancestors",
   descendants: "Descendants",
   task_age: "Task age",
+  estimate: "Estimated finish",
   pr_age: "PR age",
   in_draft: "In draft",
   review_requested: "Review requested",
@@ -287,7 +288,7 @@ describe("a card's labelled slots", () => {
       expect(keys).toEqual([
         ["repo", "branch", "ancestors", "descendants"],
         ["title", "pr", "ci", "review", "comments", "bot_comments", "merge", "conflict_commit", "lines", "pr_age", "in_draft", "review_requested", "ci_failures"],
-        ["next", "task_age", "task", "task_title", "task_status", "slack_status", "slack_age", "assigned_review"],
+        ["next", "task_age", "estimate", "task", "task_title", "task_status", "slack_status", "slack_age", "assigned_review"],
         ["session", "agent_status", "agent_runs", "agent_run", "agent_run_summary"],
         ["cost", "agent_cost"],
       ]);
@@ -306,7 +307,7 @@ describe("a card's labelled slots", () => {
 
     expect(labels(found)).toEqual(SLOT_LABELS);
     for (const key of Object.keys(SLOT_LABELS)) {
-      if (["repo", "branch", "ancestors", "descendants", "task", "task_title", "task_status", "slack_status", "slack_age", "assigned_review", "session", "task_age", "agent_status", "agent_runs", "agent_run", "agent_run_summary", "cost", "agent_cost"].includes(key)) continue;
+      if (["repo", "branch", "ancestors", "descendants", "task", "task_title", "task_status", "slack_status", "slack_age", "assigned_review", "session", "task_age", "estimate", "agent_status", "agent_runs", "agent_run", "agent_run_summary", "cost", "agent_cost"].includes(key)) continue;
       expect(found[key].slice(1), key).toEqual(["na", "loading…"]);
     }
   });
@@ -999,6 +1000,45 @@ describe("a card's agent and spend slots", () => {
     }
     return slotsOf("devon/a");
   };
+
+  test("the estimated finish shows the median and p80, with the explanation in its tooltip", () => {
+    const found = show({
+      ...extras(),
+      estimate: {
+        known: true,
+        stage: "wait_review",
+        finish_p50: new Date(NOW + 2 * 86400_000).toISOString(),
+        finish_p80: new Date(NOW + 4 * 86400_000).toISOString(),
+        overdue: false,
+        partial: false,
+        level: "reviewer",
+        n: 14,
+        explanation: "waiting on ann, 2.1 working days in, based on 14 reviews",
+      },
+    });
+
+    expect(found.estimate).toEqual(["Estimated finish", "ok", "~2d (p50), up to 4d (p80)"]);
+    expect(screen.getByTitle(/waiting on ann, 2.1 working days in, based on 14 reviews/)).toBeInTheDocument();
+  });
+
+  test("an estimate with too little history says unknown, not a number", () => {
+    const found = show({
+      ...extras(),
+      estimate: {
+        known: false,
+        stage: "wait_review",
+        finish_p50: null,
+        finish_p80: null,
+        overdue: false,
+        partial: false,
+        level: "unknown",
+        n: 2,
+        explanation: "unknown: not enough history (2 of the 5 wait_review stages needed)",
+      },
+    });
+
+    expect(found.estimate).toEqual(["Estimated finish", "na", "unknown: not enough history"]);
+  });
 
   test("the session moved into the Agent group as the interactive session", () => {
     const found = show(extras());

@@ -109,6 +109,30 @@ def decisions_mcp():
     build_server().run()
 
 
+estimate_typer = typer.Typer(
+    help="The finish estimate of tasks: how long each stage takes, and how right it is.",
+    no_args_is_help=True,
+)
+app.add_typer(estimate_typer, name="estimate")
+
+
+@estimate_typer.command(name="backtest")
+def estimate_backtest():
+    """Rebuild the stage history from the cached GitHub history and backtest now
+
+    `tt ui` does this daily. The backtest replays every finished task, predicting
+    at each stage boundary from only what was known before, tunes the estimator's
+    parameters on it and stores them (the cards use the latest). No network."""
+    import asyncio
+
+    from toolbelt.git.repo_pull import default_config_path
+    from toolbelt.git.stack.store import default_db_path
+    from toolbelt.ui.estimate_feed import backtest_now
+
+    for line in asyncio.run(backtest_now(default_db_path(), default_config_path())):
+        typer.echo(line)
+
+
 ui_typer = typer.Typer(
     help="Serve a read-only web view of every known repo's stacks on 127.0.0.1",
     invoke_without_command=True,

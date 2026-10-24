@@ -577,6 +577,63 @@ _MIGRATIONS: list[tuple[str, ...]] = [
         "CREATE INDEX review_verdicts_by_task ON review_verdicts (task_id, id)",
     ),
     (
+        # The finish estimate (``toolbelt.finish_estimate``). One row per stage
+        # of a task (a kind of the task's Next) once it ended, the history
+        # estimates are made from; ``task_key`` is ``owner/name#number`` of the
+        # PR, ``kind`` who the stage waited on, ``reviewer`` who was asked (or
+        # whose review was addressed), ``additions`` / ``deletions`` the size
+        # inputs, ``finished_at`` when the task merged. ``predictions`` are the
+        # estimates shown, made once per stage a task entered and later
+        # compared with the actual finish. ``estimate_backtests`` are the
+        # rolling-origin backtests with the hyperparameters they chose and
+        # their metrics (JSON).
+        """
+        CREATE TABLE task_stage_durations (
+            id INTEGER PRIMARY KEY,
+            task_key TEXT NOT NULL,
+            task_id TEXT,
+            stage TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            ended_at TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            reviewer TEXT NOT NULL,
+            repo TEXT NOT NULL,
+            additions INTEGER NOT NULL,
+            deletions INTEGER NOT NULL,
+            size_bucket INTEGER NOT NULL,
+            round INTEGER NOT NULL,
+            finished_at TEXT,
+            UNIQUE (task_key, stage, started_at)
+        )
+        """,
+        "CREATE INDEX task_stage_durations_by_end ON task_stage_durations (ended_at)",
+        """
+        CREATE TABLE predictions (
+            id INTEGER PRIMARY KEY,
+            task_key TEXT NOT NULL,
+            stage TEXT NOT NULL,
+            stage_started_at TEXT NOT NULL,
+            made_at TEXT NOT NULL,
+            p50_at TEXT NOT NULL,
+            p80_at TEXT NOT NULL,
+            level TEXT NOT NULL,
+            n INTEGER NOT NULL,
+            model_version INTEGER NOT NULL,
+            UNIQUE (task_key, stage, stage_started_at)
+        )
+        """,
+        """
+        CREATE TABLE estimate_backtests (
+            id INTEGER PRIMARY KEY,
+            ran_at TEXT NOT NULL,
+            model_version INTEGER NOT NULL,
+            params TEXT NOT NULL,
+            metrics TEXT NOT NULL
+        )
+        """,
+    ),
+    (
         # A user's review of one file of a branch before its PR (see
         # ``ui.personal_review``), replacing ``review_verdicts``, which is no
         # longer written: a decision is for one file and the hash of that
@@ -600,6 +657,51 @@ _MIGRATIONS: list[tuple[str, ...]] = [
         "CREATE INDEX file_approvals_by_task ON file_approvals (task_id, id)",
     ),
 ]
+
+
+@dataclass(frozen=True)
+class StageDurationRow:
+    """A stage of a task that ended (see the ``task_stage_durations``
+    migration)."""
+
+    task_key: str
+    task_id: str | None
+    stage: str
+    kind: str
+    started_at: datetime
+    ended_at: datetime
+    actor: str
+    reviewer: str
+    repo: str
+    additions: int
+    deletions: int
+    size_bucket: int
+    round: int
+    finished_at: datetime | None
+
+
+@dataclass(frozen=True)
+class PredictionRow:
+    """The finish estimated for a task, once per stage it entered."""
+
+    task_key: str
+    stage: str
+    stage_started_at: datetime
+    made_at: datetime
+    p50_at: datetime
+    p80_at: datetime
+    level: str
+    n: int
+    model_version: int
+
+
+@dataclass(frozen=True)
+class BacktestRow:
+    ran_at: datetime
+    model_version: int
+    #: JSON of the chosen hyperparameters and of the metrics.
+    params: str
+    metrics: str
 
 
 @dataclass(frozen=True)
@@ -1802,6 +1904,134 @@ class StackStore:
             "ORDER BY started_at, run_id"
         )
         return [_agent_run(r) for r in rows]
+
+    # ---- the finish estimate ----
+
+    def replace_stage_durations(self, rows: Sequence[StageDurationRow]) -> None:
+        """Stores the stages of the tasks in ``rows``, replacing everything
+        stored for those tasks (a stage can be found differently later)."""
+        with self._write() as conn:
+            conn.executemany(
+                "DELETE FROM task_stage_durations WHERE task_key = ?",
+                [(key,) for key in {row.task_key for row in rows}],
+            )
+            conn.executemany(
+                "INSERT INTO task_stage_durations (task_key, task_id, stage, kind, "
+                "started_at, ended_at, actor, reviewer, repo, additions, deletions, "
+                "size_bucket, round, finished_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT (task_key, stage, started_at) DO NOTHING",
+                [
+                    (
+                        row.task_key,
+                        row.task_id,
+                        row.stage,
+                        row.kind,
+                        _iso(row.started_at),
+                        _iso(row.ended_at),
+                        row.actor,
+                        row.reviewer,
+                        row.repo,
+                        row.additions,
+                        row.deletions,
+                        row.size_bucket,
+                        row.round,
+                        _iso(row.finished_at) if row.finished_at else None,
+                    )
+                    for row in rows
+                ],
+            )
+
+    def stage_durations(self) -> list[StageDurationRow]:
+        rows = self._conn.execute(
+            "SELECT * FROM task_stage_durations ORDER BY ended_at, id"
+        )
+        return [
+            StageDurationRow(
+                task_key=r["task_key"],
+                task_id=r["task_id"],
+                stage=r["stage"],
+                kind=r["kind"],
+                started_at=datetime.fromisoformat(r["started_at"]),
+                ended_at=datetime.fromisoformat(r["ended_at"]),
+                actor=r["actor"],
+                reviewer=r["reviewer"],
+                repo=r["repo"],
+                additions=r["additions"],
+                deletions=r["deletions"],
+                size_bucket=r["size_bucket"],
+                round=r["round"],
+                finished_at=_optional_time(r["finished_at"]),
+            )
+            for r in rows
+        ]
+
+    def record_prediction(self, row: PredictionRow) -> bool:
+        """Keeps the first estimate made for a task in a stage; ``True`` when
+        this one was new."""
+        with self._write() as conn:
+            return (
+                conn.execute(
+                    "INSERT INTO predictions (task_key, stage, stage_started_at, "
+                    "made_at, p50_at, p80_at, level, n, model_version) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT (task_key, stage, stage_started_at) DO NOTHING",
+                    (
+                        row.task_key,
+                        row.stage,
+                        _iso(row.stage_started_at),
+                        _iso(row.made_at),
+                        _iso(row.p50_at),
+                        _iso(row.p80_at),
+                        row.level,
+                        row.n,
+                        row.model_version,
+                    ),
+                ).rowcount
+                > 0
+            )
+
+    def predictions(self) -> list[PredictionRow]:
+        rows = self._conn.execute("SELECT * FROM predictions ORDER BY made_at, id")
+        return [
+            PredictionRow(
+                task_key=r["task_key"],
+                stage=r["stage"],
+                stage_started_at=datetime.fromisoformat(r["stage_started_at"]),
+                made_at=datetime.fromisoformat(r["made_at"]),
+                p50_at=datetime.fromisoformat(r["p50_at"]),
+                p80_at=datetime.fromisoformat(r["p80_at"]),
+                level=r["level"],
+                n=r["n"],
+                model_version=r["model_version"],
+            )
+            for r in rows
+        ]
+
+    def save_backtest(self, row: BacktestRow) -> None:
+        with self._write() as conn:
+            conn.execute(
+                "INSERT INTO estimate_backtests (ran_at, model_version, params, "
+                "metrics) VALUES (?, ?, ?, ?)",
+                (_iso(row.ran_at), row.model_version, row.params, row.metrics),
+            )
+
+    def backtests(self, limit: int = 200) -> list[BacktestRow]:
+        """The latest ``limit`` backtests, oldest first."""
+        rows = self._conn.execute(
+            "SELECT * FROM (SELECT * FROM estimate_backtests ORDER BY ran_at DESC, "
+            "id DESC LIMIT ?) ORDER BY ran_at, id",
+            (limit,),
+        )
+        return [
+            BacktestRow(
+                ran_at=datetime.fromisoformat(r["ran_at"]),
+                model_version=r["model_version"],
+                params=r["params"],
+                metrics=r["metrics"],
+            )
+            for r in rows
+        ]
 
     def aggregate_prs(self) -> list[AggregatePrRow]:
         rows = self._conn.execute(

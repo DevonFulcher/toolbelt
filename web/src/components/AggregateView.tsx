@@ -1,6 +1,7 @@
 // The aggregate view: how work has been flowing over a window. Fetches
 // `/api/aggregate` when opened (and when the window changes); the server
 // refreshes its history in the background.
+import { EstimateAccuracySection } from "./EstimateAccuracy";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchAggregate } from "../api/client";
 import type { Aggregate, Tone, WaitingOnKey } from "../api/generated";
@@ -469,6 +470,7 @@ export function AggregatePanels({
           </>
         )}
       </section>
+      {data.estimate && <EstimateAccuracySection accuracy={data.estimate} timeZone={timeZone} />}
       <details className="agg-notes">
         <summary>What is approximated or not reconstructable</summary>
         <dl>
