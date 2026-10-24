@@ -995,9 +995,9 @@ export const register: Register = on => {
     }
     try {
       const result = await next(e)
-      // a call the engine refused answers { deny } rather than throwing
-      const isDenied = typeof result === 'object' && result !== null && 'deny' in result
-      if (call !== null) endCall(call, e.agentId, !isDenied)
+      // a call that failed or was refused (a blocking hook, say) still returns, with isError set
+      const isError = typeof result === 'object' && result !== null && (result as { isError?: unknown }).isError === true
+      if (call !== null) endCall(call, e.agentId, !isError)
       return result
     } catch (error) {
       if (call !== null) endCall(call, e.agentId, false)

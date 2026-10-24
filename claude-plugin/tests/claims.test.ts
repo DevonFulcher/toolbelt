@@ -341,7 +341,8 @@ function world(
     // a test makes a call take time with delay(): keyed by what the call says
     const fields = e as unknown as Record<string, unknown>
     const key = String(fields['command'] ?? fields['prompt'] ?? fields['pattern'] ?? '')
-    if (denied.has(key)) return { deny: 'blocked by a hook' }
+    // a refused or failed call returns with isError set, as the engine's results do
+    if (denied.has(key)) return { result: 'Error: blocked by a hook', text: 'blocked by a hook', isError: true }
     const ms = delays.get(key) ?? 0
     if (ms > 0) await new Promise(resolve => setTimeout(resolve, ms))
     return { result: 'ok' }
@@ -938,7 +939,7 @@ describe('activity', () => {
     expect(lastChunk(w).calls[0]?.ok).toBe(false)
   })
 
-  test('a call the engine refuses is not ok, and neither is one the user denied', async ($, on) => {
+  test('a call whose result is an error is not ok (refused, failed), and neither is one the user denied', async ($, on) => {
     const w = world(on)
     await startTurn($, w)
     denied.add('sleep 99')

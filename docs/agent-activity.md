@@ -14,7 +14,7 @@ unchanged) and keeps, per turn:
 | `tool`, `detail` | the tool and its command (Bash) or path / pattern / URL / query / text / description / prompt (the first the call has), cut to 500 characters |
 | `started_at`, `duration_ms` | when and how long, from the same clock as the claim files |
 | `blocked_ms` | the part of the call spent blocked on a permission prompt or dialog |
-| `ok` | `false` when the failure hook reported it, the user denied it, or the engine refused it (answered `deny`); `null` when it never ended |
+| `ok` | `false` when the failure hook reported it, the user denied it, or its result came back as an error (it failed, or a hook refused it); `null` when it never ended |
 | `worktree` | the worktree it was about: a path it names, else where its command ran (a `cd` anywhere in the chain moves the rest; `-C`, `--dir`, `--project`, `--cwd` and absolute paths among the words are read), else where the session is; failing that, the one worktree the turn claimed. Reads are attributed too, although they claim nothing |
 | `background`, `delegated` | a background Bash call; a call that starts a subagent (`Task`) |
 
@@ -29,6 +29,21 @@ that add up to it:
 - **model**: the rest: thinking, streaming, API latency.
 
 A call still running when the turn ends is closed with it and marked `unended`.
+
+## What else the plugin can see
+
+Seen in real events (captured with a throwaway probe) but not recorded yet:
+
+- `classic.PostToolUse` and `PostToolUseFailure` carry the engine's own
+  `duration_ms` for the call (a cross-check on the plugin's timing),
+  `tool_use_id`, `tool_response` (for Bash: `stdout`, `stderr`, `interrupted`)
+  and, for a failure, `error` and `is_interrupt`; both also carry `agent_id`,
+  `agent_type`, `permission_mode`, `effort.level`, `prompt_id` (groups the turns
+  of one user prompt) and `transcript_path`.
+- The `tool.call` result is `{ref, result, text}` plus `isError` for a failed or
+  refused call and `isReadOnly` for a read-only one.
+- A call refused by a hook fires no `PostToolUse` or `PostToolUseFailure`; it is
+  only visible as `isError` on the result, which is what `ok` reads.
 
 ## The files
 
@@ -68,4 +83,4 @@ calls were about; turns with none are only in the all-repos view.
 ## Updating
 
 `claude-plugin/install.sh`, then start a new session: the mod is loaded per
-session. The plugin version is 0.2.1.
+session. The plugin version is 0.2.2.
