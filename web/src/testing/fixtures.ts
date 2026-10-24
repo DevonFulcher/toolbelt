@@ -133,6 +133,7 @@ export function branch(
     claim: { holders: [] },
     slack: null,
     merge_queue: null,
+    sibling_conflicts: null,
     started_at: null,
     status: { load: "loading" },
     ...rest,

@@ -1144,6 +1144,16 @@
         "repo_id": {
           "type": "integer"
         },
+        "sibling_conflicts": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SiblingConflictsInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "slack": {
           "anyOf": [
             {
@@ -1216,6 +1226,7 @@
         "claim",
         "slack",
         "merge_queue",
+        "sibling_conflicts",
         "started_at",
         "status"
       ],
@@ -4313,6 +4324,72 @@
         }
       ]
     },
+    "SiblingConflict": {
+      "additionalProperties": false,
+      "description": "Another open task whose branch does not merge cleanly with this one's.",
+      "properties": {
+        "branch_id": {
+          "type": "string"
+        },
+        "files": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "more": {
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/SiblingConflictState"
+        }
+      },
+      "required": [
+        "branch_id",
+        "name",
+        "state",
+        "files",
+        "more"
+      ],
+      "title": "SiblingConflict",
+      "type": "object"
+    },
+    "SiblingConflictState": {
+      "enum": [
+        "conflict",
+        "inherited",
+        "unknown"
+      ],
+      "type": "string"
+    },
+    "SiblingConflictsInfo": {
+      "additionalProperties": false,
+      "description": "How a branch's head merges with the other open tasks' of its repo (see\n``sibling_conflicts``). ``None`` on a branch when there is nothing to say.",
+      "properties": {
+        "conflicts": {
+          "items": {
+            "$ref": "#/$defs/SiblingConflict"
+          },
+          "type": "array"
+        },
+        "head_known": {
+          "type": "boolean"
+        },
+        "prominent": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "head_known",
+        "prominent",
+        "conflicts"
+      ],
+      "title": "SiblingConflictsInfo",
+      "type": "object"
+    },
     "SlackAccepted": {
       "additionalProperties": false,
       "description": "The answer to ``POST /api/slack/send``: the message is being posted in\nthe background. Its PRs read ``posting`` until it is done; then they read\nposted, or carry a ``notice`` saying why not.",
@@ -5602,6 +5679,16 @@
             }
           ]
         },
+        "sibling_conflicts": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SiblingConflictsInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "slack": {
           "anyOf": [
             {
@@ -5629,7 +5716,8 @@
         "branch_id",
         "status",
         "slack",
-        "merge_queue"
+        "merge_queue",
+        "sibling_conflicts"
       ],
       "title": "StatusEvent",
       "type": "object"

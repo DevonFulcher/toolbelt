@@ -154,6 +154,7 @@ from toolbelt.ui.pr_gate import GithubChangeGate, PrGate
 from toolbelt.ui.pushed_views import PushedViews, conversation_of
 from toolbelt.ui.repo_visibility import visible_repos
 from toolbelt.ui.review_routes import review_router
+from toolbelt.ui.sibling_conflicts import SiblingConflictTracker
 from toolbelt.ui.slack_config import SlackConfig
 from toolbelt.ui.slack_proxy import SlackProxy
 from toolbelt.ui.slack_service import SlackNotApplicable, SlackService, SlackUnknown
@@ -273,6 +274,32 @@ def _merge_queue_entries() -> list[MergeQueueRow]:
         return store.merge_queue()
     finally:
         store.close()
+
+
+class _StoredConflictCache:
+    """The ``sibling_conflicts`` table as the tracker's cache (see
+    ``sibling_conflicts``)."""
+
+    def load(self, repo_id: int) -> dict[tuple[str, str], tuple[str, ...]]:
+        store = StackStore(default_db_path())
+        try:
+            return store.sibling_conflicts(repo_id)
+        finally:
+            store.close()
+
+    def save(self, repo_id: int, pairs: dict[tuple[str, str], tuple[str, ...]]) -> None:
+        store = StackStore(default_db_path())
+        try:
+            store.save_sibling_conflicts(repo_id, pairs)
+        finally:
+            store.close()
+
+    def prune(self, repo_id: int, heads: set[str]) -> None:
+        store = StackStore(default_db_path())
+        try:
+            store.prune_sibling_conflicts(repo_id, heads)
+        finally:
+            store.close()
 
 
 def _add_to_merge_queue(row: MergeQueueRow) -> None:
@@ -640,6 +667,7 @@ def create_app(
             looked_up = refresher.get(repo_id, name)
             info = slack.info(repo_id, name, looked_up, now)
             queue_info = merge_queue.info(repo_id, name)
+            sibling_info = sibling_conflicts.info(repo_id, name)
             hub.publish(
                 "status",
                 {
@@ -650,6 +678,9 @@ def create_app(
                     "slack": info.model_dump(mode="json") if info else None,
                     "merge_queue": queue_info.model_dump(mode="json")
                     if queue_info
+                    else None,
+                    "sibling_conflicts": sibling_info.model_dump(mode="json")
+                    if sibling_info
                     else None,
                 },
             )
@@ -1055,6 +1086,22 @@ def create_app(
         tick=merge_queue_tick,
     )
 
+    def publish_sibling_conflicts(changed: set[BranchKey]) -> None:
+        """Only the branches themselves change: their conflicts do not move any
+        other branch's next action."""
+        for repo_id, branch in sorted(changed):
+            publish_branches(repo_id, _all_parents(repo_id), [branch])
+
+    sibling_conflicts = SiblingConflictTracker(
+        branches=_tracked_branches,
+        parents=_all_parents,
+        fetched=refresher.get,
+        cache=_StoredConflictCache(),
+        on_change=publish_sibling_conflicts,
+        hub=hub,
+        branch_id=row_id,
+    )
+
     slack_service = (
         SlackService(
             config=slack_settings,
@@ -1117,6 +1164,7 @@ def create_app(
         if bump_watcher is not None:
             tasks.append(asyncio.create_task(bump_watcher.run()))
         tasks.append(asyncio.create_task(merge_queue.run()))
+        tasks.append(asyncio.create_task(sibling_conflicts.run()))
         tasks.append(asyncio.create_task(task_status_sync.run()))
         try:
             yield
@@ -1149,6 +1197,9 @@ def create_app(
     app.state.forwarders = forwarders
     app.state.slack = slack
     app.state.merge_queue = merge_queue
+    #: ``await app.state.sibling_conflicts.fresh_conflicts_for(repo_id, branch)``
+    #: before a review starts or a merge runs.
+    app.state.sibling_conflicts = sibling_conflicts
     app.state.github = requests
     app.state.views = views
     app.include_router(review_router(review_sessions))
@@ -1219,6 +1270,7 @@ def create_app(
             webhooks=webhook_problems(),
             slack=slack,
             merge_queue=merge_queue,
+            sibling_conflicts=sibling_conflicts,
         )
 
     @app.get("/api/aggregate", response_model=api.Aggregate)

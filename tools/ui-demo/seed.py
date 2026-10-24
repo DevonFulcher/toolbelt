@@ -559,6 +559,31 @@ def write_activity(home: Path, now: datetime) -> None:
             (out / f"sess-demo.{turn_id}.0.json").write_text(json.dumps(document))
 
 
+def write_sibling_commits(repo: Path) -> None:
+    """Real commits for two tasks of demo-search that both change the same line
+    of one file, so their heads conflict (the sibling-conflict chips of docs/
+    sibling-conflicts.md). The other demo branches have no commits: their heads
+    are not in the repo, which the cards show as unknown."""
+    identity = ("-c", "user.name=Demo", "-c", "user.email=demo@example.com")
+    weights = repo / "search" / "weights.py"
+    weights.parent.mkdir(exist_ok=True)
+
+    def commit(message: str, weight: int) -> None:
+        weights.write_text(
+            "".join(f"# weight {n}\n" for n in range(1, 6))
+            + f"TITLE_WEIGHT = {weight}\n"
+            + "".join(f"# weight {n}\n" for n in range(7, 12))
+        )
+        _git(repo, "add", "-A")
+        _git(repo, *identity, "commit", "-q", "-m", message)
+
+    commit("Search weights", 2)
+    for branch, weight in (("devon/search-index", 3), ("devon/search-cache", 5)):
+        _git(repo, "checkout", "-q", "-b", branch, "main")
+        commit(f"Weigh titles {weight}", weight)
+        _git(repo, "checkout", "-q", "main")
+
+
 def seed(dest: Path, deep: int) -> None:
     repos = dest / "repos"
     for name in STACKS:
@@ -579,6 +604,7 @@ def seed(dest: Path, deep: int) -> None:
             "-m",
             "init",
         )
+    write_sibling_commits(repos / "demo-search")
     (dest / "config").mkdir(exist_ok=True)
 
     started: dict[tuple[str, str], float] = {}

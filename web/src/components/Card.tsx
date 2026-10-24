@@ -7,6 +7,8 @@ import type {
   LiveStatus,
   LoadedStatus,
   MergeQueueInfo,
+  SiblingConflict,
+  SiblingConflictsInfo,
   RepoWebhook,
   SlackInfo,
   SlotDimensions,
@@ -219,6 +221,7 @@ export const Card = memo(
     const task = useApp((s) => s.tasks[id]) ?? null;
     const slack = useApp((s) => s.slacks[id]) ?? null;
     const mergeQueue = useApp((s) => s.mergeQueues[id]) ?? null;
+    const siblings = useApp((s) => s.siblingConflicts[id]) ?? null;
     const claim = useApp((s) => s.claims[id]) ?? NO_CLAIM;
     const extras = useApp((s) => s.extras[id]);
     const decidedAt = useApp((s) => s.decidedAt);
@@ -387,6 +390,7 @@ export const Card = memo(
             session={sessionLink(claim, branch.agent)}
             slackPosting={slack?.posting ?? false}
             queue={mergeQueue}
+            siblings={siblings}
           />
           <Slot
             id="task_age"
@@ -533,6 +537,7 @@ function NextSlot({
   session,
   slackPosting,
   queue,
+  siblings,
 }: {
   id: string;
   status: LiveStatus;
@@ -544,6 +549,8 @@ function NextSlot({
   slackPosting: boolean;
   /** Where the PR stands in the merge queue (``null``: nothing to say). */
   queue: MergeQueueInfo | null;
+  /** How its head merges with the other open tasks' (``null``: cleanly). */
+  siblings: SiblingConflictsInfo | null;
 }) {
   if (status.load !== "loaded") {
     return (
@@ -575,8 +582,67 @@ function NextSlot({
         {wouldBe ? `would be: ${wouldBe.label}` : WHO_TEXT[status.next.who]}
       </span>
       {queue && <MergeQueueControls id={id} queue={queue} />}
+      {siblings && <SiblingConflictChips siblings={siblings} />}
       <ClaimChips claim={claim} />
     </Slot>
+  );
+}
+
+const MAX_SIBLING_FILES = 3;
+/** More tasks than this collapse into one chip. */
+const MAX_SIBLING_CHIPS = 3;
+
+function siblingText(c: SiblingConflict): string {
+  if (c.state === "unknown") return `${c.name}: unknown, head not fetched`;
+  const shown = c.files.slice(0, MAX_SIBLING_FILES).join(", ");
+  const rest = c.files.length - MAX_SIBLING_FILES + c.more;
+  const files = `${shown}${rest > 0 ? ` (+${rest})` : ""}`;
+  return c.state === "inherited"
+    ? `conflicts with ${c.name} through their parents: ${files}`
+    : `conflicts with ${c.name}: ${files}`;
+}
+
+/** Other open tasks whose branch does not merge cleanly with this one. Loud
+ *  (red) for a PR in review or ready to merge, quiet (gray) for the rest;
+ *  conflicts inherited from the parents and heads that could not be tried are
+ *  amber/gray as never clean. */
+function SiblingConflictChips({ siblings }: { siblings: SiblingConflictsInfo }) {
+  if (!siblings.head_known) {
+    return (
+      <>
+        {" "}
+        <Pill tone="gray" title="This task's head commit is not in the local repo, so its merges with the other open tasks could not be tried.">
+          conflicts unknown, head not fetched
+        </Pill>
+      </>
+    );
+  }
+  const tone = (c: SiblingConflict): "red" | "amber" | "gray" =>
+    !siblings.prominent || c.state === "unknown" ? "gray" : c.state === "inherited" ? "amber" : "red";
+  if (siblings.conflicts.length > MAX_SIBLING_CHIPS) {
+    return (
+      <>
+        {" "}
+        <Pill
+          tone={siblings.prominent ? "red" : "gray"}
+          title={siblings.conflicts.map(siblingText).join("\n")}
+        >
+          {`conflicts with ${siblings.conflicts.length} tasks`}
+        </Pill>
+      </>
+    );
+  }
+  return (
+    <>
+      {siblings.conflicts.map((c) => (
+        <span key={c.branch_id}>
+          {" "}
+          <Pill tone={tone(c)} title={c.files.join("\n") || undefined}>
+            {siblingText(c)}
+          </Pill>
+        </span>
+      ))}
+    </>
   );
 }
 

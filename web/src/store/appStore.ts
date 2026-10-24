@@ -15,6 +15,7 @@ import type {
   FetchedBranch,
   RepoWebhook,
   MergeQueueInfo,
+  SiblingConflictsInfo,
   SlackInfo,
   Spend,
   Branch,
@@ -33,7 +34,7 @@ import { DEFAULT_STATE, type View, type ViewState } from "../logic/viewState";
 import { runningBuild } from "../live/build";
 
 /** A branch without its live parts (those are patched separately). */
-export type StaticBranch = Omit<Branch, "status" | "task_live" | "claim" | "slack" | "merge_queue">;
+export type StaticBranch = Omit<Branch, "status" | "task_live" | "claim" | "slack" | "merge_queue" | "sibling_conflicts">;
 
 /** Per-card timeline UI state, kept across live updates. */
 export interface CardUi {
@@ -72,6 +73,8 @@ export interface AppState {
   slacks: Record<string, SlackInfo>;
   /** Where each branch's PR stands in the merge queue (absent: nothing to say). */
   mergeQueues: Record<string, MergeQueueInfo>;
+  /** How a branch's head merges with the other open tasks' (absent: cleanly). */
+  siblingConflicts: Record<string, SiblingConflictsInfo>;
   /** Only for branches whose task the configured tracker owns. */
   tasks: Record<string, TaskLive>;
   /** When (ms) each branch's PR status was last looked up on GitHub. */
@@ -123,6 +126,7 @@ export interface AppState {
     v: number,
     slack?: SlackInfo | null,
     mergeQueue?: MergeQueueInfo | null,
+    siblingConflicts?: SiblingConflictsInfo | null,
   ): void;
   taskChanged(branchId: string, task: TaskLive, v: number): void;
   /** Claims changed on some branches: their claim and re-derived status. */
@@ -222,6 +226,7 @@ export function createAppStore(init: StoreInit = {}): AppStore {
     claims: {},
     slacks: {},
     mergeQueues: {},
+    siblingConflicts: {},
     tasks: {},
     fetchedAt: {},
     fetchError: {},
@@ -252,12 +257,14 @@ export function createAppStore(init: StoreInit = {}): AppStore {
       const claims: Record<string, BranchClaim> = {};
       const slacks: Record<string, SlackInfo> = {};
       const mergeQueues: Record<string, MergeQueueInfo> = {};
+      const siblingConflicts: Record<string, SiblingConflictsInfo> = {};
       const statics: StaticBranch[] = [];
-      for (const { status, task_live, claim, slack, merge_queue, ...rest } of snapshot.branches) {
+      for (const { status, task_live, claim, slack, merge_queue, sibling_conflicts, ...rest } of snapshot.branches) {
         statuses[rest.id] = status;
         claims[rest.id] = claim;
         if (slack) slacks[rest.id] = slack;
         if (merge_queue) mergeQueues[rest.id] = merge_queue;
+        if (sibling_conflicts) siblingConflicts[rest.id] = sibling_conflicts;
         if (task_live) tasks[rest.id] = task_live;
         const before = prev.branchesById[rest.id];
         statics.push(before && same(before, rest) ? before : rest);
@@ -279,6 +286,7 @@ export function createAppStore(init: StoreInit = {}): AppStore {
         claims: share(prev.claims, claims),
         slacks: share(prev.slacks, slacks),
         mergeQueues: share(prev.mergeQueues, mergeQueues),
+        siblingConflicts: share(prev.siblingConflicts, siblingConflicts),
         ...fetchedState(snapshot.fetched),
         webhooks: webhooksByRepo(snapshot.webhooks),
         ...(snapshot.extras ? extrasState(snapshot.extras) : {}),
@@ -300,7 +308,7 @@ export function createAppStore(init: StoreInit = {}): AppStore {
       set({ error: message });
     },
 
-    statusChanged(branchId, status, v, slack, mergeQueue) {
+    statusChanged(branchId, status, v, slack, mergeQueue, siblingConflicts) {
       const state = get();
       // Already reflected in the snapshot this page was built from.
       if (state.version !== null && v <= state.version) return;
@@ -317,6 +325,12 @@ export function createAppStore(init: StoreInit = {}): AppStore {
         if (mergeQueue === null) delete mergeQueues[branchId];
         else mergeQueues[branchId] = mergeQueue;
       }
+      let siblings = state.siblingConflicts;
+      if (siblingConflicts !== undefined && !same(siblings[branchId] ?? null, siblingConflicts)) {
+        siblings = { ...siblings };
+        if (siblingConflicts === null) delete siblings[branchId];
+        else siblings[branchId] = siblingConflicts;
+      }
       set({
         version: v,
         updatedAt: clock(),
@@ -324,6 +338,7 @@ export function createAppStore(init: StoreInit = {}): AppStore {
           before && same(before, status) ? state.statuses : { ...state.statuses, [branchId]: status },
         slacks,
         mergeQueues,
+        siblingConflicts: siblings,
       });
     },
 

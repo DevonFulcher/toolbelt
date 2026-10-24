@@ -96,7 +96,7 @@ describe("live updates", () => {
     expect(env.fetches).toBe(1);
 
     env.time = 5000;
-    current().emit({ type: "status", v: 1, branch_id: "1:a", status: loaded, slack: null, merge_queue: null });
+    current().emit({ type: "status", v: 1, branch_id: "1:a", status: loaded, slack: null, merge_queue: null, sibling_conflicts: null });
     current().emit({ type: "refreshed", v: 2, fetched: [{ branch_id: "1:a", fetched_at: "2026-10-17T12:00:00Z", error: null }] });
     await settle();
     expect(store.getState().statuses["1:a"]).toEqual(loaded);
@@ -142,7 +142,7 @@ describe("live updates", () => {
     current().emit({ type: "hello", v: 0, age: null, build: null });
 
     current().emit({ type: "structure", v: 1 });
-    current().emit({ type: "status", v: 2, branch_id: "1:a", status: loaded, slack: null, merge_queue: null });
+    current().emit({ type: "status", v: 2, branch_id: "1:a", status: loaded, slack: null, merge_queue: null, sibling_conflicts: null });
     await settle();
 
     expect(store.getState().statuses["1:a"]).toEqual(loaded);
@@ -156,7 +156,7 @@ describe("live updates", () => {
     await settle();
 
     current().emit({ type: "hello", v: 5, age: null, build: null });
-    current().emit({ type: "status", v: 4, branch_id: "1:a", status: stale, slack: null, merge_queue: null });
+    current().emit({ type: "status", v: 4, branch_id: "1:a", status: stale, slack: null, merge_queue: null, sibling_conflicts: null });
     await settle();
 
     expect(store.getState().statuses["1:a"]).toEqual(loaded);
