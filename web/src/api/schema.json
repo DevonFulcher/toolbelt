@@ -589,6 +589,12 @@
         "fetched_at": {
           "type": "string"
         },
+        "lanes": {
+          "items": {
+            "$ref": "#/$defs/AggregateLane"
+          },
+          "type": "array"
+        },
         "mix": {
           "$ref": "#/$defs/StatusMix"
         },
@@ -636,6 +642,7 @@
         "repo",
         "prs",
         "mix",
+        "lanes",
         "coverage",
         "notes"
       ],
@@ -665,6 +672,90 @@
         "hidden"
       ],
       "title": "AggregateCoverage",
+      "type": "object"
+    },
+    "AggregateLane": {
+      "additionalProperties": false,
+      "description": "A lane's layer of the aggregate view: how often its spans were on the\ntasks in flight, and its markers (see ``timeline_lanes.py``).",
+      "properties": {
+        "events": {
+          "items": {
+            "$ref": "#/$defs/AggregateLaneEvents"
+          },
+          "type": "array"
+        },
+        "lane": {
+          "$ref": "#/$defs/LaneId"
+        },
+        "phases": {
+          "items": {
+            "$ref": "#/$defs/AggregateLanePhase"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "lane",
+        "phases",
+        "events"
+      ],
+      "title": "AggregateLane",
+      "type": "object"
+    },
+    "AggregateLaneEvents": {
+      "additionalProperties": false,
+      "description": "When (in the window) markers of this kind happened, on the tasks.",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/LaneEventKind"
+        },
+        "times": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind",
+        "times"
+      ],
+      "title": "AggregateLaneEvents",
+      "type": "object"
+    },
+    "AggregateLanePhase": {
+      "additionalProperties": false,
+      "description": "The share of the tasks in flight (at each of ``mix.starts``) that had\na span of this kind of lane ``lane`` then, and how many.",
+      "properties": {
+        "count": {
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "$ref": "#/$defs/LanePhaseKind"
+        },
+        "share": {
+          "items": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind",
+        "share",
+        "count"
+      ],
+      "title": "AggregateLanePhase",
       "type": "object"
     },
     "AggregateNote": {
@@ -2925,7 +3016,8 @@
         "ci_running",
         "ci_failing",
         "approved",
-        "blocked"
+        "blocked",
+        "agent"
       ],
       "type": "string"
     },
@@ -2958,6 +3050,7 @@
     "MixWho": {
       "enum": [
         "you",
+        "agent",
         "ci",
         "others"
       ],

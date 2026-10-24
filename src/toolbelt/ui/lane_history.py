@@ -11,7 +11,12 @@ source's own vocabulary), so a status value without a timeline kind is a
 from collections.abc import Callable
 from datetime import datetime
 
-from toolbelt.git.stack.store import SlackPostRow, StackStore
+from toolbelt.git.stack.store import (
+    RemovedBranch,
+    SlackPostRow,
+    StackStore,
+    TrackedBranchFacts,
+)
 from toolbelt.ui import api_models as api
 from toolbelt.ui.claims_feed import SPAN_MAX_GAP
 from toolbelt.ui.status_transitions import CI, CONFLICT
@@ -69,11 +74,14 @@ def build_lanes(
     now: datetime,
     repo_slug: Callable[[int], str | None] = lambda repo_id: None,
 ) -> dict[BranchKey, list[api.TimelineLane]]:
-    """Every tracked branch's lanes that have something to draw, in the
-    catalog's lane order. ``repo_slug`` is a repo's ``owner/name`` (what Slack
+    """Every branch's (tracked, and archived: the aggregate view reads them
+    too) lanes that have something to draw, in the catalog's lane order. ``repo_slug`` is a repo's ``owner/name`` (what Slack
     posts are keyed by)."""
     found = _Lanes()
-    tracked = store.tracked_branch_facts()
+    tracked: list[TrackedBranchFacts | RemovedBranch] = [
+        *store.tracked_branch_facts(),
+        *store.removed_branches(),
+    ]
     by_task = {facts.task_id: (facts.repo_id, facts.name) for facts in tracked}
 
     # Observed changes: each value lasts until the next one is recorded.

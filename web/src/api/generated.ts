@@ -26,10 +26,42 @@ export type AgentReasonCode =
 export type AgentTrigger = "resolve_conflicts" | "resolve_comments" | "fix_ci";
 export type AgentRunState =
   "running" | "succeeded" | "failed" | "timed_out" | "cap_reached" | "stopped" | "abandoned" | "deciding";
+export type LaneEventKind = "slack_post" | "slack_bump" | "slack_reassign" | "decision_answered" | "task_in_review";
+export type LaneId = "git" | "ci" | "agent" | "claim" | "slack" | "merge_queue" | "decision" | "task";
+export type LanePhaseKind =
+  | "git_conflicting"
+  | "ci_seen_running"
+  | "ci_seen_failed"
+  | "ci_seen_success"
+  | "agent_running"
+  | "agent_deciding"
+  | "agent_succeeded"
+  | "agent_failed"
+  | "agent_timed_out"
+  | "agent_cap_reached"
+  | "agent_stopped"
+  | "agent_abandoned"
+  | "claim_agent_worktree"
+  | "claim_agent_ref"
+  | "claim_human_worktree"
+  | "claim_human_ref"
+  | "claim_autonomous_worktree"
+  | "claim_autonomous_ref"
+  | "merge_queued"
+  | "decision_pending";
 export type MixState =
-  "working" | "draft" | "ready" | "waiting" | "changes" | "ci_running" | "ci_failing" | "approved" | "blocked";
+  | "working"
+  | "draft"
+  | "ready"
+  | "waiting"
+  | "changes"
+  | "ci_running"
+  | "ci_failing"
+  | "approved"
+  | "blocked"
+  | "agent";
 export type Tone = "green" | "red" | "amber" | "gray" | "purple" | "accent";
-export type MixWho = "you" | "ci" | "others";
+export type MixWho = "you" | "agent" | "ci" | "others";
 export type DecisionStatus = "pending" | "answered";
 export type ServerEvent =
   | HelloEvent
@@ -88,29 +120,6 @@ export type TaskLive = TaskLoading | TaskDetails | TaskUnavailable;
 export type HolderKind = "agent" | "human" | "autonomous";
 export type HolderState = "working" | "idle" | "blocked";
 export type UntrackedPrs = UntrackedLoading | UntrackedLoaded | UntrackedFailed;
-export type LaneEventKind = "slack_post" | "slack_bump" | "slack_reassign" | "decision_answered" | "task_in_review";
-export type LaneId = "git" | "ci" | "agent" | "claim" | "slack" | "merge_queue" | "decision" | "task";
-export type LanePhaseKind =
-  | "git_conflicting"
-  | "ci_seen_running"
-  | "ci_seen_failed"
-  | "ci_seen_success"
-  | "agent_running"
-  | "agent_deciding"
-  | "agent_succeeded"
-  | "agent_failed"
-  | "agent_timed_out"
-  | "agent_cap_reached"
-  | "agent_stopped"
-  | "agent_abandoned"
-  | "claim_agent_worktree"
-  | "claim_agent_ref"
-  | "claim_human_worktree"
-  | "claim_human_ref"
-  | "claim_autonomous_worktree"
-  | "claim_autonomous_ref"
-  | "merge_queued"
-  | "decision_pending";
 export type CatalogDimension =
   "pr" | "ci" | "review" | "comments" | "merge" | "task" | "draft" | "reviewers" | "blocked" | "next";
 export type CatalogState =
@@ -287,6 +296,7 @@ export interface AgentsLaunching {
 export interface Aggregate {
   coverage: AggregateCoverage;
   fetched_at: string;
+  lanes: AggregateLane[];
   mix: StatusMix;
   notes: AggregateNote[];
   prs: PrMilestones[];
@@ -301,6 +311,31 @@ export interface AggregateCoverage {
   task_starts_since: string;
   tasks_without_pr: number;
   truncated: boolean;
+}
+/**
+ * A lane's layer of the aggregate view: how often its spans were on the
+ * tasks in flight, and its markers (see ``timeline_lanes.py``).
+ */
+export interface AggregateLane {
+  events: AggregateLaneEvents[];
+  lane: LaneId;
+  phases: AggregateLanePhase[];
+}
+/**
+ * When (in the window) markers of this kind happened, on the tasks.
+ */
+export interface AggregateLaneEvents {
+  kind: LaneEventKind;
+  times: string[];
+}
+/**
+ * The share of the tasks in flight (at each of ``mix.starts``) that had
+ * a span of this kind of lane ``lane`` then, and how many.
+ */
+export interface AggregateLanePhase {
+  count: number[];
+  kind: LanePhaseKind;
+  share: (number | null)[];
 }
 /**
  * A snapshot of the tasks in flight at each transition instant (not an

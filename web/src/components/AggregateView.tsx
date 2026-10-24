@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchAggregate } from "../api/client";
 import type { Aggregate, MixWho, Tone } from "../api/generated";
 import { formatBucketDate } from "../logic/aggregateChart";
+import { laneLayers } from "../logic/aggregateLanes";
 import { bucketDays, leadTimeSeries, STAGES, type StageKey } from "../logic/leadTime";
 import { formatAbsolute } from "../logic/format";
 import { browserTimeZone, formatLocalDate, windowStart } from "../logic/localTime";
@@ -115,7 +116,7 @@ export function useAggregate(
 
 /** The coarse classes: the sections of the grouped view, so the legend reads
  * as the cards do. */
-const WHO_TONE: Record<MixWho, Tone> = { you: "accent", ci: "amber", others: "gray" };
+const WHO_TONE: Record<MixWho, Tone> = { you: "accent", agent: "purple", ci: "amber", others: "gray" };
 
 /** The lead-time steps' lines use the page's existing tones. */
 const LEAD_TONES: Record<StageKey, Tone> = {
@@ -248,6 +249,7 @@ export function AggregatePanels({
       legend: `${LEAD_DESCRIPTIONS[key]} Each bar is the median over the PRs merged in a group.`,
     })),
   ) as LeadStageStyle[];
+  const layers = catalog ? laneLayers(data, catalog) : [];
   const startsAfterWindow = Date.parse(coverage.task_starts_since) > start;
 
   return (
@@ -319,7 +321,7 @@ export function AggregatePanels({
       />
       <MixChart
         title="Who is it waiting on"
-        description="Stacked snapshots at every task state change, placed at their exact times on the x-axis and grouped by who the next action waits on: you (open, publish, fix, address review, merge), CI, or others (a reviewer, or a parent PR that waits on one). Derived with the rules of the Next column."
+        description="Stacked snapshots at every task state change, placed at their exact times on the x-axis and grouped by who the next action waits on: you (open, publish, fix, address review, merge), an agent that holds a claim on the task, CI, or others (a reviewer, or a parent PR that waits on one). Derived with the rules of the Next column."
         series={whoSeries}
         shares={mix.who.map((s) => s.share)}
         counts={mix.who.map((s) => s.count)}
@@ -329,6 +331,27 @@ export function AggregatePanels({
         empty="No task was in flight in this window."
         transitionTicks={weeks <= 12}
       />
+      {layers.map((layer) => (
+        <div key={layer.lane} className={`agg-lane agg-lane-${layer.lane}`}>
+          <MixChart
+            title={`Lane: ${layer.label}`}
+            description={`The share of the tasks in flight, at every sampled moment, that had something in the ${layer.label} lane (see the card timeline's lanes); the rest had nothing recorded there. Recorded history only: it begins when toolbelt first recorded each source, and covers tasks that were tracked branches.`}
+            series={withHatches(layer.styles)}
+            shares={layer.shares}
+            counts={layer.counts}
+            starts={mix.starts}
+            inflight={mix.inflight}
+            timeZone={timeZone}
+            empty="No task was in flight in this window."
+            transitionTicks={weeks <= 12}
+          />
+          {layer.events.length > 0 && (
+            <p className="agg-lane-events">
+              {layer.events.map((e) => `${e.count} × ${e.label}`).join(", ")} in this window.
+            </p>
+          )}
+        </div>
+      ))}
       <details className="agg-notes">
         <summary>What is approximated or not reconstructable</summary>
         <dl>

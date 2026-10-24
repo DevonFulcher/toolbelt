@@ -41,3 +41,18 @@ A card's timeline is a PR track with lanes under it, all on one time axis.
 
 Lanes reach the page in `BranchExtras.lanes`, rebuilt whenever the database
 changes (`PushedViews`).
+
+## The aggregate view
+
+The aggregate view uses the same registry (`aggregate.py`):
+
+- Time under a claim is the status mix's "With an agent" state, replacing the
+  PR's own state while the claim was held.
+- Each lane without an `aggregate_skip` reason gets a layer in
+  `Aggregate.lanes`: per sampled instant, how many of the tasks in flight had a
+  span of each kind (drawn like the status mix, the rest as "no activity"), and
+  the times of its markers. A lane that is not counted says why in
+  `LaneSource.aggregate_skip`; `tests/test_ui_aggregate.py` checks that every
+  other lane has a layer.
+- Lane history is recorded history: it covers tasks that were tracked
+  branches and begins when each source was first recorded.

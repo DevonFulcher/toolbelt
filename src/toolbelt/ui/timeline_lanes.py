@@ -46,6 +46,9 @@ class LaneSource:
     events: Mapping[str, Marker]
     phases: Mapping[str, Span]
     covers: tuple[Coverage, ...]
+    #: Why the aggregate view does not draw a layer for this lane; ``None``:
+    #: it does (see ``aggregate.py``).
+    aggregate_skip: str | None = None
 
 
 def _run_phase(state: str) -> tuple[str, ...]:
@@ -79,6 +82,7 @@ LANE_SOURCES: tuple[LaneSource, ...] = (
     LaneSource(
         id="ci",
         label="CI (seen)",
+        aggregate_skip="The status mix replays CI from GitHub's own history of each commit, which is complete; this lane only holds what `tt ui` saw.",
         events={},
         phases={
             "ci_seen_running": Span(

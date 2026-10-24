@@ -11,6 +11,7 @@ const STATES: { key: MixState; label: string; tone: Aggregate["mix"]["states"][n
   { key: "ci_failing", label: "CI failing", tone: "red" },
   { key: "approved", label: "Approved", tone: "green" },
   { key: "blocked", label: "Blocked on parent", tone: "gray" },
+  { key: "agent", label: "With an agent", tone: "purple" },
 ];
 
 function milestones(number: number, parts: Partial<PrMilestones>): PrMilestones {
@@ -78,19 +79,20 @@ const PRS: PrMilestones[] = [
 export function aggregate(overrides: Partial<Aggregate> = {}): Aggregate {
   const days = ["2026-10-05T00:00:00Z", "2026-10-05T06:00:00Z", "2026-10-05T12:00:00Z", "2026-10-05T18:00:00Z"];
   const inflight = [2, 4, 0, 10];
-  // Shares per sample for the nine states; null where nothing was in flight.
+  // Shares per sample for the ten states; null where nothing was in flight.
   const columns: (number[] | null)[] = [
-    [0.5, 0.5, 0, 0, 0, 0, 0, 0, 0],
-    [0.25, 0.25, 0.25, 0.25, 0, 0, 0, 0, 0],
+    [0.5, 0.5, 0, 0, 0, 0, 0, 0, 0, 0],
+    [0.25, 0.25, 0.25, 0.25, 0, 0, 0, 0, 0, 0],
     null,
-    [0, 0, 0, 0.4, 0.1, 0, 0.1, 0.4, 0],
+    [0, 0, 0, 0.4, 0.1, 0, 0.1, 0.4, 0, 0],
   ];
-  const whoOf = (c: number[]): [number, number, number] => [
+  const whoOf = (c: number[]): [number, number, number, number] => [
     c[0] + c[1] + c[2] + c[4] + c[6] + c[7],
+    c[9],
     c[5],
     c[3] + c[8],
   ];
-  const who: MixWho[] = ["you", "ci", "others"];
+  const who: MixWho[] = ["you", "agent", "ci", "others"];
   return {
     weeks: 12,
     window_start: "2026-09-21T00:00:00Z",
@@ -115,6 +117,7 @@ export function aggregate(overrides: Partial<Aggregate> = {}): Aggregate {
         count: columns.map((c, i) => (c ? Math.round(whoOf(c)[k] * inflight[i]) : 0)),
       })),
     },
+    lanes: [],
     coverage: {
       task_starts_since: "2026-09-30T08:00:00Z",
       tasks_without_pr: 1,

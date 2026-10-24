@@ -701,9 +701,10 @@ type MixState = Literal[
     "ci_failing",
     "approved",
     "blocked",
+    "agent",
 ]
 #: The coarse classes the Next rules fall into (``Who`` without ``none``).
-type MixWho = Literal["you", "ci", "others"]
+type MixWho = Literal["you", "agent", "ci", "others"]
 
 
 class MixStateInfo(Model):
@@ -795,6 +796,31 @@ class AggregateNote(Model):
     why: str
 
 
+class AggregateLanePhase(Model):
+    """The share of the tasks in flight (at each of ``mix.starts``) that had
+    a span of this kind of lane ``lane`` then, and how many."""
+
+    kind: LanePhaseKind
+    share: list[float | None]
+    count: list[int]
+
+
+class AggregateLaneEvents(Model):
+    """When (in the window) markers of this kind happened, on the tasks."""
+
+    kind: LaneEventKind
+    times: list[str]
+
+
+class AggregateLane(Model):
+    """A lane's layer of the aggregate view: how often its spans were on the
+    tasks in flight, and its markers (see ``timeline_lanes.py``)."""
+
+    lane: LaneId
+    phases: list[AggregateLanePhase]
+    events: list[AggregateLaneEvents]
+
+
 class Aggregate(Model):
     weeks: int
     window_start: str
@@ -809,6 +835,9 @@ class Aggregate(Model):
     #: The PRs of (a little more than) the window, with their milestones.
     prs: list[PrMilestones]
     mix: StatusMix
+    #: One layer per lane the aggregate counts (``timeline_lanes.LANE_SOURCES``
+    #: without an ``aggregate_skip``), sampled at ``mix.starts``.
+    lanes: list[AggregateLane]
     coverage: AggregateCoverage
     #: What could not be reconstructed or is approximated.
     notes: list[AggregateNote]

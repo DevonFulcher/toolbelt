@@ -29,8 +29,8 @@ injected, so tests drive it with canned payloads.
 import asyncio
 import json
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
-from datetime import datetime, timedelta
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from toolbelt.git.stack.store import (
@@ -46,6 +46,7 @@ from toolbelt.logger import logger
 from toolbelt.ui import aggregate
 from toolbelt.ui import api_models as api
 from toolbelt.ui.github_requests import GithubRequests, GithubUnavailable
+from toolbelt.ui.lane_history import build_lanes
 from toolbelt.ui.pr_activity import PrFacts, facts_from_dict, facts_to_dict
 from toolbelt.ui.pr_fetch import timeline_items
 from toolbelt.ui.repo_visibility import visible_repos
@@ -256,6 +257,9 @@ class StoredHistory:
     removed: list[RemovedBranch]
     tracked: list[TrackedBranchFacts]
     since: datetime
+    #: What each lane recorded for each branch (``lane_history``), by repo id
+    #: and branch name.
+    lanes: dict[tuple[int, str], list[api.TimelineLane]] = field(default_factory=dict)
 
 
 def read_history() -> StoredHistory:
@@ -263,11 +267,14 @@ def read_history() -> StoredHistory:
     try:
         repos = visible_repos(store.repos())
         ids = {repo.id for repo in repos}
+        slugs = {repo.id: repo_slug(repo.remote_url) for repo in repos}
+        lanes = build_lanes(store, datetime.now(UTC), slugs.get)
         return StoredHistory(
             repos=repos,
             removed=[row for row in store.removed_branches() if row.repo_id in ids],
             tracked=[row for row in store.tracked_branch_facts() if row.repo_id in ids],
             since=store.archive_since(),
+            lanes={key: value for key, value in lanes.items() if key[0] in ids},
         )
     finally:
         store.close()
@@ -293,6 +300,7 @@ async def task_facts(
             finished=finished(row.repo_id, row.name),
             pr_node_id=row.pr.node_id if row.pr else None,
             pr_number=row.pr.number if row.pr else None,
+            lanes=tuple(history.lanes.get((row.repo_id, row.name), ())),
         )
         for row in history.tracked
     ]
@@ -305,6 +313,7 @@ async def task_facts(
             landed=row.landed,
             pr_node_id=row.pr.node_id if row.pr else None,
             pr_number=row.pr.number if row.pr else None,
+            lanes=tuple(history.lanes.get((row.repo_id, row.name), ())),
         )
         for row in history.removed
     ]

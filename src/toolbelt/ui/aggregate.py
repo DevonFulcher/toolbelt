@@ -20,10 +20,18 @@ approved and CI-failing spans follow the card timeline's phase rules exactly
 (``phase_spans`` mirrors ``phaseSpans`` in ``web/src/logic/timeline.ts``; one
 shared set of vectors is checked against both).
 
+**Claims and lanes.** The time a claim was held on a task (``claim_spans``,
+via the claim lane of ``lane_history``) is the "agent" state: it replaces the
+PR's own state for that time, as the claimed Next action does. Every other
+lane that the aggregate counts (``timeline_lanes.LANE_SOURCES`` without an
+``aggregate_skip``) is a layer in ``Aggregate.lanes``: at each sampled instant,
+how many of the tasks in flight had a span of each of its kinds, and when its
+markers happened. A lane added to the registry gets a layer, or says why not.
+
 **What history cannot give.** Merge conflicts and unresolved review threads
-are only known now (``pr_states.NOT_REPRESENTED``), so "Resolve conflicts" /
-"Resolve comments" never appear; time spent there is shown as whatever else
-applies. CI follows ``pr_activity.commit_ci_phases``, as the card does:
+are only known now (``pr_states.NOT_REPRESENTED``) apart from what ``tt ui``
+recorded, so "Resolve conflicts" / "Resolve comments" never appear in the mix;
+time spent there is shown as whatever else applies. CI follows ``pr_activity.commit_ci_phases``, as the card does:
 "running" is the time from a push until its check suites completed (their
 ``updatedAt``) whatever the outcome, or until now for a still-pending head
 commit; "failing" is the time from that completion with a failing result
@@ -41,14 +49,16 @@ from toolbelt.ui import api_models as api
 from toolbelt.ui import pr_activity as act
 from toolbelt.ui import pr_states
 from toolbelt.ui.pr_activity import PrFacts, TimelineItem
+from toolbelt.ui.timeline_lanes import LANE_SOURCES
 
 WINDOWS = (4, 12, 26, 52)
 DEFAULT_WEEKS = 12
 
 WHO_YOU = "you"
+WHO_AGENT = "agent"
 WHO_CI = "ci"
 WHO_OTHERS = "others"
-WHOS = (WHO_YOU, WHO_CI, WHO_OTHERS)
+WHOS = (WHO_YOU, WHO_AGENT, WHO_CI, WHO_OTHERS)
 
 
 @dataclass(frozen=True)
@@ -72,6 +82,7 @@ STATES: tuple[StateDef, ...] = (
     StateDef("ci_failing", ("phase", "ci_failing"), WHO_YOU),
     StateDef("approved", ("phase", "approved"), WHO_YOU),
     StateDef("blocked", ("state", "next:blocked"), None),
+    StateDef("agent", ("state", "next:claimed"), WHO_AGENT),
 )
 _STATE_BY_KEY = {state.key: state for state in STATES}
 
@@ -79,9 +90,10 @@ NOTES: tuple[tuple[str, str], ...] = (
     (
         "Merge conflicts and unresolved threads",
         (
-            "GitHub keeps no history of either (the card shows them as now-only "
-            "states), so 'Resolve conflicts' and 'Resolve comments' are not "
-            "separated here: that time is counted as whatever else applies."
+            "GitHub keeps no history of either, so 'Resolve conflicts' and "
+            "'Resolve comments' are not separated in the status mix: that time "
+            "is counted as whatever else applies. The conflicts lane layer shows "
+            "the conflicts `tt ui` saw."
         ),
     ),
     (
@@ -113,11 +125,17 @@ NOTES: tuple[tuple[str, str], ...] = (
         ),
     ),
     (
-        "Agent claims",
+        "Agent claims and lane layers",
         (
-            "'With an agent' (a task claimed by an agent session or a person) is "
-            "the present state only: claims are files with no history, so the "
-            "chart counts a claimed task in the state its PR was in."
+            "'With an agent' is the time a claim was held on the task (an agent "
+            "session, a person or an autonomous agent), from the claim record "
+            "`tt ui` keeps: it takes precedence over the PR's own state while "
+            "it lasts. The lane layers (conflicts, claims by kind, agent runs, "
+            "merge queue, decisions, Slack, task moves) are drawn from what "
+            "`tt ui` recorded, so they begin when it first recorded each "
+            "(claims and runs the earliest; conflicts only from when it first "
+            "looked at the branch) and cover only tasks that were tracked "
+            "branches. Before that they are unknown, not zero."
         ),
     ),
     (
@@ -203,6 +221,8 @@ class TaskFact:
     #: branch name can tie it to a PR).
     pr_node_id: str | None = None
     pr_number: int | None = None
+    #: What each lane recorded for the branch (see ``lane_history``).
+    lanes: tuple[api.TimelineLane, ...] = ()
 
     @property
     def linked(self) -> bool:
@@ -568,6 +588,8 @@ class Task:
     #: or ``name`` (the branch name and the times, the fallback for a task
     #: whose PR was never recorded); ``None`` without a fact.
     matched_by: str | None = None
+    #: The lanes of the task's branch (see ``TaskFact.lanes``).
+    lanes: tuple[api.TimelineLane, ...] = ()
 
 
 def match_tasks(
@@ -609,7 +631,12 @@ def match_tasks(
             linked = by_number.get((pr.repo, pr.facts.number))
         if linked is not None and id(linked) not in used:
             used.add(id(linked))
-            matched[id(pr)] = Task(pr=pr, started=start_of(linked, pr), matched_by="id")
+            matched[id(pr)] = Task(
+                pr=pr,
+                started=start_of(linked, pr),
+                matched_by="id",
+                lanes=linked.lanes,
+            )
     for pr in ordered:
         if id(pr) in matched:
             continue
@@ -622,7 +649,7 @@ def match_tasks(
                 continue
             used.add(id(fact))
             started = start_of(fact, pr)
-            task = Task(pr=pr, started=started, matched_by="name")
+            task = Task(pr=pr, started=started, matched_by="name", lanes=fact.lanes)
             break
         matched[id(pr)] = task
     tasks = [matched[id(pr)] for pr in ordered]
@@ -635,7 +662,14 @@ def match_tasks(
         # or beyond the fetch's limit), so it is not a task without one.
         if fact.landed or fact.finished or fact.linked:
             continue
-        tasks.append(Task(pr=None, started=fact.started_at, ended=fact.removed_at))
+        tasks.append(
+            Task(
+                pr=None,
+                started=fact.started_at,
+                ended=fact.removed_at,
+                lanes=fact.lanes,
+            )
+        )
     return tasks
 
 
@@ -766,8 +800,10 @@ def compute(
     plain = [open_segments(record, now) for record in records]
     resolved = with_blocked(records, plain, now)
 
-    # Every task's life as segments: working, then the PR's states.
+    # Every task's life as segments: working, then the PR's states, with the
+    # time a claim was held as "With an agent".
     lives: list[list[Segment]] = []
+    task_lanes: list[tuple[api.TimelineLane, ...]] = []
     for task, segments in zip(with_pr, resolved, strict=True):
         assert task.pr is not None
         life = list(segments)
@@ -776,15 +812,23 @@ def compute(
                 0,
                 Segment(task.started, task.pr.facts.created_at, "working", WHO_YOU),
             )
-        lives.append(life)
+        lives.append(with_claims(life, claimed_intervals(task.lanes, now)))
+        task_lanes.append(task.lanes)
     tasks_without_pr = 0
     for task in tasks:
         if task.pr is None and task.started is not None:
             end = task.ended or now
             if end > task.started:
-                lives.append([Segment(task.started, end, "working", WHO_YOU)])
+                lives.append(
+                    with_claims(
+                        [Segment(task.started, end, "working", WHO_YOU)],
+                        claimed_intervals(task.lanes, now),
+                    )
+                )
+                task_lanes.append(task.lanes)
                 tasks_without_pr += 1
 
+    instants = sample_instants(start, now, lives, lane_boundaries(task_lanes, now))
     return api.Aggregate(
         weeks=weeks,
         window_start=_iso(start),
@@ -797,7 +841,8 @@ def compute(
             for task in with_pr
             if task.pr is not None and _in_window(task.pr, margin_start, now)
         ],
-        mix=_mix(lives, sample_instants(start, now, lives)),
+        mix=_mix(lives, instants),
+        lanes=lane_layers(lives, task_lanes, instants, start, now),
         coverage=api.AggregateCoverage(
             task_starts_since=_iso(archive_since),
             tasks_without_pr=tasks_without_pr,
@@ -816,11 +861,16 @@ def _in_window(record: PrRecord, start: datetime, now: datetime) -> bool:
 
 
 def sample_instants(
-    start: datetime, now: datetime, lives: Sequence[Sequence[Segment]]
+    start: datetime,
+    now: datetime,
+    lives: Sequence[Sequence[Segment]],
+    extra: Iterable[datetime] = (),
 ) -> list[datetime]:
-    """Every boundary where a task joins, leaves, or changes state."""
+    """Every boundary where a task joins, leaves, or changes state, and
+    ``extra`` ones (where a lane's span starts or ends)."""
     return sorted(
         {start, now}
+        | {instant for instant in extra if start < instant < now}
         | {
             instant
             for life in lives
@@ -829,6 +879,159 @@ def sample_instants(
             if start < instant < now
         }
     )
+
+
+def claimed_intervals(
+    lanes: Sequence[api.TimelineLane], now: datetime
+) -> list[tuple[datetime, datetime]]:
+    """When a claim was held on the task, any holder and kind, as merged
+    intervals (a claim still held runs to ``now``)."""
+    spans = sorted(
+        (
+            datetime.fromisoformat(phase.start),
+            datetime.fromisoformat(phase.end) if phase.end else now,
+        )
+        for lane in lanes
+        if lane.lane == "claim"
+        for phase in lane.phases
+    )
+    merged: list[tuple[datetime, datetime]] = []
+    for lo, hi in spans:
+        if merged and lo <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], hi))
+        else:
+            merged.append((lo, hi))
+    return merged
+
+
+def with_claims(
+    life: Sequence[Segment], claimed: Sequence[tuple[datetime, datetime]]
+) -> list[Segment]:
+    """``life`` with the parts under a claim in the "agent" state: a claim
+    takes the task, whatever its PR was waiting for (as the Next rules do)."""
+    result: list[Segment] = []
+    for segment in life:
+        cursor = segment.start
+        for lo, hi in claimed:
+            lo, hi = max(lo, segment.start), min(hi, segment.end)
+            if hi <= lo:
+                continue
+            if lo > cursor:
+                result.append(Segment(cursor, lo, segment.state, segment.who))
+            result.append(Segment(lo, hi, "agent", WHO_AGENT))
+            cursor = hi
+        if cursor < segment.end:
+            result.append(Segment(cursor, segment.end, segment.state, segment.who))
+    return result
+
+
+def lane_boundaries(
+    task_lanes: Sequence[Sequence[api.TimelineLane]], now: datetime
+) -> list[datetime]:
+    """Where the aggregated lanes' spans start and end."""
+    counted = {source.id for source in LANE_SOURCES if source.aggregate_skip is None}
+    return [
+        datetime.fromisoformat(edge)
+        for lanes in task_lanes
+        for lane in lanes
+        if lane.lane in counted
+        for phase in lane.phases
+        for edge in (phase.start, phase.end)
+        if edge is not None
+    ]
+
+
+def _in_flight(
+    life: Sequence[Segment], instants: Sequence[datetime]
+) -> list[Segment | None]:
+    """The segment a task is in at each instant (``None``: not in flight).
+    In flight on [start, end): a task that ended at the instant is no longer.
+    (Still-open ones end at ``now``, the last instant, where they are in
+    flight.)"""
+    ordered = sorted(life, key=lambda segment: segment.start)
+    starts = [segment.start for segment in ordered]
+    found: list[Segment | None] = []
+    for instant in instants:
+        position = bisect.bisect_right(starts, instant) - 1
+        if position < 0:
+            found.append(None)
+            continue
+        segment = ordered[position]
+        gone = segment.end < instant or (
+            segment.end == instant and instant < instants[-1]
+        )
+        found.append(None if gone else segment)
+    return found
+
+
+def lane_layers(
+    lives: Sequence[Sequence[Segment]],
+    task_lanes: Sequence[Sequence[api.TimelineLane]],
+    instants: Sequence[datetime],
+    start: datetime,
+    now: datetime,
+) -> list[api.AggregateLane]:
+    """Each counted lane's layer: at every instant, how many of the tasks in
+    flight had a span of each kind of the lane, and when its markers happened."""
+    count = len(instants)
+    inflight = [0] * count
+    flights = [_in_flight(life, instants) for life in lives]
+    for flight in flights:
+        for index, segment in enumerate(flight):
+            inflight[index] += segment is not None
+    layers: list[api.AggregateLane] = []
+    for source in LANE_SOURCES:
+        if source.aggregate_skip is not None:
+            continue
+        counts = {kind: [0] * count for kind in source.phases}
+        times: dict[str, list[datetime]] = {kind: [] for kind in source.events}
+        for flight, lanes in zip(flights, task_lanes, strict=True):
+            for lane in lanes:
+                if lane.lane != source.id:
+                    continue
+                for kind in source.phases:
+                    spans = [
+                        (
+                            datetime.fromisoformat(phase.start),
+                            datetime.fromisoformat(phase.end) if phase.end else None,
+                        )
+                        for phase in lane.phases
+                        if phase.kind == kind
+                    ]
+                    for index, instant in enumerate(instants):
+                        if flight[index] is not None and any(
+                            lo <= instant and (hi is None or instant < hi)
+                            for lo, hi in spans
+                        ):
+                            counts[kind][index] += 1
+                for event in lane.events:
+                    at = datetime.fromisoformat(event.t)
+                    if start <= at <= now:
+                        times[event.kind].append(at)
+        layers.append(
+            api.AggregateLane(
+                lane=source.id,  # type: ignore[arg-type]
+                phases=[
+                    api.AggregateLanePhase(
+                        kind=kind,  # type: ignore[arg-type]
+                        share=[
+                            c / n if n else None
+                            for c, n in zip(counts[kind], inflight, strict=True)
+                        ],
+                        count=counts[kind],
+                    )
+                    for kind in source.phases
+                ],
+                events=[
+                    api.AggregateLaneEvents(
+                        kind=kind,  # type: ignore[arg-type]
+                        times=[_iso(at) for at in sorted(times[kind])],
+                    )
+                    for kind in source.events
+                ],
+            )
+        )
+    return layers
 
 
 def _mix(
@@ -842,21 +1045,10 @@ def _mix(
     by_state = {state.key: [0] * count for state in STATES}
     by_who = {who: [0] * count for who in WHOS}
     for life in lives:
-        ordered = sorted(life, key=lambda segment: segment.start)
-        starts = [segment.start for segment in ordered]
-        for index, instant in enumerate(instants):
-            position = bisect.bisect_right(starts, instant) - 1
-            # In flight on [start, end): a task that ended at the instant is
-            # no longer. (Still-open ones end at ``now``, the last instant,
-            # where they are in flight.)
-            if position < 0:
-                continue
-            end = ordered[position].end
-            if end < instant or (end == instant and instant < instants[-1]):
-                continue
-            segment = ordered[position]
-            by_state[segment.state][index] += 1
-            by_who[segment.who][index] += 1
+        for index, segment in enumerate(_in_flight(life, instants)):
+            if segment is not None:
+                by_state[segment.state][index] += 1
+                by_who[segment.who][index] += 1
     inflight = [sum(by_state[state.key][i] for state in STATES) for i in range(count)]
 
     def share(counts: list[int]) -> list[float | None]:

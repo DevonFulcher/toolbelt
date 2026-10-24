@@ -21,6 +21,7 @@ from toolbelt.git.stack.store import (
     default_db_path,
 )
 from toolbelt.ui import aggregate as agg
+from toolbelt.ui import api_models as api
 from toolbelt.ui import pr_activity as act
 from toolbelt.ui import pr_states
 from toolbelt.ui.aggregate import PrRecord, TaskFact
@@ -33,6 +34,7 @@ from toolbelt.ui.aggregate_feed import (
 )
 from toolbelt.ui.app import create_app
 from toolbelt.ui.pr_activity import PrFacts, TimelineItem
+from toolbelt.ui.timeline_lanes import LANE_SOURCES
 
 # A Monday, so the window's weeks line up with the test's hours.
 MONDAY = datetime(2026, 10, 5, tzinfo=UTC)
@@ -1649,3 +1651,126 @@ def test_a_node_without_line_counts_has_zero():
     record = parse_pr(bare)
 
     assert (record.facts.additions, record.facts.deletions) == (0, 0)
+
+
+# ---- claims and lane layers ----------------------------------------------------------------
+
+
+def lane_phase(kind: str, start: float, end: float | None) -> api.LanePhase:
+    return api.LanePhase.model_validate(
+        {
+            "start": at(start).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "end": at(end).strftime("%Y-%m-%dT%H:%M:%SZ") if end is not None else None,
+            "kind": kind,
+            "detail": "",
+        }
+    )
+
+
+def lanes_of(lane: str, *phases: api.LanePhase) -> tuple[api.TimelineLane, ...]:
+    return (api.TimelineLane(lane=lane, events=[], phases=list(phases)),)  # type: ignore[arg-type]
+
+
+def claimed_task(*phases: api.LanePhase) -> TaskFact:
+    return replace(
+        fact("branch-1", None, node_id="n1", number=1),
+        lanes=lanes_of("claim", *phases),
+    )
+
+
+def test_a_claim_takes_the_task_from_its_prs_state_while_it_is_held():
+    # A ready PR from Mon 00:00, claimed from 06:00 to 12:00.
+    mix = compute(
+        [pr(1, created=0, node_id="n1")],
+        facts=[claimed_task(lane_phase("claim_agent_worktree", 6, 12))],
+        now=at(30),
+    ).mix
+
+    assert _column(mix, at(3)) == {"ready": 1}
+    assert _column(mix, at(8)) == {"agent": 1}
+    assert _column(mix, at(18)) == {"ready": 1}
+    who = {w.key: w.count[mix.starts.index("2026-10-05T06:00:00Z")] for w in mix.who}
+    assert who["agent"] == 1 and who["you"] == 0
+
+
+def test_a_claim_still_held_runs_to_now():
+    mix = compute(
+        [pr(1, created=0, node_id="n1")],
+        facts=[claimed_task(lane_phase("claim_autonomous_ref", 6, None))],
+        now=at(30),
+    ).mix
+
+    assert _column(mix, at(30)) == {"agent": 1}
+
+
+def test_overlapping_claims_are_one_interval():
+    claimed = agg.claimed_intervals(
+        lanes_of(
+            "claim",
+            lane_phase("claim_agent_worktree", 1, 5),
+            lane_phase("claim_human_ref", 4, 8),
+            lane_phase("claim_agent_ref", 10, 11),
+        ),
+        at(20),
+    )
+
+    assert claimed == [(at(1), at(8)), (at(10), at(11))]
+
+
+def test_a_lane_layer_counts_the_tasks_in_flight_that_had_its_span():
+    # Two tasks in flight; the first conflicts from 06:00 to 12:00.
+    conflicting = replace(
+        fact("branch-1", None, node_id="n1", number=1),
+        lanes=lanes_of("git", lane_phase("git_conflicting", 6, 12)),
+    )
+    result = compute(
+        [pr(1, created=0, node_id="n1"), pr(2, created=0)],
+        facts=[conflicting],
+        now=at(30),
+    )
+
+    (git,) = [lane for lane in result.lanes if lane.lane == "git"]
+    (phase,) = git.phases
+    inside = result.mix.starts.index("2026-10-05T06:00:00Z")
+    after = result.mix.starts.index("2026-10-05T12:00:00Z")
+    assert (phase.count[inside], phase.share[inside]) == (1, 0.5)
+    assert phase.count[after] == 0
+
+
+def test_a_lane_layer_lists_each_markers_times_in_the_window():
+    posted = replace(
+        fact("branch-1", None, node_id="n1", number=1),
+        lanes=(
+            api.TimelineLane(
+                lane="slack",
+                phases=[],
+                events=[
+                    api.LaneEvent(
+                        t="2026-10-05T09:00:00Z", kind="slack_post", detail=""
+                    ),
+                    api.LaneEvent(
+                        t="2026-09-01T09:00:00Z", kind="slack_bump", detail=""
+                    ),
+                ],
+            ),
+        ),
+    )
+    result = compute([pr(1, created=0, node_id="n1")], facts=[posted], now=at(30))
+
+    (slack,) = [lane for lane in result.lanes if lane.lane == "slack"]
+    times = {e.kind: e.times for e in slack.events}
+    assert times == {
+        "slack_post": ["2026-10-05T09:00:00Z"],
+        "slack_bump": [],
+        "slack_reassign": [],
+    }
+
+
+def test_the_lanes_the_aggregate_skips_say_why_and_the_rest_have_a_layer():
+    result = compute([pr(1, created=0)])
+
+    skipped = {s.id for s in LANE_SOURCES if s.aggregate_skip}
+    assert skipped == {"ci"}
+    assert [lane.lane for lane in result.lanes] == [
+        s.id for s in LANE_SOURCES if s.id not in skipped
+    ]

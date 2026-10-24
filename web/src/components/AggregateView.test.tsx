@@ -59,6 +59,27 @@ describe("the aggregate view", () => {
     expect(within(who).getByText("Waiting on others / team")).toBeInTheDocument();
   });
 
+  test("draws a chart for each lane that recorded something, with its markers counted", async () => {
+    serve(
+      aggregate({
+        lanes: [
+          { lane: "git", events: [], phases: [{ kind: "git_conflicting", share: [0.5, 0.25, null, 0], count: [1, 1, 0, 0] }] },
+          { lane: "slack", events: [{ kind: "slack_post", times: ["2026-10-05T09:00:00Z"] }], phases: [] },
+          { lane: "agent", events: [], phases: [{ kind: "agent_running", share: [0, 0, null, 0], count: [0, 0, 0, 0] }] },
+        ],
+      }),
+    );
+    show();
+
+    const git = await screen.findByRole("region", { name: "Lane: Git" });
+    expect(within(git).getByText("Conflicting")).toBeInTheDocument();
+    expect(within(git).getByText("No git activity")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Lane: Slack" })).toBeInTheDocument();
+    expect(screen.getByText("1 × posted in Slack in this window.")).toBeInTheDocument();
+    // A lane with nothing recorded is not drawn.
+    expect(screen.queryByRole("region", { name: "Lane: Agent runs" })).not.toBeInTheDocument();
+  });
+
   test("each chart legend describes its properties on hover and focus", async () => {
     serve(aggregate());
     show();
