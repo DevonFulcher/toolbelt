@@ -22,7 +22,7 @@ presentation, sorting, filtering, grouping and layout.
 """
 
 from dataclasses import asdict
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
@@ -901,6 +901,62 @@ class EstimateStageAccuracy(Model):
     median_abs_error_seconds: float | None
     #: Median of p80 - p50, in working seconds.
     median_width_seconds: float | None
+    #: Predictions for tasks still open (right-censored: their finish is not
+    #: known yet), the coverage counting those already past their p80 as
+    #: misses, and the mean pinball loss.
+    censored: int
+    coverage_adjusted: float | None
+    loss: float | None
+
+
+class ModelMetrics(Model):
+    """One model's metrics on a backtest."""
+
+    model: str
+    overall: EstimateStageAccuracy
+    by_stage: list[EstimateStageAccuracy]
+
+
+class ChampionEvidence(Model):
+    model: str
+    points: int
+    loss: float | None
+    coverage: float | None
+
+
+class EstimateChampion(Model):
+    """The model that answers for a stage and why: ``margin`` is its loss
+    advantage over the baseline (0: the baseline stays)."""
+
+    stage: str
+    model: str
+    margin: float
+    points: int
+    evidence: list[ChampionEvidence]
+
+
+class EstimateAblation(Model):
+    """The pinball-loss change when a feature is taken out of ``model``
+    (positive: worse without it, so signal; near zero or negative: noise)."""
+
+    feature: str
+    loss_with: float | None
+    loss_without: float | None
+    delta: float | None
+    points: int
+
+
+class ChampionChange(Model):
+    stage: str
+    previous: str
+    model: str
+    at: str
+
+
+class ModelFitInfo(Model):
+    model: str
+    fitted_at: str
+    trained_on: int
 
 
 class EstimateRegime(Model):
@@ -922,6 +978,13 @@ class EstimateBacktest(Model):
     overall: EstimateStageAccuracy
     by_stage: list[EstimateStageAccuracy]
     regime: list[EstimateRegime]
+    #: Every model's metrics on the same test points (the baseline's are
+    #: ``overall`` / ``by_stage`` above), the champion per stage and the
+    #: ablation of the candidate features.
+    models: list[ModelMetrics]
+    champions: list[EstimateChampion]
+    ablation_model: str
+    ablation: list[EstimateAblation]
 
 
 class EstimateAccuracy(Model):
@@ -939,6 +1002,10 @@ class EstimateAccuracy(Model):
     live_made: int
     live_finished: int
     live_coverage: float | None
+    #: When the champion of a stage changed, oldest first, and when each
+    #: learned model was last fitted.
+    champion_changes: list[ChampionChange]
+    fits: list[ModelFitInfo]
 
 
 class Aggregate(Model):
@@ -1371,6 +1438,103 @@ class CardEstimate(Model):
     #: The history samples it is based on.
     n: int
     explanation: str
+    #: The model that answered (the champion for the stage, else the baseline).
+    model: str
+
+
+class EstimateFactor(Model):
+    """A group the baseline scaled the estimate by."""
+
+    dim: str
+    value: str
+    n: int
+    raw: float
+    shrunk: float
+
+
+class ModelForecast(Model):
+    """One model's answer for a task: the finish as UTC instants (``None``:
+    it has no answer), its explanation, and what it learned that matters here
+    (``details``: the baseline's factors and level, the regression's biggest
+    contributions, the hazard's shape and coefficients, the trees'
+    importances)."""
+
+    model: str
+    champion: bool
+    known: bool
+    finish_p50: str | None
+    finish_p80: str | None
+    level: str
+    n: int
+    explanation: str
+    details: dict[str, Any]
+
+
+class ModelAccuracy(Model):
+    """A model's recent record: on the latest backtest's points for the stage
+    (``all``: every stage), and when it was last fitted."""
+
+    model: str
+    points: int
+    coverage: float | None
+    loss: float | None
+    median_abs_error_seconds: float | None
+    trained_on: int | None
+    fitted_at: str | None
+    #: Pinball loss relative to the baseline's (1: as good; below 1: better).
+    loss_vs_baseline: float | None
+
+
+class PathStage(Model):
+    """A stage that typically follows, from the reference class: the share of
+    similar tasks that went through it and its working time per task."""
+
+    stage: str
+    share: float
+    p50_seconds: float
+    p80_seconds: float
+
+
+class ParentWait(Model):
+    """The wait for the parent a stacked task is blocked on: the parent's own
+    finish, and the combined finish (the later of the two, plus what usually
+    follows a parent landing)."""
+
+    task_key: str
+    #: ``unknown``: the parent has no estimate, so the child's is "at least".
+    parent_known: bool
+    parent_p50: str | None
+    parent_p80: str | None
+    combined_p50: str | None
+    combined_p80: str | None
+
+
+class SimilarTask(Model):
+    """A past stage like this one (the reference class)."""
+
+    task_key: str
+    stage: str
+    reviewer: str
+    seconds: float
+    tail_seconds: float | None
+    ended_at: str
+
+
+class EstimateBreakdown(Model):
+    """What the card's popup shows for one task."""
+
+    id: str
+    stage: str
+    #: The model that answers the card, and why (``champion of wait_review: 12%
+    #: better than the baseline on 41 points``, or the baseline staying).
+    champion: str
+    champion_reason: str
+    models: list[ModelForecast]
+    accuracy: list[ModelAccuracy]
+    path: list[PathStage]
+    parent: ParentWait | None
+    factors: list[EstimateFactor]
+    similar: list[SimilarTask]
 
 
 class BranchExtras(Model):
@@ -1888,6 +2052,7 @@ class Wire(Model):
     snapshot: Snapshot
     event: ServerEvent
     aggregate: Aggregate
+    estimate_breakdown: EstimateBreakdown
     spend: Spend
     agents: Agents
     agents_enabled: AgentsEnabled

@@ -411,7 +411,7 @@ export const Card = memo(
             )}
           </Slot>
           <Slot id="estimate" label="Estimated finish" state={extras?.estimate?.known ? "ok" : "na"}>
-            <EstimateValue extras={extras} now={now} />
+            <EstimateValue extras={extras} now={now} branch={branch.name} />
           </Slot>
           <Slot id="task" label="Task" state={branch.task ? "ok" : "gap"}>
             {branch.task ? (

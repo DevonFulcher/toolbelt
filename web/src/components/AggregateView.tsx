@@ -22,7 +22,7 @@ type Load =
   | { weeks: number; repo: string; state: "ready"; data: Aggregate }
   | { weeks: number; repo: string; state: "error"; message: string };
 
-const storedKey = (weeks: number, repo: string): string => `toolbelt:aggregate:v3:${weeks}:${repo}`;
+const storedKey = (weeks: number, repo: string): string => `toolbelt:aggregate:v4:${weeks}:${repo}`;
 
 function storedAggregate(weeks: number, repo: string): Aggregate | null {
   if (weeks > 12) return null;

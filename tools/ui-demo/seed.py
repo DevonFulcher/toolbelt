@@ -189,24 +189,99 @@ def write_estimates(db: sqlite3.Connection, now: datetime) -> None:
                 "stage": stage,
                 "n": n,
                 "unknown": 3,
+                "censored": 1,
+                "coverage_adjusted": None,
+                "loss": 5000.0,
                 "coverage": round(min(0.95, share + (coverage - 0.76)), 3),
                 "median_abs_error_seconds": error,
                 "median_width_seconds": width,
             }
             for stage, (n, share, error, width) in stages.items()
         ]
-        metrics = {
-            "loss": 11000.0 - 500 * night,
-            "overall": {
+
+        def overall(n: int, cov: float, loss: float, err: float) -> dict:
+            return {
                 "stage": "all",
-                "n": sum(n for n, *_ in stages.values()),
+                "n": n,
                 "unknown": 12,
-                "coverage": coverage,
-                "median_abs_error_seconds": (7.5 - 0.3 * night) * 3600,
+                "censored": 6,
+                "coverage": cov,
+                "coverage_adjusted": cov - 0.02,
+                "median_abs_error_seconds": err,
                 "median_width_seconds": 6.0 * 3600,
-            },
+                "loss": loss,
+            }
+
+        base_loss = 11000.0 - 500 * night
+        learned_loss = {
+            "regression": base_loss * (1.05 - 0.04 * night),
+            "hazard": base_loss * 1.02,
+            "trees": base_loss * (1.1 - 0.05 * night),
+        }
+        champion = "regression" if night >= 4 else "baseline"
+        metrics = {
+            "loss": base_loss,
+            "overall": overall(160, coverage, base_loss, (7.5 - 0.3 * night) * 3600),
             "by_stage": by_stage,
             "regime": [],
+            "models": {
+                "baseline": {
+                    "overall": overall(
+                        160, coverage, base_loss, (7.5 - 0.3 * night) * 3600
+                    ),
+                    "by_stage": by_stage,
+                },
+                **{
+                    name: {
+                        "overall": overall(160, coverage - 0.02, loss, 7.4 * 3600),
+                        "by_stage": by_stage,
+                    }
+                    for name, loss in learned_loss.items()
+                },
+            },
+            "champions": {
+                stage: {
+                    "model": champion
+                    if stage in ("all", "wait_review")
+                    else "baseline",
+                    "margin": 0.07
+                    if champion != "baseline" and stage in ("all", "wait_review")
+                    else 0.0,
+                    "points": 60,
+                    "evidence": [
+                        {
+                            "model": "baseline",
+                            "points": 60,
+                            "loss": base_loss,
+                            "coverage": coverage,
+                        },
+                        {
+                            "model": "regression",
+                            "points": 60,
+                            "loss": learned_loss["regression"],
+                            "coverage": coverage - 0.02,
+                        },
+                    ],
+                }
+                for stage in ("all", "wait_review", "wait_ci", "merge")
+            },
+            "ablation_model": "regression",
+            "ablation": [
+                {
+                    "feature": "size_log2",
+                    "loss_with": 4000.0,
+                    "loss_without": 4400.0,
+                    "delta": 400.0,
+                    "points": 120,
+                },
+                {
+                    "feature": "hour_of_week",
+                    "loss_with": 4000.0,
+                    "loss_without": 3980.0,
+                    "delta": -20.0,
+                    "points": 120,
+                },
+            ],
         }
         db.execute(
             "INSERT INTO estimate_backtests (ran_at, model_version, params, metrics) "

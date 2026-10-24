@@ -20,11 +20,13 @@ from pydantic import BaseModel
 from toolbelt.autonomous_agents.conversation import find_transcript, read_conversation
 from toolbelt.autonomous_agents.dispatcher import Dispatcher
 from toolbelt.autonomous_agents.runner import AgentRunner
+from toolbelt.finish_estimate.model import Prior
 from toolbelt.finish_estimate.working_hours import WorkingHours
 from toolbelt.git.stack.store import StackStore
 from toolbelt.ui import api_models as api
 from toolbelt.ui.agents_view import build_agents
 from toolbelt.ui.card_extras import build_card_extras
+from toolbelt.ui.estimate_feed import ModelHub
 from toolbelt.ui.live_status import EventHub
 from toolbelt.ui.pr_activity import PrFacts
 from toolbelt.ui.spend_feed import BREAKDOWN_DAYS, SpendFeed
@@ -80,7 +82,14 @@ class PushedViews:
             None,
         ),
         working_hours: Callable[[], WorkingHours] = WorkingHours,
+        estimate_hub: ModelHub | None = None,
+        priors: Callable[[], dict[str, Prior]] = dict,
     ) -> None:
+        self._estimate_hub = estimate_hub
+        self._priors = priors
+        #: Every model's answer for each task in flight, by card id: what the
+        #: estimate popup reads (worked out with the card extras).
+        self.breakdowns: dict[str, api.EstimateBreakdown] = {}
         self._opening_pr = opening_pr
         self._working_hours = working_hours
         self._repo_slug = repo_slug
@@ -118,6 +127,9 @@ class PushedViews:
                 self._pr_facts,
                 self._opening_pr,
                 self._working_hours(),
+                self._estimate_hub,
+                self._priors(),
+                self.breakdowns,
             )
         finally:
             store.close()

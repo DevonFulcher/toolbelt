@@ -201,6 +201,7 @@ export interface Wire {
   decision_delete_request: DecisionDeleteRequest;
   decision_info: DecisionInfo;
   decision_list: DecisionList;
+  estimate_breakdown: EstimateBreakdown;
   event: ServerEvent;
   merge_queue_info: MergeQueueInfo;
   merge_queue_request: MergeQueueRequest;
@@ -394,29 +395,74 @@ export interface AggregateCoverage {
  */
 export interface EstimateAccuracy {
   backtests: EstimateBacktest[];
+  champion_changes: ChampionChange[];
   current: EstimateParams | null;
+  fits: ModelFitInfo[];
   live_coverage: number | null;
   live_finished: number;
   live_made: number;
   working_day_seconds: number;
 }
 export interface EstimateBacktest {
+  ablation: EstimateAblation[];
+  ablation_model: string;
   by_stage: EstimateStageAccuracy[];
+  champions: EstimateChampion[];
+  models: ModelMetrics[];
   overall: EstimateStageAccuracy;
   params: EstimateParams;
   ran_at: string;
   regime: EstimateRegime[];
 }
 /**
+ * The pinball-loss change when a feature is taken out of ``model``
+ * (positive: worse without it, so signal; near zero or negative: noise).
+ */
+export interface EstimateAblation {
+  delta: number | null;
+  feature: string;
+  loss_with: number | null;
+  loss_without: number | null;
+  points: number;
+}
+/**
  * How a backtest's predictions fared for one stage (``all`` for every).
  */
 export interface EstimateStageAccuracy {
+  censored: number;
   coverage: number | null;
+  coverage_adjusted: number | null;
+  loss: number | null;
   median_abs_error_seconds: number | null;
   median_width_seconds: number | null;
   n: number;
   stage: string;
   unknown: number;
+}
+/**
+ * The model that answers for a stage and why: ``margin`` is its loss
+ * advantage over the baseline (0: the baseline stays).
+ */
+export interface EstimateChampion {
+  evidence: ChampionEvidence[];
+  margin: number;
+  model: string;
+  points: number;
+  stage: string;
+}
+export interface ChampionEvidence {
+  coverage: number | null;
+  loss: number | null;
+  model: string;
+  points: number;
+}
+/**
+ * One model's metrics on a backtest.
+ */
+export interface ModelMetrics {
+  by_stage: EstimateStageAccuracy[];
+  model: string;
+  overall: EstimateStageAccuracy;
 }
 /**
  * The estimator's hyperparameters (what backtesting tunes).
@@ -437,6 +483,17 @@ export interface EstimateRegime {
   recent_median_seconds: number;
   stage: string;
   weeks: number;
+}
+export interface ChampionChange {
+  at: string;
+  model: string;
+  previous: string;
+  stage: string;
+}
+export interface ModelFitInfo {
+  fitted_at: string;
+  model: string;
+  trained_on: number;
 }
 /**
  * A lane's layer of the aggregate view: how often its spans were on the
@@ -563,6 +620,99 @@ export interface DecisionRecommendationInfo {
  */
 export interface DecisionList {
   decisions: DecisionInfo[];
+}
+/**
+ * What the card's popup shows for one task.
+ */
+export interface EstimateBreakdown {
+  accuracy: ModelAccuracy[];
+  champion: string;
+  champion_reason: string;
+  factors: EstimateFactor[];
+  id: string;
+  models: ModelForecast[];
+  parent: ParentWait | null;
+  path: PathStage[];
+  similar: SimilarTask[];
+  stage: string;
+}
+/**
+ * A model's recent record: on the latest backtest's points for the stage
+ * (``all``: every stage), and when it was last fitted.
+ */
+export interface ModelAccuracy {
+  coverage: number | null;
+  fitted_at: string | null;
+  loss: number | null;
+  loss_vs_baseline: number | null;
+  median_abs_error_seconds: number | null;
+  model: string;
+  points: number;
+  trained_on: number | null;
+}
+/**
+ * A group the baseline scaled the estimate by.
+ */
+export interface EstimateFactor {
+  dim: string;
+  n: number;
+  raw: number;
+  shrunk: number;
+  value: string;
+}
+/**
+ * One model's answer for a task: the finish as UTC instants (``None``:
+ * it has no answer), its explanation, and what it learned that matters here
+ * (``details``: the baseline's factors and level, the regression's biggest
+ * contributions, the hazard's shape and coefficients, the trees'
+ * importances).
+ */
+export interface ModelForecast {
+  champion: boolean;
+  details: {
+    [k: string]: unknown;
+  };
+  explanation: string;
+  finish_p50: string | null;
+  finish_p80: string | null;
+  known: boolean;
+  level: string;
+  model: string;
+  n: number;
+}
+/**
+ * The wait for the parent a stacked task is blocked on: the parent's own
+ * finish, and the combined finish (the later of the two, plus what usually
+ * follows a parent landing).
+ */
+export interface ParentWait {
+  combined_p50: string | null;
+  combined_p80: string | null;
+  parent_known: boolean;
+  parent_p50: string | null;
+  parent_p80: string | null;
+  task_key: string;
+}
+/**
+ * A stage that typically follows, from the reference class: the share of
+ * similar tasks that went through it and its working time per task.
+ */
+export interface PathStage {
+  p50_seconds: number;
+  p80_seconds: number;
+  share: number;
+  stage: string;
+}
+/**
+ * A past stage like this one (the reference class).
+ */
+export interface SimilarTask {
+  ended_at: string;
+  reviewer: string;
+  seconds: number;
+  stage: string;
+  tail_seconds: number | null;
+  task_key: string;
 }
 /**
  * Sent on connect: the current version (a client that last saw another
@@ -935,6 +1085,7 @@ export interface CardEstimate {
   finish_p80: string | null;
   known: boolean;
   level: string;
+  model: string;
   n: number;
   overdue: boolean;
   partial: boolean;

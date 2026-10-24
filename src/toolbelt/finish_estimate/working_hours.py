@@ -48,6 +48,11 @@ class WorkingHours:
     def _local_day(self, when: datetime) -> date:
         return (when.astimezone(self.tz) if self.tz else when.astimezone()).date()
 
+    def hour_of_week(self, when: datetime) -> int:
+        """Hours since Monday 00:00 in the calendar's zone (0-167)."""
+        local = when.astimezone(self.tz) if self.tz else when.astimezone()
+        return local.weekday() * 24 + local.hour
+
     def seconds(self, begin: datetime, end: datetime) -> float:
         """Working seconds between two instants (0 when ``end`` is not after
         ``begin``)."""

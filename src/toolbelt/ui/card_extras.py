@@ -7,6 +7,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from toolbelt.autonomous_agents.dispatcher import Dispatcher
+from toolbelt.finish_estimate.model import Prior
 from toolbelt.finish_estimate.working_hours import WorkingHours
 from toolbelt.git.stack.store import (
     AgentRun,
@@ -17,7 +18,7 @@ from toolbelt.git.stack.store import (
 from toolbelt.ui import aggregate
 from toolbelt.ui import api_models as api
 from toolbelt.ui.agents_view import reason_info, run_info
-from toolbelt.ui.estimate_feed import LiveTask, live_estimates
+from toolbelt.ui.estimate_feed import LiveTask, ModelHub, live_estimates
 from toolbelt.ui.lane_history import build_lanes
 from toolbelt.ui.personal_review import VALIDATE, validated_tasks
 from toolbelt.ui.pr_activity import PrFacts
@@ -97,6 +98,15 @@ def folded_next(
                 branch=task.name,
                 facts=record.facts,
                 segments=segments,
+                slack_posts=tuple(
+                    sorted(
+                        datetime.fromisoformat(event.t)
+                        for lane in lanes.get(task.task_id, [])
+                        if lane.lane == "slack"
+                        for event in lane.events
+                    )
+                ),
+                row_id=row_id(task.repo_id, task.name),
             )
         )
     return folded, live
@@ -160,6 +170,9 @@ def build_card_extras(
         None,
     ),
     working_hours: WorkingHours | None = None,
+    hub: ModelHub | None = None,
+    priors: dict[str, Prior] | None = None,
+    breakdowns: dict[str, api.EstimateBreakdown] | None = None,
 ) -> api.CardExtras:
     """``opening_pr(repo_id, branch)``: whether the PR of an approved branch is
     being opened, and why it could not be."""
@@ -178,8 +191,16 @@ def build_card_extras(
     for verdict in store.review_verdicts():
         verdicts.setdefault(verdict.task_id, []).append(verdict)
     folded, live = folded_next(store, now, lanes, repo_slug, pr_facts)
+    row_of = {t.task_id: t.row_id for t in live}
     with_next = next_lanes(lanes, folded, now)
-    estimates = live_estimates(store, live, working_hours or WorkingHours(), now)
+    estimates, details = live_estimates(
+        store, live, working_hours or WorkingHours(), now, hub, priors
+    )
+    if breakdowns is not None:
+        breakdowns.clear()
+        breakdowns.update(
+            {live_row: details[t] for t, live_row in row_of.items() if t in details}
+        )
     branches = []
     for facts in store.tracked_branch_facts():
         key = (facts.repo_id, facts.name)

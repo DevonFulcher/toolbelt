@@ -7,16 +7,11 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from toolbelt.finish_estimate.backtest import (
-    loss,
-    metrics_of,
-    regime_changes,
-    replay,
-    run_backtest,
-)
+from toolbelt.finish_estimate.backtest import regime_changes
 from toolbelt.finish_estimate.model import (
     History,
     Params,
+    Prior,
     StageSample,
     Subject,
     estimate,
@@ -65,10 +60,20 @@ def sample(
     )
 
 
-def subject(**kw) -> Subject:
-    kw.setdefault("stage", "wait_review")
-    kw.setdefault("started_at", datetime(2026, 6, 1, 9, tzinfo=UTC))
-    return Subject(**kw)
+def subject(
+    stage: str = "wait_review",
+    started_at: datetime | None = None,
+    *,
+    reviewer: str = "",
+    repo: str = "o/r",
+    size: int = 3,
+    round: int = 1,
+) -> Subject:
+    return Subject(
+        stage,
+        started_at or datetime(2026, 6, 1, 9, tzinfo=UTC),
+        {"reviewer": reviewer, "repo": repo, "size": str(size), "round": str(round)},
+    )
 
 
 NOW = datetime(2026, 6, 1, 9, tzinfo=UTC)  # a Monday
@@ -158,16 +163,30 @@ class TestEstimate:
         assert not result.known
         assert (result.p50_seconds, result.p80_seconds) == (None, None)
         assert result.level == "unknown"
-        assert result.explanation.startswith("unknown: not enough history")
+        assert result.explanation.startswith("unknown: no history for this stage yet")
 
-    def test_too_few_in_the_stage_falls_back_to_all_stages_then_unknown(self):
+    def test_a_stage_with_too_little_history_is_unknown_not_answered_from_others(self):
         few = [sample(1, HOUR), sample(2, 2 * HOUR)]
-        assert not estimate(History(few), subject(), NOW, PARAMS, UTC_HOURS).known
-        other = [sample(i, 4 * HOUR, stage="wait_ci") for i in range(3, 9)]
-        result = estimate(History(few + other), subject(), NOW, PARAMS, UTC_HOURS)
-        assert result.level == "global"
-        assert result.partial
-        assert result.p50_seconds == 4 * HOUR
+        other = [sample(i, 4 * HOUR, stage="wait_ci") for i in range(3, 20)]
+        history = History(few + other)
+
+        result = estimate(history, subject(), NOW, PARAMS, UTC_HOURS)
+
+        assert not result.known
+        assert result.level == "unknown"
+        assert "no history for this stage yet" in result.explanation
+
+    def test_a_brand_new_stage_is_unknown_unless_a_prior_is_configured(self):
+        history = History([sample(i, 4 * HOUR, stage="wait_ci") for i in range(1, 20)])
+        new = subject("personal_review")
+
+        assert not estimate(history, new, NOW, PARAMS, UTC_HOURS).known
+
+        prior = estimate(
+            history, new, NOW, PARAMS, UTC_HOURS, prior=Prior(2 * HOUR, 6 * HOUR)
+        )
+        assert prior.level == "prior"
+        assert (prior.p50_seconds, prior.p80_seconds) == (2 * HOUR, 6 * HOUR)
 
     def test_stage_level_quantiles_are_exact(self):
         history = History([sample(i, i * HOUR, tail=0) for i in range(1, 11)])
@@ -327,68 +346,7 @@ def synthetic(
     return out
 
 
-class TestBacktest:
-    def test_coverage_is_near_the_target(self):
-        samples = synthetic(160, review=DAY, jitter=0.9, seed=7)
-        outcomes = replay(samples, UTC_HOURS, Params(), max_tasks=100)
-        overall = metrics_of(outcomes)
-        assert overall.coverage is not None
-        assert 0.7 <= overall.coverage <= 0.95
-        assert overall.n == len(outcomes)
-        assert overall.unknown < overall.n // 3
-
-    def test_a_prediction_never_sees_its_own_future(self):
-        samples = synthetic(40, review=DAY, seed=3)
-        history = History(samples)
-        first = min(samples, key=lambda s: s.started_at)
-        guess = estimate(
-            history,
-            Subject(first.stage, first.started_at),
-            first.started_at,
-            Params(),
-            UTC_HOURS,
-            known_at=first.started_at,
-        )
-        assert not guess.known
-
-    def test_the_estimate_follows_a_regime_change(self):
-        old = synthetic(60, review=2 * DAY, seed=1)
-        new = synthetic(30, review=DAY, seed=2, first_week=14)
-        history = History(old + new)
-        when = max(s.ended_at for s in new) + timedelta(days=1)
-        quick = Params(half_life_weeks=2.0, min_samples=3, shrinkage=5.0)
-        result = estimate(history, Subject("wait_review", when), when, quick, UTC_HOURS)
-        assert result.p50_seconds is not None
-        assert result.p50_seconds < 1.3 * DAY
-
-    def test_tuning_picks_a_shorter_half_life_after_a_regime_change(self):
-        stable = synthetic(120, review=DAY, seed=5)
-        shifted = synthetic(60, review=2 * DAY, seed=6, first_week=24) + synthetic(
-            60, review=0.5 * DAY, seed=8, first_week=48
-        )
-        grid = [Params(h, 3, 5.0) for h in (52.0, 12.0, 2.0)]
-        stable_best = run_backtest(
-            stable, UTC_HOURS, START + timedelta(weeks=60), grid=grid
-        )
-        shifted_best = run_backtest(
-            stable + shifted,
-            UTC_HOURS,
-            START + timedelta(weeks=90),
-            grid=grid,
-            max_tasks=100,
-        )
-        assert (
-            shifted_best.params.half_life_weeks < stable_best.params.half_life_weeks
-            or (shifted_best.params.half_life_weeks < 52.0)
-        )
-
-    def test_unknown_is_scored_as_no_time_left(self):
-        samples = synthetic(3, review=DAY)
-        outcomes = replay(samples, UTC_HOURS, Params(min_samples=50))
-        assert all(o.p50 is None for o in outcomes)
-        assert loss(outcomes) > 0
-        assert metrics_of(outcomes).coverage is None
-
+class TestRegime:
     def test_regime_change_is_reported_with_its_size(self):
         now = START + timedelta(weeks=30)
         older = [
@@ -419,14 +377,3 @@ class TestRobustness:
 
         assert result.p80_seconds is not None
         assert result.p80_seconds <= 10 * 8 * HOUR
-
-    def test_every_grid_point_is_scored_and_the_first_of_equals_wins(self):
-        from toolbelt.finish_estimate.backtest import tune
-
-        samples = synthetic(30, review=DAY, seed=4)
-        grid = [Params(12.0, 3, 5.0), Params(12.0, 3, 5.0)]
-
-        best, best_loss, scored, _ = tune(samples, UTC_HOURS, grid=grid)
-
-        assert best is grid[0]
-        assert [value for _, value in scored] == [best_loss, best_loss]

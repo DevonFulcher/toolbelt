@@ -382,14 +382,16 @@ def test_the_demo_history_is_enough_for_estimates_and_a_backtest(tmp_path: Path)
     predicts most of them."""
     from collections import Counter
 
-    from toolbelt.finish_estimate.backtest import run_backtest
+    from toolbelt.finish_estimate.backtest import metrics_of, replay
+    from toolbelt.finish_estimate.baseline import BaselineModel
     from toolbelt.finish_estimate.working_hours import WorkingHours
-    from toolbelt.ui.estimate_feed import samples_of, stage_rows
+    from toolbelt.ui.estimate_feed import stage_rows, timelines_of
 
     records = _demo_records(tmp_path)
     tasks = [aggregate.Task(pr=record, started=None) for record in records]
     with_pr, resolved, _ = aggregate.pr_lives(tasks, NOW)
-    rows = stage_rows(list(zip(with_pr, resolved, strict=True)), NOW)
+    lives = list(zip(with_pr, resolved, strict=True))
+    rows = stage_rows(lives, NOW)
 
     reviews = [row for row in rows if row.stage == "wait_review"]
     assert len(reviews) >= 25
@@ -397,12 +399,18 @@ def test_the_demo_history_is_enough_for_estimates_and_a_backtest(tmp_path: Path)
     assert {"sam", "lee", "kim"} <= set(by_reviewer)
     assert all(by_reviewer[name] >= 5 for name in ("sam", "lee", "kim"))
 
-    result = run_backtest(samples_of(rows, WorkingHours()), WorkingHours(), NOW)
-    assert result.overall.n >= 100
-    assert result.overall.unknown < result.overall.n * 0.25
-    assert (
-        result.overall.coverage is not None and 0.6 <= result.overall.coverage <= 0.95
+    hours = WorkingHours()
+    out = replay(
+        {"baseline": BaselineModel(hours)},
+        timelines_of(lives),
+        hours,
+        NOW,
+        max_tasks=100,
     )
+    overall = metrics_of(out["baseline"])
+    assert overall.n >= 100
+    assert overall.unknown < overall.n * 0.4
+    assert overall.coverage is not None and 0.6 <= overall.coverage <= 0.95
 
 
 def test_the_seeded_demo_has_earlier_backtests_for_the_accuracy_chart(tmp_path: Path):
@@ -427,6 +435,14 @@ def test_the_seeded_demo_has_earlier_backtests_for_the_accuracy_chart(tmp_path: 
         store.close()
 
     assert len(track.backtests) >= 3
+    assert [c.stage for c in track.champion_changes] == ["all", "wait_review"]
+    assert {m.model for m in track.backtests[-1].models} == {
+        "baseline",
+        "regression",
+        "hazard",
+        "trees",
+    }
+    assert track.backtests[-1].ablation
     assert track.current is not None
     assert all(b.overall.coverage is not None for b in track.backtests)
     assert {s.stage for s in track.backtests[-1].by_stage} >= {"wait_review", "merge"}

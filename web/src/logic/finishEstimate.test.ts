@@ -15,6 +15,7 @@ function estimate(patch: Partial<CardEstimate> = {}): CardEstimate {
     level: "reviewer",
     n: 14,
     explanation: "waiting on ann, 2.1 working days in, based on 14 reviews",
+    model: "baseline",
     ...patch,
   };
 }
@@ -83,7 +84,7 @@ test("percent and regime text", () => {
 });
 
 function stage(name: string, n: number) {
-  return { stage: name, n, unknown: 0, coverage: 0.8, median_abs_error_seconds: 1, median_width_seconds: 1 };
+  return { stage: name, n, unknown: 0, coverage: 0.8, median_abs_error_seconds: 1, median_width_seconds: 1, censored: 0, coverage_adjusted: 0.8, loss: 1 };
 }
 
 test("the series follows the stored backtests and stages are ordered by volume", () => {
@@ -92,12 +93,14 @@ test("the series follows the stored backtests and stages are ordered by volume",
     working_day_seconds: 28800,
     current: params,
     backtests: [
-      { ran_at: "2026-10-01T00:00:00Z", params, overall: { ...stage("all", 10), coverage: 0.7 }, by_stage: [], regime: [] },
-      { ran_at: "2026-10-02T00:00:00Z", params, overall: { ...stage("all", 12), coverage: null }, by_stage: [], regime: [] },
+      { ran_at: "2026-10-01T00:00:00Z", params, overall: { ...stage("all", 10), coverage: 0.7 }, by_stage: [], regime: [], models: [], champions: [], ablation_model: "", ablation: [] },
+      { ran_at: "2026-10-02T00:00:00Z", params, overall: { ...stage("all", 12), coverage: null }, by_stage: [], regime: [], models: [], champions: [], ablation_model: "", ablation: [] },
     ],
     live_made: 0,
     live_finished: 0,
     live_coverage: null,
+    champion_changes: [],
+    fits: [],
   };
   expect(backtestSeries(accuracy).map((p) => p.coverage)).toEqual([0.7, null]);
   expect(stagesByVolume([stage("b", 2), stage("a", 2), stage("c", 9)]).map((s) => s.stage)).toEqual(["c", "a", "b"]);

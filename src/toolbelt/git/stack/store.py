@@ -633,6 +633,25 @@ _MIGRATIONS: list[tuple[str, ...]] = [
         )
         """,
     ),
+    (
+        # Several models forecast a task's finish (``toolbelt.finish_estimate``):
+        # ``predictions`` records which one made the shown estimate, and
+        # ``model_fits`` keeps each fitted model (its state is the model's own
+        # pickle) with when it was fitted and what it was trained on, so a
+        # restart does not refit at once. ``stage_rows`` is how many stage rows
+        # existed then (a refit is due after enough new ones).
+        "ALTER TABLE predictions ADD COLUMN model TEXT NOT NULL DEFAULT 'baseline'",
+        """
+        CREATE TABLE model_fits (
+            model TEXT PRIMARY KEY,
+            fitted_at TEXT NOT NULL,
+            trained_on INTEGER NOT NULL,
+            stage_rows INTEGER NOT NULL,
+            model_version INTEGER NOT NULL,
+            state BLOB NOT NULL
+        )
+        """,
+    ),
 ]
 
 
@@ -670,6 +689,20 @@ class PredictionRow:
     level: str
     n: int
     model_version: int
+    #: The model that made it.
+    model: str = "baseline"
+
+
+@dataclass(frozen=True)
+class ModelFitRow:
+    """A fitted model's stored state (see the ``model_fits`` migration)."""
+
+    model: str
+    fitted_at: datetime
+    trained_on: int
+    stage_rows: int
+    model_version: int
+    state: bytes
 
 
 @dataclass(frozen=True)
@@ -1949,8 +1982,8 @@ class StackStore:
             return (
                 conn.execute(
                     "INSERT INTO predictions (task_key, stage, stage_started_at, "
-                    "made_at, p50_at, p80_at, level, n, model_version) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "made_at, p50_at, p80_at, level, n, model_version, model) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                     "ON CONFLICT (task_key, stage, stage_started_at) DO NOTHING",
                     (
                         row.task_key,
@@ -1962,6 +1995,7 @@ class StackStore:
                         row.level,
                         row.n,
                         row.model_version,
+                        row.model,
                     ),
                 ).rowcount
                 > 0
@@ -1980,6 +2014,39 @@ class StackStore:
                 level=r["level"],
                 n=r["n"],
                 model_version=r["model_version"],
+                model=r["model"],
+            )
+            for r in rows
+        ]
+
+    def save_model_fit(self, row: ModelFitRow) -> None:
+        with self._write() as conn:
+            conn.execute(
+                "INSERT INTO model_fits (model, fitted_at, trained_on, stage_rows, "
+                "model_version, state) VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT (model) DO UPDATE SET fitted_at = excluded.fitted_at, "
+                "trained_on = excluded.trained_on, stage_rows = excluded.stage_rows, "
+                "model_version = excluded.model_version, state = excluded.state",
+                (
+                    row.model,
+                    _iso(row.fitted_at),
+                    row.trained_on,
+                    row.stage_rows,
+                    row.model_version,
+                    row.state,
+                ),
+            )
+
+    def model_fits(self) -> list[ModelFitRow]:
+        rows = self._conn.execute("SELECT * FROM model_fits ORDER BY model")
+        return [
+            ModelFitRow(
+                model=r["model"],
+                fitted_at=datetime.fromisoformat(r["fitted_at"]),
+                trained_on=r["trained_on"],
+                stage_rows=r["stage_rows"],
+                model_version=r["model_version"],
+                state=r["state"],
             )
             for r in rows
         ]

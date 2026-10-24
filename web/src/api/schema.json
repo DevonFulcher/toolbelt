@@ -1427,6 +1427,9 @@
         "level": {
           "type": "string"
         },
+        "model": {
+          "type": "string"
+        },
         "n": {
           "type": "integer"
         },
@@ -1449,7 +1452,8 @@
         "partial",
         "level",
         "n",
-        "explanation"
+        "explanation",
+        "model"
       ],
       "title": "CardEstimate",
       "type": "object"
@@ -1690,6 +1694,70 @@
           "$ref": "#/$defs/NextCatalogState"
         }
       ]
+    },
+    "ChampionChange": {
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "previous": {
+          "type": "string"
+        },
+        "stage": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "stage",
+        "previous",
+        "model",
+        "at"
+      ],
+      "title": "ChampionChange",
+      "type": "object"
+    },
+    "ChampionEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "coverage": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "loss": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model": {
+          "type": "string"
+        },
+        "points": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "model",
+        "points",
+        "loss",
+        "coverage"
+      ],
+      "title": "ChampionEvidence",
+      "type": "object"
     },
     "ChildRef": {
       "additionalProperties": false,
@@ -2579,6 +2647,57 @@
       "title": "DraftCatalogState",
       "type": "object"
     },
+    "EstimateAblation": {
+      "additionalProperties": false,
+      "description": "The pinball-loss change when a feature is taken out of ``model``\n(positive: worse without it, so signal; near zero or negative: noise).",
+      "properties": {
+        "delta": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "feature": {
+          "type": "string"
+        },
+        "loss_with": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "loss_without": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "points": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "feature",
+        "loss_with",
+        "loss_without",
+        "delta",
+        "points"
+      ],
+      "title": "EstimateAblation",
+      "type": "object"
+    },
     "EstimateAccuracy": {
       "additionalProperties": false,
       "description": "The finish estimate's track record: the stored backtests, oldest\nfirst, and the shown estimates compared with the actual finishes.",
@@ -2586,6 +2705,12 @@
         "backtests": {
           "items": {
             "$ref": "#/$defs/EstimateBacktest"
+          },
+          "type": "array"
+        },
+        "champion_changes": {
+          "items": {
+            "$ref": "#/$defs/ChampionChange"
           },
           "type": "array"
         },
@@ -2598,6 +2723,12 @@
               "type": "null"
             }
           ]
+        },
+        "fits": {
+          "items": {
+            "$ref": "#/$defs/ModelFitInfo"
+          },
+          "type": "array"
         },
         "live_coverage": {
           "anyOf": [
@@ -2625,7 +2756,9 @@
         "backtests",
         "live_made",
         "live_finished",
-        "live_coverage"
+        "live_coverage",
+        "champion_changes",
+        "fits"
       ],
       "title": "EstimateAccuracy",
       "type": "object"
@@ -2633,9 +2766,30 @@
     "EstimateBacktest": {
       "additionalProperties": false,
       "properties": {
+        "ablation": {
+          "items": {
+            "$ref": "#/$defs/EstimateAblation"
+          },
+          "type": "array"
+        },
+        "ablation_model": {
+          "type": "string"
+        },
         "by_stage": {
           "items": {
             "$ref": "#/$defs/EstimateStageAccuracy"
+          },
+          "type": "array"
+        },
+        "champions": {
+          "items": {
+            "$ref": "#/$defs/EstimateChampion"
+          },
+          "type": "array"
+        },
+        "models": {
+          "items": {
+            "$ref": "#/$defs/ModelMetrics"
           },
           "type": "array"
         },
@@ -2660,9 +2814,148 @@
         "params",
         "overall",
         "by_stage",
-        "regime"
+        "regime",
+        "models",
+        "champions",
+        "ablation_model",
+        "ablation"
       ],
       "title": "EstimateBacktest",
+      "type": "object"
+    },
+    "EstimateBreakdown": {
+      "additionalProperties": false,
+      "description": "What the card's popup shows for one task.",
+      "properties": {
+        "accuracy": {
+          "items": {
+            "$ref": "#/$defs/ModelAccuracy"
+          },
+          "type": "array"
+        },
+        "champion": {
+          "type": "string"
+        },
+        "champion_reason": {
+          "type": "string"
+        },
+        "factors": {
+          "items": {
+            "$ref": "#/$defs/EstimateFactor"
+          },
+          "type": "array"
+        },
+        "id": {
+          "type": "string"
+        },
+        "models": {
+          "items": {
+            "$ref": "#/$defs/ModelForecast"
+          },
+          "type": "array"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ParentWait"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "path": {
+          "items": {
+            "$ref": "#/$defs/PathStage"
+          },
+          "type": "array"
+        },
+        "similar": {
+          "items": {
+            "$ref": "#/$defs/SimilarTask"
+          },
+          "type": "array"
+        },
+        "stage": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "stage",
+        "champion",
+        "champion_reason",
+        "models",
+        "accuracy",
+        "path",
+        "parent",
+        "factors",
+        "similar"
+      ],
+      "title": "EstimateBreakdown",
+      "type": "object"
+    },
+    "EstimateChampion": {
+      "additionalProperties": false,
+      "description": "The model that answers for a stage and why: ``margin`` is its loss\nadvantage over the baseline (0: the baseline stays).",
+      "properties": {
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/ChampionEvidence"
+          },
+          "type": "array"
+        },
+        "margin": {
+          "type": "number"
+        },
+        "model": {
+          "type": "string"
+        },
+        "points": {
+          "type": "integer"
+        },
+        "stage": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "stage",
+        "model",
+        "margin",
+        "points",
+        "evidence"
+      ],
+      "title": "EstimateChampion",
+      "type": "object"
+    },
+    "EstimateFactor": {
+      "additionalProperties": false,
+      "description": "A group the baseline scaled the estimate by.",
+      "properties": {
+        "dim": {
+          "type": "string"
+        },
+        "n": {
+          "type": "integer"
+        },
+        "raw": {
+          "type": "number"
+        },
+        "shrunk": {
+          "type": "number"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "dim",
+        "value",
+        "n",
+        "raw",
+        "shrunk"
+      ],
+      "title": "EstimateFactor",
       "type": "object"
     },
     "EstimateParams": {
@@ -2729,7 +3022,30 @@
       "additionalProperties": false,
       "description": "How a backtest's predictions fared for one stage (``all`` for every).",
       "properties": {
+        "censored": {
+          "type": "integer"
+        },
         "coverage": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "coverage_adjusted": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "loss": {
           "anyOf": [
             {
               "type": "number"
@@ -2775,7 +3091,10 @@
         "unknown",
         "coverage",
         "median_abs_error_seconds",
-        "median_width_seconds"
+        "median_width_seconds",
+        "censored",
+        "coverage_adjusted",
+        "loss"
       ],
       "title": "EstimateStageAccuracy",
       "type": "object"
@@ -3780,6 +4099,197 @@
       ],
       "type": "string"
     },
+    "ModelAccuracy": {
+      "additionalProperties": false,
+      "description": "A model's recent record: on the latest backtest's points for the stage\n(``all``: every stage), and when it was last fitted.",
+      "properties": {
+        "coverage": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fitted_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "loss": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "loss_vs_baseline": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "median_abs_error_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model": {
+          "type": "string"
+        },
+        "points": {
+          "type": "integer"
+        },
+        "trained_on": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "model",
+        "points",
+        "coverage",
+        "loss",
+        "median_abs_error_seconds",
+        "trained_on",
+        "fitted_at",
+        "loss_vs_baseline"
+      ],
+      "title": "ModelAccuracy",
+      "type": "object"
+    },
+    "ModelFitInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "fitted_at": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "trained_on": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "model",
+        "fitted_at",
+        "trained_on"
+      ],
+      "title": "ModelFitInfo",
+      "type": "object"
+    },
+    "ModelForecast": {
+      "additionalProperties": false,
+      "description": "One model's answer for a task: the finish as UTC instants (``None``:\nit has no answer), its explanation, and what it learned that matters here\n(``details``: the baseline's factors and level, the regression's biggest\ncontributions, the hazard's shape and coefficients, the trees'\nimportances).",
+      "properties": {
+        "champion": {
+          "type": "boolean"
+        },
+        "details": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "explanation": {
+          "type": "string"
+        },
+        "finish_p50": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "finish_p80": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "known": {
+          "type": "boolean"
+        },
+        "level": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "n": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "model",
+        "champion",
+        "known",
+        "finish_p50",
+        "finish_p80",
+        "level",
+        "n",
+        "explanation",
+        "details"
+      ],
+      "title": "ModelForecast",
+      "type": "object"
+    },
+    "ModelMetrics": {
+      "additionalProperties": false,
+      "description": "One model's metrics on a backtest.",
+      "properties": {
+        "by_stage": {
+          "items": {
+            "$ref": "#/$defs/EstimateStageAccuracy"
+          },
+          "type": "array"
+        },
+        "model": {
+          "type": "string"
+        },
+        "overall": {
+          "$ref": "#/$defs/EstimateStageAccuracy"
+        }
+      },
+      "required": [
+        "model",
+        "overall",
+        "by_stage"
+      ],
+      "title": "ModelMetrics",
+      "type": "object"
+    },
     "NextActionInfo": {
       "additionalProperties": false,
       "properties": {
@@ -3946,6 +4456,94 @@
         "absent"
       ],
       "title": "NowRep",
+      "type": "object"
+    },
+    "ParentWait": {
+      "additionalProperties": false,
+      "description": "The wait for the parent a stacked task is blocked on: the parent's own\nfinish, and the combined finish (the later of the two, plus what usually\nfollows a parent landing).",
+      "properties": {
+        "combined_p50": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "combined_p80": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "parent_known": {
+          "type": "boolean"
+        },
+        "parent_p50": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "parent_p80": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "task_key": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_key",
+        "parent_known",
+        "parent_p50",
+        "parent_p80",
+        "combined_p50",
+        "combined_p80"
+      ],
+      "title": "ParentWait",
+      "type": "object"
+    },
+    "PathStage": {
+      "additionalProperties": false,
+      "description": "A stage that typically follows, from the reference class: the share of\nsimilar tasks that went through it and its working time per task.",
+      "properties": {
+        "p50_seconds": {
+          "type": "number"
+        },
+        "p80_seconds": {
+          "type": "number"
+        },
+        "share": {
+          "type": "number"
+        },
+        "stage": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "stage",
+        "share",
+        "p50_seconds",
+        "p80_seconds"
+      ],
+      "title": "PathStage",
       "type": "object"
     },
     "PersonalReviewState": {
@@ -4894,6 +5492,47 @@
         "conflicts"
       ],
       "title": "SiblingConflictsInfo",
+      "type": "object"
+    },
+    "SimilarTask": {
+      "additionalProperties": false,
+      "description": "A past stage like this one (the reference class).",
+      "properties": {
+        "ended_at": {
+          "type": "string"
+        },
+        "reviewer": {
+          "type": "string"
+        },
+        "seconds": {
+          "type": "number"
+        },
+        "stage": {
+          "type": "string"
+        },
+        "tail_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "task_key": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_key",
+        "stage",
+        "reviewer",
+        "seconds",
+        "tail_seconds",
+        "ended_at"
+      ],
+      "title": "SimilarTask",
       "type": "object"
     },
     "SlackAccepted": {
@@ -6785,6 +7424,9 @@
     "decision_list": {
       "$ref": "#/$defs/DecisionList"
     },
+    "estimate_breakdown": {
+      "$ref": "#/$defs/EstimateBreakdown"
+    },
     "event": {
       "$ref": "#/$defs/ServerEvent"
     },
@@ -6841,6 +7483,7 @@
     "snapshot",
     "event",
     "aggregate",
+    "estimate_breakdown",
     "spend",
     "agents",
     "agents_enabled",

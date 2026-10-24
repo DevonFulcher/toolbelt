@@ -23,6 +23,7 @@ from toolbelt.ui.aggregate_feed import parse_pr
 from toolbelt.ui.estimate_feed import (
     EstimateJob,
     LiveTask,
+    ModelHub,
     accuracy,
     live_estimates,
     samples_of,
@@ -253,6 +254,10 @@ class TestStore:
             store.close()
 
 
+def cards(*args, **kwargs):
+    return live_estimates(*args, **kwargs)[0]
+
+
 def run_job(store_path: Path, records: list[agg.PrRecord], now: datetime, **kw) -> bool:
     async def lives():
         return lives_of(records, now)
@@ -262,6 +267,8 @@ def run_job(store_path: Path, records: list[agg.PrRecord], now: datetime, **kw) 
         lives=lives,
         hours=lambda: HOURS,
         wall_clock=lambda: now,
+        challengers=(),
+        ablation=None,
     )
     return asyncio.run(job.run_once(**kw))
 
@@ -358,7 +365,7 @@ class TestLiveEstimate:
         try:
             fast = self.open_pr(900, "ann", day_at(61, 10))
             slow = self.open_pr(901, "bob", day_at(61, 10))
-            found = live_estimates(
+            found = cards(
                 store, [live("fast", fast, now), live("slow", slow, now)], HOURS, now
             )
         finally:
@@ -377,7 +384,7 @@ class TestLiveEstimate:
         now = at(day_at(1, 11))
         store = StackStore(tmp_path / "s.db")
         try:
-            found = live_estimates(
+            found = cards(
                 store,
                 [live("t", self.open_pr(1, "ann", day_at(1, 10)), now)],
                 HOURS,
@@ -389,7 +396,7 @@ class TestLiveEstimate:
         estimate = found["t"]
         assert not estimate.known
         assert (estimate.finish_p50, estimate.finish_p80) == (None, None)
-        assert estimate.explanation.startswith("unknown: not enough history")
+        assert estimate.explanation.startswith("unknown: no history for this stage yet")
 
     def test_a_parent_landing_late_holds_back_its_child(self, tmp_path: Path):
         now = at(day_at(61, 11))
@@ -404,10 +411,8 @@ class TestLiveEstimate:
                 items=(request(day_at(61, 10), "ann"),),
                 review_now="requested",
             )
-            alone = live_estimates(store, [live("child", child, now)], HOURS, now)[
-                "child"
-            ]
-            stacked = live_estimates(
+            alone = cards(store, [live("child", child, now)], HOURS, now)["child"]
+            stacked = cards(
                 store,
                 [live("parent", parent, now), live("child", child, now)],
                 HOURS,
@@ -427,8 +432,8 @@ class TestLiveEstimate:
         store = self.seeded(tmp_path, now)
         try:
             task = live("t", self.open_pr(920, "ann", day_at(61, 10)), now)
-            live_estimates(store, [task], HOURS, now)
-            live_estimates(store, [task], HOURS, now + timedelta(hours=1))
+            cards(store, [task], HOURS, now)
+            cards(store, [task], HOURS, now + timedelta(hours=1))
             (made,) = store.predictions()
         finally:
             store.close()
@@ -443,7 +448,7 @@ class TestLiveEstimate:
         store = self.seeded(tmp_path, now)
         try:
             done = merged_pr(930, "ann", 2)
-            assert live_estimates(store, [live("done", done, now)], HOURS, now) == {}
+            assert cards(store, [live("done", done, now)], HOURS, now) == {}
         finally:
             store.close()
 
@@ -595,7 +600,10 @@ class TestCommand:
         lines = asyncio.run(backtest_now(db, tmp_path / "no-config.yaml"))
 
         assert lines[0].endswith("stage rows stored.")
-        assert any("at or under p80" in line for line in lines)
+        assert any(
+            line.startswith("baseline:") and "coverage" in line for line in lines
+        )
+        assert any(line.startswith("champion for all:") for line in lines)
         store = StackStore(db)
         try:
             assert len(store.backtests()) == 1
@@ -610,3 +618,327 @@ class TestCommand:
         lines = asyncio.run(backtest_now(tmp_path / "empty.db", tmp_path / "c.yaml"))
 
         assert lines == ["0 stage rows stored; no finished work to backtest yet."]
+
+
+def models_job(
+    db: Path,
+    records: list[agg.PrRecord],
+    now: datetime,
+    hub=None,
+    ablation="regression",
+    **kw,
+):
+    async def lives():
+        return lives_of(records, now)
+
+    job = EstimateJob(
+        db_path=lambda: db,
+        lives=lives,
+        hours=lambda: HOURS,
+        wall_clock=lambda: now,
+        hub=hub,
+        ablation=ablation,
+        **kw,
+    )
+    return job, asyncio.run(job.run_once(force_backtest=True))
+
+
+class TestModels:
+    def test_the_job_backtests_every_model_picks_champions_and_stores_the_fits(
+        self, tmp_path: Path
+    ):
+        db = tmp_path / "s.db"
+        now = at(day_at(60, 12))
+
+        _, ran = models_job(db, history_records(60), now)
+
+        assert ran
+        store = StackStore(db)
+        try:
+            (backtest,) = store.backtests()
+            metrics = json.loads(backtest.metrics)
+            assert set(metrics["models"]) == {
+                "baseline",
+                "regression",
+                "hazard",
+                "trees",
+            }
+            assert metrics["champions"]["all"]["model"] in metrics["models"]
+            assert {
+                e["model"] for e in metrics["champions"]["wait_review"]["evidence"]
+            } == set(metrics["models"])
+            assert metrics["ablation_model"] == "regression"
+            assert {
+                "size_log2",
+                "queue_length",
+                "slack_hours_since",
+                "reviewer_open_requests",
+            } <= {a["feature"] for a in metrics["ablation"]}
+            assert {f.model for f in store.model_fits()} == {
+                "regression",
+                "hazard",
+                "trees",
+            }
+            track = accuracy(store, HOURS)
+        finally:
+            store.close()
+        assert {m.model for m in track.backtests[-1].models} == {
+            "baseline",
+            "regression",
+            "hazard",
+            "trees",
+        }
+        assert {f.model for f in track.fits} == {"regression", "hazard", "trees"}
+
+    def test_a_restart_restores_the_fits_instead_of_refitting(self, tmp_path: Path):
+        db = tmp_path / "s.db"
+        now = at(day_at(60, 12))
+        models_job(db, history_records(40), now, ablation=None)
+
+        hub = ModelHub()
+        store = StackStore(db)
+        try:
+            assert hub.due(store, now + timedelta(hours=2)) == []
+            assert set(hub.models) == {"regression", "hazard", "trees"}
+            assert hub.due(store, now + timedelta(days=1, hours=1)) == [
+                "regression",
+                "hazard",
+                "trees",
+            ]
+        finally:
+            store.close()
+
+    def test_new_finished_stages_make_a_refit_due(self, tmp_path: Path):
+        db = tmp_path / "s.db"
+        now = at(day_at(60, 12))
+        models_job(db, history_records(40), now, ablation=None)
+        hub = ModelHub()
+        store = StackStore(db)
+        try:
+            assert hub.due(store, now) == []
+            store.replace_stage_durations(
+                [
+                    StageDurationRow(
+                        task_key=f"o/api#{900 + i}",
+                        task_id=None,
+                        stage="wait_ci",
+                        kind="ci",
+                        started_at=at(i),
+                        ended_at=at(i + 1),
+                        actor="ci",
+                        reviewer="",
+                        repo="o/api",
+                        additions=1,
+                        deletions=1,
+                        size_bucket=1,
+                        round=1,
+                        finished_at=None,
+                    )
+                    for i in range(30)
+                ]
+            )
+            assert hub.due(store, now) == ["regression", "hazard", "trees"]
+        finally:
+            store.close()
+
+    def test_the_card_shows_the_champions_range_and_the_popup_every_model(
+        self, tmp_path: Path
+    ):
+        db = tmp_path / "s.db"
+        now = at(day_at(61, 11))
+        hub = ModelHub()
+        models_job(db, history_records(50), at(day_at(60, 12)), hub=hub, ablation=None)
+        store = StackStore(db)
+        try:
+            task = live(
+                "t", TestLiveEstimate.open_pr(None, 920, "bob", day_at(61, 10)), now
+            )
+            found, details = live_estimates(store, [task], HOURS, now, hub)
+        finally:
+            store.close()
+
+        card, popup = found["t"], details["t"]
+        assert card.model == popup.champion
+        assert [m.model for m in popup.models] == [
+            "baseline",
+            "regression",
+            "hazard",
+            "trees",
+        ]
+        assert sum(m.champion for m in popup.models) == 1
+        champion = next(m for m in popup.models if m.champion)
+        assert champion.finish_p50 == card.finish_p50
+        assert {a.model for a in popup.accuracy} == {
+            "baseline",
+            "regression",
+            "hazard",
+            "trees",
+        }
+        assert (
+            next(a for a in popup.accuracy if a.model == "regression").trained_on
+            is not None
+        )
+        assert popup.champion_reason
+        baseline = next(m for m in popup.models if m.model == "baseline")
+        assert baseline.details["factors"] and baseline.details["similar"]
+        assert popup.similar and popup.factors
+
+    def test_the_champion_is_what_the_backtest_chose_for_the_stage(self):
+        from toolbelt.ui.estimate_feed import champion_for
+
+        metrics = {
+            "champions": {
+                "all": {"model": "baseline", "margin": 0.0, "points": 80},
+                "wait_review": {"model": "trees", "margin": 0.12, "points": 41},
+                "merge": {"model": "baseline", "margin": 0.0, "points": 12},
+            }
+        }
+        model, reason = champion_for(metrics, "wait_review")
+        assert model == "trees" and "12%" in reason and "41 test points" in reason
+        assert champion_for(metrics, "merge")[0] == "baseline"
+        assert "stays" in champion_for(metrics, "merge")[1]
+        assert champion_for(metrics, "fix_ci")[0] == "baseline"
+        assert champion_for({}, "fix_ci")[0] == "baseline"
+
+
+class TestStackedModels:
+    """Ancestors are never summed: a child's own work runs in parallel with
+    its parent's, only the merge is ordered."""
+
+    def seeded(self, tmp_path: Path):
+        db = tmp_path / "s.db"
+        now = at(day_at(61, 11))
+        run_job(db, history_records(60), at(day_at(60, 12)))
+        return StackStore(db), now
+
+    def pr_with(self, number: int, reviewer: str, **kw):
+        opened = day_at(61, 10)
+        return pr(
+            number=number,
+            created=opened,
+            head=kw.pop("head", f"devon/p{number}"),
+            items=(request(opened + 0.25, reviewer),),
+            review_now="requested",
+            **kw,
+        )
+
+    def test_the_child_is_the_later_of_its_own_and_its_parents_finish(
+        self, tmp_path: Path
+    ):
+        store, now = self.seeded(tmp_path)
+        try:
+            slow_parent = self.pr_with(1, "bob")
+            fast_child = self.pr_with(2, "ann", base=slow_parent.head_branch)
+            alone = cards(store, [live("c", fast_child, now)], HOURS, now)["c"]
+            both = cards(
+                store,
+                [live("p", slow_parent, now), live("c", fast_child, now)],
+                HOURS,
+                now,
+            )
+        finally:
+            store.close()
+
+        assert both["c"].finish_p50 >= both["p"].finish_p50
+        assert both["c"].finish_p50 > alone.finish_p50
+        assert both["c"].finish_p80 >= both["c"].finish_p50
+
+    def test_a_chain_recurses_through_the_nearest_parent_only(self, tmp_path: Path):
+        store, now = self.seeded(tmp_path)
+        try:
+            grand = self.pr_with(1, "bob")
+            parent = self.pr_with(2, "ann", base=grand.head_branch)
+            child = self.pr_with(3, "ann", base=parent.head_branch)
+            found = cards(
+                store,
+                [live("g", grand, now), live("p", parent, now), live("c", child, now)],
+                HOURS,
+                now,
+            )
+        finally:
+            store.close()
+
+        # The grandparent's wait reaches the child through its parent.
+        assert found["g"].finish_p50 <= found["p"].finish_p50 <= found["c"].finish_p50
+
+    def test_a_merged_parent_adds_no_wait(self, tmp_path: Path):
+        store, now = self.seeded(tmp_path)
+        try:
+            merged_parent = merged_pr(950, "ann", 1)
+            child = self.pr_with(4, "ann", base=merged_parent.head_branch)
+            with_merged = cards(
+                store,
+                [live("m", merged_parent, now), live("c", child, now)],
+                HOURS,
+                now,
+            )
+            alone = cards(store, [live("c", child, now)], HOURS, now)
+        finally:
+            store.close()
+
+        assert with_merged["c"].finish_p50 == alone["c"].finish_p50
+
+    def test_a_parent_with_no_estimate_makes_the_child_at_least_its_own(
+        self, tmp_path: Path
+    ):
+        store, now = self.seeded(tmp_path)
+        try:
+            # The parent is in a stage nothing was ever seen in: unknown.
+            parent = pr(
+                number=5,
+                created=day_at(61, 10),
+                head="devon/p5",
+                draft=True,
+                items=(),
+                review_now="none",
+            )
+            child = self.pr_with(6, "ann", base=parent.head_branch)
+            found, details = live_estimates(
+                store, [live("p", parent, now), live("c", child, now)], HOURS, now
+            )
+            alone = cards(store, [live("c", child, now)], HOURS, now)["c"]
+        finally:
+            store.close()
+
+        assert not found["p"].known
+        assert found["c"].known
+        assert found["c"].finish_p50 == alone.finish_p50
+        assert "at least this: its parent has no estimate" in found["c"].explanation
+        assert details["c"].parent is not None and not details["c"].parent.parent_known
+
+    def test_siblings_never_affect_each_other(self, tmp_path: Path):
+        store, now = self.seeded(tmp_path)
+        try:
+            parent = self.pr_with(7, "ann")
+            a = self.pr_with(8, "ann", base=parent.head_branch, head="devon/a8")
+            b = self.pr_with(9, "bob", base=parent.head_branch, head="devon/b9")
+            together = cards(
+                store,
+                [live("p", parent, now), live("a", a, now), live("b", b, now)],
+                HOURS,
+                now,
+            )
+            only_a = cards(
+                store, [live("p", parent, now), live("a", a, now)], HOURS, now
+            )
+        finally:
+            store.close()
+
+        assert together["a"].finish_p50 == only_a["a"].finish_p50
+
+    def test_the_popup_shows_the_parent_wait_as_its_own_row(self, tmp_path: Path):
+        store, now = self.seeded(tmp_path)
+        try:
+            parent = self.pr_with(10, "bob")
+            child = self.pr_with(11, "ann", base=parent.head_branch)
+            _, details = live_estimates(
+                store, [live("p", parent, now), live("c", child, now)], HOURS, now
+            )
+        finally:
+            store.close()
+
+        wait = details["c"].parent
+        assert wait is not None and wait.parent_known
+        assert wait.task_key == "o/api#10"
+        assert wait.combined_p50 >= wait.parent_p50
+        assert details["p"].parent is None

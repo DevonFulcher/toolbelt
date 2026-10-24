@@ -34,6 +34,9 @@ describe("the estimate accuracy section", () => {
     coverage,
     median_abs_error_seconds: 3.5 * 3600,
     median_width_seconds: 12 * 3600,
+    censored: 0,
+    coverage_adjusted: coverage,
+    loss: 3600,
   });
   const run = (day: number, coverage: number) => ({
     ran_at: `2026-10-0${day}T00:00:00Z`,
@@ -41,6 +44,10 @@ describe("the estimate accuracy section", () => {
     overall: stage("all", 100, coverage),
     by_stage: [stage("merge", 10, 0.9), stage("wait_review", 60, coverage)],
     regime: [],
+    models: [],
+    champions: [],
+    ablation_model: "",
+    ablation: [],
   });
 
   test("shows the last backtest, the parameters in use, a regime change and every stage", async () => {
@@ -67,6 +74,8 @@ describe("the estimate accuracy section", () => {
           live_made: 6,
           live_finished: 4,
           live_coverage: 0.75,
+          champion_changes: [],
+          fits: [],
         },
       }),
     );
@@ -84,10 +93,69 @@ describe("the estimate accuracy section", () => {
     expect(within(section).getByText(/Of 6 estimates shown, 4 tasks have finished: 75% of them at or before their p80/)).toBeInTheDocument();
   });
 
+  test("compares every model, names the champion per stage and shows which features carry signal", async () => {
+    const withModels = (day: number, regCoverage: number, regLoss: number) => ({
+      ...run(day, 0.78),
+      models: [
+        { model: "baseline", overall: { ...stage("all", 100, 0.78), loss: 5000 }, by_stage: [] },
+        { model: "regression", overall: { ...stage("all", 100, regCoverage), loss: regLoss }, by_stage: [] },
+      ],
+      champions: [
+        { stage: "all", model: regLoss < 4750 ? "regression" : "baseline", margin: 0.2, points: 90, evidence: [] },
+        {
+          stage: "wait_review",
+          model: regLoss < 4750 ? "regression" : "baseline",
+          margin: regLoss < 4750 ? 0.2 : 0,
+          points: 41,
+          evidence: [
+            { model: "baseline", points: 41, loss: 5000, coverage: 0.78 },
+            { model: "regression", points: 41, loss: regLoss, coverage: regCoverage },
+          ],
+        },
+      ],
+      ablation_model: "regression",
+      ablation: [
+        { feature: "size_log2", loss_with: 4000, loss_without: 6000, delta: 2000, points: 90 },
+        { feature: "hour_of_week", loss_with: 4000, loss_without: 3900, delta: -100, points: 90 },
+      ],
+    });
+    serve(
+      aggregate({
+        estimate: {
+          working_day_seconds: 8 * 3600,
+          current: params,
+          backtests: [withModels(1, 0.7, 5200), withModels(2, 0.8, 4000)],
+          live_made: 0,
+          live_finished: 0,
+          live_coverage: null,
+          champion_changes: [{ stage: "wait_review", previous: "baseline", model: "regression", at: "2026-10-02T00:00:00Z" }],
+          fits: [{ model: "regression", fitted_at: "2026-10-02T01:00:00Z", trained_on: 420 }],
+        },
+      }),
+    );
+    show();
+
+    const section = await screen.findByRole("region", { name: "Estimate accuracy" });
+
+    const models = within(within(section).getByRole("table", { name: "Models" })).getAllByRole("row");
+    expect(models[1]?.textContent).toContain("baseline");
+    expect(models[2]?.textContent).toContain("regression");
+    expect(models[2]?.textContent).toContain("420 rows");
+    const champions = within(section).getByRole("table", { name: "Champions" });
+    expect(within(champions).getByText("wait review").closest("tr")?.textContent).toContain("regression");
+    expect(within(champions).getByText("wait review").closest("tr")?.textContent).toContain("20%");
+    expect(within(section).getByText(/the champion for wait review changed from baseline to regression/)).toBeInTheDocument();
+    expect(within(section).getByRole("img", { name: "Pinball loss by model over time" })).toBeInTheDocument();
+    const ablation = within(within(section).getByRole("table", { name: "Ablation" })).getAllByRole("row");
+    expect(ablation[1]?.textContent).toContain("size_log2");
+    expect(ablation[1]?.textContent).toContain("(signal)");
+    expect(ablation[2]?.textContent).toContain("(better without)");
+  });
+
   test("says so when no backtest has run", async () => {
     serve(
       aggregate({
-        estimate: { working_day_seconds: 8 * 3600, current: null, backtests: [], live_made: 0, live_finished: 0, live_coverage: null },
+        estimate: { working_day_seconds: 8 * 3600, current: null, backtests: [], live_made: 0, live_finished: 0, live_coverage: null, champion_changes: [], fits: [] },
       }),
     );
     show();
@@ -109,7 +177,7 @@ describe("the estimate accuracy section", () => {
 
 describe("the aggregate view", () => {
   test("a page refresh shows the saved short-window result while the server request is pending", () => {
-    sessionStorage.setItem("toolbelt:aggregate:v3:4:", JSON.stringify(aggregate({ weeks: 4 })));
+    sessionStorage.setItem("toolbelt:aggregate:v4:4:", JSON.stringify(aggregate({ weeks: 4 })));
     const fetchMock = vi.fn(() => new Promise<Response>(() => {}));
     vi.stubGlobal("fetch", fetchMock);
     show("?view=aggregate&weeks=4");

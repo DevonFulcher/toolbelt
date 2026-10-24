@@ -1,6 +1,7 @@
 import type {
   Aggregate,
   AgentConversation,
+  EstimateBreakdown,
   DecisionAnswerInfo,
   DecisionInfo,
   DecisionList,
@@ -108,6 +109,13 @@ export async function fetchAgentConversation(runId: string, fetchImpl: typeof fe
 }
 
 /** Start a run on a task by hand; the error says which rule still stops it. */
+/** Every model's answer for a task (the estimate popup). */
+export async function fetchEstimateBreakdown(id: string, fetchImpl: typeof fetch = fetch): Promise<EstimateBreakdown> {
+  const response = await fetchImpl(`/api/estimate?id=${encodeURIComponent(id)}`);
+  if (!response.ok) throw new Error(`estimate: ${response.status}`);
+  return (await response.json()) as EstimateBreakdown;
+}
+
 export async function startAgentRun(id: string, fetchImpl: typeof fetch = fetch): Promise<void> {
   const response = await fetchImpl(`${AGENTS_URL}/start`, {
     method: "POST",

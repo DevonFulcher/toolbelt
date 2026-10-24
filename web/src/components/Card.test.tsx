@@ -1027,10 +1027,11 @@ describe("a card's agent and spend slots", () => {
         level: "reviewer",
         n: 14,
         explanation: "waiting on ann, 2.1 working days in, based on 14 reviews",
+        model: "baseline",
       },
     });
 
-    expect(found.estimate).toEqual(["Estimated finish", "ok", "~2d (p50), up to 4d (p80)"]);
+    expect(found.estimate).toEqual(["Estimated finish", "ok", "~2d (p50), up to 4d (p80) Models"]);
     expect(screen.getByTitle(/waiting on ann, 2.1 working days in, based on 14 reviews/)).toBeInTheDocument();
   });
 
@@ -1047,10 +1048,11 @@ describe("a card's agent and spend slots", () => {
         level: "unknown",
         n: 2,
         explanation: "unknown: not enough history (2 of the 5 wait_review stages needed)",
+        model: "baseline",
       },
     });
 
-    expect(found.estimate).toEqual(["Estimated finish", "na", "unknown: not enough history"]);
+    expect(found.estimate).toEqual(["Estimated finish", "na", "unknown: not enough history Models"]);
   });
 
   test("the session moved into the Agent group as the interactive session", () => {

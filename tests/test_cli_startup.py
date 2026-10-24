@@ -7,7 +7,17 @@ that use them; an eager import would add over a second to every invocation.
 import subprocess
 import sys
 
-HEAVY = ["pandas", "matplotlib", "seaborn", "boto3", "pydantic", "httpx", "yaml"]
+HEAVY = [
+    "pandas",
+    "matplotlib",
+    "seaborn",
+    "boto3",
+    "pydantic",
+    "httpx",
+    "yaml",
+    "sklearn",
+    "scipy",
+]
 
 
 def test_importing_the_cli_does_not_load_heavy_libraries():

@@ -1,34 +1,46 @@
-"""Backtesting: replay the history, predicting every finished task at each of
-its stage boundaries from only what was known strictly before that instant,
-and compare with the actual finish. The same replay picks the estimator's
-hyperparameters from a small fixed grid by pinball loss, and spots a change
-in how long stages take."""
+"""Backtesting: replay the history, predicting at every checkpoint of every
+task from only what was known strictly before it, and compare with what
+happened. Any ``ForecastModel`` runs through the same harness on the same
+splits, so models are compared on identical rows and a feature can be taken in
+and out (``ablate``). The harness also picks the champion per stage and spots
+a change in how long stages take."""
 
 import statistics
+from bisect import bisect_left
 from collections import defaultdict
-from collections.abc import Sequence
-from dataclasses import asdict, dataclass, field
-from datetime import datetime, timedelta
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
-from toolbelt.finish_estimate.model import (
-    PARAMS_GRID,
-    History,
-    Params,
-    StageSample,
-    Subject,
-    estimate,
+from toolbelt.finish_estimate.forecast import ForecastModel, TrainingData
+from toolbelt.finish_estimate.model import StageSample
+from toolbelt.finish_estimate.snapshots import (
+    SnapshotRow,
+    TaskTimeline,
+    build_snapshots,
+    samples_of_timelines,
+    with_known_at,
 )
 from toolbelt.finish_estimate.working_hours import WorkingHours
 
-#: How many of the most recently finished tasks are replayed.
+#: How many of the most recently ended tasks are tested (every task trains).
 MAX_TASKS = 150
 
-#: The quantiles the estimate states and the loss scores.
+#: The model refits at most this often during the replay (it is still fitted
+#: only on what was known before the instant it was fitted at).
+REFIT_EVERY = timedelta(days=1)
+
+#: The quantiles the forecast states and the loss scores.
 QUANTILES = (0.5, 0.8)
 
 #: A prediction of "unknown" is scored as if it had predicted no time left, so
-#: a setting cannot win by declining to answer.
+#: a model cannot win by declining to answer.
 UNKNOWN_PREDICTION = 0.0
+
+#: Champion rules (``choose_champions``).
+CHAMPION_MARGIN = 0.05
+CHAMPION_MIN_POINTS = 30
+BASELINE = "baseline"
 
 #: A change of the median stage duration beyond this share is a regime change,
 #: with at least this many samples in each window.
@@ -40,72 +52,18 @@ REGIME_WEEKS = 4
 @dataclass(frozen=True)
 class Outcome:
     """One backtested prediction. Seconds are working seconds left at
-    ``made_at``."""
+    ``made_at``; ``censored``: the task was still open, so ``actual`` is only
+    a lower bound."""
 
     task_key: str
     stage: str
     made_at: datetime
     actual: float
+    censored: bool
     p50: float | None
     p80: float | None
     level: str
     n: int
-
-
-def _subject(sample: StageSample) -> Subject:
-    return Subject(
-        stage=sample.stage,
-        started_at=sample.started_at,
-        reviewer=sample.reviewer,
-        repo=sample.repo,
-        size_bucket=sample.size_bucket,
-        round=sample.round,
-    )
-
-
-def replay(
-    samples: Sequence[StageSample],
-    hours: WorkingHours,
-    params: Params,
-    *,
-    max_tasks: int = MAX_TASKS,
-    history: History | None = None,
-) -> list[Outcome]:
-    """Predicts, at the start of each stage of the ``max_tasks`` most recently
-    finished tasks, when the task would finish, from the samples that had
-    ended (and tasks that had finished) before that instant."""
-    history = history or History(samples)
-    finished: dict[str, datetime] = {}
-    for sample in samples:
-        if sample.finished_at is not None:
-            finished[sample.task_key] = sample.finished_at
-    recent = {
-        key
-        for key, _ in sorted(finished.items(), key=lambda kv: (kv[1], kv[0]))[
-            -max_tasks:
-        ]
-    }
-    outcomes = []
-    for sample in sorted(samples, key=lambda s: (s.started_at, s.task_key)):
-        if sample.task_key not in recent:
-            continue
-        end = finished[sample.task_key]
-        if sample.started_at >= end:
-            continue
-        guess = estimate(history, _subject(sample), sample.started_at, params, hours)
-        outcomes.append(
-            Outcome(
-                task_key=sample.task_key,
-                stage=sample.stage,
-                made_at=sample.started_at,
-                actual=hours.seconds(sample.started_at, end),
-                p50=guess.p50_seconds,
-                p80=guess.p80_seconds,
-                level=guess.level,
-                n=guess.n,
-            )
-        )
-    return outcomes
 
 
 def pinball(actual: float, predicted: float, q: float) -> float:
@@ -114,44 +72,57 @@ def pinball(actual: float, predicted: float, q: float) -> float:
 
 
 def loss(outcomes: Sequence[Outcome]) -> float:
-    """The mean pinball loss over both quantiles, in seconds; ``inf`` with no
-    outcome."""
-    if not outcomes:
+    """The mean pinball loss over both quantiles of the outcomes whose finish
+    is known (censored ones have no actual to score), in seconds; ``inf``
+    with none."""
+    scored = [o for o in outcomes if not o.censored]
+    if not scored:
         return float("inf")
     total = 0.0
-    for o in outcomes:
+    for o in scored:
         for q, predicted in zip(QUANTILES, (o.p50, o.p80), strict=True):
             total += pinball(
                 o.actual, UNKNOWN_PREDICTION if predicted is None else predicted, q
             )
-    return total / (len(outcomes) * len(QUANTILES))
+    return total / (len(scored) * len(QUANTILES))
 
 
 @dataclass(frozen=True)
 class StageMetrics:
     stage: str
-    #: Predictions made, and how many were "unknown".
+    #: Predictions made, how many were "unknown" and how many were for tasks
+    #: still open (right-censored).
     n: int
     unknown: int
-    #: The share of the known ones whose actual time was at or under p80
-    #: (the target is 0.8); ``None`` with none known.
+    censored: int
+    #: The share of the known, finished-task predictions whose actual time was
+    #: at or under the p80 (the target is 0.8); ``None`` with none.
     coverage: float | None
+    #: The same with every open task already past its p80 counted as a miss
+    #: (it is one, whatever happens next).
+    coverage_adjusted: float | None
     median_abs_error_seconds: float | None
     #: The median of p80 - p50.
     median_width_seconds: float | None
+    #: Mean pinball loss (see ``loss``); ``None`` with no finished task.
+    loss: float | None
 
 
 def metrics_of(outcomes: Sequence[Outcome], stage: str = "all") -> StageMetrics:
-    known = [o for o in outcomes if o.p50 is not None and o.p80 is not None]
+    done = [o for o in outcomes if not o.censored]
+    known = [o for o in done if o.p50 is not None and o.p80 is not None]
+    over = [
+        o for o in outcomes if o.censored and o.p80 is not None and o.actual > o.p80
+    ]
+    hits = sum(o.actual <= o.p80 for o in known if o.p80 is not None)
+    scored = loss(outcomes)
     return StageMetrics(
         stage=stage,
         n=len(outcomes),
-        unknown=len(outcomes) - len(known),
-        coverage=(
-            sum(o.actual <= o.p80 for o in known if o.p80 is not None) / len(known)
-            if known
-            else None
-        ),
+        unknown=sum(o.p50 is None for o in outcomes),
+        censored=sum(o.censored for o in outcomes),
+        coverage=hits / len(known) if known else None,
+        coverage_adjusted=hits / (len(known) + len(over)) if known else None,
         median_abs_error_seconds=(
             statistics.median(abs(o.actual - o.p50) for o in known if o.p50 is not None)
             if known
@@ -164,6 +135,7 @@ def metrics_of(outcomes: Sequence[Outcome], stage: str = "all") -> StageMetrics:
             if known
             else None
         ),
+        loss=None if scored == float("inf") else scored,
     )
 
 
@@ -172,6 +144,198 @@ def metrics_by_stage(outcomes: Sequence[Outcome]) -> list[StageMetrics]:
     for o in outcomes:
         grouped[o.stage].append(o)
     return [metrics_of(grouped[stage], stage) for stage in sorted(grouped)]
+
+
+# ---- the replay -------------------------------------------------------------------------
+
+
+def training_data(
+    samples: Sequence[StageSample],
+    rows: Sequence[SnapshotRow],
+    checkpoints: Sequence[datetime],
+    known_at: datetime,
+    hours: WorkingHours,
+) -> TrainingData:
+    """What may be learned from at ``known_at``: stages ended before it, and
+    the rows checkpointed before it with their targets censored at it where
+    they were not known yet. ``checkpoints`` are ``rows``' instants, sorted."""
+    end = bisect_left(checkpoints, known_at)
+    return TrainingData(
+        known_at=known_at,
+        hours=hours,
+        samples=[s for s in samples if s.ended_at < known_at],
+        rows=[with_known_at(r, known_at, hours) for r in rows[:end]],
+    )
+
+
+def tested_tasks(timelines: Sequence[TaskTimeline], max_tasks: int) -> set[str]:
+    """The ``max_tasks`` most recent tasks by their last activity."""
+
+    def last(task: TaskTimeline) -> datetime:
+        times = [span.ended_at or span.started_at for span in task.spans]
+        if task.ended_at:
+            times.append(task.ended_at)
+        return max(times, default=datetime.min.replace(tzinfo=UTC))
+
+    ranked = sorted(timelines, key=lambda t: (last(t), t.task_key))
+    return {t.task_key for t in ranked[-max_tasks:]}
+
+
+def replay(
+    models: Mapping[str, ForecastModel],
+    timelines: Sequence[TaskTimeline],
+    hours: WorkingHours,
+    now: datetime,
+    *,
+    max_tasks: int = MAX_TASKS,
+    refit_every: timedelta = REFIT_EVERY,
+) -> dict[str, list[Outcome]]:
+    """Runs every model over the same rows: at each checkpoint of the tested
+    tasks it is (re)fitted on what was known strictly before and predicts the
+    finish. Rows of a task that was closed without merging have no finish and
+    are not scored; rows of one still open are kept, censored."""
+    samples = samples_of_timelines(timelines, hours)
+    rows = build_snapshots(timelines, hours, now)
+    checkpoints = [r.checkpoint for r in rows]
+    tested = tested_tasks(timelines, max_tasks)
+    out: dict[str, list[Outcome]] = {name: [] for name in models}
+    next_fit: datetime | None = None
+    for row in rows:
+        if row.features.task_key not in tested or row.finish_remaining_seconds is None:
+            continue
+        if next_fit is None or row.checkpoint >= next_fit:
+            data = training_data(samples, rows, checkpoints, row.checkpoint, hours)
+            for model in models.values():
+                model.fit(data)
+            next_fit = row.checkpoint + refit_every
+        for name, model in models.items():
+            guess = model.predict(row.features)
+            out[name].append(
+                Outcome(
+                    task_key=row.features.task_key,
+                    stage=row.features.stage,
+                    made_at=row.checkpoint,
+                    actual=row.finish_remaining_seconds,
+                    censored=row.finish_censored,
+                    p50=guess.p50_seconds,
+                    p80=guess.p80_seconds,
+                    level=guess.level,
+                    n=guess.n,
+                )
+            )
+    return out
+
+
+# ---- champions ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Evidence:
+    """One model's record on a stage's test points."""
+
+    model: str
+    points: int
+    loss: float | None
+    coverage: float | None
+
+
+@dataclass(frozen=True)
+class Champion:
+    """The model that answers for a stage, and why: ``margin`` is how much its
+    loss beats the baseline's (0 when the baseline stays)."""
+
+    stage: str
+    model: str
+    margin: float
+    points: int
+    evidence: tuple[Evidence, ...]
+
+
+def choose_champions(
+    outcomes: Mapping[str, Sequence[Outcome]],
+    *,
+    margin: float = CHAMPION_MARGIN,
+    min_points: int = CHAMPION_MIN_POINTS,
+) -> dict[str, Champion]:
+    """Per stage (and ``all``), the model with the lowest pinball loss when it
+    beats the baseline's by at least ``margin`` (a share of it) on at least
+    ``min_points`` scored test points; otherwise the baseline stays."""
+    stages = sorted({o.stage for rows in outcomes.values() for o in rows})
+    result: dict[str, Champion] = {}
+    for stage in ("all", *stages):
+        evidence = []
+        values: dict[str, float] = {}
+        points = 0
+        for model, rows in outcomes.items():
+            picked = [
+                o
+                for o in rows
+                if (stage == "all" or o.stage == stage) and not o.censored
+            ]
+            m = metrics_of(picked, stage)
+            evidence.append(Evidence(model, len(picked), m.loss, m.coverage))
+            if m.loss is not None:
+                values[model] = m.loss
+            points = max(points, len(picked))
+        chosen, gain = BASELINE, 0.0
+        base = values.get(BASELINE)
+        if base is not None and points >= min_points:
+            challengers = {k: v for k, v in values.items() if k != BASELINE}
+            if challengers:
+                best = min(sorted(challengers), key=lambda k: challengers[k])
+                share = (base - challengers[best]) / base if base > 0 else 0.0
+                if share >= margin:
+                    chosen, gain = best, share
+        result[stage] = Champion(stage, chosen, gain, points, tuple(evidence))
+    return result
+
+
+# ---- ablation --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Ablation:
+    """The change in pinball loss when ``feature`` is taken out of a model:
+    positive ``delta`` means the model got worse without it (the feature is
+    signal), around zero or negative means it is noise."""
+
+    feature: str
+    loss_with: float | None
+    loss_without: float | None
+    delta: float | None
+    points: int
+
+
+def ablate(
+    make: Callable[[frozenset[str]], ForecastModel],
+    features: Sequence[str],
+    timelines: Sequence[TaskTimeline],
+    hours: WorkingHours,
+    now: datetime,
+    *,
+    max_tasks: int = MAX_TASKS,
+    refit_every: timedelta = timedelta(days=3),
+) -> list[Ablation]:
+    """Runs ``make(excluded)`` with every feature in, then each one out, on the
+    same rows and splits."""
+    models = {"": make(frozenset())} | {f: make(frozenset({f})) for f in features}
+    outcomes = replay(
+        models, timelines, hours, now, max_tasks=max_tasks, refit_every=refit_every
+    )
+    full = metrics_of(outcomes[""]).loss
+    rows = []
+    for feature in features:
+        without = metrics_of(outcomes[feature]).loss
+        rows.append(
+            Ablation(
+                feature=feature,
+                loss_with=full,
+                loss_without=without,
+                delta=None if full is None or without is None else without - full,
+                points=sum(not o.censored for o in outcomes[feature]),
+            )
+        )
+    return rows
 
 
 @dataclass(frozen=True)
@@ -229,60 +393,3 @@ def regime_changes(
                 )
             )
     return found
-
-
-@dataclass(frozen=True)
-class BacktestResult:
-    params: Params
-    loss: float
-    #: The loss of every grid point, in grid order.
-    grid: tuple[tuple[Params, float], ...]
-    overall: StageMetrics
-    by_stage: tuple[StageMetrics, ...]
-    regime: tuple[RegimeChange, ...] = field(default_factory=tuple)
-
-    def to_dict(self) -> dict:
-        return asdict(self)
-
-
-def tune(
-    samples: Sequence[StageSample],
-    hours: WorkingHours,
-    *,
-    grid: Sequence[Params] = PARAMS_GRID,
-    max_tasks: int = MAX_TASKS,
-) -> tuple[Params, float, list[tuple[Params, float]], list[Outcome]]:
-    """The grid point with the lowest pinball loss (the first of equals), its
-    loss, every point's loss and the best point's outcomes."""
-    history = History(samples)
-    scored = []
-    best: tuple[Params, float, list[Outcome]] | None = None
-    for params in grid:
-        outcomes = replay(samples, hours, params, max_tasks=max_tasks, history=history)
-        value = loss(outcomes)
-        scored.append((params, value))
-        if best is None or value < best[1]:
-            best = (params, value, outcomes)
-    assert best is not None
-    return best[0], best[1], scored, best[2]
-
-
-def run_backtest(
-    samples: Sequence[StageSample],
-    hours: WorkingHours,
-    now: datetime,
-    *,
-    grid: Sequence[Params] = PARAMS_GRID,
-    max_tasks: int = MAX_TASKS,
-) -> BacktestResult:
-    params, best_loss, scored, outcomes = tune(
-        samples, hours, grid=grid, max_tasks=max_tasks
-    )
-    return BacktestResult(
-        params=params,
-        loss=best_loss,
-        grid=tuple(scored),
-        overall=metrics_of(outcomes),
-        by_stage=tuple(metrics_by_stage(outcomes)),
-        regime=tuple(regime_changes(samples, now)),
-    )

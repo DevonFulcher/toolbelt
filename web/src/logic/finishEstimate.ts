@@ -74,3 +74,25 @@ export function backtestSeries(accuracy: EstimateAccuracy): BacktestPoint[] {
 export function stagesByVolume(stages: readonly EstimateStageAccuracy[]): EstimateStageAccuracy[] {
   return [...stages].sort((a, b) => b.n - a.n || a.stage.localeCompare(b.stage));
 }
+
+export interface ModelSeries {
+  model: string;
+  /** One value per stored backtest, oldest first (`null`: none that night). */
+  coverage: (number | null)[];
+  loss: (number | null)[];
+}
+
+/** Each model's coverage and pinball loss over the stored backtests. */
+export function modelSeries(accuracy: EstimateAccuracy): ModelSeries[] {
+  const names = [...new Set(accuracy.backtests.flatMap((b) => b.models.map((m) => m.model)))].sort((a, b) =>
+    a === "baseline" ? -1 : b === "baseline" ? 1 : a.localeCompare(b),
+  );
+  return names.map((model) => {
+    const overall = accuracy.backtests.map((b) => b.models.find((m) => m.model === model)?.overall ?? null);
+    return {
+      model,
+      coverage: overall.map((o) => o?.coverage ?? null),
+      loss: overall.map((o) => o?.loss ?? null),
+    };
+  });
+}

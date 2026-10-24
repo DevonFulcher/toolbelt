@@ -79,7 +79,7 @@ from toolbelt.decisions.model import Decision, InvalidDecision
 from toolbelt.diff_review.language_servers import PYTHON_SERVER, LanguageServer
 from toolbelt.diff_review.lsp import LspSessions
 from toolbelt.diff_review.revisions import RevisionPair, Side
-from toolbelt.finish_estimate.config import configured_working_hours
+from toolbelt.finish_estimate.config import configured_priors, configured_working_hours
 from toolbelt.finish_estimate.working_hours import WorkingHours
 from toolbelt.git.repo_pull import default_config_path
 from toolbelt.git.stack.status import CiState, PrState
@@ -120,7 +120,7 @@ from toolbelt.ui.claims_feed import (
 )
 from toolbelt.ui.client_build import CLIENT_DIST, served_build
 from toolbelt.ui.conflict_commit import conflict_for
-from toolbelt.ui.estimate_feed import EstimateJob
+from toolbelt.ui.estimate_feed import EstimateJob, ModelHub
 from toolbelt.ui.estimate_feed import accuracy as estimate_track_record
 from toolbelt.ui.forwarder_ledger import SettingsLedger
 from toolbelt.ui.github_requests import (
@@ -882,6 +882,8 @@ def create_app(
     def working_hours() -> WorkingHours:
         return configured_working_hours(default_config_path())
 
+    estimate_hub = ModelHub()
+
     views = PushedViews(
         hub=hub,
         dispatcher=dispatcher,
@@ -899,6 +901,8 @@ def create_app(
             personal_review.notices.get((repo_id, name)),
         ),
         working_hours=working_hours,
+        estimate_hub=estimate_hub,
+        priors=lambda: configured_priors(default_config_path()),
     )
     dispatcher.on_tick = lambda: views.notify("agents", "extras")
     runner.on_change = lambda: views.notify("agents", "extras")
@@ -1031,6 +1035,8 @@ def create_app(
         hours=working_hours,
         wall_clock=wall_clock,
         changed=lambda: views.notify("extras"),
+        hub=estimate_hub,
+        priors=lambda: configured_priors(default_config_path()),
     )
 
     # The default change signal needs a connection held for as long as the app
@@ -1404,6 +1410,15 @@ def create_app(
             merge_queue=merge_queue,
             sibling_conflicts=sibling_conflicts,
         )
+
+    @app.get("/api/estimate", response_model=api.EstimateBreakdown)
+    async def estimate_breakdown(id: str = Query(...)) -> api.EstimateBreakdown:
+        """What the estimate popup of a card shows: every model's answer,
+        read from what the background computation stored."""
+        found = views.breakdowns.get(id)
+        if found is None:
+            raise HTTPException(status_code=404, detail="no estimate for this task")
+        return found
 
     @app.get("/api/aggregate", response_model=api.Aggregate)
     async def aggregate(

@@ -15,10 +15,11 @@ taken from sorted values. See ``docs/finish-estimate.md``.
 import math
 from bisect import bisect_left
 from collections import defaultdict
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from toolbelt.finish_estimate.features import BY_NAME, DEFAULT_DIMS, STAGE_DIMS, Value
 from toolbelt.finish_estimate.working_hours import WorkingHours
 
 #: Bumped when the model changes what it predicts for the same history, so
@@ -46,24 +47,6 @@ MAX_ADJUSTMENT = 10.0
 #: fraction of its typical duration, at least this long.
 OVERDUE_FRACTION = 0.25
 OVERDUE_MIN_SECONDS = 3600.0
-
-#: What each stage's duration is explained by, most specific first. A stage not
-#: listed here is explained by its repo.
-STAGE_DIMS: dict[str, tuple[str, ...]] = {
-    "wait_review": ("reviewer", "round"),
-    "address_review": ("reviewer", "size"),
-    "resolve_comments": ("size",),
-    "resolve_conflicts": ("size",),
-    "open_pr": ("size",),
-    "publish": ("size",),
-    "request_review": ("size",),
-    "personal_review": ("size",),
-    "fix_ci": ("repo", "size"),
-    "wait_ci": ("repo",),
-    "merge": ("repo",),
-    "blocked": ("repo",),
-}
-DEFAULT_DIMS = ("repo",)
 
 _PHRASES = {
     "wait_review": "waiting on {reviewer}",
@@ -96,15 +79,6 @@ class Params:
 
 DEFAULT_PARAMS = Params()
 
-#: The grid tuning picks from: small and fixed, defaults first (a tie keeps the
-#: earlier point).
-PARAMS_GRID: tuple[Params, ...] = tuple(
-    Params(half_life, min_samples, shrinkage)
-    for half_life in (12.0, 4.0, 52.0)
-    for min_samples in (5, 3, 10)
-    for shrinkage in (5.0, 2.0, 10.0)
-)
-
 
 @dataclass(frozen=True)
 class StageSample:
@@ -125,40 +99,61 @@ class StageSample:
     finished_at: datetime | None = None
     tail_seconds: float | None = None
 
-    def value(self, dim: str) -> str | int:
-        values: dict[str, str | int] = {
-            "reviewer": self.reviewer,
-            "repo": self.repo,
-            "size": self.size_bucket,
-            "round": self.round,
-        }
-        return values[dim]
+    def value(self, dim: str) -> str:
+        """The categorical feature ``dim`` of the stage (a stored column:
+        ``features.REGISTRY``); ``""`` when it has none."""
+        attr = BY_NAME[dim].sample_attr
+        assert attr is not None, dim
+        value = getattr(self, attr)
+        return "" if value in (None, "") else str(value)
 
 
 @dataclass(frozen=True)
 class Subject:
-    """A stage a task is in (or entering), to estimate the rest of."""
+    """A stage a task is in (or entering), to estimate the rest of. ``values``
+    are its registry features by name (``features.REGISTRY``)."""
 
     stage: str
     started_at: datetime
-    reviewer: str = ""
-    repo: str = ""
-    size_bucket: int = 0
-    round: int = 1
+    values: Mapping[str, Value] = field(default_factory=dict)
 
-    def value(self, dim: str) -> str | int:
-        values: dict[str, str | int] = {
-            "reviewer": self.reviewer,
-            "repo": self.repo,
-            "size": self.size_bucket,
-            "round": self.round,
-        }
-        return values[dim]
+    def value(self, dim: str) -> str:
+        value = self.values.get(dim)
+        return "" if value in (None, "") else str(value)
+
+    @property
+    def reviewer(self) -> str:
+        return self.value("reviewer")
 
 
 def size_bucket(additions: int, deletions: int) -> int:
     """log2 of the lines changed (0 for none or one)."""
     return int(math.log2(max(1, additions + deletions)))
+
+
+#: The fixed quantile grid a finish distribution is carried on: 19 levels.
+LEVELS: tuple[float, ...] = tuple(i / 20 for i in range(1, 20))
+
+
+@dataclass(frozen=True)
+class Prior:
+    """What to answer for a stage with no history of its own: its typical
+    working seconds at p50 and p80 (configured: ``estimate.priors``)."""
+
+    p50_seconds: float
+    p80_seconds: float
+
+
+@dataclass(frozen=True)
+class FactorInfo:
+    """One factor applied to the estimate: the group of the task (a reviewer,
+    a size bucket, ...), its samples, and its raw and shrunk factors."""
+
+    dim: str
+    value: str
+    n: int
+    raw: float
+    shrunk: float
 
 
 @dataclass(frozen=True)
@@ -182,6 +177,11 @@ class Estimate:
     elapsed_seconds: float
     reviewer: str
     explanation: str
+    #: The remaining time to finish at ``LEVELS`` (``None``: not carried).
+    grid: tuple[float, ...] | None = None
+    factors: tuple[FactorInfo, ...] = ()
+    #: The past stages most like this one (same groups, most recent first).
+    similar: tuple[StageSample, ...] = ()
 
     @property
     def known(self) -> bool:
@@ -266,17 +266,17 @@ def _factors(
     weights: Sequence[float],
     dims: Sequence[str],
     params: Params,
-) -> dict[str, dict[str | int, tuple[float, float]]]:
-    """Per dimension, each group's ``(raw, shrunk)`` factor. Raw is
+) -> dict[str, dict[str, tuple[float, float, int]]]:
+    """Per dimension, each group's ``(raw, shrunk, n)`` factor. Raw is
     ``median_group / median_stage``: dividing a sample by its groups' raw
     factors leaves only its spread within the groups. Shrunk is ``exp(n/(n+k)
     * (log median_group - log median_stage))``: what a task of the group is
     scaled by, pulled to the stage's median when ``n`` is small. Groups of
     fewer than ``min_samples`` have none."""
     stage_log = _log_median(samples, weights)
-    out: dict[str, dict[str | int, tuple[float, float]]] = {}
+    out: dict[str, dict[str, tuple[float, float, int]]] = {}
     for dim in dims:
-        groups: dict[str | int, list[int]] = defaultdict(list)
+        groups: dict[str, list[int]] = defaultdict(list)
         for index, sample in enumerate(samples):
             value = sample.value(dim)
             if value != "":
@@ -291,6 +291,7 @@ def _factors(
             out[dim][value] = (
                 math.exp(log_group - stage_log),
                 math.exp(n / (n + params.shrinkage) * (log_group - stage_log)),
+                n,
             )
     return out
 
@@ -307,8 +308,8 @@ def _unknown(subject: Subject, elapsed: float, n: int, params: Params) -> Estima
         elapsed_seconds=elapsed,
         reviewer=subject.reviewer,
         explanation=(
-            f"unknown: not enough history ({n} of the {params.min_samples} "
-            f"{subject.stage} stages needed)"
+            f"unknown: no history for this stage yet ({n} of the "
+            f"{params.min_samples} {subject.stage.replace('_', ' ')} stages needed)"
         ),
     )
 
@@ -321,30 +322,44 @@ def estimate(
     hours: WorkingHours,
     *,
     known_at: datetime | None = None,
+    prior: Prior | None = None,
 ) -> Estimate:
     """The working time left for a task in ``subject``'s stage at ``now``,
     from what was known at ``known_at`` (default ``now``; a backtest passes the
     instant it predicts from). A sample counts once its stage ended before
-    ``known_at``, and its remainder only once the task finished before it."""
+    ``known_at``, and its remainder only once the task finished before it. A
+    stage with fewer than ``min_samples`` samples is unknown (it is never
+    answered from other stages), unless ``prior`` says what to expect."""
     known_at = known_at or now
     elapsed = hours.seconds(subject.started_at, now)
     pool = history.before(subject.stage, known_at, STAGE_CAP)
     dims = STAGE_DIMS.get(subject.stage, DEFAULT_DIMS)
     used: list[str] = []
+    info: list[FactorInfo] = []
     factor_of: dict[int, float] = {}
     target_factor = 1.0
-    if len(pool) >= params.min_samples:
-        level = "stage"
-    else:
-        pool = [
-            s
-            for stage in history.stages()
-            for s in history.before(stage, known_at, GLOBAL_CAP)
-        ]
-        if len(pool) < params.min_samples:
+    level = "stage"
+    if len(pool) < params.min_samples:
+        if prior is None:
             return _unknown(subject, elapsed, len(pool), params)
-        level = "global"
-        dims = ()
+        floor = OVERDUE_MIN_SECONDS
+        p50 = max(prior.p50_seconds - elapsed, floor)
+        p80 = max(prior.p80_seconds - elapsed, p50)
+        return Estimate(
+            stage=subject.stage,
+            p50_seconds=p50,
+            p80_seconds=p80,
+            level="prior",
+            n=len(pool),
+            overdue=False,
+            partial=True,
+            elapsed_seconds=elapsed,
+            reviewer=subject.reviewer,
+            explanation=(
+                f"{subject.stage.replace('_', ' ')}: a configured prior, only "
+                f"{len(pool)} stages of history"
+            ),
+        )
     weights = _weights(pool, known_at, params.half_life_weeks)
     if dims:
         factors = _factors(pool, weights, dims, params)
@@ -358,6 +373,15 @@ def estimate(
             ):
                 used.append(dim)
                 target_factor *= factors[dim][wanted][1]
+                info.append(
+                    FactorInfo(
+                        dim,
+                        wanted,
+                        factors[dim][wanted][2],
+                        factors[dim][wanted][0],
+                        factors[dim][wanted][1],
+                    )
+                )
         for index, sample in enumerate(pool):
             product = 1.0
             for dim in dims:
@@ -381,7 +405,6 @@ def estimate(
         if s.tail_seconds is not None
         and s.finished_at is not None
         and s.finished_at < known_at
-        and level != "global"
     ]
 
     def tail_quantile(q: float) -> float | None:
@@ -389,6 +412,7 @@ def estimate(
 
     overdue = not survivors
     partial = not tails
+    grid = None
     if overdue:
         typical = weighted_quantile(zip(adjusted, weights, strict=True), 0.5)
         floor = max(OVERDUE_MIN_SECONDS, OVERDUE_FRACTION * typical)
@@ -402,12 +426,13 @@ def estimate(
             if (t := pool[i].tail_seconds) is not None
             and pool[i].finished_at is not None
             and pool[i].finished_at < known_at  # type: ignore[operator]
-            and level != "global"
         ]
+        grid = None
         if len(joint) >= MIN_JOINT:
             p50 = weighted_quantile(joint, 0.5)
             p80 = weighted_quantile(joint, 0.8)
             partial = False
+            grid = tuple(weighted_quantile(joint, q) for q in LEVELS)
         else:
             p50 = weighted_quantile(remaining, 0.5) + (tail_quantile(0.5) or 0.0)
             p80 = weighted_quantile(remaining, 0.8) + (tail_quantile(0.8) or 0.0)
@@ -423,7 +448,34 @@ def estimate(
         elapsed_seconds=elapsed,
         reviewer=subject.reviewer,
         explanation=_explain(subject, level, len(pool), elapsed, overdue, hours),
+        grid=grid,
+        factors=tuple(info),
+        similar=_similar(pool, weights, survivors, subject, dims),
     )
+
+
+def _similar(
+    pool: Sequence[StageSample],
+    weights: Sequence[float],
+    survivors: Sequence[int],
+    subject: Subject,
+    dims: Sequence[str],
+    count: int = 5,
+) -> tuple[StageSample, ...]:
+    """The reference class: the surviving samples sharing most groups with the
+    subject, then the heaviest (most recent)."""
+    ranked = sorted(
+        survivors,
+        key=lambda i: (
+            -sum(
+                1
+                for d in dims
+                if subject.value(d) and pool[i].value(d) == subject.value(d)
+            ),
+            -weights[i],
+        ),
+    )
+    return tuple(pool[i] for i in ranked[:count])
 
 
 def _explain(
@@ -438,12 +490,7 @@ def _explain(
         reviewer=subject.reviewer or "the reviewer"
     )
     noun = _NOUNS.get(subject.stage, "similar stages")
-    basis = (
-        f"based on {n} stages of any kind (too few {subject.stage.replace('_', ' ')}"
-        " yet)"
-        if level == "global"
-        else f"based on {n} {noun}"
-    )
+    basis = f"based on {n} {noun}"
     text = f"{phrase}, {format_working(elapsed, hours)} in, {basis}"
     if overdue:
         text += "; already longer than all of them"

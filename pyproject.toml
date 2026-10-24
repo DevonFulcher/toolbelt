@@ -19,6 +19,7 @@ dependencies = [
     "uvicorn>=0.54.0",
     "genai-prices>=0.1.11",
     "claude-agent-sdk>=0.2.165",
+    "scikit-learn>=1.9.1",
 ]
 
 [dependency-groups]
@@ -52,6 +53,7 @@ module = [
     "deepagents.*",
     "langchain.*",
     "langgraph.*",
+    "sklearn.*",
 ]
 ignore_missing_imports = true
 
@@ -65,7 +67,7 @@ extend-select = ["TID251", "TID254", "TID255"]
 # combined, so they must be `lazy import`ed (PEP 810); TID255 flags a lazy import
 # that is used at module level anyway. tests/test_cli_startup.py is the
 # runtime check.
-require-lazy = ["pandas", "matplotlib", "seaborn", "boto3"]
+require-lazy = ["pandas", "matplotlib", "seaborn", "boto3", "sklearn", "numpy"]
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "subprocess.run".msg = "Use toolbelt.logged_process.run"
