@@ -1,13 +1,11 @@
 # Validate, personal review, publish
 
 A task (a tracked branch) goes from "work done" to "PR open for review" in three
-button presses. Nothing here is inferred or automatic: you decide when a branch
+steps. Nothing here is inferred or automatic: you decide when a branch
 is ready, and no PR or CI is involved until you approve.
 
 ```
-Open PR  --Validate-->  (agent run)  -->  Personal review  --Approve-->  PR open
-   ^                                           |
-   +------------- Request changes -------------+
+Open PR  --Validate-->  (agent run)  -->  Personal review  --every file approved-->  PR open
 ```
 
 ## 1. Validate
@@ -51,30 +49,42 @@ When a validate run **succeeds** (not failed, timed out, capped or stopped) and
 no question is pending, the task's Next becomes **Personal review** (kind
 `personal_review`, who: you), replacing **Open PR**. A pending question still
 reads **Deciding** first. The pass/fail result does not decide this: a `fail`
-means the agent would ask for changes, and you read its summary and decide.
+means the agent would ask for changes, and you read its summary and decide. The
+task stays in personal review until its PR exists; Jira stays "In Progress".
 
 The card's Next is a link to the **Review** view of the branch against its
-parent. There, above the diff, the personal review bar shows the run's result and
-summary and offers:
+parent. Above the diff, the personal review bar shows the run's result, how many
+files are approved, and for the file you have open: **Approve `<file>`** and
+**Request changes** (a note is required). **Approve all** approves every file's
+current diff. The file list marks each file ✓ (approved) or ✎ (changes
+requested).
 
-- **Approve and open PR**, with an optional note and a **Post in Slack once it is
-  open** box (shown only when Slack is configured; off by default, see below).
-- **Request changes**, which needs a note. The task reads **Open PR** again until
-  another validate run succeeds.
+**A decision is for one file and the hash of that file's own diff**, not for a
+commit (`file_approvals`: task, path, hash, state, note, time). The hash is
+`git patch-id --stable` of the file's patch between the parent and the head,
+with its status and paths (`RevisionPair.file_diffs`). So:
 
-Both are stored in `review_verdicts` (task, repo, branch, **head commit**,
-verdict, note, time). The page sends the commit it showed; if the branch has a
-new commit since, the verdict is refused ("reload it"). An approval stands only
-for its commit: a new commit makes `current_verdict` forget it. Line-level
-comments are not supported.
+| Change | Approval |
+| --- | --- |
+| a commit that does not touch the file | kept |
+| a rebase onto a moved parent that leaves the file's diff identical | kept |
+| any edit that changes the file's diff | dropped (unreviewed) |
+| the file leaves the diff | dropped out |
+| a file enters the diff | starts unreviewed |
+| a rename | one file, as git's rename detection says |
 
-The task stays in personal review until its PR exists; Jira stays "In Progress".
+The page sends the hash it showed; a decision for a diff that has changed since
+is refused ("reload it"). The task is approved when **every file of its current
+diff is approved** (an empty diff is not). A request for changes to one file
+blocks only that file: the task stays in personal review. Line-level comments
+are not supported.
 
 ## 3. Publish
 
-Approving opens the PR for review in the background (the Next reads *Opening
-PR…*, the outcome comes through the live stream, a failure is the card's
-notice, and approving again retries). `personal_review.open_pr`:
+Approving the last unapproved file (or **Approve all**) opens the PR for review
+in the background (the Next reads *Opening PR…*, the outcome comes through the
+live stream, a failure is the card's notice, and **Approve all** again retries).
+`personal_review.open_pr`:
 
 1. `git push -u origin <branch>` (never forced);
 2. `gh pr create --base <parent> --head <branch> --fill` (not a draft).
@@ -85,23 +95,26 @@ stack database by the next sync, as for any PR.
 
 **Slack.** By default the PR then reads **Post in Slack**, with the dialog that
 shows the message for you to confirm, exactly as in [slack posts](slack-posts.md).
-With *Post in Slack once it is open* ticked, toolbelt drafts the same message
-and posts it straight away, as if you had pressed Post in that dialog. If Slack
-is not configured or the post fails, the PR is still open and the card says so.
+With *Post in Slack once it is open* ticked on the decision that completes the
+approval, toolbelt drafts the same message and posts it straight away, as if you
+had pressed Post in that dialog. If Slack is not configured or the post fails,
+the PR is still open and the card says so.
 
 ## What is recorded
 
 | Input | Recorded in | Read by |
 | --- | --- | --- |
-| a validate run and its result | `agent_runs` (`trigger = 'validate'`, `result`) | `personal_review.validation_spans` |
-| your verdict | `review_verdicts` | the same, and `current_verdict` |
+| a validate run and its result | `agent_runs` (`trigger = 'validate'`, `result`) | `personal_review.validated_since` |
+| your decision on a file | `file_approvals` | `personal_review.file_reviews` |
 
-A task is *validated* from the end of a succeeded validate run until a request
-for changes. That is the `personal_review` lane (a span, *Validated*, plus an
-*approved* / *changes requested* marker each), which `aggregate.task_segments`
-replays so the aggregate view and the card's "next" lane show Personal review
-too ([timeline lanes](timeline-lanes.md)). The agent lane's span for a validate
-run carries its result in the tooltip.
+A task is *validated* from the end of its first succeeded validate run until its
+PR exists. That is the `personal_review` lane (a *Validated* span, plus a *file
+approved* / *changes requested* marker per decision), which
+`aggregate.task_segments` replays so the aggregate view and the card's "next"
+lane show Personal review too ([timeline lanes](timeline-lanes.md)). Whether a
+file is approved depends on the branch's current diff, so it is read from git
+when the Review view asks, not stored on the card. The agent lane's span for a
+validate run carries its result in the tooltip.
 
 ## Not included
 

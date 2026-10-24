@@ -282,16 +282,16 @@
       "legend": "You answered an agent's question."
     },
     "review_approved": {
-      "label": "approved",
+      "label": "file approved",
       "glyph": "✓",
       "tone": "green",
-      "legend": "You approved the branch: its PR was opened."
+      "legend": "You approved a file of the branch."
     },
     "review_changes_requested": {
       "label": "changes requested",
       "glyph": "✎",
       "tone": "amber",
-      "legend": "You requested changes to the branch before any PR."
+      "legend": "You requested changes to a file of the branch before any PR."
     },
     "task_in_review": {
       "label": "task moved to In Review",
@@ -494,7 +494,7 @@
     "personal_review_waiting": {
       "label": "Validated",
       "tone": "accent",
-      "legend": "A validate run reviewed the branch; it waited for your review."
+      "legend": "A validate run reviewed the branch; it waited for your review of its files."
     }
   },
   "chips": {

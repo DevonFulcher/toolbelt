@@ -706,7 +706,6 @@ describe("a card with a validated branch and no PR", () => {
     can_validate: true,
     validated: true,
     result: "pass",
-    verdict: null,
     opening_pr: false,
     notice: null,
     ...over,
@@ -769,18 +768,6 @@ describe("a card with a validated branch and no PR", () => {
     expect(url).toBe("/api/agents/validate");
     expect(JSON.parse(String(init.body))).toEqual({ id: "1:devon/a" });
     vi.unstubAllGlobals();
-  });
-
-  test("a task with changes requested shows the note and offers Validate", () => {
-    withValidation(
-      validation({
-        validated: false,
-        verdict: { verdict: "changes_requested", note: "rename it", head_sha: "abc", at: "2026-10-13T12:00:00Z" },
-      }),
-    );
-
-    expect(slotsOf("devon/a").agent_status[2]).toContain("you requested changes: rename it");
-    expect(screen.getByRole("button", { name: "Validate" })).toBeInTheDocument();
   });
 
   test("a task that has a PR has no Validate button", () => {
@@ -1001,7 +988,7 @@ describe("a card's agent and spend slots", () => {
       latest_run: null,
       runs: 0,
       recent_runs: over.latest_run ? [over.latest_run] : [],
-      validation: { can_validate: false, validated: false, result: null, verdict: null, opening_pr: false, notice: null },
+      validation: { can_validate: false, validated: false, result: null, opening_pr: false, notice: null },
       ...over,
     },
     spend: { interactive_usd: 1.5, interactive_unpriced_calls: 0, autonomous_usd: 0.05, autonomous_runs: 2, ...spend },

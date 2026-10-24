@@ -346,25 +346,25 @@ LANE_SOURCES: tuple[LaneSource, ...] = (
         label="Personal review",
         events={
             "review_approved": Marker(
-                "approved", "✓", GREEN, "You approved the branch: its PR was opened."
+                "file approved", "✓", GREEN, "You approved a file of the branch."
             ),
             "review_changes_requested": Marker(
                 "changes requested",
                 "✎",
                 AMBER,
-                "You requested changes to the branch before any PR.",
+                "You requested changes to a file of the branch before any PR.",
             ),
         },
         phases={
             "personal_review_waiting": Span(
                 "Validated",
                 ACCENT,
-                "A validate run reviewed the branch; it waited for your review.",
+                "A validate run reviewed the branch; it waited for your review of its files.",
             ),
         },
         covers=(
             Coverage(
-                "ReviewVerdict",
+                "FileApprovalState",
                 {
                     "approved": ("review_approved",),
                     "changes_requested": ("review_changes_requested",),

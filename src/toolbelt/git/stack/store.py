@@ -634,6 +634,29 @@ _MIGRATIONS: list[tuple[str, ...]] = [
         """,
     ),
     (
+        # A user's review of one file of a branch before its PR (see
+        # ``ui.personal_review``), replacing ``review_verdicts``, which is no
+        # longer written: a decision is for one file and the hash of that
+        # file's own diff against the parent, so a new commit elsewhere, or a
+        # rebase that leaves the file's diff as it was, keeps it, and any change
+        # to the file's diff drops it. ``state`` is ``approved`` or
+        # ``changes_requested``.
+        """
+        CREATE TABLE file_approvals (
+            id INTEGER PRIMARY KEY,
+            task_id TEXT NOT NULL,
+            repo_id INTEGER NOT NULL,
+            branch TEXT NOT NULL,
+            path TEXT NOT NULL,
+            diff_hash TEXT NOT NULL,
+            state TEXT NOT NULL,
+            note TEXT NOT NULL,
+            decided_at TEXT NOT NULL
+        )
+        """,
+        "CREATE INDEX file_approvals_by_task ON file_approvals (task_id, id)",
+    ),
+    (
         # Several models forecast a task's finish (``toolbelt.finish_estimate``):
         # ``predictions`` records which one made the shown estimate, and
         # ``model_fits`` keeps each fitted model (its state is the model's own
@@ -985,19 +1008,20 @@ class AgentRun:
 
 
 @dataclass(frozen=True)
-class ReviewVerdict:
-    """The user's review of a branch before its PR: ``approved`` or
-    ``changes_requested``, for the head commit ``head_sha`` (``note`` is free
-    text)."""
+class FileApproval:
+    """The user's decision on one file of a branch: ``approved`` or
+    ``changes_requested``, for the file's diff with hash ``diff_hash``
+    (``note`` is free text)."""
 
     id: int
     task_id: str
     repo_id: int
     branch: str
-    head_sha: str
-    verdict: str
+    path: str
+    diff_hash: str
+    state: str
     note: str
-    at: datetime
+    decided_at: datetime
 
 
 @dataclass(frozen=True)
@@ -2243,40 +2267,42 @@ class StackStore:
                 ),
             )
 
-    def add_review_verdict(
+    def add_file_approval(
         self,
         *,
         task_id: str,
         repo_id: int,
         branch: str,
-        head_sha: str,
-        verdict: str,
+        path: str,
+        diff_hash: str,
+        state: str,
         note: str,
         at: datetime,
     ) -> None:
         with self._write() as conn:
             conn.execute(
-                "INSERT INTO review_verdicts (task_id, repo_id, branch, head_sha, "
-                "verdict, note, at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (task_id, repo_id, branch, head_sha, verdict, note, _iso(at)),
+                "INSERT INTO file_approvals (task_id, repo_id, branch, path, "
+                "diff_hash, state, note, decided_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (task_id, repo_id, branch, path, diff_hash, state, note, _iso(at)),
             )
 
-    def review_verdicts(self, *, task_id: str | None = None) -> list[ReviewVerdict]:
-        """Every verdict (of one task, when given), oldest first."""
+    def file_approvals(self, *, task_id: str | None = None) -> list[FileApproval]:
+        """Every decision (of one task, when given), oldest first."""
         rows = self._conn.execute(
-            "SELECT * FROM review_verdicts WHERE ? IS NULL OR task_id = ? ORDER BY id",
+            "SELECT * FROM file_approvals WHERE ? IS NULL OR task_id = ? ORDER BY id",
             (task_id, task_id),
         )
         return [
-            ReviewVerdict(
+            FileApproval(
                 id=r["id"],
                 task_id=r["task_id"],
                 repo_id=r["repo_id"],
                 branch=r["branch"],
-                head_sha=r["head_sha"],
-                verdict=r["verdict"],
+                path=r["path"],
+                diff_hash=r["diff_hash"],
+                state=r["state"],
                 note=r["note"],
-                at=datetime.fromisoformat(r["at"]),
+                decided_at=datetime.fromisoformat(r["decided_at"]),
             )
             for r in rows
         ]

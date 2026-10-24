@@ -50,16 +50,17 @@ has no seeded rows, so a new lane has to be added there.
 
 ## Validate, personal review, publish
 
-`devon/auth-sso` has a succeeded validate run (result pass) and reads
-**Personal review**: open its card's link, read the diff (the branch has a real
-commit in `demo-app`) and approve it. Approving pushes to a bare repo next to
-the demo (`origin/demo-app.git`, set as `demo-app`'s push URL, never
-GitHub) and the fake `gh pr create` opens the PR (it remembers it in
-`created.json`, so the lookups find it). `devon/auth-audit` was sent back
-(a failed validate run, then a request for changes with a note) and reads
-**Open PR**; `devon/auth-lockout` has not been validated, so it only offers
-**Validate** (the demo has no worktrees, so pressing it shows the refusal; no
-agent is ever started by the demo). See `docs/personal-review.md`.
+`devon/auth-sso` has a succeeded validate run (result pass) and two changed
+files, one of them (`sso.py`) already approved: it reads **Personal review**.
+Open its card's link, read the diff, approve `test_sso.py` (or **Approve all**)
+and the PR opens: the branch is pushed to a bare repo next to the demo
+(`origin/demo-app.git`, `demo-app`'s push URL, never GitHub) and the fake `gh pr
+create` opens the PR (remembered in `created.json`, so the lookups find it).
+`devon/auth-audit` was validated (result fail) and its only file has changes
+requested, with a note: it stays in personal review. `devon/auth-lockout` has not
+been validated, so it only offers **Validate** (the demo has no worktrees, so
+pressing it shows the refusal; no agent is ever started by the demo). See
+`docs/personal-review.md`.
 
 ## Task claims
 

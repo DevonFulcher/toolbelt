@@ -79,7 +79,7 @@ describe("the estimate popup", () => {
         {
           id: "1:devon/a",
           lanes: [],
-          agent: { has_action: false, trigger: null, reason: null, can_override: false, starting: false, start_error: null, latest_run: null, runs: 0, recent_runs: [], validation: { can_validate: false, validated: false, result: null, verdict: null, opening_pr: false, notice: null } },
+          agent: { has_action: false, trigger: null, reason: null, can_override: false, starting: false, start_error: null, latest_run: null, runs: 0, recent_runs: [], validation: { can_validate: false, validated: false, result: null, opening_pr: false, notice: null } },
           spend: { interactive_usd: 0, interactive_unpriced_calls: 0, autonomous_usd: 0, autonomous_runs: 0 },
           estimate: {
             known: true, stage: "wait_review", finish_p50: at(2), finish_p80: at(4), overdue: false, partial: false,

@@ -149,7 +149,7 @@ export type TaskLive = TaskLoading | TaskDetails | TaskUnavailable;
 export type HolderKind = "agent" | "human" | "autonomous";
 export type HolderState = "working" | "idle" | "blocked";
 export type UntrackedPrs = UntrackedLoading | UntrackedLoaded | UntrackedFailed;
-export type ReviewVerdict = "approved" | "changes_requested";
+export type FileApprovalState = "approved" | "changes_requested";
 export type Tone = "green" | "red" | "amber" | "gray" | "purple" | "accent";
 export type CatalogDimension =
   "pr" | "ci" | "review" | "comments" | "merge" | "task" | "draft" | "reviewers" | "blocked" | "next";
@@ -197,12 +197,14 @@ export interface Wire {
   agents_enabled: AgentsEnabled;
   agents_launching: AgentsLaunching;
   aggregate: Aggregate;
+  approve_all_request: ApproveAllRequest;
   decision_answer_request: DecisionAnswerRequest;
   decision_delete_request: DecisionDeleteRequest;
   decision_info: DecisionInfo;
   decision_list: DecisionList;
   estimate_breakdown: EstimateBreakdown;
   event: ServerEvent;
+  file_approval_request: FileApprovalRequest;
   merge_queue_info: MergeQueueInfo;
   merge_queue_request: MergeQueueRequest;
   merge_request: MergeRequest;
@@ -211,7 +213,6 @@ export interface Wire {
   review_file: ReviewFile;
   review_files: ReviewChangedFile[];
   review_hover: ReviewHover;
-  review_verdict_request: ReviewVerdictRequest;
   slack_accepted: SlackAccepted;
   slack_draft: SlackDraft;
   slack_draft_request: SlackDraftRequest;
@@ -562,6 +563,18 @@ export interface WaitingOn {
   count: number[];
   key: WaitingOnKey;
   share: (number | null)[];
+}
+/**
+ * The body of ``POST /api/review/approve-all``: approve every file's diff
+ * as the page showed it.
+ */
+export interface ApproveAllRequest {
+  files: {
+    [k: string]: string;
+  };
+  id: string;
+  note: string;
+  post_in_slack?: boolean;
 }
 /**
  * The body of ``POST /api/decisions/answer``: one answer per point, each an
@@ -1063,16 +1076,6 @@ export interface CardValidation {
   opening_pr: boolean;
   result: ValidateResult | null;
   validated: boolean;
-  verdict: ReviewVerdictInfo | null;
-}
-/**
- * The user's review of a branch before its PR (``review_verdicts``).
- */
-export interface ReviewVerdictInfo {
-  at: string;
-  head_sha: string;
-  note: string;
-  verdict: ReviewVerdict;
 }
 /**
  * When a task is estimated to be finished (merged): a median and a p80
@@ -1282,6 +1285,18 @@ export interface ConversationEvent {
   v: number;
 }
 /**
+ * The body of ``POST /api/review/file``: approve one file's diff, or
+ * request changes to it with a note.
+ */
+export interface FileApprovalRequest {
+  diff_hash: string;
+  id: string;
+  note: string;
+  path: string;
+  post_in_slack?: boolean;
+  state: FileApprovalState;
+}
+/**
  * The body of ``POST /api/merge/queue`` and ``/api/merge/unqueue``.
  */
 export interface MergeQueueRequest {
@@ -1299,13 +1314,24 @@ export interface MergeRequest {
  */
 export interface PersonalReviewState {
   can_post_in_slack: boolean;
-  head_sha: string;
+  files: FileReviewInfo[];
   id: string;
   notice: string | null;
   opening_pr: boolean;
   result: ValidateResult | null;
   summary: string | null;
-  verdict: ReviewVerdictInfo | null;
+}
+/**
+ * A changed file of a branch awaiting its personal review, and where your
+ * review of it stands.
+ */
+export interface FileReviewInfo {
+  diff_hash: string;
+  note: string;
+  old_path: string | null;
+  path: string;
+  state: "unreviewed" | "approved" | "changes_requested";
+  status: "A" | "M" | "D" | "R";
 }
 export interface ReviewDefinition {
   target: ReviewDefinitionTarget | null;
@@ -1353,15 +1379,6 @@ export interface ReviewChangedFile {
 }
 export interface ReviewHover {
   text: string | null;
-}
-/**
- * The body of ``POST /api/review/approve`` and ``.../request-changes``.
- */
-export interface ReviewVerdictRequest {
-  head_sha: string;
-  id: string;
-  note: string;
-  post_in_slack?: boolean;
 }
 /**
  * The answer to ``POST /api/slack/send``: the message is being posted in

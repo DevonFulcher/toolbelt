@@ -78,7 +78,7 @@ from toolbelt.decisions.book import AlreadyAnswered, DecisionBook, NoSuchDecisio
 from toolbelt.decisions.model import Decision, InvalidDecision
 from toolbelt.diff_review.language_servers import PYTHON_SERVER, LanguageServer
 from toolbelt.diff_review.lsp import LspSessions
-from toolbelt.diff_review.revisions import RevisionPair, Side
+from toolbelt.diff_review.revisions import FileDiff, RevisionPair
 from toolbelt.finish_estimate.config import configured_priors, configured_working_hours
 from toolbelt.finish_estimate.working_hours import WorkingHours
 from toolbelt.git.repo_pull import default_config_path
@@ -154,7 +154,6 @@ from toolbelt.ui.personal_review import (
     OpenPr,
     PersonalReview,
     ReviewRefused,
-    current_verdict,
     validated_tasks,
 )
 from toolbelt.ui.pr_activity import PrFacts
@@ -1246,8 +1245,8 @@ def create_app(
                 f"The PR is open, but not posted in Slack: {error}"
             ) from error
 
-    def reviewed_head(repo: Path, base: str, branch: str) -> str:
-        return RevisionPair.resolve(repo, base=base, head=branch).commit(Side.NEW)
+    def reviewed_diffs(repo: Path, base: str, branch: str) -> list[FileDiff]:
+        return RevisionPair.resolve(repo, base=base, head=branch).file_diffs()
 
     def review_changed(key: BranchKey) -> None:
         """A branch's personal review changed (a verdict, its PR opening)."""
@@ -1260,7 +1259,7 @@ def create_app(
         repo_path=lambda repo_id: next(
             (p for r, p, _ in _registered_repos() if r == repo_id), None
         ),
-        head_sha=reviewed_head,
+        file_diffs=reviewed_diffs,
         base_of=lambda repo_id, branch: _all_parents(repo_id).get(branch),
         open_pr=open_pr,
         opened=pr_opened,
@@ -1715,22 +1714,21 @@ def create_app(
                     and r.trigger == VALIDATE
                     and r.state == "succeeded"
                 ]
-                verdicts = store.review_verdicts(task_id=task.task_id)
             finally:
                 store.close()
-            head_sha = personal_review.head(repo, head)
-            latest = current_verdict(verdicts, head_sha)
             return api.PersonalReviewState(
                 id=row_id(repo, head),
-                head_sha=head_sha,
-                verdict=api.ReviewVerdictInfo(
-                    verdict=latest.verdict,  # type: ignore[arg-type]
-                    note=latest.note,
-                    head_sha=latest.head_sha,
-                    at=latest.at.isoformat(),
-                )
-                if latest
-                else None,
+                files=[
+                    api.FileReviewInfo(
+                        path=review.diff.path,
+                        old_path=review.diff.old_path,
+                        status=review.diff.status,  # type: ignore[arg-type]
+                        diff_hash=review.diff.diff_hash,
+                        state=review.state,  # type: ignore[arg-type]
+                        note=review.note,
+                    )
+                    for review in personal_review.reviews((repo, head))
+                ],
                 result=runs[0].result if runs else None,  # type: ignore[arg-type]
                 summary=runs[0].summary if runs else None,
                 opening_pr=(repo, head) in personal_review.opening,
@@ -1743,29 +1741,42 @@ def create_app(
         except ReviewRefused as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
 
-    @app.post("/api/review/approve", status_code=202)
-    async def approve_branch(body: api.ReviewVerdictRequest) -> dict[str, bool]:
-        """Approve the branch: record it for the commit the page showed and
-        open its PR (and post it in Slack) in the background."""
+    @app.post("/api/review/file", status_code=202)
+    async def decide_file(body: api.FileApprovalRequest) -> dict[str, bool]:
+        """Approve one file's diff, or request changes to it. Approving the last
+        unapproved file opens the PR (and posts it in Slack) in the background."""
         key = personal_key(body.id)
         try:
-            await asyncio.to_thread(personal_review.check, key, body.head_sha)
-            personal_review.approve(key, body.head_sha, body.note, body.post_in_slack)
+            complete = await asyncio.to_thread(
+                personal_review.decide,
+                key,
+                body.path,
+                body.diff_hash,
+                body.state,
+                body.note,
+            )
+            personal_review.finish(
+                key, complete and body.state == "approved", body.post_in_slack
+            )
         except ReviewRefused as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
-        return {"opening": True}
+        return {"recorded": True}
 
-    @app.post("/api/review/request-changes")
-    async def request_changes(body: api.ReviewVerdictRequest) -> dict[str, bool]:
-        """Request changes: the task goes back to Open PR until the next
-        validate run ends."""
+    @app.post("/api/review/approve-all", status_code=202)
+    async def approve_all_files(body: api.ApproveAllRequest) -> dict[str, bool]:
+        """Approve every file's diff as the page showed it, which opens the PR."""
         key = personal_key(body.id)
         try:
-            await asyncio.to_thread(personal_review.check, key, body.head_sha)
-            personal_review.request_changes(key, body.head_sha, body.note)
+            complete = await asyncio.to_thread(
+                personal_review.approve_all,
+                key,
+                body.files,
+                body.note,
+            )
+            personal_review.finish(key, complete, body.post_in_slack)
         except ReviewRefused as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
-        return {"requested": True}
+        return {"recorded": True}
 
     # Webhooks received since the server started, by event, and how many of
     # them named a tracked branch.

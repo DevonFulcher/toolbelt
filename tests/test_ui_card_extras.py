@@ -219,7 +219,6 @@ def test_a_task_with_no_pr_can_be_validated_and_shows_where_it_stands():
         "can_validate": True,
         "validated": False,
         "result": None,
-        "verdict": None,
         "opening_pr": False,
         "notice": None,
     }
@@ -235,19 +234,6 @@ def test_a_task_with_no_pr_can_be_validated_and_shows_where_it_stands():
         "boom",
     )
     assert {lane.lane for lane in waiting.lanes} >= {"agent", "personal_review"}
-
-    store.add_review_verdict(
-        task_id=task_id,
-        repo_id=repo_id,
-        branch="a",
-        head_sha="abc",
-        verdict="changes_requested",
-        note="rename it",
-        at=NOW - timedelta(hours=2),
-    )
-    (sent_back,) = build_card_extras(r.dispatcher, store, NOW).branches
-    assert sent_back.agent.validation.validated is False
-    assert sent_back.agent.validation.verdict.note == "rename it"  # type: ignore[union-attr]
 
 
 def test_a_task_with_a_pr_cannot_be_validated():

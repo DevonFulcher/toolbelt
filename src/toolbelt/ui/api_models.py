@@ -48,7 +48,7 @@ type FilterKey = Literal["next", "pr", "ci", "review", "comments", "merge"]
 type ClaimKind = Literal["worktree", "ref"]
 type SlackPostKind = Literal["post", "bump", "reassign"]
 type DecisionStatus = Literal["pending", "answered"]
-type ReviewVerdict = Literal["approved", "changes_requested"]
+type FileApprovalState = Literal["approved", "changes_requested"]
 
 # The lanes under the PR track (see timeline_lanes.py): the kinds of their
 # markers and spans, built from the registry so a kind added there is a kind
@@ -1350,15 +1350,6 @@ class CardAgent(Model):
     validation: CardValidation
 
 
-class ReviewVerdictInfo(Model):
-    """The user's review of a branch before its PR (``review_verdicts``)."""
-
-    verdict: ReviewVerdict
-    note: str
-    head_sha: str
-    at: str
-
-
 class CardValidation(Model):
     """Where a task stands on "validate, personal review, publish"
     (``docs/personal-review.md``)."""
@@ -1370,9 +1361,6 @@ class CardValidation(Model):
     validated: bool
     #: The latest validate run's verdict.
     result: ValidateResult | None
-    #: Your latest verdict still standing (an approval of an older commit does
-    #: not stand).
-    verdict: ReviewVerdictInfo | None
     #: The PR is being opened after an approval.
     opening_pr: bool
     #: Why the PR could not be opened after an approval.
@@ -1939,15 +1927,29 @@ Snapshot.model_rebuild()
 # --- Diff review ------------------------------------------------------------
 
 
+class FileReviewInfo(Model):
+    """A changed file of a branch awaiting its personal review, and where your
+    review of it stands."""
+
+    path: str
+    #: Where a renamed file was (``None``: it was not renamed).
+    old_path: str | None
+    status: Literal["A", "M", "D", "R"]
+    #: The hash of this file's own diff against the parent: what a decision is
+    #: for, and what a decision sent back must name.
+    diff_hash: str
+    state: Literal["unreviewed", "approved", "changes_requested"]
+    #: The note of the decision (``""``: none).
+    note: str
+
+
 class PersonalReviewState(Model):
     """What the Review view needs to know of the branch it shows, when it is a
     tracked branch with no PR that a validate run has reviewed."""
 
     #: The branch's row id (see ``Branch.id``).
     id: str
-    #: The commit the diff shows, which a verdict is for.
-    head_sha: str
-    verdict: ReviewVerdictInfo | None
+    files: list[FileReviewInfo]
     result: ValidateResult | None
     summary: str | None
     opening_pr: bool
@@ -1956,15 +1958,30 @@ class PersonalReviewState(Model):
     can_post_in_slack: bool
 
 
-class ReviewVerdictRequest(Model):
-    """The body of ``POST /api/review/approve`` and ``.../request-changes``."""
+class FileApprovalRequest(Model):
+    """The body of ``POST /api/review/file``: approve one file's diff, or
+    request changes to it with a note."""
 
     id: str
-    #: The commit the user reviewed (a newer commit refuses the verdict).
-    head_sha: str
+    path: str
+    #: The hash of the file's diff the user reviewed (a changed diff refuses it).
+    diff_hash: str
+    state: FileApprovalState
     note: str
-    #: Approve only: post the PR in Slack as soon as it is open (``False``: it
-    #: reads Post in Slack, as for any ready PR).
+    #: Approving the last unapproved file opens the PR; post it in Slack as soon
+    #: as it is open (``False``: it reads Post in Slack, as for any ready PR).
+    post_in_slack: bool = False
+
+
+class ApproveAllRequest(Model):
+    """The body of ``POST /api/review/approve-all``: approve every file's diff
+    as the page showed it."""
+
+    id: str
+    #: Each file's path and the hash of its diff on the page (a different diff
+    #: refuses it).
+    files: dict[str, str]
+    note: str
     post_in_slack: bool = False
 
 
@@ -2064,7 +2081,8 @@ class Wire(Model):
     review_hover: ReviewHover
     review_definition: ReviewDefinition
     personal_review_state: PersonalReviewState
-    review_verdict_request: ReviewVerdictRequest
+    file_approval_request: FileApprovalRequest
+    approve_all_request: ApproveAllRequest
     merge_queue_info: MergeQueueInfo
     slack_draft_request: SlackDraftRequest
     slack_draft: SlackDraft
