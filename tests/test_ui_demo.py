@@ -268,7 +268,7 @@ def test_the_seeded_demo_shows_validate_personal_review_and_publish(tmp_path: Pa
     from toolbelt.git.stack.store import StackStore, default_db_path
     from toolbelt.ui.personal_review import current_verdict, validated_tasks
 
-    spec = importlib.util.spec_from_file_location("ui_demo_seed3", DEMO / "seed.py")
+    spec = importlib.util.spec_from_file_location("ui_demo_seed4", DEMO / "seed.py")
     assert spec and spec.loader
     seed = importlib.util.module_from_spec(spec)
     sys.path.insert(0, str(DEMO))
@@ -282,7 +282,7 @@ def test_the_seeded_demo_shows_validate_personal_review_and_publish(tmp_path: Pa
     try:
         task = {f.name: f.task_id for f in store.tracked_branch_facts()}
         waiting = validated_tasks(store)
-        sent_back = store.review_verdicts(task_id=task["devon/search-synonyms"])
+        sent_back = store.review_verdicts(task_id=task["devon/auth-audit"])
         results = {
             run.branch: run.result
             for run in store.agent_runs()
@@ -290,17 +290,16 @@ def test_the_seeded_demo_shows_validate_personal_review_and_publish(tmp_path: Pa
         }
     finally:
         store.close()
-    assert waiting == {task["devon/search-ranking"]}
-    assert results == {"devon/search-ranking": "pass", "devon/search-synonyms": "fail"}
+    assert waiting == {task["devon/auth-sso"]}
+    assert results == {"devon/auth-sso": "pass", "devon/auth-audit": "fail"}
     assert [v.verdict for v in sent_back] == ["changes_requested"]
     assert current_verdict(sent_back, "any") is not None
-    assert "devon/search-stemming" in task  # tracked, never validated
+    assert "devon/auth-lockout" in task  # tracked, never validated
 
-    repo = tmp_path / "repos" / "demo-search"
+    repo = tmp_path / "repos" / "demo-app"
     for branch in (
-        "devon/search-index",
-        "devon/search-ranking",
-        "devon/search-synonyms",
+        "devon/auth-sso",
+        "devon/auth-audit",
     ):
         subprocess.run(
             ["git", "-C", str(repo), "rev-parse", "--verify", branch],
@@ -308,17 +307,17 @@ def test_the_seeded_demo_shows_validate_personal_review_and_publish(tmp_path: Pa
             capture_output=True,
         )
     subprocess.run(
-        ["git", "-C", str(repo), "push", "-u", "origin", "devon/search-ranking"],
+        ["git", "-C", str(repo), "push", "-u", "origin", "devon/auth-sso"],
         check=True,
         capture_output=True,
     )
     pushed = subprocess.run(
-        ["git", "-C", str(tmp_path / "origin" / "demo-search.git"), "branch"],
+        ["git", "-C", str(tmp_path / "origin" / "demo-app.git"), "branch"],
         check=True,
         capture_output=True,
         text=True,
     ).stdout
-    assert "devon/search-ranking" in pushed
+    assert "devon/auth-sso" in pushed
 
     created = subprocess.run(
         [
@@ -329,7 +328,7 @@ def test_the_seeded_demo_shows_validate_personal_review_and_publish(tmp_path: Pa
             "--base",
             "main",
             "--head",
-            "devon/search-ranking",
+            "devon/auth-sso",
             "--fill",
         ],
         check=True,
@@ -337,7 +336,7 @@ def test_the_seeded_demo_shows_validate_personal_review_and_publish(tmp_path: Pa
         text=True,
         env={**os.environ},
     ).stdout.strip()
-    assert created == "https://github.com/devon/demo-search/pull/200"
+    assert created == "https://github.com/devon/demo-app/pull/200"
     lookup = subprocess.run(
         [
             sys.executable,
@@ -345,7 +344,7 @@ def test_the_seeded_demo_shows_validate_personal_review_and_publish(tmp_path: Pa
             "api",
             "graphql",
             "-f",
-            "branch=devon/search-ranking",
+            "branch=devon/auth-sso",
         ],
         check=True,
         capture_output=True,

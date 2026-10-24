@@ -72,47 +72,40 @@ STACKS: dict[str, list[tuple[str, str, str | None, int | None, float]]] = {
         ("devon/auth-docs", "devon/auth-api", None, None, 3),
         ("devon/cache-layer", "main", "PLAT-377", 4, 12),
         ("devon/cache-metrics", "devon/cache-layer", "PLAT-377", 5, 3),
+        ("devon/auth-sso", "main", "PLAT-420", None, 2),
+        ("devon/auth-audit", "main", "PLAT-421", None, 2),
+        ("devon/auth-lockout", "main", "PLAT-422", None, 1),
     ],
     "demo-search": [
         ("devon/search-index", "main", "SRCH-9", 6, 3),
         ("devon/search-ranking", "devon/search-index", None, None, 2),
         ("devon/search-cache", "main", "SRCH-12", None, 1),
-        ("devon/search-synonyms", "main", "SRCH-14", None, 1),
-        ("devon/search-stemming", "main", "SRCH-15", None, 1),
     ],
 }
 
-# Branches with real commits, so the Review view has a diff and an approval can
-# push them (search-index has a PR already; the others have none):
-# (repo, branch, parent, file, text).
+# Branches with no PR that have real commits, so the Review view has a diff and
+# an approval can push them: (repo, branch, parent, file, text).
 LOCAL_BRANCHES = [
     (
-        "demo-search",
-        "devon/search-index",
+        "demo-app",
+        "devon/auth-sso",
         "main",
-        "index.py",
-        "def build_index(documents):\n    return {d.id: d.terms for d in documents}\n",
+        "sso.py",
+        "def sign_in(provider, token):\n    return provider.verify(token)\n",
     ),
     (
-        "demo-search",
-        "devon/search-ranking",
-        "devon/search-index",
-        "ranking.py",
-        "def rank(index, query):\n    return sorted(index, key=lambda doc: len(index[doc]))\n",
+        "demo-app",
+        "devon/auth-audit",
+        "main",
+        "audit.py",
+        "AUDITED = ['login', 'logout']\n",
     ),
     (
-        "demo-search",
-        "devon/search-synonyms",
+        "demo-app",
+        "devon/auth-lockout",
         "main",
-        "synonyms.py",
-        "SYNONYMS = {'car': ['auto', 'vehicle']}\n",
-    ),
-    (
-        "demo-search",
-        "devon/search-stemming",
-        "main",
-        "stemming.py",
-        "def stem(word):\n    return word.removesuffix('ing')\n",
+        "lockout.py",
+        "def locked(attempts):\n    return attempts >= 5\n",
     ),
 ]
 
@@ -126,10 +119,10 @@ def write_branches(dest: Path) -> None:
     URL: approving a branch pushes it (never to GitHub) and the fake `gh`
     opens its PR."""
     repos = dest / "repos"
-    bare = dest / "origin" / "demo-search.git"
+    bare = dest / "origin" / "demo-app.git"
     bare.parent.mkdir(parents=True, exist_ok=True)
     _git(repos, "init", "-q", "--bare", str(bare))
-    _git(repos / "demo-search", "config", "remote.origin.pushurl", str(bare))
+    _git(repos / "demo-app", "config", "remote.origin.pushurl", str(bare))
     for name, branch, parent, filename, text in LOCAL_BRANCHES:
         repo = repos / name
         _git(repo, "switch", "-q", "-c", branch, parent)
@@ -378,19 +371,18 @@ def write_lanes(now: datetime) -> None:
                     summary=summary,
                 )
 
-        # Validate runs and the verdicts on them: search-ranking awaits your
-        # review, search-synonyms was sent back, search-stemming has not been
-        # validated.
+        # Validate runs and the verdicts on them: auth-sso awaits your review,
+        # auth-audit was sent back, auth-lockout has not been validated.
         for (repo_id, branch, task_id), (started, result, summary) in {
-            search("devon/search-ranking"): (
+            app("devon/auth-sso"): (
                 ago(hours=3),
                 "pass",
                 "Approve: small and tested; one nit on the empty-index case.",
             ),
-            search("devon/search-synonyms"): (
+            app("devon/auth-audit"): (
                 ago(days=1, hours=2),
                 "fail",
-                "Changes required: synonyms are never applied to the query.",
+                "Changes required: the audit list is never written anywhere.",
             ),
         }.items():
             run_id = store.start_agent_run(
@@ -412,14 +404,14 @@ def write_lanes(now: datetime) -> None:
                 summary=summary,
                 result=result,
             )
-        repo_id, branch, task_id = search("devon/search-synonyms")
+        repo_id, branch, task_id = app("devon/auth-audit")
         store.add_review_verdict(
             task_id=task_id,
             repo_id=repo_id,
             branch=branch,
             head_sha="demo",
             verdict="changes_requested",
-            note="Apply SYNONYMS in the query path, not only define them.",
+            note="Write AUDITED events to the audit log, not only list them.",
             at=ago(days=1),
         )
 
