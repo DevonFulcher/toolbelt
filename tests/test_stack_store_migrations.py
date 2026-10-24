@@ -240,3 +240,49 @@ def test_an_empty_database_file_is_version_zero(tmp_path: Path):
 
     assert s.schema_version() == len(store._MIGRATIONS)
     assert s.repos() == []
+
+
+def test_rows_that_predate_task_ids_get_the_task_alive_at_their_time(tmp_path: Path):
+    """A branch name reused over time: an old row belongs to the archived task
+    that was removed after it, a later one to the tracked task."""
+    db = tmp_path / "stacks.db"
+    conn = _build_at(db, len(store._MIGRATIONS) - 1)
+    _seed(conn)
+    # ``seeded-old`` (branch "old") was removed on REMOVED; "old" is tracked
+    # again afterwards.
+    _insert(
+        conn,
+        "branches",
+        {
+            "repo_id": 1,
+            "task_id": "seeded-old-again",
+            "name": "old",
+            "parent": "main",
+            "created_at": REMOVED,
+            "updated_at": REMOVED,
+        },
+    )
+    before, after = (
+        "2026-01-15T00:00:00.000000+00:00",
+        "2026-03-01T00:00:00.000000+00:00",
+    )
+    for at in (before, after):
+        conn.execute(
+            "INSERT INTO status_transitions (repo_id, branch, dimension, value, at) "
+            "VALUES (1, 'old', 'conflict', 'conflicts', ?)",
+            (at,),
+        )
+    conn.execute(
+        "INSERT INTO status_transitions (repo_id, branch, dimension, value, at) "
+        "VALUES (1, 'gone', 'ci', 'running', ?)",
+        (before,),
+    )
+    conn.close()
+
+    s = StackStore(db)
+
+    assert [(t.branch, t.task_id) for t in s.status_transitions()] == [
+        ("old", "seeded-old"),
+        ("old", "seeded-old-again"),
+        ("gone", None),
+    ]

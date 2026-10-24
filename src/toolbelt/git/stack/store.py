@@ -439,6 +439,36 @@ _MIGRATIONS: list[tuple[str, ...]] = [
             "ON status_transitions (repo_id, branch, dimension, id)"
         ),
     ),
+    (
+        # The task each of these belongs to (see ``branches.task_id``): a
+        # branch name is reused, a task id is not. Existing rows get the task
+        # that was alive at their time: the first archived task of that name
+        # removed after it, else the tracked one, else the last archived.
+        *(
+            statement
+            for table, moment in (
+                ("merge_queue", "queued_at"),
+                ("task_status_moves", "moved_at"),
+                ("status_transitions", "at"),
+            )
+            for statement in (
+                f"ALTER TABLE {table} ADD COLUMN task_id TEXT",
+                f"""
+                UPDATE {table} SET task_id = COALESCE(
+                    (SELECT r.task_id FROM removed_branches r
+                     WHERE r.repo_id = {table}.repo_id AND r.name = {table}.branch
+                       AND r.removed_at >= {table}.{moment}
+                     ORDER BY r.removed_at LIMIT 1),
+                    (SELECT b.task_id FROM branches b
+                     WHERE b.repo_id = {table}.repo_id AND b.name = {table}.branch),
+                    (SELECT r.task_id FROM removed_branches r
+                     WHERE r.repo_id = {table}.repo_id AND r.name = {table}.branch
+                     ORDER BY r.removed_at DESC LIMIT 1)
+                )
+                """,
+            )
+        ),
+    ),
 ]
 
 
@@ -492,6 +522,9 @@ class MergeQueueRow:
     pr_number: int
     head_oid: str
     queued_at: datetime
+    #: The task it belongs to (set when it is read back; the store fills it in
+    #: from the tracked branch when it is queued).
+    task_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -713,6 +746,8 @@ class StatusTransition:
     dimension: str
     value: str
     at: datetime
+    #: The task the branch was (``None``: it was not tracked).
+    task_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1663,6 +1698,7 @@ class StackStore:
                 pr_number=r["pr_number"],
                 head_oid=r["head_oid"],
                 queued_at=datetime.fromisoformat(r["queued_at"]),
+                task_id=r["task_id"],
             )
             for r in rows
         ]
@@ -1672,14 +1708,15 @@ class StackStore:
         with self._write() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO merge_queue "
-                "(repo_id, branch, pr_number, head_oid, queued_at) "
-                "VALUES (?, ?, ?, ?, ?)",
+                "(repo_id, branch, pr_number, head_oid, queued_at, task_id) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
                 (
                     row.repo_id,
                     row.branch,
                     row.pr_number,
                     row.head_oid,
                     _iso(row.queued_at),
+                    self._tracked_task_id(conn, row.repo_id, row.branch),
                 ),
             )
 
@@ -1779,36 +1816,57 @@ class StackStore:
         with self._write() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO task_status_moves "
-                "(repo_id, branch, stage, pr_number, moved_at) VALUES (?, ?, ?, ?, ?)",
-                (repo_id, branch, stage, pr_number, _iso(at)),
+                "(repo_id, branch, stage, pr_number, moved_at, task_id) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    repo_id,
+                    branch,
+                    stage,
+                    pr_number,
+                    _iso(at),
+                    self._tracked_task_id(conn, repo_id, branch),
+                ),
             )
+
+    @staticmethod
+    def _tracked_task_id(
+        conn: sqlite3.Connection, repo_id: int, branch: str
+    ) -> str | None:
+        """The task of the branch tracked under this name now (what a write
+        about the branch is about)."""
+        row = conn.execute(
+            "SELECT task_id FROM branches WHERE repo_id = ? AND name = ?",
+            (repo_id, branch),
+        ).fetchone()
+        return row["task_id"] if row else None
 
     def record_status_transition(
         self, repo_id: int, branch: str, dimension: str, value: str, at: datetime
     ) -> bool:
-        """Note that the branch's ``dimension`` is ``value`` as of ``at``.
-        Recorded only when it differs from the latest value recorded for it;
-        returns whether a row was added."""
+        """Note that the tracked branch's ``dimension`` is ``value`` as of
+        ``at``. Recorded only when it differs from the latest value recorded
+        for its task; returns whether a row was added."""
         with self._write() as conn:
+            task_id = self._tracked_task_id(conn, repo_id, branch)
             latest = conn.execute(
-                "SELECT value FROM status_transitions WHERE repo_id = ? AND "
-                "branch = ? AND dimension = ? ORDER BY id DESC LIMIT 1",
-                (repo_id, branch, dimension),
+                "SELECT value FROM status_transitions WHERE task_id IS ? AND "
+                "repo_id = ? AND dimension = ? ORDER BY id DESC LIMIT 1",
+                (task_id, repo_id, dimension),
             ).fetchone()
             if latest is not None and latest["value"] == value:
                 return False
             conn.execute(
                 "INSERT INTO status_transitions (repo_id, branch, dimension, "
-                "value, at) VALUES (?, ?, ?, ?, ?)",
-                (repo_id, branch, dimension, value, _iso(at)),
+                "value, at, task_id) VALUES (?, ?, ?, ?, ?, ?)",
+                (repo_id, branch, dimension, value, _iso(at), task_id),
             )
         return True
 
     def status_transitions(self) -> list[StatusTransition]:
         """Every recorded change, oldest first."""
         rows = self._conn.execute(
-            "SELECT repo_id, branch, dimension, value, at FROM status_transitions "
-            "ORDER BY id"
+            "SELECT repo_id, branch, dimension, value, at, task_id "
+            "FROM status_transitions ORDER BY id"
         )
         return [
             StatusTransition(
@@ -1817,23 +1875,18 @@ class StackStore:
                 dimension=r["dimension"],
                 value=r["value"],
                 at=datetime.fromisoformat(r["at"]),
+                task_id=r["task_id"],
             )
             for r in rows
         ]
 
-    def task_status_moves(self) -> list[tuple[int, str, str, datetime]]:
-        """Every status move recorded, as ``(repo_id, branch, stage, moved_at)``."""
+    def task_status_moves(self) -> list[tuple[str | None, str, datetime]]:
+        """Every status move recorded, as ``(task_id, stage, moved_at)``."""
         rows = self._conn.execute(
-            "SELECT repo_id, branch, stage, moved_at FROM task_status_moves "
-            "ORDER BY moved_at"
+            "SELECT task_id, stage, moved_at FROM task_status_moves ORDER BY moved_at"
         )
         return [
-            (
-                r["repo_id"],
-                r["branch"],
-                r["stage"],
-                datetime.fromisoformat(r["moved_at"]),
-            )
+            (r["task_id"], r["stage"], datetime.fromisoformat(r["moved_at"]))
             for r in rows
         ]
 

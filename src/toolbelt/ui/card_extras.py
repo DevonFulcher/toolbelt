@@ -46,7 +46,7 @@ def build_card_extras(
         branches.append(
             api.BranchExtras(
                 id=row_id(*key),
-                lanes=lanes[key],
+                lanes=lanes.get(facts.task_id, []),
                 agent=api.CardAgent(
                     has_action=decision is not None,
                     trigger=decision.trigger if decision else None,  # type: ignore[arg-type]

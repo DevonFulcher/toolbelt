@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Diff viewer</title>
+    <style>
+      :root { color-scheme: dark; --bg: #21252b; --panel: #282c34; --border: #3a3f4b; --text: #abb2bf; --active: #2c3a55; }
+      body { font-family: system-ui, sans-serif; margin: 0; display: grid; grid-template-rows: auto 1fr; height: 100vh; background: var(--bg); color: var(--text); }
+      header { display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+      header input[name="repo"] { width: 320px; }
+      main { display: grid; grid-template-columns: 280px minmax(0, 1fr); min-height: 0; }
+      #files { list-style: none; margin: 0; padding: 0; overflow: auto; border-right: 1px solid var(--border); }
+      #files button { width: 100%; text-align: left; border: 0; background: none; padding: 4px 10px; font: 12px ui-monospace, monospace; cursor: pointer; color: var(--text); }
+      #files button.active { background: var(--active); }
+      #diff { overflow: auto; }
+      .cm-editor { font-size: 13px; }
+      .lsp-hover { margin: 0; padding: 6px 8px; max-width: 600px; white-space: pre-wrap; font: 12px ui-monospace, monospace; }
+      #definition { position: fixed; left: 280px; right: 0; bottom: 0; height: 40vh; background: var(--panel); border-top: 2px solid var(--border); display: grid; grid-template-rows: auto 1fr; }
+      #definition[hidden] { display: none; }
+      #definition-bar { display: flex; justify-content: space-between; padding: 4px 8px; background: var(--bg); font: 12px ui-monospace, monospace; }
+      #definition-body { overflow: auto; }
+      .cm-mergeView { height: 100%; }
+      .cm-mergeViewEditor { min-width: 0; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <form id="revisions">
+        <input name="repo" placeholder="repo path" />
+        <input name="base" placeholder="base" size="12" />
+        <input name="head" placeholder="head" size="12" />
+        <button type="submit">Load</button>
+      </form>
+      <span id="status"></span>
+    </header>
+    <main>
+      <ul id="files"></ul>
+      <div id="diff"></div>
+    </main>
+    <section id="definition" hidden>
+      <div id="definition-bar"><span id="definition-title"></span><button id="definition-close">Close</button></div>
+      <div id="definition-body"></div>
+    </section>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,6 @@
+[workspace]
+resolver = "3"
+members = ["core", "src-tauri"]
+
+[workspace.package]
+rust-version = "1.86"

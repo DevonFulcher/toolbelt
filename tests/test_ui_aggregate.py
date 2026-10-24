@@ -31,6 +31,7 @@ from toolbelt.ui.aggregate_feed import (
     StoredHistory,
     parse_page,
     parse_pr,
+    task_facts,
 )
 from toolbelt.ui.app import create_app
 from toolbelt.ui.pr_activity import PrFacts, TimelineItem
@@ -1774,3 +1775,52 @@ def test_the_lanes_the_aggregate_skips_say_why_and_the_rest_have_a_layer():
     assert [lane.lane for lane in result.lanes] == [
         s.id for s in LANE_SOURCES if s.id not in skipped
     ]
+
+
+def test_each_tasks_lanes_come_from_its_own_task_id_not_its_branch_name():
+    from toolbelt.git.stack.store import RemovedBranch, RepoRecord, TrackedBranchFacts
+
+    old_lanes = lanes_of("git", lane_phase("git_conflicting", 1, 2))
+    new_lanes = lanes_of("claim", lane_phase("claim_agent_ref", 5, 6))
+    history = StoredHistory(
+        repos=[
+            RepoRecord(
+                1, "api", Path("/api"), Path("/api/.git"), "git@github.com:o/api.git"
+            )
+        ],
+        removed=[
+            RemovedBranch(
+                task_id="old",
+                pr=None,
+                repo_id=1,
+                name="same",
+                task=None,
+                task_tracker=None,
+                started_at=at(0),
+                removed_at=at(3),
+                landed=True,
+            )
+        ],
+        tracked=[
+            TrackedBranchFacts(
+                task_id="new",
+                pr=None,
+                repo_id=1,
+                name="same",
+                task=None,
+                started_at=at(4),
+            )
+        ],
+        since=at(-100),
+        lanes={"old": list(old_lanes), "new": list(new_lanes)},
+    )
+
+    async def remote(_path):
+        return "git@github.com:o/api.git"
+
+    facts = asyncio.run(task_facts(history, remote, lambda *_: False))
+
+    assert {f.started_at: f.lanes for f in facts} == {
+        at(4): new_lanes,
+        at(0): old_lanes,
+    }

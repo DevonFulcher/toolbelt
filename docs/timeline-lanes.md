@@ -29,6 +29,14 @@ A card's timeline is a PR track with lanes under it, all on one time axis.
 
 ## Where history comes from
 
+Every lane item belongs to a task by its `task_id` (a branch name is reused, a
+task id is not): the store resolves it from the tracked branch when a row is
+written (`status_transitions`, `merge_queue`, `task_status_moves`), and
+`agent_runs`, `decisions` and `claim_spans` carry it. Slack posts belong to the
+task through its PR. A span still open when its task was archived ends at the
+archiving. Rows that predate the `task_id` columns were assigned to the task
+alive at their time.
+
 | Lane | Recorded in |
 | --- | --- |
 | git, ci | `status_transitions` (written by the status refresher when a lookup differs from the last one recorded; the first lookup records a baseline, so history starts when `tt ui` first saw the branch) |
@@ -55,4 +63,5 @@ The aggregate view uses the same registry (`aggregate.py`):
   `LaneSource.aggregate_skip`; `tests/test_ui_aggregate.py` checks that every
   other lane has a layer.
 - Lane history is recorded history: it covers tasks that were tracked
-  branches and begins when each source was first recorded.
+  branches and begins when each source was first recorded. It is joined to a
+  task by `task_id`.

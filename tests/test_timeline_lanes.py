@@ -147,7 +147,7 @@ def test_a_branchs_history_reaches_its_lanes():
         seen_at=t0 + timedelta(minutes=5),
         max_gap=timedelta(seconds=30),
     )
-    lanes = build_lanes(store, t0 + timedelta(days=1), lambda _: "o/x")[(repo_id, "a")]
+    lanes = build_lanes(store, t0 + timedelta(days=1), lambda _: "o/x")[facts.task_id]
 
     by_lane = {lane.lane: lane for lane in lanes}
     assert list(by_lane) == ["git", "claim"]
@@ -173,14 +173,56 @@ def test_a_lookup_records_conflict_and_ci_once_per_change():
             bot_comments=0,
         )
 
+    store = StackStore(default_db_path())
+    repo_id = store.ensure_repo(
+        RepoIdentity(
+            git_common_dir=default_db_path().parent / "x" / ".git",
+            path=default_db_path().parent / "x",
+            remote_url=None,
+        )
+    )
+    store.set_parent(repo_id, "a", "main")
+    (facts,) = store.tracked_branch_facts()
     recorder = StatusTransitionRecorder()
     at = datetime(2026, 1, 1, tzinfo=UTC)
-    assert recorder.observe(1, "a", status(False, CiState.RUNNING), at)
-    assert not recorder.observe(1, "a", status(False, CiState.RUNNING), at)
-    assert recorder.observe(1, "a", status(True, CiState.RUNNING), at)
-    store = StackStore(default_db_path())
-    assert [(t.dimension, t.value) for t in store.status_transitions()] == [
-        ("conflict", "clean"),
-        ("ci", "running"),
-        ("conflict", "conflicts"),
+    assert recorder.observe(repo_id, "a", status(False, CiState.RUNNING), at)
+    assert not recorder.observe(repo_id, "a", status(False, CiState.RUNNING), at)
+    assert recorder.observe(repo_id, "a", status(True, CiState.RUNNING), at)
+    assert [(t.dimension, t.value, t.task_id) for t in store.status_transitions()] == [
+        ("conflict", "clean", facts.task_id),
+        ("ci", "running", facts.task_id),
+        ("conflict", "conflicts", facts.task_id),
     ]
+
+
+def test_a_reused_branch_name_keeps_each_tasks_history_apart():
+    store = StackStore(default_db_path())
+    repo_id = store.ensure_repo(
+        RepoIdentity(
+            git_common_dir=default_db_path().parent / "x" / ".git",
+            path=default_db_path().parent / "x",
+            remote_url=None,
+        )
+    )
+    t0 = datetime(2026, 1, 1, tzinfo=UTC)
+    store.set_parent(repo_id, "a", "main")
+    (old,) = store.tracked_branch_facts()
+    store.record_status_transition(repo_id, "a", "conflict", "conflicts", t0)
+    store.record_task_status_move(repo_id, "a", "in_review", 1, t0 + timedelta(hours=1))
+    store.remove_branch(repo_id, "a", landed=True)
+    store.set_parent(repo_id, "a", "main")
+    (new,) = store.tracked_branch_facts()
+    store.record_status_transition(
+        repo_id, "a", "conflict", "clean", t0 + timedelta(days=9)
+    )
+
+    lanes = build_lanes(store, t0 + timedelta(days=10))
+
+    assert old.task_id != new.task_id
+    old_lanes = {lane.lane: lane for lane in lanes[old.task_id]}
+    assert list(old_lanes) == ["git", "task"]
+    (conflict,) = old_lanes["git"].phases
+    # Still open when its task was archived, so it ends there, not at now.
+    assert conflict.kind == "git_conflicting" and conflict.end is not None
+    assert [e.kind for e in old_lanes["task"].events] == ["task_in_review"]
+    assert lanes[new.task_id] == []

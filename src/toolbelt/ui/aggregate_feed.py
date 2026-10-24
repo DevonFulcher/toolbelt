@@ -257,9 +257,8 @@ class StoredHistory:
     removed: list[RemovedBranch]
     tracked: list[TrackedBranchFacts]
     since: datetime
-    #: What each lane recorded for each branch (``lane_history``), by repo id
-    #: and branch name.
-    lanes: dict[tuple[int, str], list[api.TimelineLane]] = field(default_factory=dict)
+    #: What each lane recorded for each task (``lane_history``), by task id.
+    lanes: dict[str, list[api.TimelineLane]] = field(default_factory=dict)
 
 
 def read_history() -> StoredHistory:
@@ -274,7 +273,7 @@ def read_history() -> StoredHistory:
             removed=[row for row in store.removed_branches() if row.repo_id in ids],
             tracked=[row for row in store.tracked_branch_facts() if row.repo_id in ids],
             since=store.archive_since(),
-            lanes={key: value for key, value in lanes.items() if key[0] in ids},
+            lanes=lanes,
         )
     finally:
         store.close()
@@ -300,7 +299,7 @@ async def task_facts(
             finished=finished(row.repo_id, row.name),
             pr_node_id=row.pr.node_id if row.pr else None,
             pr_number=row.pr.number if row.pr else None,
-            lanes=tuple(history.lanes.get((row.repo_id, row.name), ())),
+            lanes=tuple(history.lanes.get(row.task_id, ())),
         )
         for row in history.tracked
     ]
@@ -313,7 +312,7 @@ async def task_facts(
             landed=row.landed,
             pr_node_id=row.pr.node_id if row.pr else None,
             pr_number=row.pr.number if row.pr else None,
-            lanes=tuple(history.lanes.get((row.repo_id, row.name), ())),
+            lanes=tuple(history.lanes.get(row.task_id, ())),
         )
         for row in history.removed
     ]

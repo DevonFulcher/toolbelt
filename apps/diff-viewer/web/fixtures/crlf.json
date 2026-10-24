@@ -1,0 +1,1 @@
+{"aligned_lines":[[0,0],[1,1],[2,2],[3,3]],"chunks":[[{"lhs":{"line_number":1,"changes":[]},"rhs":{"line_number":1,"changes":[{"start":21,"end":22,"content":"+","highlight":"keyword"},{"start":23,"end":24,"content":"1","highlight":"normal"}]}}]],"language":"Python","path":"crlf.new.py","status":"changed"}
