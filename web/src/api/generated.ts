@@ -30,6 +30,7 @@ export type MixState =
   "working" | "draft" | "ready" | "waiting" | "changes" | "ci_running" | "ci_failing" | "approved" | "blocked";
 export type Tone = "green" | "red" | "amber" | "gray" | "purple" | "accent";
 export type MixWho = "you" | "ci" | "others";
+export type DecisionStatus = "pending" | "answered";
 export type ServerEvent =
   | HelloEvent
   | StatusEvent
@@ -43,6 +44,7 @@ export type ServerEvent =
   | AgentsEvent
   | SpendEvent
   | ConversationEvent;
+export type SlackPostKind = "post" | "bump" | "reassign";
 export type LiveStatus = LoadingStatus | FailedStatus | LoadedStatus;
 export type CiState = "none" | "running" | "failed" | "success";
 export type CiResult = "" | "failed" | "success" | "pending";
@@ -86,6 +88,29 @@ export type TaskLive = TaskLoading | TaskDetails | TaskUnavailable;
 export type HolderKind = "agent" | "human" | "autonomous";
 export type HolderState = "working" | "idle" | "blocked";
 export type UntrackedPrs = UntrackedLoading | UntrackedLoaded | UntrackedFailed;
+export type LaneEventKind = "slack_post" | "slack_bump" | "slack_reassign" | "decision_answered" | "task_in_review";
+export type LaneId = "git" | "ci" | "agent" | "claim" | "slack" | "merge_queue" | "decision" | "task";
+export type LanePhaseKind =
+  | "git_conflicting"
+  | "ci_seen_running"
+  | "ci_seen_failed"
+  | "ci_seen_success"
+  | "agent_running"
+  | "agent_deciding"
+  | "agent_succeeded"
+  | "agent_failed"
+  | "agent_timed_out"
+  | "agent_cap_reached"
+  | "agent_stopped"
+  | "agent_abandoned"
+  | "claim_agent_worktree"
+  | "claim_agent_ref"
+  | "claim_human_worktree"
+  | "claim_human_ref"
+  | "claim_autonomous_worktree"
+  | "claim_autonomous_ref"
+  | "merge_queued"
+  | "decision_pending";
 export type CatalogDimension =
   "pr" | "ci" | "review" | "comments" | "merge" | "task" | "draft" | "reviewers" | "blocked" | "next";
 export type CatalogState =
@@ -363,7 +388,7 @@ export interface DecisionInfo {
   points: DecisionPointInfo[];
   proposer: "interactive" | "autonomous";
   session_id: string | null;
-  status: "pending" | "answered";
+  status: DecisionStatus;
   title: string;
 }
 export interface DecisionPointInfo {
@@ -433,7 +458,7 @@ export interface SlackInfo {
   assignee: string | null;
   bump_due: boolean;
   last_at: string | null;
-  last_kind: ("post" | "bump" | "reassign") | null;
+  last_kind: SlackPostKind | null;
   notice: string | null;
   posted: boolean;
   posting: boolean;
@@ -681,6 +706,7 @@ export interface CardExtras {
 export interface BranchExtras {
   agent: CardAgent;
   id: string;
+  lanes: TimelineLane[];
   spend: CardSpend;
 }
 /**
@@ -696,6 +722,26 @@ export interface CardAgent {
   start_error: string | null;
   starting: boolean;
   trigger: AgentTrigger | null;
+}
+/**
+ * One lane of a card's timeline, under the PR track (see
+ * ``timeline_lanes.py``): what that source recorded for the branch.
+ */
+export interface TimelineLane {
+  events: LaneEvent[];
+  lane: LaneId;
+  phases: LanePhase[];
+}
+export interface LaneEvent {
+  detail: string;
+  kind: LaneEventKind;
+  t: string;
+}
+export interface LanePhase {
+  detail: string;
+  end: string | null;
+  kind: LanePhaseKind;
+  start: string;
 }
 /**
  * What a task has cost, over all the spend on record.
@@ -996,6 +1042,9 @@ export interface ChildRef {
 export interface Catalog {
   chips: ChipGroups;
   events: EventMarkers;
+  lane_events: LaneEventMarkers;
+  lane_phases: LanePhaseSpans;
+  lanes: LaneSpec[];
   not_represented: NotRepresented[];
   phases: PhaseSpans;
   slots: SlotDimensions;
@@ -1036,6 +1085,46 @@ export interface Marker {
   legend: string;
   tone: Tone;
 }
+export interface LaneEventMarkers {
+  decision_answered: Marker;
+  slack_bump: Marker;
+  slack_post: Marker;
+  slack_reassign: Marker;
+  task_in_review: Marker;
+}
+export interface LanePhaseSpans {
+  agent_abandoned: Span;
+  agent_cap_reached: Span;
+  agent_deciding: Span;
+  agent_failed: Span;
+  agent_running: Span;
+  agent_stopped: Span;
+  agent_succeeded: Span;
+  agent_timed_out: Span;
+  ci_seen_failed: Span;
+  ci_seen_running: Span;
+  ci_seen_success: Span;
+  claim_agent_ref: Span;
+  claim_agent_worktree: Span;
+  claim_autonomous_ref: Span;
+  claim_autonomous_worktree: Span;
+  claim_human_ref: Span;
+  claim_human_worktree: Span;
+  decision_pending: Span;
+  git_conflicting: Span;
+  merge_queued: Span;
+}
+export interface Span {
+  label: string;
+  legend: string;
+  tone: Tone;
+}
+export interface LaneSpec {
+  events: LaneEventKind[];
+  id: LaneId;
+  label: string;
+  phases: LanePhaseKind[];
+}
 export interface NotRepresented {
   label: string;
   why: string;
@@ -1047,11 +1136,6 @@ export interface PhaseSpans {
   draft: Span;
   waiting: Span;
   working: Span;
-}
-export interface Span {
-  label: string;
-  legend: string;
-  tone: Tone;
 }
 export interface SlotDimensions {
   agent_cost: CatalogDimension | null;

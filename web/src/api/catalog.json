@@ -129,6 +129,224 @@
       "legend": "From an approving review until merge or now. Ends early at the first push after it when the PR is no longer approved (a stale approval), or when that reviewer then requests changes."
     }
   },
+  "lanes": [
+    {
+      "id": "git",
+      "label": "Git",
+      "events": [],
+      "phases": [
+        "git_conflicting"
+      ]
+    },
+    {
+      "id": "ci",
+      "label": "CI (seen)",
+      "events": [],
+      "phases": [
+        "ci_seen_running",
+        "ci_seen_failed",
+        "ci_seen_success"
+      ]
+    },
+    {
+      "id": "agent",
+      "label": "Agent runs",
+      "events": [],
+      "phases": [
+        "agent_running",
+        "agent_deciding",
+        "agent_succeeded",
+        "agent_failed",
+        "agent_timed_out",
+        "agent_cap_reached",
+        "agent_stopped",
+        "agent_abandoned"
+      ]
+    },
+    {
+      "id": "claim",
+      "label": "Claims",
+      "events": [],
+      "phases": [
+        "claim_agent_worktree",
+        "claim_agent_ref",
+        "claim_human_worktree",
+        "claim_human_ref",
+        "claim_autonomous_worktree",
+        "claim_autonomous_ref"
+      ]
+    },
+    {
+      "id": "slack",
+      "label": "Slack",
+      "events": [
+        "slack_post",
+        "slack_bump",
+        "slack_reassign"
+      ],
+      "phases": []
+    },
+    {
+      "id": "merge_queue",
+      "label": "Merge queue",
+      "events": [],
+      "phases": [
+        "merge_queued"
+      ]
+    },
+    {
+      "id": "decision",
+      "label": "Decisions",
+      "events": [
+        "decision_answered"
+      ],
+      "phases": [
+        "decision_pending"
+      ]
+    },
+    {
+      "id": "task",
+      "label": "Task tracker",
+      "events": [
+        "task_in_review"
+      ],
+      "phases": []
+    }
+  ],
+  "lane_events": {
+    "slack_post": {
+      "label": "posted in Slack",
+      "glyph": "✉",
+      "tone": "accent",
+      "legend": "The PR was posted in Slack."
+    },
+    "slack_bump": {
+      "label": "bumped in Slack",
+      "glyph": "↑",
+      "tone": "amber",
+      "legend": "The PR's Slack thread was bumped."
+    },
+    "slack_reassign": {
+      "label": "reassigned in Slack",
+      "glyph": "⇄",
+      "tone": "amber",
+      "legend": "The PR's Slack thread asked someone else to review."
+    },
+    "decision_answered": {
+      "label": "decision answered",
+      "glyph": "?",
+      "tone": "green",
+      "legend": "You answered an agent's question."
+    },
+    "task_in_review": {
+      "label": "task moved to In Review",
+      "glyph": "◈",
+      "tone": "green",
+      "legend": "`tt ui` moved the task to In Review."
+    }
+  },
+  "lane_phases": {
+    "git_conflicting": {
+      "label": "Conflicting",
+      "tone": "red",
+      "legend": "The PR conflicted with its base, as `tt ui` saw it (the start is when it was first seen)."
+    },
+    "ci_seen_running": {
+      "label": "CI running",
+      "tone": "amber",
+      "legend": "The PR's checks were running, as `tt ui` saw."
+    },
+    "ci_seen_failed": {
+      "label": "CI failed",
+      "tone": "red",
+      "legend": "The PR's checks were failing, as `tt ui` saw."
+    },
+    "ci_seen_success": {
+      "label": "CI passed",
+      "tone": "green",
+      "legend": "The PR's checks had passed, as `tt ui` saw."
+    },
+    "agent_running": {
+      "label": "Agent working",
+      "tone": "accent",
+      "legend": "An autonomous agent run was working on it."
+    },
+    "agent_deciding": {
+      "label": "Agent asked you",
+      "tone": "amber",
+      "legend": "A run asked a question and waited for the answer."
+    },
+    "agent_succeeded": {
+      "label": "Agent run done",
+      "tone": "green",
+      "legend": "An autonomous agent run that finished."
+    },
+    "agent_failed": {
+      "label": "Agent run failed",
+      "tone": "red",
+      "legend": "An autonomous agent run that failed."
+    },
+    "agent_timed_out": {
+      "label": "Agent run timed out",
+      "tone": "red",
+      "legend": "A run that hit its time limit."
+    },
+    "agent_cap_reached": {
+      "label": "Agent run capped",
+      "tone": "red",
+      "legend": "A run that hit its turn or cost cap."
+    },
+    "agent_stopped": {
+      "label": "Agent run stopped",
+      "tone": "gray",
+      "legend": "A run you stopped."
+    },
+    "agent_abandoned": {
+      "label": "Agent run abandoned",
+      "tone": "gray",
+      "legend": "A run `tt ui` lost track of (it restarted while the run was working)."
+    },
+    "claim_agent_worktree": {
+      "label": "Agent session (worktree)",
+      "tone": "purple",
+      "legend": "An interactive agent session held a claim on the task's worktree."
+    },
+    "claim_agent_ref": {
+      "label": "Agent session (ref)",
+      "tone": "purple",
+      "legend": "An interactive agent session claimed the task by branch or ticket, without editing its worktree."
+    },
+    "claim_human_worktree": {
+      "label": "You (worktree)",
+      "tone": "accent",
+      "legend": "A human held a claim on the worktree."
+    },
+    "claim_human_ref": {
+      "label": "You (ref)",
+      "tone": "accent",
+      "legend": "A human claimed the task by branch or ticket."
+    },
+    "claim_autonomous_worktree": {
+      "label": "Autonomous (worktree)",
+      "tone": "amber",
+      "legend": "An autonomous agent held a claim on the worktree."
+    },
+    "claim_autonomous_ref": {
+      "label": "Autonomous (ref)",
+      "tone": "amber",
+      "legend": "An autonomous agent claimed the task by branch or ticket."
+    },
+    "merge_queued": {
+      "label": "Queued to merge",
+      "tone": "purple",
+      "legend": "Queued: it merges when its CI has passed."
+    },
+    "decision_pending": {
+      "label": "Waiting for your decision",
+      "tone": "amber",
+      "legend": "An agent asked you a question about this task and waited."
+    }
+  },
   "chips": {
     "pr": "PR",
     "ci": "CI",
@@ -873,11 +1091,11 @@
     },
     {
       "label": "A PR becoming conflicting",
-      "why": "Not an event; only whether it conflicts now is shown (Merge, in the Now tooltip)."
+      "why": "Not a GitHub event; the Git lane shows when `tt ui` saw it conflict, and Merge in the Now tooltip says whether it does now."
     },
     {
       "label": "CI progress between commits",
-      "why": "Only each commit's final result is known; a re-run of the same commit is not an event."
+      "why": "GitHub gives each commit's final result only; a re-run of the same commit is not an event. The CI lane shows the rollup changes `tt ui` saw."
     },
     {
       "label": "When an approval went stale or was dismissed",
@@ -886,10 +1104,6 @@
     {
       "label": "History of being blocked on a parent",
       "why": "Derived from the parent's state now (Next, in the Now tooltip), not recorded."
-    },
-    {
-      "label": "History of an agent claiming a task",
-      "why": "Claims are files with no history: With an agent shows only now, and the aggregate view does not count it (the task is in the state its PR was in)."
     },
     {
       "label": "Conversation comments, edits, labels, assignees",

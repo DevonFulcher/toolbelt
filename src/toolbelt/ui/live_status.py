@@ -230,8 +230,10 @@ class StatusRefresher:
         no_pr_interval: float = DEFAULT_NO_PR_INTERVAL_SECONDS,
         persist: LookupPersistence | None = None,
         jitter: Callable[[], float] = random.random,
+        observe: Callable[[int, str, BranchStatus, datetime], bool] | None = None,
     ) -> None:
         self._persist = persist
+        self._observe = observe
         self._jitter = jitter
         self._no_pr_interval = no_pr_interval
         self._gate = gate
@@ -422,6 +424,7 @@ class StatusRefresher:
                     with contextlib.suppress(Exception):
                         await self._gate.remember(branch, fetched)
                 await self._save(branch, fetched)
+                await self._record_transitions(branch, fetched)
         self._cache[branch.key] = fetched
         if (
             previous is None
@@ -431,6 +434,26 @@ class StatusRefresher:
         ):
             self._on_change(branch, fetched)
         return branch, fetched
+
+    async def _record_transitions(
+        self, branch: TrackedBranch, fetched: Fetched
+    ) -> None:
+        """Note a change of the branch's conflict or CI status for its timeline
+        (``status_transitions.py``). The write moves the database's data
+        version, which the watcher turns into a refresh of the card extras."""
+        if self._observe is None or fetched.status is None or fetched.wall_at is None:
+            return
+        try:
+            await asyncio.to_thread(
+                self._observe,
+                branch.repo_id,
+                branch.branch,
+                fetched.status,
+                fetched.wall_at,
+            )
+        except Exception:  # noqa: BLE001
+            # Only the timeline's history: never stop the poll for it.
+            logger.exception("could not record the status of %s", branch.branch)
 
     async def _save(self, branch: TrackedBranch, fetched: Fetched) -> None:
         if self._persist is None or fetched.status is None or fetched.wall_at is None:

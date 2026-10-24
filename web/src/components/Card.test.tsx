@@ -866,6 +866,7 @@ describe("a card's Slack fields", () => {
 describe("a card's agent and spend slots", () => {
   const extras = (over: Partial<BranchExtras["agent"]> = {}, spend: Partial<BranchExtras["spend"]> = {}): BranchExtras => ({
     id: "1:devon/a",
+    lanes: [],
     agent: {
       has_action: true,
       trigger: "fix_ci",

@@ -21,13 +21,15 @@ Derivations stay in Python (next action, ages, the catalog); the client does
 presentation, sorting, filtering, grouping and layout.
 """
 
+from dataclasses import asdict
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from toolbelt.git.stack.status import CiState, PrState, ReviewState
 from toolbelt.task_claims.claim_file import HolderKind, HolderState
-from toolbelt.ui import pr_states
+from toolbelt.tasks.tracker import Stage as TaskStage  # noqa: F401  (a status type the task lane covers by this name)
+from toolbelt.ui import pr_states, timeline_lanes
 from toolbelt.ui.next_action import NextKind, Who
 from toolbelt.ui.pr_activity import ActivityKind
 from toolbelt.ui.pr_states import ChipDimension, EventKind, PhaseKind, Tone
@@ -43,6 +45,16 @@ type CommentsValue = Literal["none", "open"]
 type MergeValue = Literal["conflicts", "clean", "none"]
 type CiResult = Literal["", "failed", "success", "pending"]
 type FilterKey = Literal["next", "pr", "ci", "review", "comments", "merge"]
+type ClaimKind = Literal["worktree", "ref"]
+type SlackPostKind = Literal["post", "bump", "reassign"]
+type DecisionStatus = Literal["pending", "answered"]
+
+# The lanes under the PR track (see timeline_lanes.py): the kinds of their
+# markers and spans, built from the registry so a kind added there is a kind
+# here and in the client's types.
+type LaneId = Literal[*timeline_lanes.LANES]  # type: ignore[valid-type]
+type LaneEventKind = Literal[*timeline_lanes.LANE_EVENTS]  # type: ignore[valid-type]
+type LanePhaseKind = Literal[*timeline_lanes.LANE_PHASES]  # type: ignore[valid-type]
 
 
 # ---- the state catalog (see pr_states.py) ------------------------------------
@@ -206,9 +218,34 @@ class NotRepresented(Model):
     why: str
 
 
+LaneEventMarkers = create_model(
+    "LaneEventMarkers",
+    __base__=Model,
+    **{kind: (Marker, ...) for kind in timeline_lanes.LANE_EVENTS},  # type: ignore[call-overload]
+)
+LanePhaseSpans = create_model(
+    "LanePhaseSpans",
+    __base__=Model,
+    **{kind: (Span, ...) for kind in timeline_lanes.LANE_PHASES},  # type: ignore[call-overload]
+)
+
+
+class LaneSpec(Model):
+    id: LaneId
+    label: str
+    #: The kinds of ``lane_events`` / ``lane_phases`` this lane draws.
+    events: list[LaneEventKind]
+    phases: list[LanePhaseKind]
+
+
 class Catalog(Model):
     events: EventMarkers  # type: ignore[valid-type]
     phases: PhaseSpans  # type: ignore[valid-type]
+    #: The lanes under the PR track, in drawing order, and the vocabulary of
+    #: their markers and spans.
+    lanes: list[LaneSpec]
+    lane_events: LaneEventMarkers  # type: ignore[valid-type]
+    lane_phases: LanePhaseSpans  # type: ignore[valid-type]
     chips: ChipGroups
     slots: SlotDimensions  # type: ignore[valid-type]
     states: list[CatalogState]
@@ -219,7 +256,27 @@ def build_catalog() -> Catalog:
     """The catalog of ``pr_states``, validated into the wire model (so a
     value the types do not know about is an error here, not a blank on the
     page)."""
-    return Catalog.model_validate(pr_states.catalog())
+    return Catalog.model_validate(
+        {
+            **pr_states.catalog(),
+            "lanes": [
+                {
+                    "id": source.id,
+                    "label": source.label,
+                    "events": list(source.events),
+                    "phases": list(source.phases),
+                }
+                for source in timeline_lanes.LANE_SOURCES
+            ],
+            "lane_events": {
+                kind: asdict(marker)
+                for kind, marker in timeline_lanes.LANE_EVENTS.items()
+            },
+            "lane_phases": {
+                kind: asdict(span) for kind, span in timeline_lanes.LANE_PHASES.items()
+            },
+        }
+    )
 
 
 # ---- a branch's live status ---------------------------------------------------
@@ -558,7 +615,7 @@ class SlackInfo(Model):
 
     posted: bool
     #: What the latest post was (``None`` while not posted).
-    last_kind: Literal["post", "bump", "reassign"] | None
+    last_kind: SlackPostKind | None
     #: ISO time of the latest post or bump: what the post age counts from.
     last_at: str | None
     #: Posted a day ago or more, and nobody has looked since.
@@ -1075,11 +1132,37 @@ class CardSpend(Model):
     autonomous_runs: int
 
 
+class LaneEvent(Model):
+    t: str
+    kind: LaneEventKind
+    #: What the tooltip adds (who, which run, which claim).
+    detail: str
+
+
+class LanePhase(Model):
+    start: str
+    #: ``None``: still going (the track draws it to now).
+    end: str | None
+    kind: LanePhaseKind
+    detail: str
+
+
+class TimelineLane(Model):
+    """One lane of a card's timeline, under the PR track (see
+    ``timeline_lanes.py``): what that source recorded for the branch."""
+
+    lane: LaneId
+    events: list[LaneEvent]
+    phases: list[LanePhase]
+
+
 class BranchExtras(Model):
     """The parts of a task card that do not come with its PR status."""
 
     #: The branch's row id (see ``Branch.id``).
     id: str
+    #: The lanes with something to draw, in the catalog's lane order.
+    lanes: list[TimelineLane]
     agent: CardAgent
     spend: CardSpend
 
@@ -1161,7 +1244,7 @@ class DecisionInfo(Model):
     session_id: str | None
     title: str
     points: list[DecisionPointInfo]
-    status: Literal["pending", "answered"]
+    status: DecisionStatus
     answers: list[DecisionAnswerInfo]
     created_at: str
     answered_at: str | None

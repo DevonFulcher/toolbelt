@@ -1,6 +1,7 @@
 import { memo, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import type { Catalog, LoadedStatus, CiResult } from "../api/generated";
+import type { Catalog, LoadedStatus, CiResult, TimelineLane } from "../api/generated";
 import { formatAbsolute } from "../logic/format";
+import { laneRows } from "../logic/lanes";
 import {
   endTip,
   eventInfo,
@@ -54,6 +55,8 @@ interface TimelineProps {
   /** When the branch's task started (null: not recorded). */
   startedAt: string | null;
   catalog: Catalog;
+  /** The lanes under the PR track (agent runs, claims, Slack, ...). */
+  lanes: readonly TimelineLane[];
   /** Current time (ms); a new minute re-draws. */
   now: number;
 }
@@ -80,7 +83,7 @@ function useWidth(ref: React.RefObject<HTMLElement | null>): number {
   return width;
 }
 
-export const Timeline = memo(function Timeline({ id, status, startedAt, catalog, now }: TimelineProps) {
+export const Timeline = memo(function Timeline({ id, status, startedAt, catalog, lanes, now }: TimelineProps) {
   const ui = useApp((s) => s.cardUi[id]);
   const patchCardUi = useApp((s) => s.patchCardUi);
   const logOpen = useApp((s) => s.logOpen.includes(id));
@@ -134,6 +137,7 @@ export const Timeline = memo(function Timeline({ id, status, startedAt, catalog,
   // The end cap (the "now" line, or the end of a merged/closed PR) says what
   // the state is at that moment.
   const capTip = endTip(layout, chips);
+  const laneDraws = laneRows(lanes, catalog, layout.start, layout.end, now);
   const entries = logOpen ? listEntries(track, { now, catalog, commits }) : [];
   const hasCi = entries.some((entry) => entry.ci);
 
@@ -219,6 +223,36 @@ export const Timeline = memo(function Timeline({ id, status, startedAt, catalog,
               className={layout.now !== null ? "tl-now" : "tl-end-cap"}
             />
           </div>
+          {laneDraws.map((row) => (
+            <div key={row.lane} className={`tl-lane tl-lane-${row.lane}`}>
+              <span className="tl-lane-label">{row.label}</span>
+              <div className="tl-lane-track">
+                {row.phases.map((phase, index) => (
+                  <TipSource
+                    key={`${phase.kind}-${phase.tip.type === "phase" ? phase.tip.t0 : index}-${index}`}
+                    tip={phase.tip}
+                    label={phase.tip.type === "phase" ? phase.tip.label : phase.title}
+                    className={`tl-lane-phase tl-lane-phase-${phase.kind} tone-${phase.tone}`}
+                    style={{
+                      left: `${phase.x0 * 100}%`,
+                      width: `${Math.max((phase.x1 - phase.x0) * 100, 0.4)}%`,
+                    }}
+                  />
+                ))}
+                {row.events.map((event, index) => (
+                  <TipSource
+                    key={`${event.kind}-${event.x}-${index}`}
+                    tip={event.tip}
+                    label={event.title}
+                    className={`tl-mark tl-lane-mark tl-k-${event.kind} tone-${event.tone}`}
+                    style={{ left: `${event.x * 100}%` }}
+                  >
+                    {event.glyph}
+                  </TipSource>
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
       {legend && <Legend catalog={catalog} />}
@@ -291,6 +325,25 @@ export function Legend({ catalog }: { catalog: Catalog }) {
           </div>
         ))}
       </section>
+      {model.lanes.map((lane) => (
+        <section className="tl-legend-part" key={lane.lane}>
+          <h4>Lane: {lane.label}</h4>
+          {lane.events.map((info) => (
+            <div className="tl-legend-row" key={info.kind}>
+              <span className={`tl-sample tone-${info.tone}`}>{info.glyph}</span>
+              <b>{info.label}</b>
+              <span>{info.legend}</span>
+            </div>
+          ))}
+          {lane.phases.map((info) => (
+            <div className="tl-legend-row" key={info.kind}>
+              <span className={`tl-sample tl-swatch tone-${info.tone}`} />
+              <b>{info.label}</b>
+              <span>{info.legend}</span>
+            </div>
+          ))}
+        </section>
+      ))}
       <section className="tl-legend-part">
         <h4>Days (decoration)</h4>
         <div className="tl-legend-row">

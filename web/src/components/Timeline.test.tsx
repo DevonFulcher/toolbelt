@@ -1,5 +1,6 @@
 import { act, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, test } from "vitest";
+import type { CardExtras } from "../api/generated";
 import { ago, branch, catalog, DAY, detail, event, HOUR, MIN, noPr, NOW, pr, snapshot } from "../testing/fixtures";
 import { renderWith } from "../testing/render";
 import { App } from "./App";
@@ -405,5 +406,45 @@ describe("the weekday lines and weekend bands", () => {
     expect(legend.getByText("Days (decoration)")).toBeInTheDocument();
     expect(legend.getByText("Weekday line")).toBeInTheDocument();
     expect(legend.getByText("Weekend")).toBeInTheDocument();
+  });
+});
+
+describe("a card's lanes", () => {
+  test("draw under the track, one row per source with history, and are in the legend", () => {
+    const extras: CardExtras = {
+      branches: [
+        {
+          id: "1:devon/a",
+          lanes: [
+            {
+              lane: "agent",
+              events: [],
+              phases: [
+                {
+                  start: new Date(NOW - 3 * DAY).toISOString(),
+                  end: new Date(NOW - 3 * DAY + HOUR).toISOString(),
+                  kind: "agent_succeeded",
+                  detail: "fix ci",
+                },
+              ],
+            },
+          ],
+          agent: { has_action: false, trigger: null, reason: null, can_override: false, starting: false, start_error: null, latest_run: null, runs: 0, recent_runs: [] },
+          spend: { interactive_usd: 0, interactive_unpriced_calls: 0, autonomous_usd: 0, autonomous_runs: 0 },
+        },
+      ],
+      agents_decided_at: null,
+      spend_read_at: null,
+    };
+    renderWith(
+      <App clock={() => NOW} />,
+      snapshot([branch(1, "devon/a", { status: pr({ review: "approved", detail: history }) })], undefined, { extras }),
+    );
+
+    const rows = document.querySelectorAll(".tl-lane");
+    expect([...rows].map((r) => r.querySelector(".tl-lane-label")?.textContent)).toEqual(["Agent runs"]);
+    expect(rows[0]!.querySelectorAll(".tl-lane-phase")).toHaveLength(1);
+    fireEvent.click(screen.getByTitle("What do the glyphs, colours and spans mean?"));
+    expect(screen.getByText("Lane: Agent runs")).toBeInTheDocument();
   });
 });

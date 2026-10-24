@@ -85,6 +85,9 @@ def rig(tmp_path: Path):
 
 
 def refresh(app, client) -> None:
+    # A branch is looked up again only once the (10 ms) refresh interval has
+    # passed since its last lookup.
+    time.sleep(0.02)
     client.portal.call(app.state.refresher.run_once)
 
 

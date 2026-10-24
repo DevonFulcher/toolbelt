@@ -13,6 +13,7 @@ from toolbelt.git.repo_pull import default_config_path
 from toolbelt.ui.app import create_app
 from toolbelt.ui.lookup_cache import LookupCache
 from toolbelt.ui.slack_config import slack_config
+from toolbelt.ui.status_transitions import StatusTransitionRecorder
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
@@ -34,6 +35,7 @@ def serve(*, port: int, cwd_root: Path | None) -> None:
             change_gate=True,
             slack_settings=slack_config(default_config_path()),
             lookup_cache=LookupCache(),
+            transitions=StatusTransitionRecorder(),
             webhook_url=f"http://{HOST}:{bound_port}/api/github-webhook",
         ),
         log_level="warning",

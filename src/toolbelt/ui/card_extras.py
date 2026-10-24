@@ -3,12 +3,14 @@ the branch (what an agent would do, why none is on it, its latest run) and
 what the task has cost. Read from the dispatcher's last decisions, the run
 records and the spend ledger when the page asks."""
 
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from toolbelt.autonomous_agents.dispatcher import Dispatcher
 from toolbelt.git.stack.store import AgentRun, StackStore
 from toolbelt.ui import api_models as api
 from toolbelt.ui.agents_view import reason_info, run_info
+from toolbelt.ui.lane_history import build_lanes
 from toolbelt.ui.snapshot import row_id
 
 #: How many of a branch's runs a card lists.
@@ -23,6 +25,7 @@ def build_card_extras(
     store: StackStore,
     now: datetime,
     spend_read_at: datetime | None = None,
+    repo_slug: Callable[[int], str | None] = lambda repo_id: None,
 ) -> api.CardExtras:
     repo_names = {repo.id: repo.name for repo in store.repos()}
     runs_by_branch: dict[tuple[int, str], list[AgentRun]] = {}
@@ -33,6 +36,7 @@ def build_card_extras(
         for usage in store.usage_by_task(_EPOCH, now + timedelta(seconds=1))
         if usage.task_id is not None
     }
+    lanes = build_lanes(store, now, repo_slug)
     branches = []
     for facts in store.tracked_branch_facts():
         key = (facts.repo_id, facts.name)
@@ -42,6 +46,7 @@ def build_card_extras(
         branches.append(
             api.BranchExtras(
                 id=row_id(*key),
+                lanes=lanes[key],
                 agent=api.CardAgent(
                     has_action=decision is not None,
                     trigger=decision.trigger if decision else None,  # type: ignore[arg-type]

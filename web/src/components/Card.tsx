@@ -10,6 +10,7 @@ import type {
   RepoWebhook,
   SlackInfo,
   SlotDimensions,
+  TimelineLane,
   Tone,
 } from "../api/generated";
 import { sessionLink } from "../logic/claimSession";
@@ -471,6 +472,7 @@ export const Card = memo(
             note={note}
             startedAt={branch.started_at}
             catalog={catalog}
+            lanes={extras?.lanes ?? []}
             id={id}
             now={now}
           />
@@ -750,6 +752,7 @@ function TimelineSlot({
   note,
   startedAt,
   catalog,
+  lanes,
   id,
   now,
 }: {
@@ -757,13 +760,14 @@ function TimelineSlot({
   note: ReactNode;
   startedAt: string | null;
   catalog: Catalog;
+  lanes: readonly TimelineLane[];
   id: string;
   now: number;
 }) {
   return (
     <Slot id="timeline" label="Timeline" state={status.load === "loaded" ? "ok" : "na"}>
       {status.load === "loaded" ? (
-        <Timeline id={id} status={status} startedAt={startedAt} catalog={catalog} now={now} />
+        <Timeline id={id} status={status} startedAt={startedAt} catalog={catalog} lanes={lanes} now={now} />
       ) : (
         note
       )}

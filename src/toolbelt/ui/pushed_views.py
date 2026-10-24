@@ -71,7 +71,9 @@ class PushedViews:
         launching: Callable[[], bool],
         wall_clock: Callable[[], datetime],
         conversation_tick: float = CONVERSATION_TICK_SECONDS,
+        repo_slug: Callable[[int], str | None] = lambda repo_id: None,
     ) -> None:
+        self._repo_slug = repo_slug
         self._hub = hub
         self._dispatcher = dispatcher
         self._runner = runner
@@ -97,7 +99,11 @@ class PushedViews:
         store = StackStore(self._db_path())
         try:
             return build_card_extras(
-                self._dispatcher, store, self._wall_clock(), self._spend.ingested_at
+                self._dispatcher,
+                store,
+                self._wall_clock(),
+                self._spend.ingested_at,
+                self._repo_slug,
             )
         finally:
             store.close()

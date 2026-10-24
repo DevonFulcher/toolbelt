@@ -47,6 +47,8 @@ server is a compile error in the client until it is handled (the renderer's
 `switch`es end in `assertNever`, and per-state tables are
 `Record<PrState, ...>`).
 
+The lanes under the PR track are described in `docs/timeline-lanes.md`.
+
 ## Layout
 
 ```

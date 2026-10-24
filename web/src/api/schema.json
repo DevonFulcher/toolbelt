@@ -1016,12 +1016,19 @@
         "id": {
           "type": "string"
         },
+        "lanes": {
+          "items": {
+            "$ref": "#/$defs/TimelineLane"
+          },
+          "type": "array"
+        },
         "spend": {
           "$ref": "#/$defs/CardSpend"
         }
       },
       "required": [
         "id",
+        "lanes",
         "agent",
         "spend"
       ],
@@ -1178,6 +1185,18 @@
         "events": {
           "$ref": "#/$defs/EventMarkers"
         },
+        "lane_events": {
+          "$ref": "#/$defs/LaneEventMarkers"
+        },
+        "lane_phases": {
+          "$ref": "#/$defs/LanePhaseSpans"
+        },
+        "lanes": {
+          "items": {
+            "$ref": "#/$defs/LaneSpec"
+          },
+          "type": "array"
+        },
         "not_represented": {
           "items": {
             "$ref": "#/$defs/NotRepresented"
@@ -1200,6 +1219,9 @@
       "required": [
         "events",
         "phases",
+        "lanes",
+        "lane_events",
+        "lane_phases",
         "chips",
         "slots",
         "states",
@@ -1810,11 +1832,7 @@
           ]
         },
         "status": {
-          "enum": [
-            "pending",
-            "answered"
-          ],
-          "type": "string"
+          "$ref": "#/$defs/DecisionStatus"
         },
         "title": {
           "type": "string"
@@ -1952,6 +1970,13 @@
       ],
       "title": "DecisionRecommendationInfo",
       "type": "object"
+    },
+    "DecisionStatus": {
+      "enum": [
+        "pending",
+        "answered"
+      ],
+      "type": "string"
     },
     "DraftCatalogState": {
       "additionalProperties": false,
@@ -2291,6 +2316,256 @@
         "blocked"
       ],
       "type": "string"
+    },
+    "LaneEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "detail": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/LaneEventKind"
+        },
+        "t": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "t",
+        "kind",
+        "detail"
+      ],
+      "title": "LaneEvent",
+      "type": "object"
+    },
+    "LaneEventKind": {
+      "enum": [
+        "slack_post",
+        "slack_bump",
+        "slack_reassign",
+        "decision_answered",
+        "task_in_review"
+      ],
+      "type": "string"
+    },
+    "LaneEventMarkers": {
+      "additionalProperties": false,
+      "properties": {
+        "decision_answered": {
+          "$ref": "#/$defs/Marker"
+        },
+        "slack_bump": {
+          "$ref": "#/$defs/Marker"
+        },
+        "slack_post": {
+          "$ref": "#/$defs/Marker"
+        },
+        "slack_reassign": {
+          "$ref": "#/$defs/Marker"
+        },
+        "task_in_review": {
+          "$ref": "#/$defs/Marker"
+        }
+      },
+      "required": [
+        "slack_post",
+        "slack_bump",
+        "slack_reassign",
+        "decision_answered",
+        "task_in_review"
+      ],
+      "title": "LaneEventMarkers",
+      "type": "object"
+    },
+    "LaneId": {
+      "enum": [
+        "git",
+        "ci",
+        "agent",
+        "claim",
+        "slack",
+        "merge_queue",
+        "decision",
+        "task"
+      ],
+      "type": "string"
+    },
+    "LanePhase": {
+      "additionalProperties": false,
+      "properties": {
+        "detail": {
+          "type": "string"
+        },
+        "end": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/LanePhaseKind"
+        },
+        "start": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "start",
+        "end",
+        "kind",
+        "detail"
+      ],
+      "title": "LanePhase",
+      "type": "object"
+    },
+    "LanePhaseKind": {
+      "enum": [
+        "git_conflicting",
+        "ci_seen_running",
+        "ci_seen_failed",
+        "ci_seen_success",
+        "agent_running",
+        "agent_deciding",
+        "agent_succeeded",
+        "agent_failed",
+        "agent_timed_out",
+        "agent_cap_reached",
+        "agent_stopped",
+        "agent_abandoned",
+        "claim_agent_worktree",
+        "claim_agent_ref",
+        "claim_human_worktree",
+        "claim_human_ref",
+        "claim_autonomous_worktree",
+        "claim_autonomous_ref",
+        "merge_queued",
+        "decision_pending"
+      ],
+      "type": "string"
+    },
+    "LanePhaseSpans": {
+      "additionalProperties": false,
+      "properties": {
+        "agent_abandoned": {
+          "$ref": "#/$defs/Span"
+        },
+        "agent_cap_reached": {
+          "$ref": "#/$defs/Span"
+        },
+        "agent_deciding": {
+          "$ref": "#/$defs/Span"
+        },
+        "agent_failed": {
+          "$ref": "#/$defs/Span"
+        },
+        "agent_running": {
+          "$ref": "#/$defs/Span"
+        },
+        "agent_stopped": {
+          "$ref": "#/$defs/Span"
+        },
+        "agent_succeeded": {
+          "$ref": "#/$defs/Span"
+        },
+        "agent_timed_out": {
+          "$ref": "#/$defs/Span"
+        },
+        "ci_seen_failed": {
+          "$ref": "#/$defs/Span"
+        },
+        "ci_seen_running": {
+          "$ref": "#/$defs/Span"
+        },
+        "ci_seen_success": {
+          "$ref": "#/$defs/Span"
+        },
+        "claim_agent_ref": {
+          "$ref": "#/$defs/Span"
+        },
+        "claim_agent_worktree": {
+          "$ref": "#/$defs/Span"
+        },
+        "claim_autonomous_ref": {
+          "$ref": "#/$defs/Span"
+        },
+        "claim_autonomous_worktree": {
+          "$ref": "#/$defs/Span"
+        },
+        "claim_human_ref": {
+          "$ref": "#/$defs/Span"
+        },
+        "claim_human_worktree": {
+          "$ref": "#/$defs/Span"
+        },
+        "decision_pending": {
+          "$ref": "#/$defs/Span"
+        },
+        "git_conflicting": {
+          "$ref": "#/$defs/Span"
+        },
+        "merge_queued": {
+          "$ref": "#/$defs/Span"
+        }
+      },
+      "required": [
+        "git_conflicting",
+        "ci_seen_running",
+        "ci_seen_failed",
+        "ci_seen_success",
+        "agent_running",
+        "agent_deciding",
+        "agent_succeeded",
+        "agent_failed",
+        "agent_timed_out",
+        "agent_cap_reached",
+        "agent_stopped",
+        "agent_abandoned",
+        "claim_agent_worktree",
+        "claim_agent_ref",
+        "claim_human_worktree",
+        "claim_human_ref",
+        "claim_autonomous_worktree",
+        "claim_autonomous_ref",
+        "merge_queued",
+        "decision_pending"
+      ],
+      "title": "LanePhaseSpans",
+      "type": "object"
+    },
+    "LaneSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "events": {
+          "items": {
+            "$ref": "#/$defs/LaneEventKind"
+          },
+          "type": "array"
+        },
+        "id": {
+          "$ref": "#/$defs/LaneId"
+        },
+        "label": {
+          "type": "string"
+        },
+        "phases": {
+          "items": {
+            "$ref": "#/$defs/LanePhaseKind"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "events",
+        "phases"
+      ],
+      "title": "LaneSpec",
+      "type": "object"
     },
     "Link": {
       "additionalProperties": false,
@@ -3722,12 +3997,7 @@
         "last_kind": {
           "anyOf": [
             {
-              "enum": [
-                "post",
-                "bump",
-                "reassign"
-              ],
-              "type": "string"
+              "$ref": "#/$defs/SlackPostKind"
             },
             {
               "type": "null"
@@ -3791,6 +4061,14 @@
       ],
       "title": "SlackPerson",
       "type": "object"
+    },
+    "SlackPostKind": {
+      "enum": [
+        "post",
+        "bump",
+        "reassign"
+      ],
+      "type": "string"
     },
     "SlackPrRef": {
       "additionalProperties": false,
@@ -5050,6 +5328,34 @@
         "ci_done"
       ],
       "title": "TimelineEvent",
+      "type": "object"
+    },
+    "TimelineLane": {
+      "additionalProperties": false,
+      "description": "One lane of a card's timeline, under the PR track (see\n``timeline_lanes.py``): what that source recorded for the branch.",
+      "properties": {
+        "events": {
+          "items": {
+            "$ref": "#/$defs/LaneEvent"
+          },
+          "type": "array"
+        },
+        "lane": {
+          "$ref": "#/$defs/LaneId"
+        },
+        "phases": {
+          "items": {
+            "$ref": "#/$defs/LanePhase"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "lane",
+        "events",
+        "phases"
+      ],
+      "title": "TimelineLane",
       "type": "object"
     },
     "Tone": {

@@ -10,6 +10,8 @@
 // from what is drawn. Pure functions; the components draw their result.
 import type {
   ActivityKind,
+  LaneEventKind,
+  LanePhaseKind,
   Catalog,
   CatalogState,
   Chip,
@@ -22,6 +24,7 @@ import type {
   Who,
 } from "../api/generated";
 import { assertNever } from "./exhaustive";
+import { laneLegend, type LaneLegend } from "./lanes";
 import { DAY, formatAbsolute, formatAge, formatSpan, HOUR, MINUTE, relative } from "./format";
 
 /**
@@ -314,7 +317,7 @@ export interface TipItem {
 export type Tip =
   | {
       type: "event";
-      kind: EventKind;
+      kind: EventKind | LaneEventKind;
       label: string;
       detail: string;
       actor: string;
@@ -327,7 +330,7 @@ export type Tip =
   | { type: "state"; title: string; ms: number; items: string[] }
   | {
       type: "phase";
-      kind: PhaseKind;
+      kind: PhaseKind | LanePhaseKind;
       label: string;
       legend: string;
       t0: number;
@@ -843,6 +846,7 @@ export interface LegendModel {
     values: { text: string; tone: Tone; legend: string }[];
   }[];
   notRepresented: Catalog["not_represented"];
+  lanes: LaneLegend[];
 }
 
 /** Everything the track and its end-cap tooltip can show, from the catalog. */
@@ -864,6 +868,7 @@ export function legendModel(catalog: Catalog): LegendModel {
       }),
     ),
     notRepresented: catalog.not_represented,
+    lanes: laneLegend(catalog),
   };
 }
 

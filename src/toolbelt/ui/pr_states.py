@@ -29,7 +29,8 @@ turns a branch's current values into catalog references, looking each one up
 without a timeline representation fails ``tests/test_pr_states.py``.
 
 What is deliberately *not* on the timeline is listed in ``NOT_REPRESENTED``
-and shown in the legend.
+and shown in the legend. The other sources of status (agent runs, claims,
+Slack, ...) are lanes under this track: see ``timeline_lanes.py``.
 """
 
 from collections.abc import Collection, Mapping
@@ -563,11 +564,11 @@ NOT_REPRESENTED: tuple[tuple[str, str], ...] = (
     ),
     (
         "A PR becoming conflicting",
-        "Not an event; only whether it conflicts now is shown (Merge, in the Now tooltip).",
+        "Not a GitHub event; the Git lane shows when `tt ui` saw it conflict, and Merge in the Now tooltip says whether it does now.",
     ),
     (
         "CI progress between commits",
-        "Only each commit's final result is known; a re-run of the same commit is not an event.",
+        "GitHub gives each commit's final result only; a re-run of the same commit is not an event. The CI lane shows the rollup changes `tt ui` saw.",
     ),
     (
         "When an approval went stale or was dismissed",
@@ -576,14 +577,6 @@ NOT_REPRESENTED: tuple[tuple[str, str], ...] = (
     (
         "History of being blocked on a parent",
         "Derived from the parent's state now (Next, in the Now tooltip), not recorded.",
-    ),
-    (
-        "History of an agent claiming a task",
-        (
-            "Claims are files with no history: With an agent shows only now, and "
-            "the aggregate view does not count it (the task is in the state its "
-            "PR was in)."
-        ),
     ),
     (
         "Conversation comments, edits, labels, assignees",

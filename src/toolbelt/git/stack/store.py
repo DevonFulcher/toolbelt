@@ -419,6 +419,26 @@ _MIGRATIONS: list[tuple[str, ...]] = [
         # session with the answer, and is not another try at the job.
         "ALTER TABLE agent_runs ADD COLUMN resumed_from TEXT",
     ),
+    (
+        # When a branch's observed status changed (see
+        # ``ui.status_transitions``): one row per change of a dimension's value
+        # (``conflict``, ``ci``), so the card timeline can draw how long a
+        # branch conflicted or its CI ran, which GitHub does not record.
+        """
+        CREATE TABLE status_transitions (
+            id INTEGER PRIMARY KEY,
+            repo_id INTEGER NOT NULL,
+            branch TEXT NOT NULL,
+            dimension TEXT NOT NULL,
+            value TEXT NOT NULL,
+            at TEXT NOT NULL
+        )
+        """,
+        (
+            "CREATE INDEX status_transitions_by_branch "
+            "ON status_transitions (repo_id, branch, dimension, id)"
+        ),
+    ),
 ]
 
 
@@ -682,6 +702,17 @@ class AgentRun:
     activity: str | None = None
     #: The run this one continues, when it resumes one that asked a question.
     resumed_from: str | None = None
+
+
+@dataclass(frozen=True)
+class StatusTransition:
+    """A branch's ``dimension`` took ``value`` at ``at``."""
+
+    repo_id: int
+    branch: str
+    dimension: str
+    value: str
+    at: datetime
 
 
 @dataclass(frozen=True)
@@ -1751,6 +1782,60 @@ class StackStore:
                 "(repo_id, branch, stage, pr_number, moved_at) VALUES (?, ?, ?, ?, ?)",
                 (repo_id, branch, stage, pr_number, _iso(at)),
             )
+
+    def record_status_transition(
+        self, repo_id: int, branch: str, dimension: str, value: str, at: datetime
+    ) -> bool:
+        """Note that the branch's ``dimension`` is ``value`` as of ``at``.
+        Recorded only when it differs from the latest value recorded for it;
+        returns whether a row was added."""
+        with self._write() as conn:
+            latest = conn.execute(
+                "SELECT value FROM status_transitions WHERE repo_id = ? AND "
+                "branch = ? AND dimension = ? ORDER BY id DESC LIMIT 1",
+                (repo_id, branch, dimension),
+            ).fetchone()
+            if latest is not None and latest["value"] == value:
+                return False
+            conn.execute(
+                "INSERT INTO status_transitions (repo_id, branch, dimension, "
+                "value, at) VALUES (?, ?, ?, ?, ?)",
+                (repo_id, branch, dimension, value, _iso(at)),
+            )
+        return True
+
+    def status_transitions(self) -> list[StatusTransition]:
+        """Every recorded change, oldest first."""
+        rows = self._conn.execute(
+            "SELECT repo_id, branch, dimension, value, at FROM status_transitions "
+            "ORDER BY id"
+        )
+        return [
+            StatusTransition(
+                repo_id=r["repo_id"],
+                branch=r["branch"],
+                dimension=r["dimension"],
+                value=r["value"],
+                at=datetime.fromisoformat(r["at"]),
+            )
+            for r in rows
+        ]
+
+    def task_status_moves(self) -> list[tuple[int, str, str, datetime]]:
+        """Every status move recorded, as ``(repo_id, branch, stage, moved_at)``."""
+        rows = self._conn.execute(
+            "SELECT repo_id, branch, stage, moved_at FROM task_status_moves "
+            "ORDER BY moved_at"
+        )
+        return [
+            (
+                r["repo_id"],
+                r["branch"],
+                r["stage"],
+                datetime.fromisoformat(r["moved_at"]),
+            )
+            for r in rows
+        ]
 
     def add_slack_session(self, row: SlackSessionRow) -> None:
         with self._write() as conn:

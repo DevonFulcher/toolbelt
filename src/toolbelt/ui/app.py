@@ -165,6 +165,7 @@ from toolbelt.ui.snapshot import (
     parent_context,
     row_id,
 )
+from toolbelt.ui.status_transitions import StatusTransitionRecorder
 from toolbelt.ui.task_cache import TaskInfoCache
 from toolbelt.ui.task_feed import LinkedTask, TaskFeed
 from toolbelt.ui.task_status_sync import TaskStatusSync
@@ -509,6 +510,7 @@ def create_app(
     merge_queue_tick: float = DEFAULT_MERGE_QUEUE_TICK_SECONDS,
     change_gate: bool = False,
     lookup_cache: LookupCache | None = None,
+    transitions: StatusTransitionRecorder | None = None,
     full_refresh_interval: float = DEFAULT_FULL_INTERVAL_SECONDS,
     webhook_url: str | None = None,
     forwarders: WebhookForwarders | None = None,
@@ -538,7 +540,9 @@ def create_app(
     ``change_gate`` lets a status poll skip the full lookup of a PR GitHub says
     is unchanged (see ``pr_gate.py``); without it every poll is a full lookup.
     ``lookup_cache`` keeps each branch's last good lookup across restarts (see
-    ``lookup_cache.py``); without it they are only in memory.
+    ``lookup_cache.py``); without it they are only in memory. ``transitions``
+    records when a branch's conflict and CI status change (see
+    ``status_transitions.py``); without it nothing is recorded.
     ``webhook_url`` is where ``gh webhook forward`` replays GitHub's webhooks
     to (this server's ``/api/github-webhook``): given, webhooks are forwarded
     for the repos the user administers (see ``webhook_forwarders.py``);
@@ -775,6 +779,7 @@ def create_app(
         enabled=_agents_enabled,
         launching=_agents_launching,
         wall_clock=wall_clock,
+        repo_slug=lambda repo_id: slug_of_repo(repo_id),
     )
     dispatcher.on_tick = lambda: views.notify("agents", "extras")
     runner.on_change = lambda: views.notify("agents", "extras")
@@ -857,6 +862,7 @@ def create_app(
             GithubChangeGate(PrGate(conditional_get), slug_of) if change_gate else None
         ),
         persist=lookup_cache,
+        observe=transitions.observe if transitions else None,
         full_interval=full_refresh_interval,
         pushed=webhooks_live,
     )
