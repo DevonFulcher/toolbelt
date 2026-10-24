@@ -48,6 +48,7 @@ type FilterKey = Literal["next", "pr", "ci", "review", "comments", "merge"]
 type ClaimKind = Literal["worktree", "ref"]
 type SlackPostKind = Literal["post", "bump", "reassign"]
 type DecisionStatus = Literal["pending", "answered"]
+type ReviewVerdict = Literal["approved", "changes_requested"]
 
 # The lanes under the PR track (see timeline_lanes.py): the kinds of their
 # markers and spans, built from the registry so a kind added there is a kind
@@ -1053,6 +1054,7 @@ class Spend(Model):
 type AgentReasonCode = Literal[
     "disabled",
     "pr_not_open",
+    "has_pr",
     "working",
     "deciding",
     "draft",
@@ -1073,7 +1075,10 @@ type AgentReasonCode = Literal[
     "backoff",
 ]
 
-type AgentTrigger = Literal["resolve_conflicts", "resolve_comments", "fix_ci"]
+type AgentTrigger = Literal[
+    "resolve_conflicts", "resolve_comments", "fix_ci", "validate"
+]
+type ValidateResult = Literal["pass", "fail"]
 
 type AgentRunState = Literal[
     "running",
@@ -1137,6 +1142,9 @@ class AgentRunInfo(Model):
     #: or the run ended). Its turns and cost so far are in ``turns`` and
     #: ``cost_usd``.
     activity: str | None
+    #: A validate run's verdict on the branch (``None``: not a validate run, or
+    #: it reported none).
+    result: ValidateResult | None
 
 
 class AgentLimitsInfo(Model):
@@ -1209,6 +1217,36 @@ class CardAgent(Model):
     #: The branch's runs, newest first (``latest_run`` is the first), at most
     #: ``card_extras.RECENT_RUNS``.
     recent_runs: list[AgentRunInfo]
+    validation: CardValidation
+
+
+class ReviewVerdictInfo(Model):
+    """The user's review of a branch before its PR (``review_verdicts``)."""
+
+    verdict: ReviewVerdict
+    note: str
+    head_sha: str
+    at: str
+
+
+class CardValidation(Model):
+    """Where a task stands on "validate, personal review, publish"
+    (``docs/personal-review.md``)."""
+
+    #: The task has no PR, so a validate run can be started on it by hand.
+    can_validate: bool
+    #: A validate run ended and nothing since sent the task back: the task
+    #: reads Personal review.
+    validated: bool
+    #: The latest validate run's verdict.
+    result: ValidateResult | None
+    #: Your latest verdict still standing (an approval of an older commit does
+    #: not stand).
+    verdict: ReviewVerdictInfo | None
+    #: The PR is being opened after an approval.
+    opening_pr: bool
+    #: Why the PR could not be opened after an approval.
+    notice: str | None
 
 
 class CardSpend(Model):
@@ -1650,6 +1688,35 @@ Snapshot.model_rebuild()
 # --- Diff review ------------------------------------------------------------
 
 
+class PersonalReviewState(Model):
+    """What the Review view needs to know of the branch it shows, when it is a
+    tracked branch with no PR that a validate run has reviewed."""
+
+    #: The branch's row id (see ``Branch.id``).
+    id: str
+    #: The commit the diff shows, which a verdict is for.
+    head_sha: str
+    verdict: ReviewVerdictInfo | None
+    result: ValidateResult | None
+    summary: str | None
+    opening_pr: bool
+    notice: str | None
+    #: Slack is configured, so an approval can post the PR.
+    can_post_in_slack: bool
+
+
+class ReviewVerdictRequest(Model):
+    """The body of ``POST /api/review/approve`` and ``.../request-changes``."""
+
+    id: str
+    #: The commit the user reviewed (a newer commit refuses the verdict).
+    head_sha: str
+    note: str
+    #: Approve only: post the PR in Slack as soon as it is open (``False``: it
+    #: reads Post in Slack, as for any ready PR).
+    post_in_slack: bool = False
+
+
 class ReviewChangedFile(Model):
     #: Added, modified, deleted or renamed.
     status: Literal["A", "M", "D", "R"]
@@ -1744,6 +1811,8 @@ class Wire(Model):
     review_file: ReviewFile
     review_hover: ReviewHover
     review_definition: ReviewDefinition
+    personal_review_state: PersonalReviewState
+    review_verdict_request: ReviewVerdictRequest
     merge_queue_info: MergeQueueInfo
     slack_draft_request: SlackDraftRequest
     slack_draft: SlackDraft

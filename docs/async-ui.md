@@ -21,6 +21,8 @@ request to know whether something is happening.
 | --- | --- | --- |
 | Post or bump in Slack | `posting` on the PR's Slack info | `notice` on the PR's Slack info |
 | Run an agent by hand | `starting` on the task's agent info | `start_error` on the same |
+| Validate a task | `starting` on the task's agent info | `start_error` on the same |
+| Approve a branch (opens its PR) | `opening_pr` on the task's validation info | `notice` on the same |
 | Merge, and merge when CI passes | `merging` on the PR's merge-queue info | `notice` on the same |
 
 Quick actions (queueing a merge, taking it off the queue, the Agents switches)

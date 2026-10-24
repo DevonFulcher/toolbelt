@@ -7,13 +7,16 @@ import { MergeView } from "@codemirror/merge";
 import { EditorView } from "@codemirror/view";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  approveBranch,
+  fetchPersonalReview,
   fetchReviewFile,
   fetchReviewFiles,
   fetchReviewText,
+  requestChanges,
   type ReviewRevisions,
   type ReviewSide,
 } from "../api/client";
-import type { ReviewChangedFile, ReviewDefinitionTarget, ReviewFile } from "../api/generated";
+import type { PersonalReviewState, ReviewChangedFile, ReviewDefinitionTarget, ReviewFile } from "../api/generated";
 import { buildChanges } from "../logic/diffChanges";
 import type { Counts } from "../store/selectors";
 import { useApp, useAppStore } from "../store/StoreContext";
@@ -140,6 +143,67 @@ function DefinitionPanel({
   );
 }
 
+/** The branch has been validated and awaits your verdict: approve it (which
+ * opens its PR, and posts it in Slack when asked) or send it back with a note. */
+export function PersonalReviewBar({ state, onDone }: { state: PersonalReviewState; onDone: () => void }) {
+  const [note, setNote] = useState("");
+  const [slack, setSlack] = useState(false);
+  const [busy, setBusy] = useState<"approve" | "changes" | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const send = (kind: "approve" | "changes"): void => {
+    setBusy(kind);
+    setProblem(null);
+    const request = { id: state.id, head_sha: state.head_sha, note, post_in_slack: kind === "approve" && slack };
+    (kind === "approve" ? approveBranch(request) : requestChanges(request))
+      .then(onDone)
+      .catch((failure: unknown) => setProblem(failure instanceof Error ? failure.message : String(failure)))
+      .finally(() => setBusy(null));
+  };
+  const approved = state.verdict?.verdict === "approved";
+  return (
+    <section className="review-verdict" aria-label="Personal review">
+      <div className="review-verdict-head">
+        <strong>Personal review</strong>
+        {state.result !== null && (
+          <span className="muted">
+            {` · the validate run would ${state.result === "pass" ? "approve" : "ask for changes"}`}
+            {state.summary ? `: ${state.summary}` : ""}
+          </span>
+        )}
+      </div>
+      {state.opening_pr ? (
+        <div>Approved: pushing the branch and opening its PR…</div>
+      ) : (
+        <>
+          {approved && <div className="muted">{`You approved this commit${state.notice ? ", but its PR was not opened." : "."}`}</div>}
+          <textarea
+            aria-label="Note"
+            placeholder="A note (required to request changes)"
+            value={note}
+            rows={2}
+            onChange={(event) => setNote(event.target.value)}
+          />
+          <div className="review-verdict-actions">
+            <button type="button" disabled={busy !== null} onClick={() => send("approve")}>
+              {busy === "approve" ? "Approving…" : "Approve and open PR"}
+            </button>
+            <button type="button" disabled={busy !== null || note.trim() === ""} onClick={() => send("changes")}>
+              {busy === "changes" ? "Requesting…" : "Request changes"}
+            </button>
+            {state.can_post_in_slack && (
+              <label>
+                <input type="checkbox" checked={slack} onChange={(event) => setSlack(event.target.checked)} /> Post in Slack once
+                it is open
+              </label>
+            )}
+          </div>
+        </>
+      )}
+      {(problem ?? state.notice) !== null && <div className="error">{problem ?? state.notice}</div>}
+    </section>
+  );
+}
+
 const STATUS_TITLE = { A: "Added", M: "Modified", D: "Deleted", R: "Renamed" } as const;
 
 export function ReviewPage({ counts }: { counts: Counts }) {
@@ -162,6 +226,16 @@ export function ReviewPage({ counts }: { counts: Counts }) {
     () => fetchReviewFile(revisions as ReviewRevisions, selected as ReviewChangedFile),
   );
 
+  // Reload the personal review when the card's validation changes (a verdict
+  // given elsewhere, the PR opening) as well as after an action here.
+  const [verdicts, setVerdicts] = useState(0);
+  const validation = useApp((s) => s.extras[`${repo}:${head}`]?.agent.validation);
+  const personal = useLoad(
+    revisions === null ? null : `personal|${repo}|${head}|${verdicts}|${JSON.stringify(validation ?? null)}`,
+    () => fetchPersonalReview(Number(repo), head),
+  );
+  const reload = useCallback(() => setVerdicts((n) => n + 1), []);
+
   const [definition, setDefinition] = useState<{ side: ReviewSide; target: ReviewDefinitionTarget } | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const onDefinition = useCallback((side: ReviewSide, target: ReviewDefinitionTarget) => {
@@ -178,6 +252,9 @@ export function ReviewPage({ counts }: { counts: Counts }) {
   return (
     <>
       <FilterBar counts={counts} />
+      {personal !== null && personal.state === "ready" && personal.data !== null && (
+        <PersonalReviewBar state={personal.data} onDone={reload} />
+      )}
       {!ready ? (
         <div className="empty">Pick a repo and give a base and a head revision to see what changed between them.</div>
       ) : files === null ? (

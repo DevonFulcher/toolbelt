@@ -12,6 +12,7 @@ run, the decision "may start" is recorded and nothing happens).
 """
 
 import asyncio
+import dataclasses
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -28,8 +29,9 @@ from toolbelt.autonomous_agents.eligibility import (
     global_blockers,
     is_trigger,
     resume_blocker,
+    validate_blocker,
 )
-from toolbelt.autonomous_agents.limits import AgentLimits
+from toolbelt.autonomous_agents.limits import VALIDATE, AgentLimits
 from toolbelt.autonomous_agents.questions import RunQuestions
 from toolbelt.autonomous_agents.screen import ScreenState
 from toolbelt.decisions.model import Decision as AskedDecision
@@ -151,7 +153,11 @@ class Dispatcher:
         questions: RunQuestions | None = None,
         resume: Callable[[AskedDecision, Decision, AgentRun], Awaitable[None]]
         | None = None,
+        parent_of: Callable[[int, str], str | None] = lambda repo_id, branch: None,
     ) -> None:
+        #: The branch a task is stacked on (a validate run reviews the diff
+        #: against it).
+        self._parent_of = parent_of
         self._questions = questions
         self._resume = resume
         #: The tasks an agent's question holds (see ``RunQuestions.holding``),
@@ -318,11 +324,16 @@ class Dispatcher:
             state = await asyncio.to_thread(self._inspect, item)
             if not state.exists:
                 continue
-            facts = self._facts(item, snapshot, action.kind, state)
+            validating = prior.trigger == VALIDATE
+            facts = self._facts(
+                item, snapshot, VALIDATE if validating else action.kind, state
+            )
             if resume_blocker(facts, world) is not None:
                 continue
-            decision = await asyncio.to_thread(
-                self._decide, item, snapshot, world, True
+            decision = (
+                self._validate_decision(item, snapshot, state, world)
+                if validating
+                else await asyncio.to_thread(self._decide, item, snapshot, world, True)
             )
             if decision is None:
                 continue
@@ -387,9 +398,29 @@ class Dispatcher:
         self._starts.add(task)
         task.add_done_callback(self._starts.discard)
 
-    async def _start_requested(self, key: tuple[int, str]) -> None:
+    def request_validate(self, key: tuple[int, str]) -> None:
+        """Starts a validate run on the task by hand, in the background like
+        ``request_start`` (the task reads ``starting`` until its run is
+        recorded; a refusal is in ``start_errors``). Raises ``KeyError`` for a
+        task that is not tracked."""
+        if not any(item.task.key == key for item in self._tasks()):
+            raise KeyError(key)
+        if key in self.starting:
+            return
+        self.starting.add(key)
+        self.start_errors.pop(key, None)
+        self._changed()
+        task = asyncio.create_task(self._start_requested(key, self.validate_now))
+        self._starts.add(task)
+        task.add_done_callback(self._starts.discard)
+
+    async def _start_requested(
+        self,
+        key: tuple[int, str],
+        start: Callable[[tuple[int, str]], Awaitable[None]] | None = None,
+    ) -> None:
         try:
-            await self.start_now(key)
+            await (start or self.start_now)(key)
         except OverrideRefused as refused:
             self.start_errors[key] = refused.reason.text
         except KeyError:
@@ -435,6 +466,52 @@ class Dispatcher:
             raise OverrideRefused(decision.reason)
         await self._launch(decision)
 
+    def _validate_decision(
+        self, item: DispatchTask, snapshot: PrSnapshot, state: BranchState, world: World
+    ) -> Decision:
+        task = item.task
+        return Decision(
+            task_id=task.task_id,
+            repo_id=task.repo_id,
+            repo=task.repo_name,
+            branch=task.branch,
+            trigger=VALIDATE,
+            reason=None,
+            head_sha=state.head_sha,
+            decided_at=world.now,
+            base_ref=self._parent_of(task.repo_id, task.branch),
+            worktree=task.worktree,
+        )
+
+    async def validate_now(self, key: tuple[int, str]) -> None:
+        """Start a validate run on the task by hand. It does not depend on the
+        agents' switches or on a PR (the task has none): see
+        ``eligibility.validate_blocker``. Raises ``KeyError`` for a task that is
+        not tracked and ``OverrideRefused`` when a reason that stays is true."""
+        if self._launch is None:
+            raise OverrideRefused(Reason("disabled", "Nothing can start runs here."))
+        tasks = await asyncio.to_thread(self._tasks)
+        item = next((t for t in tasks if t.task.key == key), None)
+        if item is None:
+            raise KeyError(key)
+        # The PR is looked up now: a validate run is for a branch with none.
+        snapshot = await self._fetch(item.task.branch, item.repo_path)
+        self._snapshots[key] = (self._clock(), snapshot)
+        world = await asyncio.to_thread(self._world, self._wall_clock())
+        world = dataclasses.replace(world, auth_ok=self._auth_ok())
+        state = await asyncio.to_thread(self._inspect, item)
+        if not state.exists:
+            raise OverrideRefused(
+                Reason(
+                    "no_worktree", "There is no local branch of this name to work on."
+                )
+            )
+        facts = self._facts(item, snapshot, VALIDATE, state)
+        reason = validate_blocker(facts, world)
+        if reason is not None:
+            raise OverrideRefused(reason)
+        await self._launch(self._validate_decision(item, snapshot, state, world))
+
     def _ci_history_of(self, key: tuple[int, str], snapshot: PrSnapshot) -> str | None:
         """Why CI keeps failing, if it was looked into at the PR's current head."""
         held = self._ci_history.get(key)
@@ -466,6 +543,7 @@ class Dispatcher:
             failed_ci_commits=failed_ci_commits(snapshot.facts),
             ci_history=self._ci_history_of(item.task.key, snapshot),
             deciding=task.task_id in self._holding,
+            has_pr=snapshot.status.pr is not PrState.NONE,
         )
 
     def _decide(

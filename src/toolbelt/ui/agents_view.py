@@ -40,6 +40,7 @@ def run_info(run: AgentRun, repo_names: dict[int, str]) -> api.AgentRunInfo:
         summary=run.summary,
         error=run.error,
         activity=run.activity,
+        result=run.result,  # type: ignore[arg-type]
     )
 
 

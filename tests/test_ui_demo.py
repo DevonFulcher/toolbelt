@@ -257,3 +257,100 @@ def test_the_seeded_search_tasks_really_conflict_and_the_others_are_unknown(
         ("devon/search-cache", "conflict", ("search/weights.py",)),
     ]
     assert heads["devon/search-ranking"] is None
+
+
+def test_the_seeded_demo_shows_validate_personal_review_and_publish(tmp_path: Path):
+    """One branch awaits its personal review, one was sent back, one was never
+    validated; approving pushes to a local bare repo and the fake `gh` opens
+    the PR (nothing reaches GitHub)."""
+    import os
+
+    from toolbelt.git.stack.store import StackStore, default_db_path
+    from toolbelt.ui.personal_review import current_verdict, validated_tasks
+
+    spec = importlib.util.spec_from_file_location("ui_demo_seed3", DEMO / "seed.py")
+    assert spec and spec.loader
+    seed = importlib.util.module_from_spec(spec)
+    sys.path.insert(0, str(DEMO))
+    try:
+        spec.loader.exec_module(seed)
+    finally:
+        sys.path.remove(str(DEMO))
+    seed.seed(tmp_path, 0)
+
+    store = StackStore(default_db_path())
+    try:
+        task = {f.name: f.task_id for f in store.tracked_branch_facts()}
+        waiting = validated_tasks(store)
+        sent_back = store.review_verdicts(task_id=task["devon/search-synonyms"])
+        results = {
+            run.branch: run.result
+            for run in store.agent_runs()
+            if run.trigger == "validate"
+        }
+    finally:
+        store.close()
+    assert waiting == {task["devon/search-ranking"]}
+    assert results == {"devon/search-ranking": "pass", "devon/search-synonyms": "fail"}
+    assert [v.verdict for v in sent_back] == ["changes_requested"]
+    assert current_verdict(sent_back, "any") is not None
+    assert "devon/search-stemming" in task  # tracked, never validated
+
+    repo = tmp_path / "repos" / "demo-search"
+    for branch in (
+        "devon/search-index",
+        "devon/search-ranking",
+        "devon/search-synonyms",
+    ):
+        subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "--verify", branch],
+            check=True,
+            capture_output=True,
+        )
+    subprocess.run(
+        ["git", "-C", str(repo), "push", "-u", "origin", "devon/search-ranking"],
+        check=True,
+        capture_output=True,
+    )
+    pushed = subprocess.run(
+        ["git", "-C", str(tmp_path / "origin" / "demo-search.git"), "branch"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert "devon/search-ranking" in pushed
+
+    created = subprocess.run(
+        [
+            sys.executable,
+            str(DEMO / "gh"),
+            "pr",
+            "create",
+            "--base",
+            "main",
+            "--head",
+            "devon/search-ranking",
+            "--fill",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={**os.environ},
+    ).stdout.strip()
+    assert created == "https://github.com/devon/demo-search/pull/200"
+    lookup = subprocess.run(
+        [
+            sys.executable,
+            str(DEMO / "gh"),
+            "api",
+            "graphql",
+            "-f",
+            "branch=devon/search-ranking",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={**os.environ},
+    ).stdout
+    (found,) = json.loads(lookup)["data"]["repository"]["pullRequests"]["nodes"]
+    assert (found["number"], found["state"], found["isDraft"]) == (200, "OPEN", False)

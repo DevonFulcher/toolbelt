@@ -9,6 +9,7 @@ that blocks the others first).
 condition                 label                      who
 ========================  =========================  ======
 no PR                     Open PR                    you
+no PR, validated          Personal review            you
 merged / closed           Done                       none
 merge conflicts           Resolve conflicts          you
 changes requested         Address review             you
@@ -34,6 +35,10 @@ The two Slack rows apply only when Slack is configured (``slack`` is given):
 posting a ready PR in the review channel is how a review gets asked for. They
 come after CI failed so an agent still sees a failing CI first, and before CI
 running so a PR is posted while its checks run.
+
+"Personal review" replaces "Open PR" for a branch a validate run has reviewed
+(``validated=True``, see ``personal_review``): you read its diff and approve it,
+which opens the PR. It needs no PR, so it never applies to a branch that has one.
 
 A branch with a question an agent asked the user (``deciding=True``) reads
 **Deciding**, whatever else holds it: the agent cannot go on until the user
@@ -83,6 +88,7 @@ type Who = Literal["you", "agent", "auto", "others", "ci", "none"]
 # ``pr_states`` must give each one a timeline representation; a test checks
 # that these are exactly the kinds ``next_action`` can return.
 OPEN_PR = "open_pr"
+PERSONAL_REVIEW = "personal_review"
 DONE = "done"
 RESOLVE_CONFLICTS = "resolve_conflicts"
 ADDRESS_REVIEW = "address_review"
@@ -101,6 +107,7 @@ AUTONOMOUS = "autonomous"
 DECIDING = "deciding"
 KINDS = (
     OPEN_PR,
+    PERSONAL_REVIEW,
     DONE,
     RESOLVE_CONFLICTS,
     ADDRESS_REVIEW,
@@ -123,6 +130,7 @@ KINDS = (
 #: step).
 type NextKind = Literal[
     "open_pr",
+    "personal_review",
     "done",
     "resolve_conflicts",
     "address_review",
@@ -181,6 +189,7 @@ def next_action(
     autonomous: bool = False,
     slack: SlackContext | None = None,
     deciding: bool = False,
+    validated: bool = False,
 ) -> NextAction:
     """``parent`` is ``None`` for a branch on the base branch (or whose
     parent's status is not known yet). ``claimed``: a live working holder has
@@ -188,8 +197,9 @@ def next_action(
     holds it. ``slack``: where the PR stands in Slack (``None``: Slack is not
     configured, so it plays no part). ``deciding``: an agent asked the user a
     question about the task that is not answered yet: nothing can go on until
-    it is, so it comes before whoever holds the task."""
-    underlying = _underlying_action(status, parent, slack)
+    it is, so it comes before whoever holds the task. ``validated``: a validate run
+    reviewed the branch and you have not requested changes since."""
+    underlying = _underlying_action(status, parent, slack, validated)
     if underlying.kind == DONE:
         return underlying
     if deciding:
@@ -202,9 +212,14 @@ def next_action(
 
 
 def _underlying_action(
-    status: BranchStatus, parent: ParentContext | None, slack: SlackContext | None
+    status: BranchStatus,
+    parent: ParentContext | None,
+    slack: SlackContext | None,
+    validated: bool = False,
 ) -> NextAction:
     if status.pr is PrState.NONE:
+        if validated:
+            return NextAction("Personal review", WHO_YOU, PERSONAL_REVIEW)
         return NextAction("Open PR", WHO_YOU, OPEN_PR)
     if status.pr in (PrState.MERGED, PrState.CLOSED):
         return NextAction("Done", WHO_NONE, DONE)

@@ -77,12 +77,76 @@ STACKS: dict[str, list[tuple[str, str, str | None, int | None, float]]] = {
         ("devon/search-index", "main", "SRCH-9", 6, 3),
         ("devon/search-ranking", "devon/search-index", None, None, 2),
         ("devon/search-cache", "main", "SRCH-12", None, 1),
+        ("devon/search-synonyms", "main", "SRCH-14", None, 1),
+        ("devon/search-stemming", "main", "SRCH-15", None, 1),
     ],
 }
+
+# Branches with real commits, so the Review view has a diff and an approval can
+# push them (search-index has a PR already; the others have none):
+# (repo, branch, parent, file, text).
+LOCAL_BRANCHES = [
+    (
+        "demo-search",
+        "devon/search-index",
+        "main",
+        "index.py",
+        "def build_index(documents):\n    return {d.id: d.terms for d in documents}\n",
+    ),
+    (
+        "demo-search",
+        "devon/search-ranking",
+        "devon/search-index",
+        "ranking.py",
+        "def rank(index, query):\n    return sorted(index, key=lambda doc: len(index[doc]))\n",
+    ),
+    (
+        "demo-search",
+        "devon/search-synonyms",
+        "main",
+        "synonyms.py",
+        "SYNONYMS = {'car': ['auto', 'vehicle']}\n",
+    ),
+    (
+        "demo-search",
+        "devon/search-stemming",
+        "main",
+        "stemming.py",
+        "def stem(word):\n    return word.removesuffix('ing')\n",
+    ),
+]
 
 
 def _git(repo: Path, *args: str) -> None:
     logged_process.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+
+
+def write_branches(dest: Path) -> None:
+    """The commits of ``LOCAL_BRANCHES``, and a bare repo as demo-search's push
+    URL: approving a branch pushes it (never to GitHub) and the fake `gh`
+    opens its PR."""
+    repos = dest / "repos"
+    bare = dest / "origin" / "demo-search.git"
+    bare.parent.mkdir(parents=True, exist_ok=True)
+    _git(repos, "init", "-q", "--bare", str(bare))
+    _git(repos / "demo-search", "config", "remote.origin.pushurl", str(bare))
+    for name, branch, parent, filename, text in LOCAL_BRANCHES:
+        repo = repos / name
+        _git(repo, "switch", "-q", "-c", branch, parent)
+        (repo / filename).write_text(text)
+        _git(repo, "add", filename)
+        _git(
+            repo,
+            "-c",
+            "user.name=Demo",
+            "-c",
+            "user.email=demo@example.com",
+            "commit",
+            "-q",
+            "-m",
+            f"Add {filename}",
+        )
+        _git(repo, "switch", "-q", "main")
 
 
 def write_history(dest: Path, db: sqlite3.Connection, now: datetime) -> None:
@@ -313,6 +377,51 @@ def write_lanes(now: datetime) -> None:
                     tokens=TokenCounts(),
                     summary=summary,
                 )
+
+        # Validate runs and the verdicts on them: search-ranking awaits your
+        # review, search-synonyms was sent back, search-stemming has not been
+        # validated.
+        for (repo_id, branch, task_id), (started, result, summary) in {
+            search("devon/search-ranking"): (
+                ago(hours=3),
+                "pass",
+                "Approve: small and tested; one nit on the empty-index case.",
+            ),
+            search("devon/search-synonyms"): (
+                ago(days=1, hours=2),
+                "fail",
+                "Changes required: synonyms are never applied to the query.",
+            ),
+        }.items():
+            run_id = store.start_agent_run(
+                task_id=task_id,
+                repo_id=repo_id,
+                branch=branch,
+                trigger="validate",
+                head_sha="demo",
+                model="claude-haiku-5-5",
+                at=started,
+            )
+            store.finish_agent_run(
+                run_id,
+                state="succeeded",
+                ended_at=started + timedelta(minutes=6),
+                turns=22,
+                cost_usd=0.21,
+                tokens=TokenCounts(),
+                summary=summary,
+                result=result,
+            )
+        repo_id, branch, task_id = search("devon/search-synonyms")
+        store.add_review_verdict(
+            task_id=task_id,
+            repo_id=repo_id,
+            branch=branch,
+            head_sha="demo",
+            verdict="changes_requested",
+            note="Apply SYNONYMS in the query path, not only define them.",
+            at=ago(days=1),
+        )
 
         # Claims, as the claims feed records them while a holder holds one.
         for (_, _, task_id), claims in {
@@ -606,6 +715,7 @@ def seed(dest: Path, deep: int) -> None:
         )
     write_sibling_commits(repos / "demo-search")
     (dest / "config").mkdir(exist_ok=True)
+    write_branches(dest)
 
     started: dict[tuple[str, str], float] = {}
     for name, branches in STACKS.items():

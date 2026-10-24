@@ -14,3 +14,6 @@
 .review-definition { margin-top: 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); }
 .review-definition-bar { display: flex; justify-content: space-between; align-items: center; padding: 4px 8px; font: 12px ui-monospace, monospace; border-bottom: 1px solid var(--line); }
 .review-definition-body { max-height: 40vh; overflow: auto; }
+.review-verdict { margin-top: 12px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); display: grid; gap: 6px; }
+.review-verdict textarea { width: 100%; box-sizing: border-box; font: inherit; }
+.review-verdict-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }

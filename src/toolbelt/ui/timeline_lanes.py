@@ -65,6 +65,7 @@ def _claim_phases(holder: str) -> tuple[str, ...]:
 #: life, early to late). ``done`` is the end of a task, not a span.
 NEXT_LANE_KINDS: tuple[str, ...] = (
     na.OPEN_PR,
+    na.PERSONAL_REVIEW,
     na.PUBLISH,
     na.REQUEST_REVIEW,
     na.POST_SLACK,
@@ -341,6 +342,37 @@ LANE_SOURCES: tuple[LaneSource, ...] = (
         ),
     ),
     LaneSource(
+        id="personal_review",
+        label="Personal review",
+        events={
+            "review_approved": Marker(
+                "approved", "✓", GREEN, "You approved the branch: its PR was opened."
+            ),
+            "review_changes_requested": Marker(
+                "changes requested",
+                "✎",
+                AMBER,
+                "You requested changes to the branch before any PR.",
+            ),
+        },
+        phases={
+            "personal_review_waiting": Span(
+                "Validated",
+                ACCENT,
+                "A validate run reviewed the branch; it waited for your review.",
+            ),
+        },
+        covers=(
+            Coverage(
+                "ReviewVerdict",
+                {
+                    "approved": ("review_approved",),
+                    "changes_requested": ("review_changes_requested",),
+                },
+            ),
+        ),
+    ),
+    LaneSource(
         id="task",
         label="Task tracker",
         events={
@@ -389,5 +421,6 @@ NOT_TIMELINE_STATUS: dict[str, str] = {
     "CiResult": "A commit's CI result: drawn by the PR track's commit markers.",
     "Tone": "A colour token, not a status.",
     "SiblingConflictState": "Whether two open tasks' heads merge cleanly is a pure function of the two commits, recomputed whenever a head moves: the card shows the latest result and nothing is recorded, so there is no history to draw.",
+    "ValidateResult": "A validate run's verdict: carried in the detail of the run's span on the agent lane.",
     "Who": "Who a next action waits on: a property of the next lane's kinds, shown as the card's Next chip.",
 }

@@ -5,6 +5,7 @@
 export type AgentReasonCode =
   | "disabled"
   | "pr_not_open"
+  | "has_pr"
   | "working"
   | "deciding"
   | "draft"
@@ -23,14 +24,33 @@ export type AgentReasonCode =
   | "screen_asleep"
   | "screen_locked"
   | "backoff";
-export type AgentTrigger = "resolve_conflicts" | "resolve_comments" | "fix_ci";
+export type AgentTrigger = "resolve_conflicts" | "resolve_comments" | "fix_ci" | "validate";
+export type ValidateResult = "pass" | "fail";
 export type AgentRunState =
   "running" | "succeeded" | "failed" | "timed_out" | "cap_reached" | "stopped" | "abandoned" | "deciding";
-export type LaneEventKind = "slack_post" | "slack_bump" | "slack_reassign" | "decision_answered" | "task_in_review";
+export type LaneEventKind =
+  | "slack_post"
+  | "slack_bump"
+  | "slack_reassign"
+  | "decision_answered"
+  | "review_approved"
+  | "review_changes_requested"
+  | "task_in_review";
 export type LaneId =
-  "next" | "git" | "review" | "ci" | "agent" | "claim" | "slack" | "merge_queue" | "decision" | "task";
+  | "next"
+  | "git"
+  | "review"
+  | "ci"
+  | "agent"
+  | "claim"
+  | "slack"
+  | "merge_queue"
+  | "decision"
+  | "personal_review"
+  | "task";
 export type LanePhaseKind =
   | "next_open_pr"
+  | "next_personal_review"
   | "next_publish"
   | "next_request_review"
   | "next_post_slack"
@@ -66,7 +86,8 @@ export type LanePhaseKind =
   | "claim_autonomous_worktree"
   | "claim_autonomous_ref"
   | "merge_queued"
-  | "decision_pending";
+  | "decision_pending"
+  | "personal_review_waiting";
 export type WaitingOnKey = "you" | "agent" | "auto" | "ci" | "others";
 export type DecisionStatus = "pending" | "answered";
 export type ServerEvent =
@@ -102,6 +123,7 @@ export type ActivityKind =
 export type MergeValue = "conflicts" | "clean" | "none";
 export type NextKind =
   | "open_pr"
+  | "personal_review"
   | "done"
   | "resolve_conflicts"
   | "address_review"
@@ -127,6 +149,7 @@ export type TaskLive = TaskLoading | TaskDetails | TaskUnavailable;
 export type HolderKind = "agent" | "human" | "autonomous";
 export type HolderState = "working" | "idle" | "blocked";
 export type UntrackedPrs = UntrackedLoading | UntrackedLoaded | UntrackedFailed;
+export type ReviewVerdict = "approved" | "changes_requested";
 export type Tone = "green" | "red" | "amber" | "gray" | "purple" | "accent";
 export type CatalogDimension =
   "pr" | "ci" | "review" | "comments" | "merge" | "task" | "draft" | "reviewers" | "blocked" | "next";
@@ -182,10 +205,12 @@ export interface Wire {
   merge_queue_info: MergeQueueInfo;
   merge_queue_request: MergeQueueRequest;
   merge_request: MergeRequest;
+  personal_review_state: PersonalReviewState;
   review_definition: ReviewDefinition;
   review_file: ReviewFile;
   review_files: ReviewChangedFile[];
   review_hover: ReviewHover;
+  review_verdict_request: ReviewVerdictRequest;
   slack_accepted: SlackAccepted;
   slack_draft: SlackDraft;
   slack_draft_request: SlackDraftRequest;
@@ -275,6 +300,7 @@ export interface AgentRunInfo {
   id: string;
   model: string;
   repo: string;
+  result: ValidateResult | null;
   run_id: string;
   started_at: string;
   state: AgentRunState;
@@ -823,6 +849,28 @@ export interface CardAgent {
   start_error: string | null;
   starting: boolean;
   trigger: AgentTrigger | null;
+  validation: CardValidation;
+}
+/**
+ * Where a task stands on "validate, personal review, publish"
+ * (``docs/personal-review.md``).
+ */
+export interface CardValidation {
+  can_validate: boolean;
+  notice: string | null;
+  opening_pr: boolean;
+  result: ValidateResult | null;
+  validated: boolean;
+  verdict: ReviewVerdictInfo | null;
+}
+/**
+ * The user's review of a branch before its PR (``review_verdicts``).
+ */
+export interface ReviewVerdictInfo {
+  at: string;
+  head_sha: string;
+  note: string;
+  verdict: ReviewVerdict;
 }
 /**
  * One lane of a card's timeline, under the PR track (see
@@ -1026,6 +1074,20 @@ export interface MergeQueueRequest {
 export interface MergeRequest {
   id: string;
 }
+/**
+ * What the Review view needs to know of the branch it shows, when it is a
+ * tracked branch with no PR that a validate run has reviewed.
+ */
+export interface PersonalReviewState {
+  can_post_in_slack: boolean;
+  head_sha: string;
+  id: string;
+  notice: string | null;
+  opening_pr: boolean;
+  result: ValidateResult | null;
+  summary: string | null;
+  verdict: ReviewVerdictInfo | null;
+}
 export interface ReviewDefinition {
   target: ReviewDefinitionTarget | null;
 }
@@ -1072,6 +1134,15 @@ export interface ReviewChangedFile {
 }
 export interface ReviewHover {
   text: string | null;
+}
+/**
+ * The body of ``POST /api/review/approve`` and ``.../request-changes``.
+ */
+export interface ReviewVerdictRequest {
+  head_sha: string;
+  id: string;
+  note: string;
+  post_in_slack?: boolean;
 }
 /**
  * The answer to ``POST /api/slack/send``: the message is being posted in
@@ -1237,6 +1308,8 @@ export interface Marker {
 }
 export interface LaneEventMarkers {
   decision_answered: Marker;
+  review_approved: Marker;
+  review_changes_requested: Marker;
   slack_bump: Marker;
   slack_post: Marker;
   slack_reassign: Marker;
@@ -1273,6 +1346,7 @@ export interface LanePhaseSpans {
   next_fix_ci: Span;
   next_merge: Span;
   next_open_pr: Span;
+  next_personal_review: Span;
   next_post_slack: Span;
   next_publish: Span;
   next_request_review: Span;
@@ -1280,6 +1354,7 @@ export interface LanePhaseSpans {
   next_resolve_conflicts: Span;
   next_wait_ci: Span;
   next_wait_review: Span;
+  personal_review_waiting: Span;
 }
 export interface Span {
   label: string;

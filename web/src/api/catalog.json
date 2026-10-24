@@ -136,6 +136,7 @@
       "events": [],
       "phases": [
         "next_open_pr",
+        "next_personal_review",
         "next_publish",
         "next_request_review",
         "next_post_slack",
@@ -236,6 +237,17 @@
       ]
     },
     {
+      "id": "personal_review",
+      "label": "Personal review",
+      "events": [
+        "review_approved",
+        "review_changes_requested"
+      ],
+      "phases": [
+        "personal_review_waiting"
+      ]
+    },
+    {
       "id": "task",
       "label": "Task tracker",
       "events": [
@@ -269,6 +281,18 @@
       "tone": "green",
       "legend": "You answered an agent's question."
     },
+    "review_approved": {
+      "label": "approved",
+      "glyph": "✓",
+      "tone": "green",
+      "legend": "You approved the branch: its PR was opened."
+    },
+    "review_changes_requested": {
+      "label": "changes requested",
+      "glyph": "✎",
+      "tone": "amber",
+      "legend": "You requested changes to the branch before any PR."
+    },
     "task_in_review": {
       "label": "task moved to In Review",
       "glyph": "◈",
@@ -281,6 +305,11 @@
       "label": "Open PR",
       "tone": "amber",
       "legend": "No PR yet: open one."
+    },
+    "next_personal_review": {
+      "label": "Personal review",
+      "tone": "accent",
+      "legend": "A validate run reviewed the branch: read its diff, then approve it (which opens the PR) or request changes."
     },
     "next_publish": {
       "label": "Publish PR in GitHub",
@@ -461,6 +490,11 @@
       "label": "Waiting for your decision",
       "tone": "amber",
       "legend": "An agent asked you a question about this task and waited."
+    },
+    "personal_review_waiting": {
+      "label": "Validated",
+      "tone": "accent",
+      "legend": "A validate run reviewed the branch; it waited for your review."
     }
   },
   "chips": {
@@ -974,6 +1008,20 @@
       ],
       "dimension": "next",
       "value": "open_pr"
+    },
+    {
+      "label": "Personal review",
+      "tone": "accent",
+      "legend": "A validate run reviewed the branch: read its diff, then approve it (which opens the PR) or request changes.",
+      "reps": [
+        {
+          "how": "now_state",
+          "kind": "next",
+          "absent": false
+        }
+      ],
+      "dimension": "next",
+      "value": "personal_review"
     },
     {
       "label": "Done",

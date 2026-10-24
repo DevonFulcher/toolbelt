@@ -83,15 +83,15 @@ def test_every_value_of_a_covered_type_maps_to_kinds_of_its_lane():
 
 
 def test_every_kind_is_used_by_a_covered_value_or_its_source_history():
-    # The merge queue has no status type: its single span is drawn from the
-    # queue itself.
+    # The merge queue and the validated span have no status type: each span is
+    # drawn from its own history.
     used = {
         kind
         for source in LANE_SOURCES
         for coverage in source.covers
         for kinds in coverage.kinds.values()
         for kind in kinds
-    } | {"merge_queued"}
+    } | {"merge_queued", "personal_review_waiting"}
     # Claims cross HolderKind with ClaimKind, so each holder maps to both.
     assert used == set(LANE_EVENTS) | set(LANE_PHASES)
 

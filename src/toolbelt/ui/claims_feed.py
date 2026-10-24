@@ -108,10 +108,12 @@ class ClaimsFeed:
         resolve_ttl: float = DEFAULT_RESOLVE_TTL_SECONDS,
         liveness: ProcessLiveness = SYSTEM_LIVENESS,
         deciding: Callable[[int, str], bool] = lambda repo_id, branch: False,
+        validated: Callable[[int, str], bool] = lambda repo_id, branch: False,
     ) -> None:
         #: Whether the task has a question for the user that is not answered
         #: (decisions are not claim files; the feed only hands the answer on).
         self._deciding = deciding
+        self._validated = validated
         #: Checks each tick that a holder's recorded process still runs; it
         #: caches start times, so a tick costs a syscall per holder.
         self._liveness = liveness
@@ -155,6 +157,11 @@ class ClaimsFeed:
             h.state == "working" and h.kind == "autonomous"
             for h in self.holders(repo_id, branch)
         )
+
+    def validated(self, repo_id: int, branch: str) -> bool:
+        """A validate run reviewed the branch and no changes were requested
+        since (see ``personal_review``)."""
+        return self._validated(repo_id, branch)
 
     def deciding(self, repo_id: int, branch: str) -> bool:
         """An agent asked the user something about the branch and it is not

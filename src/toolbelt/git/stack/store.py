@@ -554,6 +554,28 @@ _MIGRATIONS: list[tuple[str, ...]] = [
         )
         """,
     ),
+    (
+        # A validate run's verdict (``agent_runs.result``: ``pass`` when the
+        # agent would approve the branch, ``fail`` when it would not), and the
+        # user's own review of a branch before any PR exists
+        # (``review_verdicts``): approved or changes requested, with a note,
+        # for the branch's head commit at the time (a new commit invalidates an
+        # approval). See ``ui.personal_review``.
+        "ALTER TABLE agent_runs ADD COLUMN result TEXT",
+        """
+        CREATE TABLE review_verdicts (
+            id INTEGER PRIMARY KEY,
+            task_id TEXT NOT NULL,
+            repo_id INTEGER NOT NULL,
+            branch TEXT NOT NULL,
+            head_sha TEXT NOT NULL,
+            verdict TEXT NOT NULL,
+            note TEXT NOT NULL,
+            at TEXT NOT NULL
+        )
+        """,
+        "CREATE INDEX review_verdicts_by_task ON review_verdicts (task_id, id)",
+    ),
 ]
 
 
@@ -822,6 +844,25 @@ class AgentRun:
     activity: str | None = None
     #: The run this one continues, when it resumes one that asked a question.
     resumed_from: str | None = None
+    #: A validate run's verdict: ``pass`` or ``fail`` (``None``: not a validate
+    #: run, or it did not report one).
+    result: str | None = None
+
+
+@dataclass(frozen=True)
+class ReviewVerdict:
+    """The user's review of a branch before its PR: ``approved`` or
+    ``changes_requested``, for the head commit ``head_sha`` (``note`` is free
+    text)."""
+
+    id: int
+    task_id: str
+    repo_id: int
+    branch: str
+    head_sha: str
+    verdict: str
+    note: str
+    at: datetime
 
 
 @dataclass(frozen=True)
@@ -961,6 +1002,7 @@ def _agent_run(r: sqlite3.Row) -> AgentRun:
         error=r["error"],
         activity=r["activity"],
         resumed_from=r["resumed_from"],
+        result=r["result"],
     )
 
 
@@ -1642,6 +1684,7 @@ class StackStore:
         tokens: TokenCounts | None = None,
         summary: str | None = None,
         error: str | None = None,
+        result: str | None = None,
     ) -> None:
         """End a run that is ``running``. A run that already ended is left as
         it is."""
@@ -1653,8 +1696,8 @@ class StackStore:
                 "UPDATE agent_runs SET state = ?, ended_at = ?, session_id = ?, "
                 "turns = ?, cost_usd = ?, input_tokens = ?, output_tokens = ?, "
                 "cache_read_tokens = ?, cache_write_5m_tokens = ?, "
-                "cache_write_1h_tokens = ?, summary = ?, error = ?, activity = NULL "
-                "WHERE run_id = ? AND state = 'running'",
+                "cache_write_1h_tokens = ?, summary = ?, error = ?, result = ?, "
+                "activity = NULL WHERE run_id = ? AND state = 'running'",
                 (
                     state,
                     _iso(ended_at),
@@ -1668,6 +1711,7 @@ class StackStore:
                     tokens.cache_write_1h,
                     summary,
                     error,
+                    result,
                     run_id,
                 ),
             )
@@ -1901,6 +1945,44 @@ class StackStore:
                     decision.delivered_at,
                 ),
             )
+
+    def add_review_verdict(
+        self,
+        *,
+        task_id: str,
+        repo_id: int,
+        branch: str,
+        head_sha: str,
+        verdict: str,
+        note: str,
+        at: datetime,
+    ) -> None:
+        with self._write() as conn:
+            conn.execute(
+                "INSERT INTO review_verdicts (task_id, repo_id, branch, head_sha, "
+                "verdict, note, at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (task_id, repo_id, branch, head_sha, verdict, note, _iso(at)),
+            )
+
+    def review_verdicts(self, *, task_id: str | None = None) -> list[ReviewVerdict]:
+        """Every verdict (of one task, when given), oldest first."""
+        rows = self._conn.execute(
+            "SELECT * FROM review_verdicts WHERE ? IS NULL OR task_id = ? ORDER BY id",
+            (task_id, task_id),
+        )
+        return [
+            ReviewVerdict(
+                id=r["id"],
+                task_id=r["task_id"],
+                repo_id=r["repo_id"],
+                branch=r["branch"],
+                head_sha=r["head_sha"],
+                verdict=r["verdict"],
+                note=r["note"],
+                at=datetime.fromisoformat(r["at"]),
+            )
+            for r in rows
+        ]
 
     def decisions(self, *, task_id: str | None = None) -> list[Decision]:
         """Every decision (of one task, when given), oldest first."""

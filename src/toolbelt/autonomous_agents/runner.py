@@ -37,8 +37,9 @@ from toolbelt.autonomous_agents.instructions import (
     build_prompt,
     build_resume_prompt,
     report_summary,
+    report_verdict,
 )
-from toolbelt.autonomous_agents.limits import AgentLimits
+from toolbelt.autonomous_agents.limits import VALIDATE, AgentLimits
 from toolbelt.decisions.book import DecisionBook
 from toolbelt.decisions.model import (
     Decision as AskedDecision,
@@ -69,6 +70,9 @@ ALLOWED_TOOLS = [
     f"mcp__{DECISIONS_SERVER}__propose_decisions",
     f"mcp__{DECISIONS_SERVER}__read_decisions",
 ]
+#: A validate run only reads: no Edit or Write (its instructions also forbid
+#: changing anything through Bash).
+VALIDATE_TOOLS = [tool for tool in ALLOWED_TOOLS if tool not in ("Edit", "Write")]
 DISALLOWED_TOOLS = ["Task", "WebFetch", "WebSearch", "NotebookEdit"]
 #: Longest summary kept on a run.
 SUMMARY_LIMIT = 4000
@@ -266,7 +270,9 @@ class AgentRunner:
             cwd=str(decision.worktree),
             max_turns=self._limits.run_turns,
             max_budget_usd=self._limits.run_usd,
-            allowed_tools=ALLOWED_TOOLS,
+            allowed_tools=VALIDATE_TOOLS
+            if decision.trigger == VALIDATE
+            else ALLOWED_TOOLS,
             disallowed_tools=DISALLOWED_TOOLS,
             permission_mode="acceptEdits",
             # The repo's own CLAUDE.md applies, not this machine's plugins,
@@ -454,7 +460,9 @@ class AgentRunner:
         finally:
             heartbeat.cancel()
             claim.end(self._wall_clock())
-            self._finish(run_id, state, error, result, spend, session_id)
+            self._finish(
+                run_id, state, error, result, spend, session_id, decision.trigger
+            )
             if self.on_change is not None:
                 self.on_change()
 
@@ -497,6 +505,7 @@ class AgentRunner:
         result: Any,
         spend: _Spend,
         session_id: str,
+        trigger: str,
     ) -> None:
         store = self._store()
         try:
@@ -516,6 +525,9 @@ class AgentRunner:
                 if result
                 else None,
                 error=None if state in ("succeeded", "deciding") else error,
+                result=report_verdict(result.result or "")
+                if result and trigger == VALIDATE and state == "succeeded"
+                else None,
             )
         finally:
             store.close()

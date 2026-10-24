@@ -12,13 +12,20 @@ from collections.abc import Callable
 from datetime import datetime
 
 from toolbelt.git.stack.store import (
+    AgentRun,
     RemovedBranch,
+    ReviewVerdict,
     SlackPostRow,
     StackStore,
     TrackedBranchFacts,
 )
 from toolbelt.ui import api_models as api
 from toolbelt.ui.claims_feed import SPAN_MAX_GAP
+from toolbelt.ui.personal_review import (
+    APPROVED,
+    VALIDATE,
+    validation_spans,
+)
 from toolbelt.ui.status_transitions import CI, COMMENTS, CONFLICT
 from toolbelt.ui.timeline_lanes import LANE_SOURCES, LANES
 
@@ -120,6 +127,8 @@ def build_lanes(
     run_kinds = _kinds("agent", "AgentRunState")
     for run in store.agent_runs():
         detail = run.trigger.replace("_", " ")
+        if run.result:
+            detail += f" ({run.result})"
         if run.error:
             detail += f": {run.error}"
         elif run.summary:
@@ -198,6 +207,42 @@ def build_lanes(
                 found.event(
                     decision.task_id, "decision", answered, kind, decision.title
                 )
+
+    verdict_kinds = _kinds("personal_review", "ReviewVerdict")
+    verdicts_of: dict[TaskId, list[ReviewVerdict]] = {}
+    for verdict in store.review_verdicts():
+        verdicts_of.setdefault(verdict.task_id, []).append(verdict)
+        for kind in verdict_kinds[verdict.verdict]:
+            found.event(
+                verdict.task_id, "personal_review", verdict.at, kind, verdict.note
+            )
+    validate_runs: dict[TaskId, list[AgentRun]] = {}
+    for run in store.agent_runs():
+        if run.trigger == VALIDATE:
+            validate_runs.setdefault(run.task_id, []).append(run)
+    for reviewed, task_runs in validate_runs.items():
+        task_verdicts = verdicts_of.get(reviewed, [])
+        for start, span_end in validation_spans(task_runs, task_verdicts):
+            # An approval opens the PR, which the PR track draws from there.
+            approved = next(
+                (
+                    v.at
+                    for v in task_verdicts
+                    if v.verdict == APPROVED and v.at >= start
+                ),
+                None,
+            )
+            end = span_end
+            if approved is not None and (end is None or approved < end):
+                end = approved
+            found.phase(
+                reviewed,
+                "personal_review",
+                start,
+                end_of(reviewed, end),
+                "personal_review_waiting",
+                "",
+            )
 
     stage_kinds = _kinds("task", "TaskStage")
     for task_id, stage, moved_at in store.task_status_moves():

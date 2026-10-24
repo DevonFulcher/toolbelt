@@ -6,6 +6,8 @@ import type {
   DecisionList,
   Agents,
   MergeQueueInfo,
+  PersonalReviewState,
+  ReviewVerdictRequest,
   Snapshot,
   SlackDraft,
   SlackPrRef,
@@ -115,6 +117,12 @@ export async function startAgentRun(id: string, fetchImpl: typeof fetch = fetch)
   if (response.ok) return;
   const detail = ((await response.json().catch(() => ({}))) as { detail?: unknown }).detail;
   throw new Error(typeof detail === "string" ? detail : `${AGENTS_URL}/start: HTTP ${response.status}`);
+}
+
+/** Start a validate run on a task by hand (a review of its branch before any
+ * PR); the error says which rule still stops it. */
+export async function validateTask(id: string, fetchImpl: typeof fetch = fetch): Promise<void> {
+  await postJson<unknown>(`${AGENTS_URL}/validate`, { id }, fetchImpl);
 }
 
 /** Land a branch's PR (`toolbelt git merge`); resolves with what it did, and
@@ -278,3 +286,29 @@ export const fetchReviewDefinition = (
   position: ReviewPosition,
   fetchImpl: typeof fetch = fetch,
 ) => reviewGet<ReviewDefinition>("definition", { ...revisions, ...position }, fetchImpl);
+
+/** The personal review of the branch the Review view shows, when it awaits one
+ * (`null` otherwise). */
+export async function fetchPersonalReview(
+  repo: number,
+  head: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<PersonalReviewState | null> {
+  const url = `${REVIEW_URL}/personal?repo=${repo}&head=${encodeURIComponent(head)}`;
+  const response = await fetchImpl(url, { headers: { Accept: "application/json" } });
+  if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
+  return (await response.json()) as PersonalReviewState | null;
+}
+
+/** Approve the branch: it opens its PR in the background (the task reads
+ * "Opening PR…" until it does). Rejects with the server's reason, e.g. a new
+ * commit since the page loaded. */
+export async function approveBranch(request: ReviewVerdictRequest, fetchImpl: typeof fetch = fetch): Promise<void> {
+  await postJson<unknown>(`${REVIEW_URL}/approve`, request, fetchImpl);
+}
+
+/** Send the branch back with a note: the task reads Open PR again until the next
+ * validate run ends. */
+export async function requestChanges(request: ReviewVerdictRequest, fetchImpl: typeof fetch = fetch): Promise<void> {
+  await postJson<unknown>(`${REVIEW_URL}/request-changes`, request, fetchImpl);
+}

@@ -60,6 +60,7 @@ export function agents(parts: Partial<Agents> = {}): Agents {
         cost_usd: 0.0831,
         summary: "Replied to two Copilot threads and resolved them.",
         error: null,
+        result: null,
       },
     ],
     ...parts,

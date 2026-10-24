@@ -74,7 +74,12 @@ class PushedViews:
         conversation_tick: float = CONVERSATION_TICK_SECONDS,
         repo_slug: Callable[[int], str | None] = lambda repo_id: None,
         pr_facts: Callable[[int, str], tuple[PrFacts, str] | None] = lambda *_: None,
+        opening_pr: Callable[[int, str], tuple[bool, str | None]] = lambda *_: (
+            False,
+            None,
+        ),
     ) -> None:
+        self._opening_pr = opening_pr
         self._repo_slug = repo_slug
         self._pr_facts = pr_facts
         self._hub = hub
@@ -108,6 +113,7 @@ class PushedViews:
                 self._spend.ingested_at,
                 self._repo_slug,
                 self._pr_facts,
+                self._opening_pr,
             )
         finally:
             store.close()

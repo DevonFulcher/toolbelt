@@ -391,6 +391,7 @@ export const Card = memo(
             slackPosting={slack?.posting ?? false}
             queue={mergeQueue}
             siblings={siblings}
+            opening={extras?.agent.validation.opening_pr ?? false}
           />
           <Slot
             id="task_age"
@@ -538,8 +539,11 @@ function NextSlot({
   slackPosting,
   queue,
   siblings,
+  opening,
 }: {
   id: string;
+  /** The PR of an approved branch is being opened. */
+  opening: boolean;
   status: LiveStatus;
   note: ReactNode;
   claim: BranchClaim;
@@ -569,6 +573,14 @@ function NextSlot({
         </Pill>
       ) : status.next.kind === "merge" ? (
         <MergeButton id={id} status={status} />
+      ) : status.next.kind === "personal_review" ? (
+        opening ? (
+          <Pill tone={WHO_TONE.ci} title="Pushing the branch and opening its PR">
+            Opening PR…
+          </Pill>
+        ) : (
+          <PersonalReviewButton id={id} label={status.next.label} />
+        )
       ) : status.next.kind === "deciding" ? (
         <DecisionsButton id={id} label={status.next.label} session={session} />
       ) : status.next.kind === "post_slack" || status.next.kind === "bump_slack" ? (
@@ -713,6 +725,29 @@ function ReassignButton({ id }: { id: string }) {
       </button>
       {open && <SlackDialog id={id} reassign onClose={() => setOpen(false)} />}
     </>
+  );
+}
+
+/** Next is Personal review: a button that opens the Review view of the branch
+ * against its parent, where it is approved (which opens the PR) or sent back. */
+function PersonalReviewButton({ id, label }: { id: string; label: string }) {
+  const store = useAppStore();
+  const branch = useApp((s) => s.branchesById[id]);
+  const view = useApp((s) => s.view);
+  if (branch.parent === null) return null;
+  const target: ViewState = { ...view, view: "review", repo: String(branch.repo_id), base: branch.parent, head: branch.name, file: "" };
+  return (
+    <a
+      className="merge-button"
+      href={serializeState(target)}
+      title={`Read what ${branch.name} changes against ${branch.parent}, then approve it or request changes`}
+      onClick={(event) => {
+        event.preventDefault();
+        store.getState().setView(target);
+      }}
+    >
+      {label}
+    </a>
   );
 }
 

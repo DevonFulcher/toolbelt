@@ -25,6 +25,10 @@ AGENTS_LAUNCH_SETTING = "agents_launch"
 #: The next actions an agent is started for: what a run is for.
 TRIGGERS = ("resolve_conflicts", "resolve_comments", "fix_ci")
 
+#: The trigger recorded for a validate run: a review of a branch with no PR,
+#: started by hand. Not one of ``TRIGGERS``: the dispatcher never starts it.
+VALIDATE = "validate"
+
 
 class AgentLimits(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)

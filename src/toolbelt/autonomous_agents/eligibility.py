@@ -15,13 +15,14 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Literal
 
-from toolbelt.autonomous_agents.limits import TRIGGERS, AgentLimits
+from toolbelt.autonomous_agents.limits import TRIGGERS, VALIDATE, AgentLimits
 from toolbelt.autonomous_agents.screen import ScreenState
 from toolbelt.git.stack.store import AgentRun
 
 type ReasonCode = Literal[
     "disabled",
     "pr_not_open",
+    "has_pr",
     "working",
     "deciding",
     "draft",
@@ -79,6 +80,9 @@ class TaskFacts:
     ci_history: str | None = None
     #: A question an agent asked the user about this task is not answered yet.
     deciding: bool = False
+    #: The branch has a PR, of any state (a validate run is for a branch that
+    #: has none).
+    has_pr: bool = False
 
 
 @dataclass(frozen=True)
@@ -188,6 +192,48 @@ OVERRIDABLE: frozenset[ReasonCode] = frozenset(
 )
 
 
+def _task_limits(task: TaskFacts, world: World) -> Iterator[Reason]:
+    """The per-task run and spend limits that hold ``task`` back."""
+    limits = world.limits
+    now = world.now
+    mine = [run for run in world.runs if run.task_id == task.task_id]
+    # The limit stops the same job being retried on a commit that did not
+    # change: runs that did another job (CI, comments) do not count against it.
+    on_head = [
+        run
+        for run in mine
+        if run.head_sha == task.head_sha
+        and run.trigger == task.action_kind
+        and run.resumed_from is None
+    ]
+    if len(on_head) >= limits.task_runs_per_head:
+        yield Reason(
+            "runs_per_head",
+            f"{len(on_head)} runs already tried this on this commit "
+            f"(limit {limits.task_runs_per_head}); a new commit resets it.",
+        )
+    today = _since(mine, now - timedelta(hours=24))
+    # A run that resumes one that asked a question is not another try.
+    if (
+        len([run for run in today if run.resumed_from is None])
+        >= limits.task_runs_per_day
+    ):
+        yield Reason(
+            "task_runs_per_day",
+            f"{len(today)} runs on this task in the last 24 hours "
+            f"(limit {limits.task_runs_per_day}).",
+            until=min(run.started_at for run in today) + timedelta(hours=24),
+        )
+    task_spend = sum(run.cost_usd for run in today)
+    if task_spend >= limits.task_usd_per_day:
+        yield Reason(
+            "task_usd_per_day",
+            f"${task_spend:.2f} spent on this task in the last 24 hours "
+            f"(limit ${limits.task_usd_per_day:.2f}).",
+            until=min(run.started_at for run in today) + timedelta(hours=24),
+        )
+
+
 def _reasons(task: TaskFacts, world: World) -> Iterator[Reason]:
     """Every reason no agent is working on ``task`` now, most important first.
     Only meaningful for a task whose ``action_kind`` is a trigger."""
@@ -246,43 +292,9 @@ def _reasons(task: TaskFacts, world: World) -> Iterator[Reason]:
             "not converge, so it is left to you."
             + (f" {task.ci_history}" if task.ci_history else ""),
         )
-    mine = [run for run in world.runs if run.task_id == task.task_id]
-    # The limit stops the same job being retried on a commit that did not
-    # change: runs that did another job (CI, comments) do not count against it.
-    on_head = [
-        run
-        for run in mine
-        if run.head_sha == task.head_sha
-        and run.trigger == task.action_kind
-        and run.resumed_from is None
-    ]
-    if len(on_head) >= limits.task_runs_per_head:
-        yield Reason(
-            "runs_per_head",
-            f"{len(on_head)} runs already tried this on this commit "
-            f"(limit {limits.task_runs_per_head}); a new commit resets it.",
-        )
-    today = _since(mine, now - timedelta(hours=24))
-    # A run that resumes one that asked a question is not another try.
-    if (
-        len([run for run in today if run.resumed_from is None])
-        >= limits.task_runs_per_day
-    ):
-        yield Reason(
-            "task_runs_per_day",
-            f"{len(today)} runs on this task in the last 24 hours "
-            f"(limit {limits.task_runs_per_day}).",
-            until=min(run.started_at for run in today) + timedelta(hours=24),
-        )
-    task_spend = sum(run.cost_usd for run in today)
-    if task_spend >= limits.task_usd_per_day:
-        yield Reason(
-            "task_usd_per_day",
-            f"${task_spend:.2f} spent on this task in the last 24 hours "
-            f"(limit ${limits.task_usd_per_day:.2f}).",
-            until=min(run.started_at for run in today) + timedelta(hours=24),
-        )
+    yield from _task_limits(task, world)
     yield from (b for b in global_blockers(world) if b.code != "disabled")
+    mine = [run for run in world.runs if run.task_id == task.task_id]
     ended = [run.ended_at for run in mine if run.ended_at is not None]
     if ended:
         resume = max(ended) + timedelta(seconds=limits.backoff_seconds)
@@ -295,6 +307,48 @@ def _reasons(task: TaskFacts, world: World) -> Iterator[Reason]:
             )
 
 
+#: What a person starting a validate run by hand is not held back by: the
+#: screen (a run is allowed while you are away) and the agents' own switch.
+_VALIDATE_IGNORES = frozenset({"disabled", "screen_asleep", "screen_locked"})
+
+
+def validate_blocker(task: TaskFacts, world: World) -> Reason | None:
+    """Why a validate run may not start on ``task`` now (``None``: it may).
+    A validate run is its own job, not a next action: it is started by hand on
+    a branch with no PR, whether or not the agents' switches are on, so it
+    skips the rules about a PR, a draft, how old the branch is and the
+    back-off, and keeps what is unsafe or impossible (someone else holding the
+    task, its worktree) and the task's and all agents' limits."""
+    if task.has_pr:
+        return Reason("has_pr", "The task already has a PR: validate runs before one.")
+    if any(r.task_id == task.task_id and r.state == "running" for r in world.runs):
+        return Reason("working", "An agent is working on this now.")
+    if task.deciding:
+        return Reason(
+            "deciding",
+            "An agent asked a question about this task: answer it (or delete it) "
+            "first.",
+        )
+    if task.claimed_by_other:
+        return Reason("claimed", "A person or an agent session holds this task.")
+    if not task.has_worktree:
+        return Reason("no_worktree", "The branch has no worktree to work in.")
+    if task.worktree_busy:
+        return Reason(
+            "worktree_busy", "The worktree is in the middle of a merge or rebase."
+        )
+    if not task.worktree_clean:
+        return Reason("worktree_dirty", "The worktree has uncommitted changes.")
+    limited = next(
+        (r for r in _task_limits(task, world) if r.code != "runs_per_head"), None
+    )
+    if limited is not None:
+        return limited
+    return next(
+        (b for b in global_blockers(world) if b.code not in _VALIDATE_IGNORES), None
+    )
+
+
 def resume_blocker(task: TaskFacts, world: World) -> Reason | None:
     """Why a run that asked a question may not be resumed with the answer now
     (``None``: it may). Only what makes it unsafe or impossible counts: the
@@ -303,7 +357,8 @@ def resume_blocker(task: TaskFacts, world: World) -> Reason | None:
     not, and the worktree may hold what the run left there."""
     if not world.enabled:
         return Reason("disabled", "Autonomous agents are switched off.")
-    if not task.pr_open:
+    # A validate run is resumed on a branch that has no PR.
+    if task.action_kind != VALIDATE and not task.pr_open:
         return Reason("pr_not_open", "The PR is not open.")
     if any(r.task_id == task.task_id and r.state == "running" for r in world.runs):
         return Reason("working", "An agent is working on this now.")

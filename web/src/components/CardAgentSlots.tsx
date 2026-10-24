@@ -2,8 +2,8 @@
 // session, what the autonomous agents would do or why none is on it, its
 // latest run, and what the task has cost (interactive and autonomous).
 import { useCallback, useState } from "react";
-import { startAgentRun, stopAgentRun } from "../api/client";
-import type { Branch, BranchExtras, SlotDimensions } from "../api/generated";
+import { startAgentRun, stopAgentRun, validateTask } from "../api/client";
+import type { Branch, BranchExtras, CardValidation, SlotDimensions } from "../api/generated";
 import { formatUsd } from "../logic/spendFormat";
 import { RUN_TEXT, RUN_TONE, TRIGGER_LABEL, reasonText, runCost } from "./AgentsView";
 import { RunsDialog } from "./RunsDialog";
@@ -83,6 +83,21 @@ export function AgentSlots({
             )}
           </>
         )}
+        {agent?.validation.can_validate && !working && !starting && (
+          <>
+            {" "}
+            <button
+              type="button"
+              className="agents-toggle"
+              disabled={busy}
+              title="An agent reviews this branch against its parent, before any PR exists"
+              onClick={() => act(() => validateTask(branchId))}
+            >
+              {busy ? "Starting…" : agent.validation.validated ? "Validate again" : "Validate"}
+            </button>
+          </>
+        )}
+        {agent && <ValidationNote validation={agent.validation} />}
         {(problem ?? agent?.start_error) && <span className="error">{` ${problem ?? agent?.start_error}`}</span>}
       </Slot>
       <Slot id="agent_runs" label="Number of Autonomous Runs" state={agent && agent.runs > 0 ? "ok" : "na"}>
@@ -128,6 +143,28 @@ export function AgentSlots({
           NO_RUN
         )}
       </Slot>
+    </>
+  );
+}
+
+/** Where the task stands on validate, personal review and publish. */
+function ValidationNote({ validation }: { validation: CardValidation }) {
+  const { validated, result, verdict, opening_pr: opening, notice } = validation;
+  return (
+    <>
+      {opening && (
+        <>
+          {" "}
+          <Pill tone="purple">Opening PR…</Pill>
+        </>
+      )}
+      {notice && <span className="error">{` ${notice}`}</span>}
+      {validated && (
+        <span className="muted">{` validated (${result === "fail" ? "the agent would ask for changes" : "the agent would approve"}): awaiting your review`}</span>
+      )}
+      {!validated && verdict?.verdict === "changes_requested" && (
+        <span className="muted">{` you requested changes: ${verdict.note || "(no note)"}`}</span>
+      )}
     </>
   );
 }

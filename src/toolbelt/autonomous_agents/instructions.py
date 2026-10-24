@@ -4,7 +4,7 @@ adapted for a run that nobody supervises."""
 import json
 
 from toolbelt.autonomous_agents.dispatcher import Decision
-from toolbelt.autonomous_agents.limits import AgentLimits
+from toolbelt.autonomous_agents.limits import VALIDATE, AgentLimits
 
 AI_PREFIX = "🤖 AI-generated on behalf of Devon:"
 TRAILER = "Co-Authored-By: AI Assistant <noreply@ai>"
@@ -189,8 +189,93 @@ def _where_rule(decision: Decision) -> str:
     )
 
 
+_VALIDATE = """\
+You are an autonomous agent reviewing ONE branch for Devon Fulcher before any \
+pull request exists. You run unattended: nobody can answer a question, so make \
+the safe choice yourself; if a choice is genuinely Devon's to make, ask with \
+`propose_decisions` and stop.
+
+## Where you work
+
+Only in this worktree: {worktree}, the checkout of branch `{branch}` in the repo \
+`{repo}`. The branch is stacked on `{base}`: the change under review is \
+`git diff {base}...HEAD` (use `origin/{base}` if there is no local `{base}`). \
+There is no PR and there is no CI: do not look for either, and do not open one.
+
+## You review; you do not change anything
+
+This is READ-ONLY. Do not edit, create or delete files, do not commit, push, \
+merge, rebase or run `toolbelt git save`, and do not post anywhere. Running the \
+repo's tests and linters is fine as long as they leave no changes behind.
+
+## Your task: a production-quality code review
+
+Be direct, specific and practical, and give actionable insights while holding a \
+high production-quality standard. Proceed in this order:
+
+1. Search the codebase for relevant details: related modules, functions and \
+patterns, existing architectural and style conventions, prior implementations \
+the change affects or resembles, and the agent context (`.cursor`, `.claude`, \
+`CLAUDE.md`, `AGENTS.md`).
+2. Describe the change: the overall modification, the intent driving it, and \
+how the implementation does or does not fulfil that intent.
+3. Validate it on these dimensions:
+   - Code quality and clarity: readability, naming, simplicity (no \
+over-engineering), dead code (unused code, or code only tests reference), \
+style, and documentation.
+   - Performance and resource management: algorithmic efficiency, scalability, \
+resource usage, caching.
+   - Security and robustness: input validation, injection, authorization, error \
+handling, thread safety, data integrity.
+   - Maintainability and architecture: separation of concerns, API design and \
+compatibility, dependencies, extensibility, technical debt.
+   - Testing: coverage of the business logic, edge cases, error conditions, \
+testability.
+   - Observability and operations: logging, debugging context, error messages, \
+user experience.
+4. Identify hidden risks, unhandled edge cases and non-obvious design trade-offs.
+5. Output a numbered list of issues (if any), each with a concise description, \
+why it matters, and a suggested fix.
+
+Finish by saying clearly whether you would approve this code for production or \
+whether changes are required, and why.
+"""
+
+_VALIDATE_REPORT = """\
+## When you finish
+
+Your last message must end with one line of JSON and nothing after it:
+
+{{"summary": "<your verdict and the one or two most important issues: plain text>", "verdict": "approve" or "changes", "issues": <how many issues you listed>}}
+
+`approve`: you would approve it for production. `changes`: changes are required. \
+The `summary` is shown in a table that does not render markdown: plain text \
+only, no links, backticks, bullets or bold, and at most 200 characters.
+"""
+
+
+def _build_validate(decision: Decision, limits: AgentLimits) -> str:
+    return "\n".join(
+        [
+            _VALIDATE.format(
+                worktree=decision.worktree,
+                branch=decision.branch,
+                repo=decision.repo,
+                base=decision.base_ref or "main",
+            ),
+            (
+                f"Do not use more than {limits.run_turns} turns or about "
+                f"{limits.run_timeout_seconds // 60} minutes.\n"
+            ),
+            _VALIDATE_REPORT,
+        ]
+    )
+
+
 def build_instructions(decision: Decision, limits: AgentLimits) -> str:
     """The text appended to Claude Code's own system prompt for this run."""
+    if decision.trigger == VALIDATE:
+        return _build_validate(decision, limits)
     kind = "approved" if decision.approved else "ready for review and not approved yet"
     pr = decision.pr_url or "(no URL known: find it with `gh pr view`)"
     general = _GENERAL.format(
@@ -217,6 +302,11 @@ _PROMPTS = {
 
 
 def build_prompt(decision: Decision) -> str:
+    if decision.trigger == VALIDATE:
+        return (
+            f"Please validate branch `{decision.branch}` against "
+            f"`{decision.base_ref or 'main'}`. Follow the instructions you were given."
+        )
     return (
         f"Please {_PROMPTS[decision.trigger]}: branch `{decision.branch}`, "
         f"{decision.pr_url or 'its PR'}. Follow the instructions you were given."
@@ -231,6 +321,24 @@ def build_resume_prompt(answers: str) -> str:
         "Continue from where you stopped, following the instructions you were "
         "given, and end with the report as before."
     )
+
+
+def report_verdict(final_message: str) -> str | None:
+    """``pass`` or ``fail`` from the ``verdict`` of the JSON line that ends a
+    validate run's final message (``approve`` or ``changes``); ``None`` when it
+    reports none."""
+    lines = final_message.strip().splitlines()
+    try:
+        report = json.loads(lines[-1]) if lines else None
+    except json.JSONDecodeError:
+        return None
+    match report:
+        case {"verdict": "approve"}:
+            return "pass"
+        case {"verdict": "changes"}:
+            return "fail"
+        case _:
+            return None
 
 
 def report_summary(final_message: str) -> str:

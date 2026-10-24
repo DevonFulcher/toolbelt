@@ -38,6 +38,19 @@ posts, a queued merge on `devon/search-cache`, two decisions on
 lane is folded from the fake PRs. `tests/test_ui_demo.py` fails when a lane
 has no seeded rows, so a new lane has to be added there.
 
+## Validate, personal review, publish
+
+`devon/search-ranking` has a succeeded validate run (result pass) and reads
+**Personal review**: open its card's link, read the diff (the branch has a real
+commit in `demo-search`) and approve it. Approving pushes to a bare repo next to
+the demo (`origin/demo-search.git`, set as `demo-search`'s push URL, never
+GitHub) and the fake `gh pr create` opens the PR (it remembers it in
+`created.json`, so the lookups find it). `devon/search-synonyms` was sent back
+(a failed validate run, then a request for changes with a note) and reads
+**Open PR**; `devon/search-stemming` has not been validated, so it only offers
+**Validate** (the demo has no worktrees, so pressing it shows the refusal; no
+agent is ever started by the demo). See `docs/personal-review.md`.
+
 ## Task claims
 
 `seed.py` writes claim files (`docs/task-claims.md`) as a Claude Code session

@@ -68,6 +68,7 @@ from toolbelt.autonomous_agents.dispatcher import (
 from toolbelt.autonomous_agents.limits import (
     AGENTS_ENABLED_SETTING,
     AGENTS_LAUNCH_SETTING,
+    VALIDATE,
     load_limits,
 )
 from toolbelt.autonomous_agents.questions import RunQuestions
@@ -77,6 +78,7 @@ from toolbelt.decisions.book import AlreadyAnswered, DecisionBook, NoSuchDecisio
 from toolbelt.decisions.model import Decision, InvalidDecision
 from toolbelt.diff_review.language_servers import PYTHON_SERVER, LanguageServer
 from toolbelt.diff_review.lsp import LspSessions
+from toolbelt.diff_review.revisions import RevisionPair, Side
 from toolbelt.git.repo_pull import default_config_path
 from toolbelt.git.stack.status import CiState, PrState
 from toolbelt.git.stack.store import (
@@ -97,6 +99,7 @@ from toolbelt.token_spend.transcripts import projects_dir
 from toolbelt.ui import aggregate as aggregate_view
 from toolbelt.ui import api_models as api
 from toolbelt.ui import branch_links
+from toolbelt.ui import personal_review as personal_review_module
 from toolbelt.ui import spend_feed as spend_module
 from toolbelt.ui.agents_view import build_agents, runs_window_start
 from toolbelt.ui.aggregate_feed import (
@@ -143,6 +146,13 @@ from toolbelt.ui.merge_queue import (
 )
 from toolbelt.ui.merge_queue import LandResult, MergeQueue, MergeQueueRefused
 from toolbelt.ui.next_action import MERGE, next_action
+from toolbelt.ui.personal_review import (
+    OpenPr,
+    PersonalReview,
+    ReviewRefused,
+    current_verdict,
+    validated_tasks,
+)
 from toolbelt.ui.pr_activity import PrFacts
 from toolbelt.ui.pr_fetch import (
     GraphqlRunner,
@@ -566,6 +576,7 @@ def create_app(
     forwarders: WebhookForwarders | None = None,
     decisions: DecisionBook | None = None,
     review_servers: Sequence[LanguageServer] = (PYTHON_SERVER,),
+    open_pr: OpenPr = personal_review_module.open_pr,
 ) -> FastAPI:
     """``cwd_root``: the repo `tt ui` was launched from; its checked-out
     branch is marked current, as `tt g tree` does. ``fetch`` looks up a
@@ -627,6 +638,7 @@ def create_app(
             claims.autonomous(repo_id, name),
             slack.context(repo_id, name, fetched, now),
             claims.deciding(repo_id, name),
+            claims.validated(repo_id, name),
         )
 
     def publish_claims(changed: set[BranchKey]) -> None:
@@ -723,6 +735,34 @@ def create_app(
 
     reload_decisions()
 
+    #: The branches a validate run reviewed and nothing sent back (the task
+    #: reads Personal review, see ``personal_review``).
+    validated_keys: set[BranchKey] = set()
+
+    def reload_validated() -> set[BranchKey]:
+        """Reads which branches are validated; returns those that changed."""
+        store = StackStore(default_db_path())
+        try:
+            ids = validated_tasks(store)
+            found = {
+                (t.repo_id, t.name)
+                for t in store.tracked_branch_facts()
+                if t.task_id in ids
+            }
+        finally:
+            store.close()
+        changed = found ^ validated_keys
+        validated_keys.clear()
+        validated_keys.update(found)
+        return changed
+
+    def refresh_validated() -> None:
+        changed = reload_validated()
+        if changed:
+            publish_slack(changed)
+
+    reload_validated()
+
     claims = ClaimsFeed(
         directory=claims_dir,
         tasks=claim_tasks,
@@ -731,6 +771,7 @@ def create_app(
         wall_clock=wall_clock,
         tick=min(tick, CLAIMS_TICK_SECONDS) if claims_tick is None else claims_tick,
         deciding=lambda repo_id, branch: (repo_id, branch) in deciding_keys,
+        validated=lambda repo_id, branch: (repo_id, branch) in validated_keys,
     )
 
     activity = ActivityIngest(
@@ -825,6 +866,7 @@ def create_app(
             resume=lambda answered, decision, prior: _resume_run(
                 runner, answered, decision, prior
             ),
+            parent_of=lambda repo_id, branch: _all_parents(repo_id).get(branch),
             explain_ci=ci_explainer(
                 lambda query, variables: requests.graphql(
                     query, variables, caller="ci_history"
@@ -845,6 +887,10 @@ def create_app(
         wall_clock=wall_clock,
         repo_slug=lambda repo_id: slug_of_repo(repo_id),
         pr_facts=lambda repo_id, name: _looked_up_facts(refresher, repo_id, name),
+        opening_pr=lambda repo_id, name: (
+            (repo_id, name) in personal_review.opening,
+            personal_review.notices.get((repo_id, name)),
+        ),
     )
     dispatcher.on_tick = lambda: views.notify("agents", "extras")
     runner.on_change = lambda: views.notify("agents", "extras")
@@ -1005,6 +1051,7 @@ def create_app(
         views.notify("agents", "extras")
         reload_slack_posts()
         refresh_decisions()
+        refresh_validated()
 
     watcher.on_change = on_database_change
 
@@ -1133,6 +1180,65 @@ def create_app(
         else None
     )
 
+    async def pr_opened(repo_id: int, branch: str, post_in_slack: bool) -> None:
+        """The approved branch's PR exists: look it up (the card reads
+        its Next from it), and post it in Slack when asked."""
+        path = next((p for r, p, _ in _registered_repos() if r == repo_id), None)
+        assert path is not None
+        await refresher.snapshot(
+            TrackedBranch(repo_id=repo_id, branch=branch, path=path), max_age=0
+        )
+        if not post_in_slack:
+            return
+        if slack_service is None:
+            raise ReviewRefused("The PR is open, but Slack is not configured.")
+        try:
+            draft = await asyncio.to_thread(slack_service.draft, repo_id, branch, None)
+            await slack_service.send(
+                api.SlackSendRequest(
+                    id=row_id(repo_id, branch),
+                    kind="post",
+                    text=draft.text,
+                    assignee_id=draft.assignee.id if draft.assignee else None,
+                    thread_ts=None,
+                    prs=[
+                        api.SlackPrRef(
+                            repo=pr.repo,
+                            number=pr.number,
+                            assignee_id=pr.assignee.id if pr.assignee else None,
+                        )
+                        for pr in draft.prs
+                        if pr.included
+                    ],
+                )
+            )
+        except (SlackNotApplicable, SlackUnknown) as error:
+            raise ReviewRefused(
+                f"The PR is open, but not posted in Slack: {error}"
+            ) from error
+
+    def reviewed_head(repo: Path, base: str, branch: str) -> str:
+        return RevisionPair.resolve(repo, base=base, head=branch).commit(Side.NEW)
+
+    def review_changed(key: BranchKey) -> None:
+        """A branch's personal review changed (a verdict, its PR opening)."""
+        refresh_validated()
+        publish_slack({key})
+        views.notify("extras")
+
+    personal_review = PersonalReview(
+        open_store=lambda: StackStore(default_db_path()),
+        repo_path=lambda repo_id: next(
+            (p for r, p, _ in _registered_repos() if r == repo_id), None
+        ),
+        head_sha=reviewed_head,
+        base_of=lambda repo_id, branch: _all_parents(repo_id).get(branch),
+        open_pr=open_pr,
+        opened=pr_opened,
+        wall_clock=wall_clock,
+        changed=review_changed,
+    )
+
     task_status_sync = TaskStatusSync(
         branches=_tracked_branches,
         fetched=refresher.get,
@@ -1193,6 +1299,7 @@ def create_app(
     app.state.aggregates = aggregates
     app.state.spend_feed = spend
     app.state.dispatcher = dispatcher
+    app.state.personal_review = personal_review
     app.state.agent_runner = runner
     app.state.forwarders = forwarders
     app.state.slack = slack
@@ -1252,6 +1359,7 @@ def create_app(
         # Questions asked by another process are read from the database here
         # too: its watcher only runs while a page is connected.
         await asyncio.to_thread(reload_decisions)
+        await asyncio.to_thread(reload_validated)
         # Read before the branches: an event published meanwhile then makes
         # the snapshot look stale to /api/events, never the other way round.
         version = hub.version
@@ -1517,6 +1625,108 @@ def create_app(
                 status_code=404, detail="no such task for an agent"
             ) from error
         return {"starting": True}
+
+    @app.post("/api/agents/validate", status_code=202)
+    async def validate_task(body: api.AgentStart) -> dict[str, bool]:
+        """Start a validate run on a task by hand (see ``docs/personal-review.md``):
+        in the background, like a run started by hand, so the task reads
+        ``starting`` and a refusal is reported on it."""
+        repo_id, _, branch = body.id.partition(":")
+        try:
+            dispatcher.request_validate((int(repo_id), branch))
+        except (KeyError, ValueError) as error:
+            raise HTTPException(status_code=404, detail="no such task") from error
+        return {"starting": True}
+
+    def personal_key(task_id: str) -> BranchKey:
+        repo_id, name = branch_ref(task_id)
+        return (repo_id, name)
+
+    @app.get("/api/review/personal", response_model=api.PersonalReviewState | None)
+    async def personal_review_state(
+        repo: int, head: str
+    ) -> api.PersonalReviewState | None:
+        """The personal review of the tracked branch the Review view shows
+        (``null``: it is not one that awaits a review)."""
+        looked_up = refresher.get(repo, head)
+        if (repo, head) not in validated_keys or (
+            looked_up is not None
+            and looked_up.status is not None
+            and looked_up.status.pr is not PrState.NONE
+        ):
+            return None
+
+        def read() -> api.PersonalReviewState | None:
+            store = StackStore(default_db_path())
+            try:
+                task = next(
+                    (
+                        t
+                        for t in store.tracked_branch_facts()
+                        if (t.repo_id, t.name) == (repo, head)
+                    ),
+                    None,
+                )
+                if task is None or task.pr is not None:
+                    return None
+                runs = [
+                    r
+                    for r in store.agent_runs()
+                    if r.task_id == task.task_id
+                    and r.trigger == VALIDATE
+                    and r.state == "succeeded"
+                ]
+                verdicts = store.review_verdicts(task_id=task.task_id)
+            finally:
+                store.close()
+            head_sha = personal_review.head(repo, head)
+            latest = current_verdict(verdicts, head_sha)
+            return api.PersonalReviewState(
+                id=row_id(repo, head),
+                head_sha=head_sha,
+                verdict=api.ReviewVerdictInfo(
+                    verdict=latest.verdict,  # type: ignore[arg-type]
+                    note=latest.note,
+                    head_sha=latest.head_sha,
+                    at=latest.at.isoformat(),
+                )
+                if latest
+                else None,
+                result=runs[0].result if runs else None,  # type: ignore[arg-type]
+                summary=runs[0].summary if runs else None,
+                opening_pr=(repo, head) in personal_review.opening,
+                notice=personal_review.notices.get((repo, head)),
+                can_post_in_slack=slack_service is not None,
+            )
+
+        try:
+            return await asyncio.to_thread(read)
+        except ReviewRefused as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @app.post("/api/review/approve", status_code=202)
+    async def approve_branch(body: api.ReviewVerdictRequest) -> dict[str, bool]:
+        """Approve the branch: record it for the commit the page showed and
+        open its PR (and post it in Slack) in the background."""
+        key = personal_key(body.id)
+        try:
+            await asyncio.to_thread(personal_review.check, key, body.head_sha)
+            personal_review.approve(key, body.head_sha, body.note, body.post_in_slack)
+        except ReviewRefused as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return {"opening": True}
+
+    @app.post("/api/review/request-changes")
+    async def request_changes(body: api.ReviewVerdictRequest) -> dict[str, bool]:
+        """Request changes: the task goes back to Open PR until the next
+        validate run ends."""
+        key = personal_key(body.id)
+        try:
+            await asyncio.to_thread(personal_review.check, key, body.head_sha)
+            personal_review.request_changes(key, body.head_sha, body.note)
+        except ReviewRefused as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return {"requested": True}
 
     # Webhooks received since the server started, by event, and how many of
     # them named a tracked branch.

@@ -19,6 +19,7 @@ export const TRIGGER_LABEL: Record<AgentTrigger, string> = {
   resolve_conflicts: "Resolve conflicts",
   resolve_comments: "Resolve comments",
   fix_ci: "Fix / re-run CI",
+  validate: "Validate",
 };
 
 export const RUN_TONE: Record<AgentRunInfo["state"], Tone> = {

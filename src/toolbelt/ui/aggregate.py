@@ -489,6 +489,7 @@ def task_segments(
     threads = _active(lanes, "review", now)
     claims = _active(lanes, "claim", now)
     decisions = _active(lanes, "decision", now)
+    validated = _active(lanes, "personal_review", now)
     posts = sorted(
         datetime.fromisoformat(event.t)
         for lane in lanes
@@ -496,7 +497,7 @@ def task_segments(
         for event in lane.events
     )
     changes = {when for when, _ in points}
-    for spans in (conflicts, threads, claims, decisions):
+    for spans in (conflicts, threads, claims, decisions, validated):
         changes.update(edge for lo, hi, _ in spans for edge in (lo, hi))
     if slack_from is not None:
         changes.update(
@@ -556,6 +557,7 @@ def task_segments(
             autonomous="autonomous" in working,
             slack=slack,
             deciding=_on(decisions, at),
+            validated=_on(validated, at),
         )
 
     segments: list[Segment] = []

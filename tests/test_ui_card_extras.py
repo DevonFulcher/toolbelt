@@ -191,3 +191,76 @@ def test_a_branch_with_no_pr_looked_up_is_open_pr_from_its_start():
 
     (nxt,) = [lane for lane in extras.lanes if lane.lane == "next"]
     assert [p.kind for p in nxt.phases] == ["next_open_pr"]
+
+
+def test_a_task_with_no_pr_can_be_validated_and_shows_where_it_stands():
+    r = rig(a=PrSnapshot(status(), None))
+    store, repo_id, task_id = tracked_store()
+
+    def validated(hours_ago: float, result: str) -> None:
+        run_id = store.start_agent_run(
+            task_id=task_id,
+            repo_id=repo_id,
+            branch="a",
+            trigger="validate",
+            head_sha="abc",
+            model="claude-haiku-5-5",
+            at=NOW - timedelta(hours=hours_ago + 1),
+        )
+        store.finish_agent_run(
+            run_id,
+            state="succeeded",
+            ended_at=NOW - timedelta(hours=hours_ago),
+            result=result,
+        )
+
+    (before,) = build_card_extras(r.dispatcher, store, NOW).branches
+    assert before.agent.validation.model_dump() == {
+        "can_validate": True,
+        "validated": False,
+        "result": None,
+        "verdict": None,
+        "opening_pr": False,
+        "notice": None,
+    }
+
+    validated(3, "fail")
+    (waiting,) = build_card_extras(
+        r.dispatcher, store, NOW, opening_pr=lambda *_: (True, "boom")
+    ).branches
+    assert waiting.agent.validation.validated is True
+    assert waiting.agent.validation.result == "fail"
+    assert (waiting.agent.validation.opening_pr, waiting.agent.validation.notice) == (
+        True,
+        "boom",
+    )
+    assert {lane.lane for lane in waiting.lanes} >= {"agent", "personal_review"}
+
+    store.add_review_verdict(
+        task_id=task_id,
+        repo_id=repo_id,
+        branch="a",
+        head_sha="abc",
+        verdict="changes_requested",
+        note="rename it",
+        at=NOW - timedelta(hours=2),
+    )
+    (sent_back,) = build_card_extras(r.dispatcher, store, NOW).branches
+    assert sent_back.agent.validation.validated is False
+    assert sent_back.agent.validation.verdict.note == "rename it"  # type: ignore[union-attr]
+
+
+def test_a_task_with_a_pr_cannot_be_validated():
+    from test_ui_aggregate import MONDAY, pr
+
+    r = rig(a=PrSnapshot(status(), None))
+    store, _, _ = tracked_store()
+    record = pr(1, created=0, draft=True)
+    (branch,) = build_card_extras(
+        r.dispatcher,
+        store,
+        MONDAY.replace(hour=20),
+        pr_facts=lambda rid, name: (record.facts, "none"),
+    ).branches
+
+    assert branch.agent.validation.can_validate is False

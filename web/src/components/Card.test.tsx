@@ -1,6 +1,6 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
-import type { Branch, BranchClaim, BranchExtras, LoadedStatus, MergeQueueInfo, SiblingConflict, SiblingConflictsInfo, SlackInfo } from "../api/generated";
+import type { Branch, BranchClaim, BranchExtras, CardValidation, LoadedStatus, MergeQueueInfo, SiblingConflict, SiblingConflictsInfo, SlackInfo } from "../api/generated";
 import { branch, catalog, detail, event, noPr, pr, repo, snapshot, DAY, NOW } from "../testing/fixtures";
 import { renderWith } from "../testing/render";
 import { App } from "./App";
@@ -695,6 +695,100 @@ describe("a card with a question for the user", () => {
   });
 });
 
+describe("a card with a validated branch and no PR", () => {
+  const personalReview = (): LoadedStatus =>
+    ({
+      ...noPr(),
+      next: { label: "Personal review", who: "you", kind: "personal_review", would_be: null },
+    }) as LoadedStatus;
+  const validation = (over: Partial<CardValidation> = {}): CardValidation => ({
+    can_validate: true,
+    validated: true,
+    result: "pass",
+    verdict: null,
+    opening_pr: false,
+    notice: null,
+    ...over,
+  });
+  const withValidation = (v: CardValidation) => {
+    const { store } = showCards([branch(1, "devon/a", { status: personalReview(), parent: "main" })]);
+    act(() =>
+      store.getState().extrasChanged({
+        branches: [
+          {
+            id: "1:devon/a",
+            lanes: [],
+            agent: {
+              has_action: false,
+              trigger: null,
+              reason: null,
+              can_override: false,
+              starting: false,
+              start_error: null,
+              latest_run: null,
+              runs: 0,
+              recent_runs: [],
+              validation: v,
+            },
+            spend: { interactive_usd: 0, interactive_unpriced_calls: 0, autonomous_usd: 0, autonomous_runs: 0 },
+          },
+        ],
+        agents_decided_at: null,
+        spend_read_at: null,
+      }),
+    );
+    return store;
+  };
+
+  test("its Next is Personal review, a link that opens the Review view of the branch", () => {
+    const store = withValidation(validation());
+
+    fireEvent.click(within(document.querySelector<HTMLElement>('[data-slot="next"]') as HTMLElement).getByRole("link", { name: "Personal review" }));
+
+    expect(store.getState().view).toMatchObject({ view: "review", repo: "1", base: "main", head: "devon/a" });
+  });
+
+  test("while its PR is being opened, Next says so instead", () => {
+    withValidation(validation({ opening_pr: true }));
+
+    expect(slotsOf("devon/a").next[2]).toContain("Opening PR…");
+    expect(screen.queryByRole("link", { name: "Personal review" })).toBeNull();
+  });
+
+  test("the Agent group offers Validate again, says what the run found, and starts one by hand", async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 202, json: async () => ({ starting: true }) }));
+    vi.stubGlobal("fetch", fetchMock);
+    withValidation(validation({ result: "fail" }));
+
+    expect(slotsOf("devon/a").agent_status[2]).toContain("the agent would ask for changes");
+    fireEvent.click(screen.getByRole("button", { name: "Validate again" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("/api/agents/validate");
+    expect(JSON.parse(String(init.body))).toEqual({ id: "1:devon/a" });
+    vi.unstubAllGlobals();
+  });
+
+  test("a task with changes requested shows the note and offers Validate", () => {
+    withValidation(
+      validation({
+        validated: false,
+        verdict: { verdict: "changes_requested", note: "rename it", head_sha: "abc", at: "2026-10-13T12:00:00Z" },
+      }),
+    );
+
+    expect(slotsOf("devon/a").agent_status[2]).toContain("you requested changes: rename it");
+    expect(screen.getByRole("button", { name: "Validate" })).toBeInTheDocument();
+  });
+
+  test("a task that has a PR has no Validate button", () => {
+    withValidation(validation({ can_validate: false, validated: false }));
+
+    expect(screen.queryByRole("button", { name: /Validate/ })).toBeNull();
+  });
+});
+
 describe("a card's Refresh button", () => {
   test("each card has one, and it refreshes only that card's PR", async () => {
     const sent: unknown[] = [];
@@ -906,6 +1000,7 @@ describe("a card's agent and spend slots", () => {
       latest_run: null,
       runs: 0,
       recent_runs: over.latest_run ? [over.latest_run] : [],
+      validation: { can_validate: false, validated: false, result: null, verdict: null, opening_pr: false, notice: null },
       ...over,
     },
     spend: { interactive_usd: 1.5, interactive_unpriced_calls: 0, autonomous_usd: 0.05, autonomous_runs: 2, ...spend },
@@ -963,6 +1058,7 @@ describe("a card's agent and spend slots", () => {
         cost_usd: 0.0123,
         summary: null,
         error: null,
+        result: null,
       },
       runs: 1,
     });
@@ -992,6 +1088,7 @@ describe("a card's agent and spend slots", () => {
         cost_usd: 0.05,
         summary: null,
         error: null,
+        result: null,
       },
       runs: 1,
     });
@@ -1058,6 +1155,7 @@ describe("a card's agent and spend slots", () => {
         cost_usd: 0.0831,
         summary: "Replied to two Copilot threads.",
         error: null,
+        result: null,
       },
       runs: 2,
     });
@@ -1104,6 +1202,7 @@ describe("a card's agent and spend slots", () => {
         cost_usd: cost,
         summary,
         error: null,
+        result: null,
         activity: null,
       });
       const latest = run("r2", "resolve_comments", 0.0831, 9, "Replied to two Copilot threads.");

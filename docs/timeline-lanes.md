@@ -6,7 +6,8 @@ A card's timeline is a PR track with lanes under it, all on one time axis.
   `EVENTS`, `PHASES`, the "now" chips).
 - A **lane** is any other source of status: `git` (conflicts), `ci` (rollup
   changes `tt ui` saw), `agent` (autonomous runs), `claim`, `slack`,
-  `merge_queue`, `decision`, `task` (tracker moves). Each is a `LaneSource` in
+  `merge_queue`, `decision`, `personal_review` (validated, approved, changes
+  requested), `task` (tracker moves). Each is a `LaneSource` in
   `src/toolbelt/ui/timeline_lanes.py`: its label, the markers (`events`) and
   shaded spans (`phases`) it can draw, and `covers`, the status types it draws.
 
@@ -45,6 +46,7 @@ alive at their time.
 | slack | `slack_posts` (matched to the branch by repo and PR number) |
 | merge_queue | `merge_queue` (only while queued) |
 | decision | `decisions` |
+| personal_review | `agent_runs` (validate runs) and `review_verdicts` |
 | task | `task_status_moves` |
 
 Lanes reach the page in `BranchExtras.lanes`, rebuilt whenever the database
@@ -56,7 +58,7 @@ A task's status over time is its **Next** (`next_action.py`), the same one the
 card shows. `aggregate.task_segments` runs `next_action` itself at every moment
 something it reads changed, on the PR's replayed state plus the recorded lanes
 (conflicts, open review threads, working claims, pending decisions, Slack
-posts). The result is the "next" lane: first on the card timeline, and the
+posts, validated branches). The result is the "next" lane: first on the card timeline, and the
 status chart of the aggregate view. There is no separate "status mix" to keep in
 step: a new Next rule is a new kind of the "next" lane (the registry test makes
 sure), and the aggregate and the card both fold the same function.

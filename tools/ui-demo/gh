@@ -30,6 +30,18 @@ if a[:2] == ["auth", "token"]:
     # What `GithubRequests` reads once to authenticate (the fake API ignores it).
     print("demo-token")
     sys.exit(0)
+CREATED = Path(os.environ.get("TOOLBELT_HOME", ".")).parent / "created.json"
+if a[:2] == ["pr", "create"]:
+    # `gh pr create --base B --head H --fill`: remember the PR (the lookups
+    # below then find it) and print its URL.
+    opened = json.loads(CREATED.read_text()) if CREATED.is_file() else {}
+    head = a[a.index("--head") + 1]
+    number = 200 + len(opened)
+    opened[head] = {"number": number, "base": a[a.index("--base") + 1]}
+    CREATED.write_text(json.dumps(opened))
+    repo = "demo-search" if head.startswith("devon/search-") else "demo-app"
+    print(f"https://github.com/devon/{repo}/pull/{number}")
+    sys.exit(0)
 if a[:2] != ["api", "graphql"]:
     sys.exit(1)
 searching = any("search(" in x for x in a)
@@ -408,5 +420,15 @@ if searching:
     }
     print(json.dumps({"data": {"search": page}}))
     sys.exit(0)
+created = json.loads(CREATED.read_text()) if CREATED.is_file() else {}
+if branch in created:
+    SCENARIOS[branch] = pr(
+        created[branch]["number"],
+        branch.removeprefix("devon/").replace("-", " ").capitalize(),
+        ci=None,
+        baseRefName=created[branch]["base"],
+        createdAt=t(minutes=2),
+        items=[commit("n1", "Open the PR", None, minutes=2)],
+    )
 nodes = [SCENARIOS[branch]] if branch in SCENARIOS else []
 print(json.dumps({"data": {"repository": {"pullRequests": {"nodes": nodes}}}}))

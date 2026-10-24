@@ -329,6 +329,7 @@
       "enum": [
         "disabled",
         "pr_not_open",
+        "has_pr",
         "working",
         "deciding",
         "draft",
@@ -398,6 +399,16 @@
         "repo": {
           "type": "string"
         },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ValidateResult"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "run_id": {
           "type": "string"
         },
@@ -438,7 +449,8 @@
         "cost_usd",
         "summary",
         "error",
-        "activity"
+        "activity",
+        "result"
       ],
       "title": "AgentRunInfo",
       "type": "object"
@@ -509,7 +521,8 @@
       "enum": [
         "resolve_conflicts",
         "resolve_comments",
-        "fix_ci"
+        "fix_ci",
+        "validate"
       ],
       "type": "string"
     },
@@ -1339,6 +1352,9 @@
               "type": "null"
             }
           ]
+        },
+        "validation": {
+          "$ref": "#/$defs/CardValidation"
         }
       },
       "required": [
@@ -1350,7 +1366,8 @@
         "start_error",
         "latest_run",
         "runs",
-        "recent_runs"
+        "recent_runs",
+        "validation"
       ],
       "title": "CardAgent",
       "type": "object"
@@ -1417,6 +1434,61 @@
         "autonomous_runs"
       ],
       "title": "CardSpend",
+      "type": "object"
+    },
+    "CardValidation": {
+      "additionalProperties": false,
+      "description": "Where a task stands on \"validate, personal review, publish\"\n(``docs/personal-review.md``).",
+      "properties": {
+        "can_validate": {
+          "type": "boolean"
+        },
+        "notice": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "opening_pr": {
+          "type": "boolean"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ValidateResult"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "validated": {
+          "type": "boolean"
+        },
+        "verdict": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReviewVerdictInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "can_validate",
+        "validated",
+        "result",
+        "verdict",
+        "opening_pr",
+        "notice"
+      ],
+      "title": "CardValidation",
       "type": "object"
     },
     "Catalog": {
@@ -2776,6 +2848,8 @@
         "slack_bump",
         "slack_reassign",
         "decision_answered",
+        "review_approved",
+        "review_changes_requested",
         "task_in_review"
       ],
       "type": "string"
@@ -2784,6 +2858,12 @@
       "additionalProperties": false,
       "properties": {
         "decision_answered": {
+          "$ref": "#/$defs/Marker"
+        },
+        "review_approved": {
+          "$ref": "#/$defs/Marker"
+        },
+        "review_changes_requested": {
           "$ref": "#/$defs/Marker"
         },
         "slack_bump": {
@@ -2804,6 +2884,8 @@
         "slack_bump",
         "slack_reassign",
         "decision_answered",
+        "review_approved",
+        "review_changes_requested",
         "task_in_review"
       ],
       "title": "LaneEventMarkers",
@@ -2820,6 +2902,7 @@
         "slack",
         "merge_queue",
         "decision",
+        "personal_review",
         "task"
       ],
       "type": "string"
@@ -2863,6 +2946,7 @@
     "LanePhaseKind": {
       "enum": [
         "next_open_pr",
+        "next_personal_review",
         "next_publish",
         "next_request_review",
         "next_post_slack",
@@ -2898,7 +2982,8 @@
         "claim_autonomous_worktree",
         "claim_autonomous_ref",
         "merge_queued",
-        "decision_pending"
+        "decision_pending",
+        "personal_review_waiting"
       ],
       "type": "string"
     },
@@ -2995,6 +3080,9 @@
         "next_open_pr": {
           "$ref": "#/$defs/Span"
         },
+        "next_personal_review": {
+          "$ref": "#/$defs/Span"
+        },
         "next_post_slack": {
           "$ref": "#/$defs/Span"
         },
@@ -3015,10 +3103,14 @@
         },
         "next_wait_review": {
           "$ref": "#/$defs/Span"
+        },
+        "personal_review_waiting": {
+          "$ref": "#/$defs/Span"
         }
       },
       "required": [
         "next_open_pr",
+        "next_personal_review",
         "next_publish",
         "next_request_review",
         "next_post_slack",
@@ -3054,7 +3146,8 @@
         "claim_autonomous_worktree",
         "claim_autonomous_ref",
         "merge_queued",
-        "decision_pending"
+        "decision_pending",
+        "personal_review_waiting"
       ],
       "title": "LanePhaseSpans",
       "type": "object"
@@ -3513,6 +3606,7 @@
     "NextKind": {
       "enum": [
         "open_pr",
+        "personal_review",
         "done",
         "resolve_conflicts",
         "address_review",
@@ -3569,6 +3663,76 @@
         "absent"
       ],
       "title": "NowRep",
+      "type": "object"
+    },
+    "PersonalReviewState": {
+      "additionalProperties": false,
+      "description": "What the Review view needs to know of the branch it shows, when it is a\ntracked branch with no PR that a validate run has reviewed.",
+      "properties": {
+        "can_post_in_slack": {
+          "type": "boolean"
+        },
+        "head_sha": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "notice": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "opening_pr": {
+          "type": "boolean"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ValidateResult"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "verdict": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReviewVerdictInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "head_sha",
+        "verdict",
+        "result",
+        "summary",
+        "opening_pr",
+        "notice",
+        "can_post_in_slack"
+      ],
+      "title": "PersonalReviewState",
       "type": "object"
     },
     "PhaseKind": {
@@ -4225,6 +4389,65 @@
       ],
       "title": "ReviewState",
       "type": "string"
+    },
+    "ReviewVerdict": {
+      "enum": [
+        "approved",
+        "changes_requested"
+      ],
+      "type": "string"
+    },
+    "ReviewVerdictInfo": {
+      "additionalProperties": false,
+      "description": "The user's review of a branch before its PR (``review_verdicts``).",
+      "properties": {
+        "at": {
+          "type": "string"
+        },
+        "head_sha": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        },
+        "verdict": {
+          "$ref": "#/$defs/ReviewVerdict"
+        }
+      },
+      "required": [
+        "verdict",
+        "note",
+        "head_sha",
+        "at"
+      ],
+      "title": "ReviewVerdictInfo",
+      "type": "object"
+    },
+    "ReviewVerdictRequest": {
+      "additionalProperties": false,
+      "description": "The body of ``POST /api/review/approve`` and ``.../request-changes``.",
+      "properties": {
+        "head_sha": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        },
+        "post_in_slack": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "head_sha",
+        "note"
+      ],
+      "title": "ReviewVerdictRequest",
+      "type": "object"
     },
     "ReviewersCatalogState": {
       "additionalProperties": false,
@@ -6123,6 +6346,13 @@
         }
       ]
     },
+    "ValidateResult": {
+      "enum": [
+        "pass",
+        "fail"
+      ],
+      "type": "string"
+    },
     "WaitingOn": {
       "additionalProperties": false,
       "description": "The tasks in flight that are waiting on this one, at each sampled\ninstant: the \"next\" lane's phases grouped by who the next action waits\non.",
@@ -6273,6 +6503,9 @@
     "merge_request": {
       "$ref": "#/$defs/MergeRequest"
     },
+    "personal_review_state": {
+      "$ref": "#/$defs/PersonalReviewState"
+    },
     "review_definition": {
       "$ref": "#/$defs/ReviewDefinition"
     },
@@ -6287,6 +6520,9 @@
     },
     "review_hover": {
       "$ref": "#/$defs/ReviewHover"
+    },
+    "review_verdict_request": {
+      "$ref": "#/$defs/ReviewVerdictRequest"
     },
     "slack_accepted": {
       "$ref": "#/$defs/SlackAccepted"
@@ -6321,6 +6557,8 @@
     "review_file",
     "review_hover",
     "review_definition",
+    "personal_review_state",
+    "review_verdict_request",
     "merge_queue_info",
     "slack_draft_request",
     "slack_draft",

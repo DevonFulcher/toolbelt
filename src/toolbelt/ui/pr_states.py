@@ -226,6 +226,13 @@ def _now(dimension):
 
 _NEXT_TONES = {
     na.OPEN_PR: (AMBER, "No PR yet: open one."),
+    na.PERSONAL_REVIEW: (
+        ACCENT,
+        (
+            "A validate run reviewed the branch: read its diff, then approve it "
+            "(which opens the PR) or request changes."
+        ),
+    ),
     na.DONE: (GRAY, "Merged or closed."),
     na.RESOLVE_CONFLICTS: (RED, "The PR has merge conflicts."),
     na.ADDRESS_REVIEW: (RED, "A reviewer requested changes."),
@@ -270,6 +277,7 @@ _NEXT_TONES = {
 
 _NEXT_LABELS = {
     na.OPEN_PR: "Open PR",
+    na.PERSONAL_REVIEW: "Personal review",
     na.DONE: "Done",
     na.RESOLVE_CONFLICTS: "Resolve conflicts",
     na.ADDRESS_REVIEW: "Address review",

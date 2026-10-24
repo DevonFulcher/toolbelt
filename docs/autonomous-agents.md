@@ -57,6 +57,10 @@ action it replaced is in the tooltip). An interactive claim on the same task
 wins. A run that is working when the screen locks is allowed to finish, within
 its time limit.
 
+A **Validate** run is a fourth job, started only by hand on a task with no PR
+(a review of the branch before it is published); see
+[personal review](personal-review.md).
+
 ## Limits
 
 Defaults are conservative; override any of them in `agents:` of
