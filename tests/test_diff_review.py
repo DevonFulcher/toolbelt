@@ -91,7 +91,27 @@ def test_the_old_side_is_where_head_forked_from_base(repo: Path) -> None:
 
 def test_a_revision_that_looks_like_an_option_is_refused(repo: Path) -> None:
     with pytest.raises(RevisionError):
-        RevisionPair(repo, "--output=/tmp/x", "feature")
+        RevisionPair.resolve(repo, base="--output=/tmp/x", head="feature")
+
+
+def test_a_branch_only_on_origin_resolves_to_its_remote_ref(repo: Path) -> None:
+    git(repo, "update-ref", "refs/remotes/origin/remote-only", "feature")
+
+    pair = RevisionPair.resolve(repo, base="main", head="remote-only")
+
+    assert pair.head == "origin/remote-only"
+    assert {f.path for f in pair.changed_files()} >= {"keep.py", "added.py"}
+
+
+def test_a_local_branch_wins_over_the_one_on_origin(repo: Path) -> None:
+    git(repo, "update-ref", "refs/remotes/origin/main", "feature")
+
+    assert RevisionPair.resolve(repo, base="main", head="feature").base == "main"
+
+
+def test_an_unknown_revision_is_named_in_the_error(repo: Path) -> None:
+    with pytest.raises(RevisionError, match=r"'nope' is not a branch.*origin/nope"):
+        RevisionPair.resolve(repo, base="main", head="nope")
 
 
 def test_an_unknown_path_is_a_revision_error(repo: Path) -> None:
@@ -165,6 +185,7 @@ def test_the_files_route_says_why_a_revision_is_unknown(client: TestClient) -> N
     )
 
     assert response.status_code == 400
+    assert "'nope' is not a branch, tag or commit in repo" in response.json()["detail"]
 
 
 def test_an_unknown_repo_is_a_404(client: TestClient) -> None:

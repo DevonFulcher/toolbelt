@@ -31,6 +31,21 @@ def _git(repo: Path, *args: str) -> bytes:
     return stdout
 
 
+def _known_revision(repo: Path, ref: str) -> str:
+    if not ref or ref.startswith("-"):
+        raise RevisionError(f"not a revision: {ref!r}")
+    for candidate in (ref, f"origin/{ref}"):
+        try:
+            _git(repo, "rev-parse", "--verify", "--quiet", f"{candidate}^{{commit}}")
+        except RevisionError:
+            continue
+        return candidate
+    raise RevisionError(
+        f"{ref!r} is not a branch, tag or commit in {repo.name}, and there is no "
+        f"origin/{ref} either: git does not have it (fetch it, or pick another revision)"
+    )
+
+
 @dataclass(frozen=True)
 class RevisionPair:
     """``base...head``: the old side is where ``head`` forked from ``base``
@@ -46,6 +61,13 @@ class RevisionPair:
         for ref in (self.base, self.head):
             if not ref or ref.startswith("-"):
                 raise RevisionError(f"not a revision: {ref!r}")
+
+    @classmethod
+    def resolve(cls, repo: Path, *, base: str, head: str) -> RevisionPair:
+        """The pair for two names a user gave: each is a branch, tag or commit
+        of the repo, or else the branch of that name on ``origin`` (a tracked
+        branch is often only there)."""
+        return cls(repo, _known_revision(repo, base), _known_revision(repo, head))
 
     def commit(self, side: Side) -> str:
         match side:

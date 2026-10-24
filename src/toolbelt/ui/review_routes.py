@@ -25,7 +25,7 @@ def _pair(repo_id: int, base: str, head: str) -> RevisionPair:
     if repo_id not in paths:
         raise HTTPException(status_code=404, detail=f"no repo {repo_id}")
     try:
-        return RevisionPair(paths[repo_id], base, head)
+        return RevisionPair.resolve(paths[repo_id], base=base, head=head)
     except RevisionError as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
 
