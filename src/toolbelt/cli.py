@@ -9,6 +9,7 @@ from toolbelt import invocation_log, logged_process
 from toolbelt.dotfiles.cli import dotfiles_typer
 from toolbelt.git.cli import git_typer
 from toolbelt.logger import logger
+from toolbelt.machine_move.cli import machine_typer
 from toolbelt.task_claims.cli import task_typer
 from toolbelt.zsh import zsh_typer
 lazy from toolbelt.github.status import display_status
@@ -22,6 +23,7 @@ app.add_typer(git_typer, name="g", help="Alias for 'git'")
 app.add_typer(zsh_typer, name="zsh")
 app.add_typer(dotfiles_typer, name="dotfiles")
 app.add_typer(task_typer, name="task")
+app.add_typer(machine_typer, name="machine")
 
 slack_typer = typer.Typer(
     help="Slack: link messages posted by hand to their PRs.", no_args_is_help=True
