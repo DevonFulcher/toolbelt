@@ -714,12 +714,15 @@ function ClaimChips({ claim }: { claim: BranchClaim }) {
           ? "Not heard from for a while: it may be hung (tt task release to take it back)"
           : `${holder.holder}, since ${holder.age.text} ago`;
         const label = holder.stale ? `${text} (stale)` : text;
+        // What it is running now (or last ran), from its claim file.
+        const doing = holder.activity;
+        const running = doing?.open ? `${doing.tool}${doing.detail ? `: ${doing.detail}` : ""}` : null;
         return (
           <span
             key={holder.holder}
             className={`pill claim-chip tone-${holder.stale ? "red" : HOLDER_TONE[holder.state]}`}
             data-state={holder.state}
-            title={title}
+            title={doing ? `${title}\n${doing.open ? "Running" : "Last ran"} ${doing.tool}${doing.detail ? `: ${doing.detail}` : ""}` : title}
           >
             {holder.link?.href ? (
               <a href={holder.link.href} title={title}>
@@ -727,6 +730,9 @@ function ClaimChips({ claim }: { claim: BranchClaim }) {
               </a>
             ) : (
               label
+            )}
+            {running !== null && holder.state === "working" && (
+              <span className="claim-activity">{` · ${running.length > 48 ? `${running.slice(0, 47)}…` : running}`}</span>
             )}
           </span>
         );

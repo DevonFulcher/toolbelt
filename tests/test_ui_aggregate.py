@@ -1934,3 +1934,86 @@ def test_each_tasks_lanes_come_from_its_own_task_id_not_its_branch_name():
         at(4): new_lanes,
         at(0): old_lanes,
     }
+
+
+# ---- agent activity -----------------------------------------------------------------------
+
+
+def agent_turn(
+    hours: float,
+    *,
+    repo_id: int | None = 1,
+    calls: int = 2,
+    tools=None,
+    categories=None,
+):
+    from toolbelt.git.stack.store import AgentTurn, TurnTotals
+
+    return AgentTurn(
+        holder="s",
+        turn_id=f"t{hours}",
+        session_id="s",
+        agent_id=None,
+        task_id=None,
+        repo_id=repo_id,
+        started_at=at(hours),
+        ended_at=at(hours + 0.1),
+        reason="answer",
+        totals=TurnTotals(
+            wall_ms=100_000,
+            tool_ms=30_000,
+            delegated_ms=0,
+            blocked_ms=10_000,
+            model_ms=60_000,
+        ),
+        calls=calls,
+        by_tool=tools or {"Bash": (calls, 30_000)},
+        by_category=categories or {"test": (1, 20_000), "vcs": (1, 10_000)},
+    )
+
+
+def test_agent_turns_are_summed_per_hour_with_what_they_called():
+    result = agg.compute(
+        [],
+        [],
+        now=DEFAULT_NOW,
+        weeks=4,
+        archive_since=DEFAULT_SINCE,
+        fetched_at=DEFAULT_NOW,
+        turns=[
+            agent_turn(5.2),
+            agent_turn(5.7, categories={"vcs": (2, 5_000)}),
+            agent_turn(30),
+        ],
+    )
+
+    first, second = result.activity.hours
+    assert (first.t, first.turns, first.calls) == ("2026-10-05T05:00:00Z", 2, 4)
+    assert (first.wall_ms, first.tool_ms, first.blocked_ms, first.model_ms) == (
+        200_000,
+        60_000,
+        20_000,
+        120_000,
+    )
+    assert [(b.name, b.calls, b.ms) for b in first.categories] == [
+        ("test", 1, 20_000),
+        ("vcs", 3, 15_000),
+    ]
+    assert [(b.name, b.calls, b.ms) for b in first.tools] == [("Bash", 4, 60_000)]
+    assert second.t == "2026-10-06T06:00:00Z"
+    assert result.activity.since == "2026-10-05T05:12:00Z"
+
+
+def test_turns_before_the_window_are_not_listed_but_say_when_recording_began():
+    result = agg.compute(
+        [],
+        [],
+        now=DEFAULT_NOW,
+        weeks=4,
+        archive_since=DEFAULT_SINCE,
+        fetched_at=DEFAULT_NOW,
+        turns=[agent_turn(-24 * 60), agent_turn(10)],
+    )
+
+    assert [h.t for h in result.activity.hours] == ["2026-10-05T10:00:00Z"]
+    assert result.activity.since == "2026-08-06T00:00:00Z"

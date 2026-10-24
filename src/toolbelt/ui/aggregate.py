@@ -40,7 +40,7 @@ timeline is longer than the fetched 100 items is truncated at its newest end.
 """
 
 import bisect
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
@@ -53,6 +53,7 @@ from toolbelt.git.stack.status import (
     ReviewState,
     is_bot,
 )
+from toolbelt.git.stack.store import AgentTurn
 from toolbelt.ui import api_models as api
 from toolbelt.ui import next_action as na
 from toolbelt.ui import pr_activity as act
@@ -117,6 +118,23 @@ NOTES: tuple[tuple[str, str], ...] = (
             '"Autonomous agent") only while its holder was working, and a '
             'question for you ("Deciding") takes it over any claim, as on the '
             "cards."
+        ),
+    ),
+    (
+        "Agent activity",
+        (
+            "Recorded by the Claude Code plugin from when it was installed and "
+            "updated (earlier turns are unknown), for every session on this "
+            "machine. A turn's wall time is split into tool time (calls, less "
+            "time blocked on you and waiting on subagents), delegated time "
+            "(waiting on subagents), blocked time (permission prompts and "
+            "dialogs) and model time (the rest: thinking, streaming, API "
+            "latency); the parts add up to it, and parallel calls count once. "
+            "Call time by tool and by category is summed over calls, so "
+            "parallel calls add up past the wall time. A turn is counted in the "
+            "hour it started. Turns are tied to a repo by the worktree most of "
+            "their calls were about; the rest are only in the all-repos view. "
+            "Raw calls are kept for 60 days, the per-turn numbers for good."
         ),
     ),
     (
@@ -860,6 +878,7 @@ def compute(
     truncated: bool = False,
     hidden: int = 0,
     repo: str | None = None,
+    turns: Sequence[AgentTurn] = (),
 ) -> api.Aggregate:
     """The aggregate view of the last ``weeks`` weeks (calendar weeks from
     Monday, UTC, the last one partial)."""
@@ -922,6 +941,7 @@ def compute(
             inflight=_inflight_counts(lives, instants),
         ),
         waiting_on=waiting_on(lives, instants),
+        activity=activity_hours(turns, margin_start),
         lanes=lane_layers(lives, task_lanes, instants, start, now),
         coverage=api.AggregateCoverage(
             task_starts_since=_iso(archive_since),
@@ -930,6 +950,55 @@ def compute(
             hidden=hidden,
         ),
         notes=[api.AggregateNote(label=a, why=b) for a, b in NOTES],
+    )
+
+
+def activity_hours(
+    turns: Iterable[AgentTurn], start: datetime
+) -> api.AggregateActivity:
+    """Agent turns that started since ``start``, summed per hour (UTC); the
+    server does no calendar arithmetic, the page makes days of them."""
+    hours: dict[datetime, list[AgentTurn]] = {}
+    first: datetime | None = None
+    for turn in turns:
+        first = turn.started_at if first is None else min(first, turn.started_at)
+        if turn.started_at >= start:
+            hour = turn.started_at.astimezone(UTC).replace(
+                minute=0, second=0, microsecond=0
+            )
+            hours.setdefault(hour, []).append(turn)
+
+    def buckets(
+        group: list[AgentTurn], pick: Callable[[AgentTurn], dict[str, tuple[int, int]]]
+    ) -> list[api.ActivityBucket]:
+        total: dict[str, list[int]] = {}
+        for turn in group:
+            for name, (calls, ms) in pick(turn).items():
+                entry = total.setdefault(name, [0, 0])
+                entry[0] += calls
+                entry[1] += ms
+        return [
+            api.ActivityBucket(name=name, calls=calls, ms=ms)
+            for name, (calls, ms) in sorted(total.items(), key=lambda kv: -kv[1][1])
+        ]
+
+    return api.AggregateActivity(
+        hours=[
+            api.ActivityHour(
+                t=_iso(hour),
+                turns=len(group),
+                calls=sum(t.calls for t in group),
+                wall_ms=sum(t.totals.wall_ms for t in group),
+                tool_ms=sum(t.totals.tool_ms for t in group),
+                delegated_ms=sum(t.totals.delegated_ms for t in group),
+                blocked_ms=sum(t.totals.blocked_ms for t in group),
+                model_ms=sum(t.totals.model_ms for t in group),
+                tools=buckets(group, lambda t: t.by_tool),
+                categories=buckets(group, lambda t: t.by_category),
+            )
+            for hour, group in sorted(hours.items())
+        ],
+        since=_iso(first) if first is not None else None,
     )
 
 

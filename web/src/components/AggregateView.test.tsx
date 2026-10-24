@@ -80,6 +80,33 @@ describe("the aggregate view", () => {
     expect(screen.queryByRole("region", { name: "Lane: Agent runs" })).not.toBeInTheDocument();
   });
 
+  test("shows what agents did: time by kind, calls by category, the tools called", async () => {
+    serve(aggregate());
+    show();
+
+    const section = await screen.findByRole("region", { name: "Agent activity" });
+    expect(section).toHaveTextContent("3 turns and 7 tool calls");
+    const time = within(section).getByRole("region", { name: "Agent time" });
+    for (const label of ["Model", "Tools", "Subagents", "Blocked on you"]) {
+      expect(within(time).getByText(label)).toBeInTheDocument();
+    }
+    const calls = within(section).getByRole("region", { name: "What agents called" });
+    expect(within(calls).getByText("Tests")).toBeInTheDocument();
+    expect(within(calls).getByText("Git")).toBeInTheDocument();
+    const tools = within(section).getByRole("table", { name: "Tools by call time in this window" });
+    // Biggest call time first: Bash 100 s, Task 90 s, Edit 1 s.
+    expect(within(tools).getAllByRole("row").slice(1).map((row) => row.textContent?.slice(0, 4))).toEqual(["Bash", "Task", "Edit"]);
+  });
+
+  test("says how to start recording when no agent turn was recorded", async () => {
+    const base = aggregate();
+    serve(aggregate({ activity: { ...base.activity, since: null, hours: [] } }));
+    show();
+
+    const section = await screen.findByRole("region", { name: "Agent activity" });
+    expect(section).toHaveTextContent(/No agent turns have been recorded yet/);
+  });
+
   test("each chart legend describes its properties on hover and focus", async () => {
     serve(aggregate());
     show();

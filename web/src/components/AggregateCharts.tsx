@@ -1263,10 +1263,13 @@ export function StackedBarsChart({
   format,
   yLabel,
   empty,
+  measure = "cost",
 }: {
   title: string;
   description: ReactNode;
   series: SeriesStyle[];
+  /** What a bar measures, as the table's caption says it ("cost", "agent time"). */
+  measure?: string;
   /** ISO start of each bucket. */
   starts: string[];
   /** Per series, its value in each bucket. */
@@ -1338,7 +1341,7 @@ export function StackedBarsChart({
       legend={<Legend id={id} series={series} values={legendValues} />}
       table={
         <table className="agg-table">
-          <caption>{`${title}: what each ${bucketHours === 1 ? "hour" : "day"} cost`}</caption>
+          <caption>{`${title}: what each ${bucketHours === 1 ? "hour" : "day"} ${measure}`}</caption>
           <thead>
             <tr>
               <th scope="col">{`${bucketHours === 1 ? "Hour" : "Day"} (${timeZone})`}</th>

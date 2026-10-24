@@ -511,6 +511,14 @@ def branch_claim(holders: tuple[BranchHolder, ...], now: datetime) -> api.Branch
                         "since": _iso(h.started_at),
                     },
                     "stale": h.stale,
+                    "activity": {
+                        "tool": h.activity.tool,
+                        "detail": h.activity.detail,
+                        "since": _iso(h.activity.since),
+                        "open": h.activity.open,
+                    }
+                    if h.activity
+                    else None,
                 }
             )
             for h in holders

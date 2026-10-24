@@ -305,6 +305,7 @@ export interface AgentsLaunching {
   launching: boolean;
 }
 export interface Aggregate {
+  activity: AggregateActivity;
   coverage: AggregateCoverage;
   fetched_at: string;
   lanes: AggregateLane[];
@@ -317,6 +318,41 @@ export interface Aggregate {
   weeks: number;
   window_end: string;
   window_start: string;
+}
+/**
+ * What agents did in their turns (see ``agent_activity``), recorded by the
+ * Claude Code plugin: only hours with a turn are listed.
+ */
+export interface AggregateActivity {
+  hours: ActivityHour[];
+  since: string | null;
+}
+/**
+ * The agent turns that started in one hour (UTC): their wall time in the
+ * parts that add up to it, and what they called. The viewer's time zone makes
+ * days of these.
+ */
+export interface ActivityHour {
+  blocked_ms: number;
+  calls: number;
+  categories: ActivityBucket[];
+  delegated_ms: number;
+  model_ms: number;
+  t: string;
+  tool_ms: number;
+  tools: ActivityBucket[];
+  turns: number;
+  wall_ms: number;
+}
+/**
+ * What agents called: a tool or a category of call, how many times, and
+ * the call time summed over them (so parallel calls add up past the wall
+ * time).
+ */
+export interface ActivityBucket {
+  calls: number;
+  ms: number;
+  name: string;
 }
 export interface AggregateCoverage {
   hidden: number;
@@ -652,12 +688,23 @@ export interface BranchClaim {
  * holders are sent: an expired one is gone.
  */
 export interface ClaimHolder {
+  activity?: HolderActivity | null;
   age: Age;
   holder: string;
   kind: HolderKind;
   link: Link | null;
   stale: boolean;
   state: HolderState;
+}
+/**
+ * What a claim's holder is running: the tool call in flight (``open``),
+ * else the last that ended.
+ */
+export interface HolderActivity {
+  detail: string;
+  open: boolean;
+  since: string;
+  tool: string;
 }
 /**
  * ``href`` is ``None`` when the value cannot (or should not) be linked.

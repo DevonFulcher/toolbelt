@@ -1050,3 +1050,45 @@ def test_the_real_ps_sees_this_process_and_a_dead_one_is_gone():
     child = subprocess.Popen([sys.executable, "-c", "pass"])
     child.wait()
     assert not liveness.is_alive(child.pid, started)
+
+
+def test_a_claim_file_may_say_what_the_holder_is_running():
+    from toolbelt.task_claims.claim_file import parse_claim_file
+
+    text = json.dumps(
+        {
+            "version": 1,
+            "holder": "s",
+            "kind": "agent",
+            "session_id": "s",
+            "agent_id": None,
+            "link": None,
+            "state": "working",
+            "started_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:30Z",
+            "ttl_seconds": 180,
+            "activity": {
+                "tool": "Bash",
+                "detail": "pnpm test",
+                "since": "2026-01-01T00:00:20Z",
+                "open": True,
+            },
+            "claims": [],
+        }
+    )
+
+    parsed = parse_claim_file(text, expected_holder="s")
+
+    assert parsed.activity is not None
+    assert (parsed.activity.tool, parsed.activity.detail, parsed.activity.open) == (
+        "Bash",
+        "pnpm test",
+        True,
+    )
+    # A reader that predates the field ignores it; a file without it has none.
+    assert (
+        parse_claim_file(
+            text.replace('"activity"', '"x"'), expected_holder="s"
+        ).activity
+        is None
+    )

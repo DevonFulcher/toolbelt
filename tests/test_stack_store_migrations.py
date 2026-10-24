@@ -247,7 +247,12 @@ def test_rows_that_predate_task_ids_get_the_task_alive_at_their_time(tmp_path: P
     that was removed after it, a later one to the tracked task."""
     db = tmp_path / "stacks.db"
     # The version just before the task ids were added to these tables.
-    conn = _build_at(db, len(store._MIGRATIONS) - 2)
+    before = next(
+        index
+        for index, migration in enumerate(store._MIGRATIONS)
+        if any("ALTER TABLE merge_queue ADD COLUMN task_id" in sql for sql in migration)
+    )
+    conn = _build_at(db, before)
     _seed(conn)
     # ``seeded-old`` (branch "old") was removed on REMOVED; "old" is tracked
     # again afterwards.

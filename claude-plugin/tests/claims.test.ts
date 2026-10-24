@@ -4,6 +4,7 @@ import type { On } from 'claude-code'
 
 const HOME = '/home/dev/.toolbelt'
 const CLAIMS = `${HOME}/claims`
+const ACTIVITY = `${HOME}/activity`
 const WORK = '/g'
 const SESSION = 'sess-1'
 const TASK_CLAIM = 'mcp__toolbelt-claims__task_claim'
@@ -83,6 +84,31 @@ const claimSchema = {
     },
     "process_started_at": {
       "$ref": "#/$defs/timestamp"
+    },
+    "activity": {
+      "description": "What the holder is running: the tool call in flight (open true), else the last that ended. Optional, no part of liveness: a reader that does not know it ignores it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tool",
+        "detail",
+        "since",
+        "open"
+      ],
+      "properties": {
+        "tool": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "since": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "open": {
+          "type": "boolean"
+        }
+      }
     },
     "claims": {
       "type": "array",
@@ -213,17 +239,50 @@ type Doc = {
   ttl_seconds: number
   pid?: number
   process_started_at?: string
+  activity?: { tool: string; detail: string; since: string; open: boolean }
   claims: { kind: string; path?: string; ref?: string; touched_at: string }[]
+}
+
+type ActivityCall = {
+  tool: string
+  detail: string
+  started_at: string
+  duration_ms: number
+  blocked_ms: number
+  ok: boolean | null
+  unended: boolean
+  worktree: string | null
+  background: boolean
+  delegated: boolean
+}
+
+type Chunk = {
+  version: number
+  holder: string
+  session_id: string
+  agent_id: string | null
+  turn_id: string
+  seq: number
+  final: boolean
+  started_at: string
+  ended_at: string | null
+  reason: string | null
+  totals: { wall_ms: number; tool_ms: number; delegated_ms: number; blocked_ms: number; model_ms: number } | null
+  calls: ActivityCall[]
 }
 
 type World = {
   files: Map<string, Doc>
   writes: Doc[]
+  chunks: Chunk[]
   statuses: (string | undefined)[]
   clock: ReturnType<typeof mock.clock>
   revoke: (holder: string, entries: unknown[]) => void
   failWrites: () => void
 }
+
+// how long a test's tool call takes, by the text it carries
+const delays = new Map<string, number>()
 
 const EDIT = (file_path: string, agentId?: string) =>
   ({ tool: 'Edit', file_path, old_string: 'a', new_string: 'b', agentId }) as never
@@ -242,6 +301,7 @@ function world(
 ): World {
   const files = new Map<string, Doc>()
   const writes: Doc[] = []
+  const chunks: Chunk[] = []
   const statuses: (string | undefined)[] = []
   const revoked = new Map<string, string>()
   let isFailing = false
@@ -257,6 +317,10 @@ function world(
   })
   on('fs.write', (_$, e) => {
     if (isFailing) return { deny: 'EROFS' }
+    if (e.path.startsWith(`${ACTIVITY}/`)) {
+      chunks.push(JSON.parse(e.text) as Chunk)
+      return { value: undefined }
+    }
     const doc = JSON.parse(e.text) as Doc
     expect(validate(claimSchema as Schema, doc, claimSchema as Schema)).toEqual([])
     files.set(e.path, doc)
@@ -271,7 +335,14 @@ function world(
     if (processOutput === null) return { deny: 'no sh' }
     return { value: { exitCode: 0, stdout: processOutput, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
-  on('tool.call', () => ({ result: 'ok' }))
+  on('tool.call', async (_$, e) => {
+    // a test makes a call take time with delay(): keyed by what the call says
+    const fields = e as unknown as Record<string, unknown>
+    const key = String(fields['command'] ?? fields['prompt'] ?? fields['pattern'] ?? '')
+    const ms = delays.get(key) ?? 0
+    if (ms > 0) await new Promise(resolve => setTimeout(resolve, ms))
+    return { result: 'ok' }
+  })
   on('session.start', () => ({ cwd }))
   on('session.end', (_$, e) => ({ sessionId: e.sessionId }))
   on('turn.start', (_$, e) => ({ turnId: e.turnId }))
@@ -291,6 +362,7 @@ function world(
   return {
     files,
     writes,
+    chunks,
     statuses,
     clock,
     revoke: (holder, entries) =>
@@ -705,5 +777,211 @@ describe('resilience', () => {
     const w = world(on, { HOME: '/home/dev', GIT_PROJECTS_WORKDIR: WORK })
     await startTurn($, w)
     expect([...w.files.keys()]).toEqual([`/home/dev/.toolbelt/claims/${SESSION}.json`])
+  })
+})
+
+
+// ---- activity: what each tool call did ----
+
+const BASH = (command: string, delay_ms = 0, agentId?: string) => {
+  if (delay_ms > 0) delays.set(command, delay_ms)
+  return { tool: 'Bash', command, agentId } as never
+}
+const CALL = (tool: string, fields: Record<string, unknown>, delay_ms = 0) => {
+  const key = String(fields['prompt'] ?? fields['pattern'] ?? '')
+  if (delay_ms > 0) delays.set(key, delay_ms)
+  return { tool, ...fields } as never
+}
+
+const wait = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
+
+const lastChunk = (w: World): Chunk => {
+  const chunk = w.chunks[w.chunks.length - 1]
+  if (chunk === undefined) throw new Error('no activity chunk written')
+  return chunk
+}
+
+const parts = (t: NonNullable<Chunk['totals']>): number => t.tool_ms + t.delegated_ms + t.blocked_ms + t.model_ms
+
+describe('activity', () => {
+  test('a turn writes one final chunk: each call timed, with its tool, detail and worktree', async ($, on) => {
+    const w = world(on)
+    await startTurn($, w)
+    await $.tool.call(BASH('ls src', 30))
+    await $.tool.call(CALL('Read', { file_path: '/g/wt/repo/feature/src/a.ts' }))
+    await $.tool.call(CALL('mcp__x__thing', {}))
+    await endTurn($, w)
+
+    expect(w.chunks).toHaveLength(1)
+    const chunk = lastChunk(w)
+    expect(chunk).toMatchObject({ version: 1, holder: SESSION, agent_id: null, turn_id: 't1', seq: 0, final: true })
+    expect(chunk.calls.map(c => [c.tool, c.worktree, c.ok])).toEqual([
+      ['Bash', null, true],
+      ['Read', '/g/wt/repo/feature', true],
+      ['mcp__x__thing', null, true],
+    ])
+    expect(chunk.calls[0]?.detail).toBe('ls src')
+    expect(chunk.calls[0]?.duration_ms).toBeGreaterThanOrEqual(25)
+  })
+
+  test('reads are attributed to a worktree although they claim nothing', async ($, on) => {
+    const w = world(on)
+    await startTurn($, w)
+    await $.tool.call(CALL('Read', { file_path: '/g/wt/repo/feature/src/a.ts' }))
+    await endTurn($, w)
+
+    expect(lastChunk(w).calls[0]?.worktree).toBe('/g/wt/repo/feature')
+    expect(w.files.get(`${CLAIMS}/${SESSION}.json`)?.claims ?? []).toEqual([])
+  })
+
+  test('the shell is read through a chain: a later cd moves the rest, and an option names where a command runs', async ($, on) => {
+    const w = world(on)
+    await startTurn($, w)
+    await $.tool.call(BASH('cd /g/toolbelt && make && cd /g/wt/repo/one && ls'))
+    await $.tool.call(BASH('git -C /g/wt/repo/two status | head'))
+    await $.tool.call(BASH('pnpm --dir=/g/wt/repo/three test && echo done'))
+    await $.tool.call(BASH('cat /g/wt/repo/four/src/a.ts'))
+    await $.tool.call(BASH('echo hi'))
+    await endTurn($, w)
+
+    expect(lastChunk(w).calls.map(c => c.worktree)).toEqual([
+      '/g/wt/repo/one',
+      '/g/wt/repo/two',
+      '/g/wt/repo/three',
+      '/g/wt/repo/four',
+      // no path of its own: the one worktree the turn claimed (`git -C` claims two)
+      '/g/wt/repo/two',
+    ])
+  })
+
+  test('a call with no path takes the worktree the turn claimed, when there is just one', async ($, on) => {
+    const w = world(on)
+    await startTurn($, w)
+    await $.tool.call(CALL('mcp__x__thing', {}))
+    await $.tool.call(EDIT('/g/wt/repo/feature/src/a.ts'))
+    await endTurn($, w)
+
+    expect(lastChunk(w).calls.map(c => c.worktree)).toEqual(['/g/wt/repo/feature', '/g/wt/repo/feature'])
+  })
+
+  test('the parts of a turn add up to its wall time; parallel calls count once', async ($, on) => {
+    const w = world(on)
+    await startTurn($, w)
+    await wait(20)
+    await Promise.all([$.tool.call(BASH('sleep 1', 60)), $.tool.call(BASH('sleep 2', 60))])
+    await wait(20)
+    await $.turn.complete({ answer: '', durationMs: 200, isAborted: false, turnId: 't1', reason: 'answer' } as never)
+    await w.clock.settle()
+
+    const totals = lastChunk(w).totals
+    expect(totals).not.toBeNull()
+    if (totals === null) return
+    expect(totals.wall_ms).toBe(200)
+    expect(parts(totals)).toBe(200)
+    // two 60 ms calls at once: about 60 ms of tool time, not 120
+    expect(totals.tool_ms).toBeGreaterThanOrEqual(55)
+    expect(totals.tool_ms).toBeLessThan(110)
+    expect(totals.blocked_ms).toBe(0)
+  })
+
+  test('time blocked on a permission prompt is blocked time, not tool time', async ($, on) => {
+    const w = world(on)
+    await startTurn($, w)
+    const running = $.tool.call(BASH('rm -rf build', 120))
+    await wait(20)
+    await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: {}, permission_suggestions: [] } as never)
+    await wait(60)
+    await $.classic.PostToolUse({ tool_name: 'Bash', tool_input: {}, tool_response: {}, tool_use_id: 'u' } as never)
+    await running
+    await $.turn.complete({ answer: '', durationMs: 300, isAborted: false, turnId: 't1', reason: 'answer' } as never)
+    await w.clock.settle()
+
+    const chunk = lastChunk(w)
+    const totals = chunk.totals
+    if (totals === null) throw new Error('no totals')
+    expect(totals.blocked_ms).toBeGreaterThanOrEqual(50)
+    expect(chunk.calls[0]?.blocked_ms).toBeGreaterThanOrEqual(50)
+    // the call's 120 ms less the blocked part
+    expect(totals.tool_ms).toBeLessThan(totals.blocked_ms + 50)
+    expect(parts(totals)).toBe(totals.wall_ms)
+  })
+
+  test('a subagent wait is delegated time, and its calls are its own holder\'s', async ($, on) => {
+    const w = world(on)
+    await startTurn($, w)
+    await $.classic.SubagentStart({ agent_id: 'ag', agent_type: 'general-purpose' } as never)
+    const task = $.tool.call(CALL('Task', { prompt: 'x' }, 80))
+    await $.tool.call(BASH('ls', 0, 'ag'))
+    await task
+    await $.classic.SubagentStop({ agent_id: 'ag', agent_type: 'general-purpose', stop_hook_active: false } as never)
+    await endTurn($, w)
+
+    const sub = w.chunks.find(c => c.agent_id === 'ag')
+    const main = w.chunks.find(c => c.agent_id === null)
+    expect(sub?.holder).toBe(`${SESSION}.ag`)
+    expect(sub?.calls.map(c => c.tool)).toEqual(['Bash'])
+    expect(main?.calls.map(c => [c.tool, c.delegated])).toEqual([['Task', true]])
+    expect(main?.totals?.delegated_ms).toBeGreaterThanOrEqual(70)
+    expect(main?.totals?.tool_ms).toBe(0)
+  })
+
+  test('a call the failure hook reports is not ok', async ($, on) => {
+    const w = world(on)
+    await startTurn($, w)
+    await $.tool.call(BASH('false'))
+    await $.classic.PostToolUseFailure({ tool_name: 'Bash', tool_input: {}, error: 'x', tool_use_id: 'u' } as never)
+    await endTurn($, w)
+
+    expect(lastChunk(w).calls[0]?.ok).toBe(false)
+  })
+
+  test('a call still running when the turn ends is closed with it and marked unended', async ($, on) => {
+    const w = world(on)
+    await startTurn($, w)
+    void $.tool.call(BASH('sleep 100', 5000))
+    await wait(10)
+    await endTurn($, w, 'aborted')
+
+    const call = lastChunk(w).calls[0]
+    expect(call?.unended).toBe(true)
+    expect(call?.ok).toBeNull()
+    expect(lastChunk(w).reason).toBe('aborted')
+  })
+
+  test('the claim file says what the holder is running now', async ($, on) => {
+    const w = world(on)
+    await startTurn($, w)
+    await $.tool.call(EDIT('/g/wt/repo/feature/src/a.ts'))
+    await $.tool.call(BASH('pnpm test', 0))
+    w.clock.advance(30_000)
+    await w.clock.settle()
+
+    expect(mainDoc(w).activity).toMatchObject({ tool: 'Bash', detail: 'pnpm test', open: false })
+  })
+
+  test('a long turn writes its finished calls part way', async ($, on) => {
+    const w = world(on)
+    await startTurn($, w)
+    for (let i = 0; i < 200; i++) await $.tool.call(CALL('Grep', { pattern: `p${i}` }))
+    w.clock.advance(30_000)
+    await w.clock.settle()
+
+    expect(w.chunks.map(c => [c.seq, c.final, c.calls.length])).toEqual([[0, false, 200]])
+    await $.tool.call(CALL('Grep', { pattern: 'last' }))
+    await endTurn($, w)
+    expect(w.chunks.map(c => [c.seq, c.final, c.calls.length])).toEqual([
+      [0, false, 200],
+      [1, true, 1],
+    ])
+  })
+
+  test('a failing activity write never fails the call', async ($, on) => {
+    const w = world(on)
+    await startTurn($, w)
+    w.failWrites()
+    await $.tool.call(BASH('ls'))
+    await endTurn($, w)
+
+    expect(w.chunks).toEqual([])
   })
 })

@@ -1,5 +1,83 @@
 {
   "$defs": {
+    "ActivityBucket": {
+      "additionalProperties": false,
+      "description": "What agents called: a tool or a category of call, how many times, and\nthe call time summed over them (so parallel calls add up past the wall\ntime).",
+      "properties": {
+        "calls": {
+          "type": "integer"
+        },
+        "ms": {
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "calls",
+        "ms"
+      ],
+      "title": "ActivityBucket",
+      "type": "object"
+    },
+    "ActivityHour": {
+      "additionalProperties": false,
+      "description": "The agent turns that started in one hour (UTC): their wall time in the\nparts that add up to it, and what they called. The viewer's time zone makes\ndays of these.",
+      "properties": {
+        "blocked_ms": {
+          "type": "integer"
+        },
+        "calls": {
+          "type": "integer"
+        },
+        "categories": {
+          "items": {
+            "$ref": "#/$defs/ActivityBucket"
+          },
+          "type": "array"
+        },
+        "delegated_ms": {
+          "type": "integer"
+        },
+        "model_ms": {
+          "type": "integer"
+        },
+        "t": {
+          "type": "string"
+        },
+        "tool_ms": {
+          "type": "integer"
+        },
+        "tools": {
+          "items": {
+            "$ref": "#/$defs/ActivityBucket"
+          },
+          "type": "array"
+        },
+        "turns": {
+          "type": "integer"
+        },
+        "wall_ms": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "t",
+        "turns",
+        "calls",
+        "wall_ms",
+        "tool_ms",
+        "delegated_ms",
+        "blocked_ms",
+        "model_ms",
+        "tools",
+        "categories"
+      ],
+      "title": "ActivityHour",
+      "type": "object"
+    },
     "ActivityKind": {
       "enum": [
         "opened",
@@ -583,6 +661,9 @@
     "Aggregate": {
       "additionalProperties": false,
       "properties": {
+        "activity": {
+          "$ref": "#/$defs/AggregateActivity"
+        },
         "coverage": {
           "$ref": "#/$defs/AggregateCoverage"
         },
@@ -649,11 +730,40 @@
         "prs",
         "samples",
         "waiting_on",
+        "activity",
         "lanes",
         "coverage",
         "notes"
       ],
       "title": "Aggregate",
+      "type": "object"
+    },
+    "AggregateActivity": {
+      "additionalProperties": false,
+      "description": "What agents did in their turns (see ``agent_activity``), recorded by the\nClaude Code plugin: only hours with a turn are listed.",
+      "properties": {
+        "hours": {
+          "items": {
+            "$ref": "#/$defs/ActivityHour"
+          },
+          "type": "array"
+        },
+        "since": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "hours",
+        "since"
+      ],
+      "title": "AggregateActivity",
       "type": "object"
     },
     "AggregateCoverage": {
@@ -1589,6 +1699,17 @@
       "additionalProperties": false,
       "description": "A live holder of a claim on a branch (see ``task_claims``). Only live\nholders are sent: an expired one is gone.",
       "properties": {
+        "activity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HolderActivity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "age": {
           "$ref": "#/$defs/Age"
         },
@@ -2573,6 +2694,32 @@
         "build"
       ],
       "title": "HelloEvent",
+      "type": "object"
+    },
+    "HolderActivity": {
+      "additionalProperties": false,
+      "description": "What a claim's holder is running: the tool call in flight (``open``),\nelse the last that ended.",
+      "properties": {
+        "detail": {
+          "type": "string"
+        },
+        "open": {
+          "type": "boolean"
+        },
+        "since": {
+          "type": "string"
+        },
+        "tool": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool",
+        "detail",
+        "since",
+        "open"
+      ],
+      "title": "HolderActivity",
       "type": "object"
     },
     "HolderKind": {

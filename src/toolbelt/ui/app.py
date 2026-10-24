@@ -55,6 +55,8 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 
+from toolbelt.agent_activity.chunks import ACTIVITY_DIRNAME
+from toolbelt.agent_activity.ingest import ActivityIngest
 from toolbelt.autonomous_agents.auth import claude_signed_in
 from toolbelt.autonomous_agents.branch_state import RepoFactsCache, inspect_branch
 from toolbelt.autonomous_agents.ci_history import ci_explainer
@@ -397,6 +399,10 @@ def _claims_dir() -> Path:
     return state_dir() / CLAIMS_DIRNAME
 
 
+def _activity_dir() -> Path:
+    return state_dir() / ACTIVITY_DIRNAME
+
+
 def _record_claim(observation: ClaimObservation) -> None:
     store = StackStore(default_db_path())
     try:
@@ -513,6 +519,7 @@ def create_app(
     search_history: PageRunner | None = None,
     stored_history: Callable[[], StoredHistory] = read_history,
     claims_dir: Callable[[], Path] = _claims_dir,
+    activity_dir: Callable[[], Path] = _activity_dir,
     claim_tasks: Callable[[], list[TrackedTask]] = _claim_tasks,
     record_claim: Callable[[ClaimObservation], None] = _record_claim,
     claims_tick: float | None = None,
@@ -693,6 +700,10 @@ def create_app(
         wall_clock=wall_clock,
         tick=min(tick, CLAIMS_TICK_SECONDS) if claims_tick is None else claims_tick,
         deciding=lambda repo_id, branch: (repo_id, branch) in deciding_keys,
+    )
+
+    activity = ActivityIngest(
+        directory=activity_dir, tasks=claim_tasks, wall_clock=wall_clock
     )
 
     spend = spend_module.SpendFeed(
@@ -1093,6 +1104,7 @@ def create_app(
             asyncio.create_task(refresher.run()),
             asyncio.create_task(task_feed.run()),
             asyncio.create_task(claims.run()),
+            asyncio.create_task(activity.run()),
             asyncio.create_task(spend.run()),
             asyncio.create_task(dispatcher.run()),
             asyncio.create_task(untracked_feed.run()),

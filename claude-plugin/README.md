@@ -7,7 +7,7 @@ This folder is a plugin marketplace (`toolbelt`) holding two independent mods.
 
 | Mod | Folder | What it does |
 | --- | --- | --- |
-| `toolbelt-claims` | this folder | writes claim files so `tt` knows which worktrees an agent is using (below) |
+| `toolbelt-claims` | this folder | writes claim files so `tt` knows which worktrees an agent is using, and activity files with what each turn did (below) |
 | `toolbelt-usage` | `mods/usage-limits/` | draws the account's usage limits above the prompt as a bar per window with a pace line; see `mods/usage-limits/README.md` |
 
 ## toolbelt-claims
@@ -58,6 +58,24 @@ Files are written only on a state change, the first touch of a new worktree or
 ref in a turn, and the heartbeat, never per tool call. Write errors are swallowed
 (debug log only).
 
+## What each turn did
+
+The same mod times every tool call (the hook wraps the call; it never changes
+what the call does or returns) and keeps them in memory for the turn. At turn
+end (and every five minutes or 200 calls in a long turn) it writes a chunk file
+to `$TOOLBELT_HOME/activity/<holder>.<turn>.<seq>.json`: for each call the tool,
+its command or path, start, duration, time blocked on a permission prompt,
+whether it succeeded, the worktree it was about and whether it was a background
+or delegated (subagent) call; the final chunk adds the turn's totals: the wall
+time split into tool, delegated, blocked and model time, which add up to it.
+`tt ui` reads and removes the files. The contract and how the totals are worked
+out are in `docs/agent-activity.md`. The claim file also says what the holder is
+running now (`activity`, optional).
+
+Nothing is written from the call itself, and the mod still never spawns `tt`.
+Reads claim nothing, but a read is attributed to a worktree in the activity
+(its path, or where the session is).
+
 ## Install
 
 ```sh
@@ -106,8 +124,10 @@ recovering: claims are turn-scoped.
   already expired (`ttl_seconds` 0, no claims) instead of deleting it, and
   writes are a plain overwrite rather than temp file plus rename. Readers must
   skip a file that fails to parse and may garbage-collect expired files.
-- Bash is judged by the tracked working directory, a leading `cd <path> &&`,
-  and `git -C <path>`. A path computed inside the command is not seen.
+- A claim from Bash is judged by the tracked working directory, a leading
+  `cd <path> &&`, and `git -C <path>`. A path computed inside the command is not
+  seen. (The activity attribution reads the whole chain: a `cd` anywhere moves
+  the rest, and `-C`, `--dir`, `--project` name where a command runs.)
 - Loaded per session: sessions that started before the install do not have it.
 - The `.claude/worktrees/<name>` layout is not recognised, only `wt/<repo>/<name>`.
 

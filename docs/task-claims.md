@@ -169,6 +169,13 @@ These are not new fields; they pin down what the contract left open.
 - **Unknown extra fields** in a v1 file are ignored (so a writer may add
   fields without a version bump, as `pid` and `process_started_at` were
   added); an unknown `version` is unreadable.
+- **`activity`** (optional, no version bump): what the holder is running, as
+  `{"tool", "detail", "since", "open"}`: the tool call in flight (`open`
+  true; `detail` is the command or path, cut to 200 characters), else the last
+  that ended. It is written with the heartbeat, so it can be up to 30 s old.
+  Readers that do not know it ignore it; it plays no part in liveness. The
+  card shows it on the holder's chip. See [agent activity](agent-activity.md)
+  for the history.
 - **A human holder counts as a holder**: a live `working` `human.*` claim
   also makes the task "With an agent" (it is how an agent without the plugin
   is marked).

@@ -120,6 +120,42 @@ export function aggregate(overrides: Partial<Aggregate> = {}): Aggregate {
         })),
       },
     ],
+    activity: {
+      since: "2026-10-05T09:00:00Z",
+      hours: [
+        {
+          t: "2026-10-05T09:00:00Z",
+          turns: 2,
+          calls: 5,
+          wall_ms: 600_000,
+          tool_ms: 120_000,
+          delegated_ms: 0,
+          blocked_ms: 60_000,
+          model_ms: 420_000,
+          tools: [
+            { name: "Bash", calls: 3, ms: 100_000 },
+            { name: "Edit", calls: 2, ms: 1_000 },
+          ],
+          categories: [
+            { name: "test", calls: 1, ms: 80_000 },
+            { name: "vcs", calls: 2, ms: 20_000 },
+            { name: "edit", calls: 2, ms: 1_000 },
+          ],
+        },
+        {
+          t: "2026-10-06T14:00:00Z",
+          turns: 1,
+          calls: 2,
+          wall_ms: 300_000,
+          tool_ms: 60_000,
+          delegated_ms: 90_000,
+          blocked_ms: 0,
+          model_ms: 150_000,
+          tools: [{ name: "Task", calls: 1, ms: 90_000 }],
+          categories: [{ name: "subagent", calls: 1, ms: 90_000 }],
+        },
+      ],
+    },
     coverage: {
       task_starts_since: "2026-09-30T08:00:00Z",
       tasks_without_pr: 1,

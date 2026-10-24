@@ -476,6 +476,68 @@ _MIGRATIONS: list[tuple[str, ...]] = [
         # none: they count as working.
         "ALTER TABLE claim_spans ADD COLUMN state TEXT",
     ),
+    (
+        # What agents do in a turn (see ``agent_activity``): the tool calls the
+        # plugin recorded, kept for a while (``agent_tool_calls``), and one row
+        # per turn that is kept: its wall time split into tool, delegated,
+        # blocked and model time, and its calls and summed call time by tool
+        # and by category (``agent_turns``). ``agent_activity_chunks`` makes
+        # reading a chunk file twice harmless.
+        """
+        CREATE TABLE agent_tool_calls (
+            id INTEGER PRIMARY KEY,
+            holder TEXT NOT NULL,
+            turn_id TEXT NOT NULL,
+            task_id TEXT,
+            repo_id INTEGER,
+            tool TEXT NOT NULL,
+            detail TEXT NOT NULL,
+            program TEXT,
+            subcommand TEXT,
+            category TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            duration_ms INTEGER NOT NULL,
+            blocked_ms INTEGER NOT NULL,
+            ok INTEGER,
+            unended INTEGER NOT NULL,
+            background INTEGER NOT NULL,
+            delegated INTEGER NOT NULL,
+            worktree TEXT
+        )
+        """,
+        "CREATE INDEX agent_tool_calls_by_time ON agent_tool_calls (started_at)",
+        "CREATE INDEX agent_tool_calls_by_turn ON agent_tool_calls (holder, turn_id)",
+        """
+        CREATE TABLE agent_turns (
+            id INTEGER PRIMARY KEY,
+            holder TEXT NOT NULL,
+            turn_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            agent_id TEXT,
+            task_id TEXT,
+            repo_id INTEGER,
+            started_at TEXT NOT NULL,
+            ended_at TEXT NOT NULL,
+            reason TEXT,
+            wall_ms INTEGER NOT NULL,
+            tool_ms INTEGER NOT NULL,
+            delegated_ms INTEGER NOT NULL,
+            blocked_ms INTEGER NOT NULL,
+            model_ms INTEGER NOT NULL,
+            calls INTEGER NOT NULL,
+            by_tool TEXT NOT NULL,
+            by_category TEXT NOT NULL,
+            UNIQUE (holder, turn_id)
+        )
+        """,
+        "CREATE INDEX agent_turns_by_time ON agent_turns (started_at)",
+        """
+        CREATE TABLE agent_activity_chunks (
+            key TEXT PRIMARY KEY,
+            ingested_at TEXT NOT NULL
+        )
+        """,
+    ),
 ]
 
 
@@ -757,6 +819,64 @@ class StatusTransition:
     at: datetime
     #: The task the branch was (``None``: it was not tracked).
     task_id: str | None = None
+
+
+@dataclass(frozen=True)
+class ToolCallRow:
+    """A tool call an agent made (``agent_tool_calls``)."""
+
+    holder: str
+    turn_id: str
+    task_id: str | None
+    repo_id: int | None
+    tool: str
+    detail: str
+    program: str | None
+    subcommand: str | None
+    category: str
+    started_at: datetime
+    duration_ms: int
+    blocked_ms: int
+    #: ``None``: it never ended (the turn did first).
+    ok: bool | None
+    unended: bool
+    background: bool
+    delegated: bool
+    worktree: str | None
+
+
+@dataclass(frozen=True)
+class TurnTotals:
+    """A turn's wall time in parts that add up to it: tool time (calls, less
+    blocked and delegated time), delegated (waiting on subagents), blocked
+    (permission prompts and dialogs) and model (the rest)."""
+
+    wall_ms: int
+    tool_ms: int
+    delegated_ms: int
+    blocked_ms: int
+    model_ms: int
+
+
+@dataclass(frozen=True)
+class AgentTurn:
+    """One agent turn, with what it called (``agent_turns``). ``by_tool`` and
+    ``by_category`` are ``{name: (calls, summed call ms)}``: call time summed
+    over parallel calls, so it can exceed the turn's tool time."""
+
+    holder: str
+    turn_id: str
+    session_id: str
+    agent_id: str | None
+    task_id: str | None
+    repo_id: int | None
+    started_at: datetime
+    ended_at: datetime
+    reason: str | None
+    totals: TurnTotals
+    calls: int
+    by_tool: dict[str, tuple[int, int]]
+    by_category: dict[str, tuple[int, int]]
 
 
 @dataclass(frozen=True)
@@ -1899,6 +2019,234 @@ class StackStore:
         )
         return [
             (r["task_id"], r["stage"], datetime.fromisoformat(r["moved_at"]))
+            for r in rows
+        ]
+
+    # ---- agent activity -----------------------------------------------------
+
+    def ingest_activity_chunk(
+        self,
+        key: str,
+        calls: Sequence[ToolCallRow],
+        *,
+        turn: tuple[
+            str, str, str, str | None, datetime, datetime, str | None, TurnTotals
+        ]
+        | None,
+        at: datetime,
+    ) -> bool:
+        """Stores a chunk's calls, once (``key`` names the chunk). A final
+        chunk (``turn``: holder, turn id, session, agent, start, end, reason,
+        totals) also closes the turn: its row is worked out from all the
+        calls stored for it. Returns whether the chunk was new."""
+        with self._write() as conn:
+            if conn.execute(
+                "SELECT 1 FROM agent_activity_chunks WHERE key = ?", (key,)
+            ).fetchone():
+                return False
+            conn.execute(
+                "INSERT INTO agent_activity_chunks (key, ingested_at) VALUES (?, ?)",
+                (key, _iso(at)),
+            )
+            for call in calls:
+                conn.execute(
+                    "INSERT INTO agent_tool_calls (holder, turn_id, task_id, repo_id, "
+                    "tool, detail, program, subcommand, category, started_at, "
+                    "duration_ms, blocked_ms, ok, unended, background, delegated, "
+                    "worktree) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        call.holder,
+                        call.turn_id,
+                        call.task_id,
+                        call.repo_id,
+                        call.tool,
+                        call.detail,
+                        call.program,
+                        call.subcommand,
+                        call.category,
+                        _iso(call.started_at),
+                        call.duration_ms,
+                        call.blocked_ms,
+                        None if call.ok is None else int(call.ok),
+                        int(call.unended),
+                        int(call.background),
+                        int(call.delegated),
+                        call.worktree,
+                    ),
+                )
+            if turn is not None:
+                self._close_turn(conn, *turn)
+            elif calls:
+                # A chunk that arrives after its turn closed: redo the row.
+                closed = conn.execute(
+                    "SELECT * FROM agent_turns WHERE holder = ? AND turn_id = ?",
+                    (calls[0].holder, calls[0].turn_id),
+                ).fetchone()
+                if closed is not None:
+                    self._close_turn(
+                        conn,
+                        closed["holder"],
+                        closed["turn_id"],
+                        closed["session_id"],
+                        closed["agent_id"],
+                        datetime.fromisoformat(closed["started_at"]),
+                        datetime.fromisoformat(closed["ended_at"]),
+                        closed["reason"],
+                        TurnTotals(
+                            wall_ms=closed["wall_ms"],
+                            tool_ms=closed["tool_ms"],
+                            delegated_ms=closed["delegated_ms"],
+                            blocked_ms=closed["blocked_ms"],
+                            model_ms=closed["model_ms"],
+                        ),
+                    )
+        return True
+
+    def _close_turn(
+        self,
+        conn: sqlite3.Connection,
+        holder: str,
+        turn_id: str,
+        session_id: str,
+        agent_id: str | None,
+        started_at: datetime,
+        ended_at: datetime,
+        reason: str | None,
+        totals: TurnTotals,
+    ) -> None:
+        rows = conn.execute(
+            "SELECT tool, category, duration_ms, blocked_ms, task_id, repo_id "
+            "FROM agent_tool_calls WHERE holder = ? AND turn_id = ?",
+            (holder, turn_id),
+        ).fetchall()
+        by_tool: dict[str, list[int]] = {}
+        by_category: dict[str, list[int]] = {}
+        owners: dict[tuple[str | None, int | None], int] = {}
+        for row in rows:
+            active = max(row["duration_ms"] - row["blocked_ms"], 0)
+            for table, name in ((by_tool, row["tool"]), (by_category, row["category"])):
+                entry = table.setdefault(name, [0, 0])
+                entry[0] += 1
+                entry[1] += active
+            if row["task_id"] is not None:
+                key = (row["task_id"], row["repo_id"])
+                owners[key] = owners.get(key, 0) + 1
+        task_id, repo_id = (
+            max(owners, key=lambda k: owners[k]) if owners else (None, None)
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO agent_turns (holder, turn_id, session_id, "
+            "agent_id, task_id, repo_id, started_at, ended_at, reason, wall_ms, "
+            "tool_ms, delegated_ms, blocked_ms, model_ms, calls, by_tool, "
+            "by_category) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                holder,
+                turn_id,
+                session_id,
+                agent_id,
+                task_id,
+                repo_id,
+                _iso(started_at),
+                _iso(ended_at),
+                reason,
+                totals.wall_ms,
+                totals.tool_ms,
+                totals.delegated_ms,
+                totals.blocked_ms,
+                totals.model_ms,
+                len(rows),
+                json.dumps(by_tool, separators=(",", ":")),
+                json.dumps(by_category, separators=(",", ":")),
+            ),
+        )
+
+    def close_unfinished_turns(self, *, idle_for: timedelta, now: datetime) -> int:
+        """Closes the turns that have calls but no final chunk and have not
+        recorded one for ``idle_for`` (the writer was killed). Their parts are
+        approximated from the calls: tool time is the summed call time, not
+        the union. Returns how many were closed."""
+        cutoff = _iso(now - idle_for)
+        with self._write() as conn:
+            stale = conn.execute(
+                "SELECT holder, turn_id, MIN(started_at) AS first, "
+                "MAX(started_at) AS last FROM agent_tool_calls c "
+                "WHERE NOT EXISTS (SELECT 1 FROM agent_turns t WHERE "
+                "t.holder = c.holder AND t.turn_id = c.turn_id) "
+                "GROUP BY holder, turn_id HAVING MAX(started_at) < ?",
+                (cutoff,),
+            ).fetchall()
+            for row in stale:
+                parts = conn.execute(
+                    "SELECT COALESCE(SUM(duration_ms - blocked_ms), 0) AS tool, "
+                    "COALESCE(SUM(blocked_ms), 0) AS blocked, "
+                    "COALESCE(SUM(CASE WHEN delegated THEN duration_ms - blocked_ms "
+                    "ELSE 0 END), 0) AS delegated FROM agent_tool_calls "
+                    "WHERE holder = ? AND turn_id = ?",
+                    (row["holder"], row["turn_id"]),
+                ).fetchone()
+                first = datetime.fromisoformat(row["first"])
+                last = datetime.fromisoformat(row["last"])
+                wall = max(
+                    int((last - first).total_seconds() * 1000),
+                    parts["tool"] + parts["blocked"],
+                )
+                self._close_turn(
+                    conn,
+                    row["holder"],
+                    row["turn_id"],
+                    row["holder"].split(".")[0],
+                    None,
+                    first,
+                    last,
+                    "unfinished",
+                    TurnTotals(
+                        wall_ms=wall,
+                        tool_ms=parts["tool"] - parts["delegated"],
+                        delegated_ms=parts["delegated"],
+                        blocked_ms=parts["blocked"],
+                        model_ms=wall - parts["tool"] - parts["blocked"],
+                    ),
+                )
+        return len(stale)
+
+    def prune_tool_calls(self, before: datetime) -> int:
+        """Deletes the raw calls that started before ``before``; the turns'
+        rows stay."""
+        with self._write() as conn:
+            return conn.execute(
+                "DELETE FROM agent_tool_calls WHERE started_at < ?", (_iso(before),)
+            ).rowcount
+
+    def agent_turns(self, *, since: datetime | None = None) -> list[AgentTurn]:
+        """Turns that started at or after ``since``, oldest first."""
+        rows = self._conn.execute(
+            "SELECT * FROM agent_turns WHERE started_at >= ? ORDER BY started_at, id",
+            (_iso(since or datetime.min.replace(tzinfo=UTC)),),
+        )
+        return [
+            AgentTurn(
+                holder=r["holder"],
+                turn_id=r["turn_id"],
+                session_id=r["session_id"],
+                agent_id=r["agent_id"],
+                task_id=r["task_id"],
+                repo_id=r["repo_id"],
+                started_at=datetime.fromisoformat(r["started_at"]),
+                ended_at=datetime.fromisoformat(r["ended_at"]),
+                reason=r["reason"],
+                totals=TurnTotals(
+                    wall_ms=r["wall_ms"],
+                    tool_ms=r["tool_ms"],
+                    delegated_ms=r["delegated_ms"],
+                    blocked_ms=r["blocked_ms"],
+                    model_ms=r["model_ms"],
+                ),
+                calls=r["calls"],
+                by_tool={k: (v[0], v[1]) for k, v in json.loads(r["by_tool"]).items()},
+                by_category={
+                    k: (v[0], v[1]) for k, v in json.loads(r["by_category"]).items()
+                },
+            )
             for r in rows
         ]
 

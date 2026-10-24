@@ -5,15 +5,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchAggregate } from "../api/client";
 import type { Aggregate, Tone, WaitingOnKey } from "../api/generated";
 import { formatBucketDate } from "../logic/aggregateChart";
+import { activityBuckets, formatDuration } from "../logic/activity";
 import { laneLayers, STATUS_LANE } from "../logic/aggregateLanes";
 import { bucketDays, leadTimeSeries, STAGES, type StageKey } from "../logic/leadTime";
 import { formatAbsolute } from "../logic/format";
 import { browserTimeZone, formatLocalDate, windowStart } from "../logic/localTime";
-import { linesThroughput, throughput } from "../logic/throughput";
+import { granularityFor, linesThroughput, throughput } from "../logic/throughput";
 import type { Counts } from "../store/selectors";
 import { NEXT_SECTIONS } from "../logic/layout";
 import { useApp, useAppStore } from "../store/StoreContext";
-import { LeadTimeChart, LinesChart, MixChart, ThroughputChart, withHatches, type LeadStageStyle } from "./AggregateCharts";
+import { LeadTimeChart, LinesChart, MixChart, StackedBarsChart, ThroughputChart, withHatches, type LeadStageStyle } from "./AggregateCharts";
 import { FilterBar } from "./FilterBar";
 
 type Load =
@@ -117,6 +118,48 @@ export function useAggregate(
 /** The coarse classes: the sections of the grouped view, so the legend reads
  * as the cards do. */
 const WHO_TONE: Record<WaitingOnKey, Tone> = { you: "accent", agent: "purple", auto: "purple", ci: "amber", others: "gray" };
+
+/** What a category of agent call is called, and the palette tone it uses. */
+const CATEGORY_LABELS: Record<string, string> = {
+  edit: "Editing",
+  read: "Reading",
+  search: "Searching",
+  files: "Files",
+  vcs: "Git",
+  github: "GitHub",
+  test: "Tests",
+  build: "Builds",
+  lint: "Lint and types",
+  deps: "Dependencies",
+  run: "Running code",
+  network: "Network",
+  infra: "Infrastructure",
+  toolbelt: "Toolbelt",
+  subagent: "Subagents",
+  web: "Web",
+  mcp: "MCP tools",
+  other: "Other",
+};
+const CATEGORY_TONES: Record<string, Tone> = {
+  edit: "green",
+  read: "gray",
+  search: "gray",
+  files: "gray",
+  vcs: "purple",
+  github: "purple",
+  test: "amber",
+  build: "amber",
+  lint: "red",
+  deps: "accent",
+  run: "accent",
+  network: "gray",
+  infra: "accent",
+  toolbelt: "purple",
+  subagent: "purple",
+  web: "gray",
+  mcp: "accent",
+  other: "gray",
+};
 
 /** The lead-time steps' lines use the page's existing tones. */
 const LEAD_TONES: Record<StageKey, Tone> = {
@@ -246,6 +289,21 @@ export function AggregatePanels({
       legend: `${LEAD_DESCRIPTIONS[key]} Each bar is the median over the PRs merged in a group.`,
     })),
   ) as LeadStageStyle[];
+  const activity = activityBuckets(data.activity, { windowStart: start, now, weeks, timeZone });
+  const timeStyles = withHatches([
+    { key: "model", label: "Model", tone: "accent", legend: "Thinking, streaming and API latency: the part of a turn that is neither tool nor waiting." },
+    { key: "tool", label: "Tools", tone: "green", legend: "Tool calls running, less the time blocked on you and the time waiting on subagents." },
+    { key: "delegated", label: "Subagents", tone: "purple", legend: "Waiting on a subagent the turn started." },
+    { key: "blocked", label: "Blocked on you", tone: "amber", legend: "Permission prompts and dialogs waiting for an answer." },
+  ]);
+  const categoryStyles = withHatches(
+    activity.categories.map((category) => ({
+      key: category.name,
+      label: CATEGORY_LABELS[category.name] ?? category.name,
+      tone: CATEGORY_TONES[category.name] ?? "gray",
+      legend: `Call time spent on ${CATEGORY_LABELS[category.name]?.toLowerCase() ?? category.name}.`,
+    })),
+  );
   const layers = catalog ? laneLayers(data, catalog) : [];
   const statusLayer = layers.find((layer) => layer.lane === STATUS_LANE);
   const startsAfterWindow = Date.parse(coverage.task_starts_since) > start;
@@ -352,6 +410,65 @@ export function AggregatePanels({
           )}
         </div>
       ))}
+      <section className="agg-activity" aria-label="Agent activity">
+        <h2>Agent activity</h2>
+        {data.activity.since === null ? (
+          <p className="notice">No agent turns have been recorded yet: the Claude Code plugin records them (update it with claude-plugin/install.sh, then start a new session).</p>
+        ) : (
+          <>
+            <p className="agg-summary">
+              {`${activity.totals.turns.toLocaleString("en-US")} turns and ${activity.totals.calls.toLocaleString("en-US")} tool calls in this window, ${formatDuration(activity.totals.wallMs)} of agent time. Recorded since ${formatBucketDate(data.activity.since)}; earlier turns are unknown.`}
+            </p>
+            <StackedBarsChart
+              title="Agent time"
+              description={`What agent turns spent their time on in each local ${granularityFor(weeks)}, in hours: the model (thinking, streaming, API latency), tool calls, waiting on subagents, and blocked on you (permission prompts). The parts add up to the turns' wall time and parallel calls count once.`}
+              series={timeStyles}
+              starts={activity.buckets.map((b) => new Date(b.start).toISOString())}
+              values={[activity.model, activity.tool, activity.delegated, activity.blocked].map((row) => row.map((ms) => ms / 3_600_000))}
+              bucketHours={24}
+              timeZone={timeZone}
+              format={(hours) => formatDuration(hours * 3_600_000)}
+              yLabel="agent time"
+              measure="took"
+              empty="No agent turns in this window."
+            />
+            <StackedBarsChart
+              title="What agents called"
+              description="Call time by kind of call in each local day or week: commands by the program they run (tests, builds, git, search ...), other tools by what they do (edit, read, search, web, subagents). Call time is summed over calls, so parallel calls add up past the time above."
+              series={categoryStyles}
+              starts={activity.buckets.map((b) => new Date(b.start).toISOString())}
+              values={activity.categories.map((category) => category.values.map((ms) => ms / 3_600_000))}
+              bucketHours={24}
+              timeZone={timeZone}
+              format={(hours) => formatDuration(hours * 3_600_000)}
+              yLabel="call time"
+              measure="took"
+              empty="No tool calls in this window."
+            />
+            {activity.tools.length > 0 && (
+              <table className="agg-table agg-tools">
+                <caption>Tools by call time in this window</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Tool</th>
+                    <th scope="col">Calls</th>
+                    <th scope="col">Call time</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {activity.tools.slice(0, 10).map((entry) => (
+                    <tr key={entry.name}>
+                      <th scope="row">{entry.name}</th>
+                      <td>{entry.calls.toLocaleString("en-US")}</td>
+                      <td>{formatDuration(entry.ms)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </>
+        )}
+      </section>
       <details className="agg-notes">
         <summary>What is approximated or not reconstructable</summary>
         <dl>

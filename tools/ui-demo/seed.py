@@ -18,6 +18,10 @@ lane of the card timelines (docs/timeline-lanes.md): conflict, CI and review
 thread changes, agent runs, claim spans, Slack posts, a queued merge,
 decisions and a task tracker move (`write_lanes`).
 
+It writes the agent activity the plugin would have recorded: a few weeks of
+turns as chunk files in DEST/home/activity (`write_activity`), which `tt ui`
+reads when it starts.
+
 It writes task claims (what a Claude Code session claims; docs/task-claims.md)
 into DEST/home/claims: a working holder on a branch with a failing CI, an idle
 one, a blocked one, an expired one and a revoked one. The live holders have
@@ -444,6 +448,117 @@ def write_lanes(now: datetime) -> None:
         store.close()
 
 
+#: What the demo agents call: (tool, detail, typical ms).
+_CALLS = [
+    ("Bash", "git status", 400),
+    ("Bash", "git diff --stat", 600),
+    ("Bash", "uv run pytest tests/test_cache.py -q", 24_000),
+    ("Bash", "pnpm --dir web test --run", 18_000),
+    ("Bash", "uv run ruff check src", 1_500),
+    ("Bash", "rg -n 'cache' src | head -20", 300),
+    ("Bash", "gh pr view 101 --json state", 900),
+    ("Bash", "cd /demo/wt/demo-app/auth-api && make lint", 6_000),
+    ("Bash", "curl -s localhost:8771/api/snapshot | head -c 200", 250),
+    ("Read", "/demo/wt/demo-app/auth-api/src/auth.py", 40),
+    ("Read", "/demo/wt/demo-app/auth-api/README.md", 30),
+    ("Grep", "def login", 120),
+    ("Glob", "src/**/*.py", 60),
+    ("Edit", "/demo/wt/demo-app/auth-api/src/auth.py", 80),
+    ("Write", "/demo/wt/demo-app/auth-api/tests/test_auth.py", 70),
+    ("WebFetch", "https://example.com/docs", 1_800),
+    ("mcp__demo__lookup", "", 700),
+]
+
+
+def write_activity(home: Path, now: datetime) -> None:
+    """Chunk files in the plugin's shape (docs/agent-activity.md), as many
+    turns as a few busy weeks: `tt ui` reads them when it starts, so the
+    aggregate view's agent activity has something to show."""
+    rng = random.Random(20261012)
+    out = home / "activity"
+    out.mkdir(parents=True, exist_ok=True)
+
+    def z(time: datetime) -> str:
+        return time.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    for day in range(21):
+        if (now - timedelta(days=day)).weekday() >= 5 and rng.random() < 0.8:
+            continue  # mostly weekdays
+        for turn in range(rng.randint(2, 7)):
+            started = (now - timedelta(days=day)).replace(
+                hour=rng.randint(8, 19),
+                minute=rng.randint(0, 59),
+                second=0,
+                microsecond=0,
+            ) - timedelta(minutes=rng.randint(0, 59))
+            if started > now:
+                continue
+            clock = started
+            calls = []
+            tool = delegated = blocked = 0
+            for _ in range(rng.randint(5, 30)):
+                clock += timedelta(
+                    milliseconds=rng.randint(2_000, 25_000)
+                )  # the model thinks
+                name, detail, typical = rng.choice(_CALLS)
+                ms = max(int(typical * rng.uniform(0.4, 2.0)), 10)
+                waits_on_subagent = rng.random() < 0.06
+                if waits_on_subagent:
+                    name, detail, ms = (
+                        "Task",
+                        "explore the cache layer",
+                        rng.randint(60_000, 240_000),
+                    )
+                stuck = (
+                    20_000 if name == "Bash" and rng.random() < 0.05 else 0
+                )  # a prompt
+                calls.append(
+                    {
+                        "tool": name,
+                        "detail": detail,
+                        "started_at": z(clock),
+                        "duration_ms": ms + stuck,
+                        "blocked_ms": stuck,
+                        "ok": rng.random() > 0.06,
+                        "unended": False,
+                        "worktree": None,
+                        "background": False,
+                        "delegated": waits_on_subagent,
+                    }
+                )
+                clock += timedelta(milliseconds=ms + stuck)
+                if waits_on_subagent:
+                    delegated += ms
+                else:
+                    tool += ms
+                blocked += stuck
+            wall = int((clock - started).total_seconds() * 1000) + rng.randint(
+                1_000, 20_000
+            )
+            turn_id = f"demo-{day:02d}-{turn}"
+            document = {
+                "version": 1,
+                "holder": "sess-demo",
+                "session_id": "sess-demo",
+                "agent_id": None,
+                "turn_id": turn_id,
+                "seq": 0,
+                "final": True,
+                "started_at": z(started),
+                "ended_at": z(started + timedelta(milliseconds=wall)),
+                "reason": "answer",
+                "totals": {
+                    "wall_ms": wall,
+                    "tool_ms": tool,
+                    "delegated_ms": delegated,
+                    "blocked_ms": blocked,
+                    "model_ms": wall - tool - delegated - blocked,
+                },
+                "calls": calls,
+            }
+            (out / f"sess-demo.{turn_id}.0.json").write_text(json.dumps(document))
+
+
 def seed(dest: Path, deep: int) -> None:
     repos = dest / "repos"
     for name in STACKS:
@@ -508,6 +623,7 @@ def seed(dest: Path, deep: int) -> None:
     db.close()
     write_lanes(now)
     write_claims(Path(os.environ["TOOLBELT_HOME"]), now)
+    write_activity(Path(os.environ["TOOLBELT_HOME"]), now)
 
 
 def main() -> None:

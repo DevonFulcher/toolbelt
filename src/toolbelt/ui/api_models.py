@@ -475,6 +475,18 @@ class Link(Model):
     href: str | None
 
 
+class HolderActivity(Model):
+    """What a claim's holder is running: the tool call in flight (``open``),
+    else the last that ended."""
+
+    tool: str
+    #: The command or path, cut short.
+    detail: str
+    #: ISO time the call started.
+    since: str
+    open: bool
+
+
 class ClaimHolder(Model):
     """A live holder of a claim on a branch (see ``task_claims``). Only live
     holders are sent: an expired one is gone."""
@@ -490,6 +502,8 @@ class ClaimHolder(Model):
     age: Age
     #: Working, but not heard from for a while: probably hung.
     stale: bool
+    #: What it is running, when the plugin says.
+    activity: HolderActivity | None = None
 
 
 class BranchClaim(Model):
@@ -789,6 +803,48 @@ class AggregateLane(Model):
     events: list[AggregateLaneEvents]
 
 
+class ActivityBucket(Model):
+    """What agents called: a tool or a category of call, how many times, and
+    the call time summed over them (so parallel calls add up past the wall
+    time)."""
+
+    name: str
+    calls: int
+    ms: int
+
+
+class ActivityHour(Model):
+    """The agent turns that started in one hour (UTC): their wall time in the
+    parts that add up to it, and what they called. The viewer's time zone makes
+    days of these."""
+
+    #: ISO time the hour starts (UTC).
+    t: str
+    turns: int
+    calls: int
+    wall_ms: int
+    #: Calls, less time blocked on you and waiting on subagents.
+    tool_ms: int
+    #: Waiting on subagents.
+    delegated_ms: int
+    #: Permission prompts and dialogs.
+    blocked_ms: int
+    #: The rest: thinking, streaming, API latency.
+    model_ms: int
+    tools: list[ActivityBucket]
+    categories: list[ActivityBucket]
+
+
+class AggregateActivity(Model):
+    """What agents did in their turns (see ``agent_activity``), recorded by the
+    Claude Code plugin: only hours with a turn are listed."""
+
+    hours: list[ActivityHour]
+    #: When the first turn was recorded, ``None`` before any: earlier turns are
+    #: unknown, not absent.
+    since: str | None
+
+
 class Aggregate(Model):
     weeks: int
     window_start: str
@@ -805,6 +861,8 @@ class Aggregate(Model):
     samples: AggregateSamples
     #: Who the tasks' Next waits on (the "next" lane, grouped).
     waiting_on: list[WaitingOn]
+    #: Agent turns: time by kind and what they called (not status: activity).
+    activity: AggregateActivity
     #: One layer per lane the aggregate counts (``timeline_lanes.LANE_SOURCES``
     #: without an ``aggregate_skip``), sampled at ``mix.starts``.
     lanes: list[AggregateLane]

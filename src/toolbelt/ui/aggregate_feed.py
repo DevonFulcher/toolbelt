@@ -34,6 +34,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from toolbelt.git.stack.store import (
+    AgentTurn,
     AggregatePrRow,
     AggregateSync,
     RemovedBranch,
@@ -259,6 +260,8 @@ class StoredHistory:
     since: datetime
     #: What each lane recorded for each task (``lane_history``), by task id.
     lanes: dict[str, list[api.TimelineLane]] = field(default_factory=dict)
+    #: The agent turns of the last year (``agent_activity``).
+    turns: list[AgentTurn] = field(default_factory=list)
 
 
 def read_history() -> StoredHistory:
@@ -274,6 +277,13 @@ def read_history() -> StoredHistory:
             tracked=[row for row in store.tracked_branch_facts() if row.repo_id in ids],
             since=store.archive_since(),
             lanes=lanes,
+            turns=[
+                turn
+                for turn in store.agent_turns(
+                    since=datetime.now(UTC) - timedelta(weeks=52)
+                )
+                if turn.repo_id is None or turn.repo_id in ids
+            ],
         )
     finally:
         store.close()
@@ -676,4 +686,9 @@ class AggregateService:
             truncated=cache.truncated,
             hidden=cache.hidden,
             repo=chosen.name if chosen else None,
+            turns=[
+                turn
+                for turn in history.turns
+                if chosen is None or turn.repo_id == chosen.id
+            ],
         )

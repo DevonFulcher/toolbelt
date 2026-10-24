@@ -31,6 +31,18 @@
     "ttl_seconds": { "type": "integer", "minimum": 0 },
     "pid": { "type": "integer", "minimum": 1 },
     "process_started_at": { "$ref": "#/$defs/timestamp" },
+    "activity": {
+      "description": "What the holder is running: the tool call in flight (open true), else the last that ended. Optional, no part of liveness: a reader that does not know it ignores it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tool", "detail", "since", "open"],
+      "properties": {
+        "tool": { "type": "string" },
+        "detail": { "type": "string" },
+        "since": { "$ref": "#/$defs/timestamp" },
+        "open": { "type": "boolean" }
+      }
+    },
     "claims": {
       "type": "array",
       "items": {

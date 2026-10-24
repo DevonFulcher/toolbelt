@@ -178,3 +178,34 @@ def test_the_seeded_demo_gives_every_lane_something_to_draw(tmp_path: Path):
 
     # "next" is folded from each PR's facts (card_extras), not recorded.
     assert drawn == {source.id for source in LANE_SOURCES} - {"next"}
+
+
+def test_the_seeded_agent_activity_is_readable_and_adds_up(tmp_path: Path):
+    from toolbelt.agent_activity.chunks import parse_chunk
+    from toolbelt.agent_activity.shell import CATEGORIES, classify
+
+    spec = importlib.util.spec_from_file_location("ui_demo_seed2", DEMO / "seed.py")
+    assert spec and spec.loader
+    seed = importlib.util.module_from_spec(spec)
+    sys.path.insert(0, str(DEMO))
+    try:
+        spec.loader.exec_module(seed)
+    finally:
+        sys.path.remove(str(DEMO))
+    seed.write_activity(tmp_path, NOW)
+
+    chunks = [
+        parse_chunk(p.read_text()) for p in (tmp_path / "activity").glob("*.json")
+    ]
+
+    assert len(chunks) > 40
+    for chunk in chunks:
+        assert chunk.totals is not None
+        totals = chunk.totals
+        assert (
+            totals.tool_ms + totals.delegated_ms + totals.blocked_ms + totals.model_ms
+            == totals.wall_ms
+        )
+        assert totals.model_ms >= 0
+        for recorded in chunk.calls:
+            assert classify(recorded.tool, recorded.detail).category in CATEGORIES

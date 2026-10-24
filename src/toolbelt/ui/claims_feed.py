@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from toolbelt.task_claims.claim_file import Claim
+from toolbelt.task_claims.claim_file import Claim, ClaimActivity
 from toolbelt.task_claims.operations import collect_garbage
 from toolbelt.task_claims.process_liveness import ProcessLiveness
 from toolbelt.task_claims.reading import (
@@ -90,6 +90,8 @@ class BranchHolder:
     started_at: datetime
     #: Working, but not heard from for a while (probably hung).
     stale: bool
+    #: What it is running, when its file says.
+    activity: ClaimActivity | None = None
 
 
 class ClaimsFeed:
@@ -232,6 +234,7 @@ class ClaimsFeed:
                         link=holder.file.link,
                         started_at=holder.file.started_at,
                         stale=holder.stale,
+                        activity=holder.file.activity,
                     )
                 task_ids: list[str | None] = [task.task_id for task in matched] or [
                     None

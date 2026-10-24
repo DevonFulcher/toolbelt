@@ -416,6 +416,24 @@ describe("claims", () => {
     },
   });
 
+  test("a working holder's chip says what it is running, and an idle one only on hover", () => {
+    const running = { tool: "Bash", detail: "pnpm test --run", since: "2026-10-08T11:00:00Z", open: true };
+    showCards([
+      branch(1, "devon/a", { status: pr(), claim: { holders: [holder({ activity: running })] } }),
+      branch(1, "devon/b", {
+        status: pr(),
+        claim: { holders: [holder({ holder: "s2", state: "idle", activity: { ...running, open: false } })] },
+      }),
+    ]);
+
+    const chips = [...document.querySelectorAll(".claim-chip")] as HTMLElement[];
+
+    expect(chips[0].textContent).toContain("agent working · Bash: pnpm test --run");
+    expect(chips[0].title).toContain("Running Bash: pnpm test --run");
+    expect(chips[1].textContent).toBe("agent idle");
+    expect(chips[1].title).toContain("Last ran Bash: pnpm test --run");
+  });
+
   test("a claimed branch says With an agent, what it would be, and links the session", () => {
     showCards([branch(1, "devon/a", { status: claimedStatus, claim: { holders: [holder()] } })]);
 

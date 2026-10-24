@@ -44,6 +44,18 @@ class RefClaim(BaseModel):
 type Claim = WorktreeClaim | RefClaim
 
 
+class ClaimActivity(BaseModel):
+    """What the holder is running: the tool call in flight (``open``), else the
+    last that ended. Optional and no part of liveness."""
+
+    model_config = ConfigDict(frozen=True)
+
+    tool: str
+    detail: str
+    since: AwareDatetime
+    open: bool
+
+
 class ClaimFile(BaseModel):
     """What a holder's file says. Unknown extra fields are ignored."""
 
@@ -68,6 +80,8 @@ class ClaimFile(BaseModel):
     #: older plugins) are live by ``ttl_seconds`` alone.
     pid: int | None = Field(default=None, ge=1)
     process_started_at: AwareDatetime | None = None
+    #: What it is running (written by plugins that record activity).
+    activity: ClaimActivity | None = None
     claims: list[Annotated[WorktreeClaim | RefClaim, Field(discriminator="kind")]]
 
     @model_validator(mode="after")
