@@ -7,12 +7,12 @@ import { MergeView } from "@codemirror/merge";
 import { EditorView } from "@codemirror/view";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  approveBranch,
+  approveAllFiles,
+  decideFile,
   fetchPersonalReview,
   fetchReviewFile,
   fetchReviewFiles,
   fetchReviewText,
-  requestChanges,
   type ReviewRevisions,
   type ReviewSide,
 } from "../api/client";
@@ -143,27 +143,57 @@ function DefinitionPanel({
   );
 }
 
-/** The branch has been validated and awaits your verdict: approve it (which
- * opens its PR, and posts it in Slack when asked) or send it back with a note. */
-export function PersonalReviewBar({ state, onDone }: { state: PersonalReviewState; onDone: () => void }) {
+const FILE_GLYPH = { unreviewed: "", approved: "✓", changes_requested: "✎" } as const;
+
+/** The branch has been validated and awaits your review, file by file: approve a
+ * file's diff, or request changes to it with a note. A decision is for that
+ * file's diff, so a new commit elsewhere keeps it and any change to the file
+ * drops it. Approving the last file opens the PR (and posts it in Slack when
+ * asked); "Approve all" approves each file's current diff. */
+export function PersonalReviewBar({
+  state,
+  selected,
+  onDone,
+}: {
+  state: PersonalReviewState;
+  /** The file the Review view shows (``null``: none picked). */
+  selected: string | null;
+  onDone: () => void;
+}) {
   const [note, setNote] = useState("");
   const [slack, setSlack] = useState(false);
-  const [busy, setBusy] = useState<"approve" | "changes" | null>(null);
+  const [busy, setBusy] = useState<"approve" | "changes" | "all" | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
-  const send = (kind: "approve" | "changes"): void => {
+  const file = state.files.find((f) => f.path === selected) ?? null;
+  const approved = state.files.filter((f) => f.state === "approved").length;
+  const run = (kind: "approve" | "changes" | "all", send: Promise<void>): void => {
     setBusy(kind);
     setProblem(null);
-    const request = { id: state.id, head_sha: state.head_sha, note, post_in_slack: kind === "approve" && slack };
-    (kind === "approve" ? approveBranch(request) : requestChanges(request))
-      .then(onDone)
+    send
+      .then(() => {
+        setNote("");
+        onDone();
+      })
       .catch((failure: unknown) => setProblem(failure instanceof Error ? failure.message : String(failure)))
       .finally(() => setBusy(null));
   };
-  const approved = state.verdict?.verdict === "approved";
+  const decide = (kind: "approve" | "changes", target: NonNullable<typeof file>): void =>
+    run(
+      kind,
+      decideFile({
+        id: state.id,
+        path: target.path,
+        diff_hash: target.diff_hash,
+        state: kind === "approve" ? "approved" : "changes_requested",
+        note,
+        post_in_slack: slack,
+      }),
+    );
   return (
     <section className="review-verdict" aria-label="Personal review">
       <div className="review-verdict-head">
         <strong>Personal review</strong>
+        <span className="muted">{` · ${approved} of ${state.files.length} files approved`}</span>
         {state.result !== null && (
           <span className="muted">
             {` · the validate run would ${state.result === "pass" ? "approve" : "ask for changes"}`}
@@ -172,23 +202,48 @@ export function PersonalReviewBar({ state, onDone }: { state: PersonalReviewStat
         )}
       </div>
       {state.opening_pr ? (
-        <div>Approved: pushing the branch and opening its PR…</div>
+        <div>Every file is approved: pushing the branch and opening its PR…</div>
       ) : (
         <>
-          {approved && <div className="muted">{`You approved this commit${state.notice ? ", but its PR was not opened." : "."}`}</div>}
+          {file !== null && file.state !== "unreviewed" && (
+            <div className="muted">
+              {file.state === "approved" ? `${file.path}: approved.` : `${file.path}: changes requested: ${file.note || "(no note)"}`}
+            </div>
+          )}
           <textarea
             aria-label="Note"
-            placeholder="A note (required to request changes)"
+            placeholder="A note (required to request changes to a file)"
             value={note}
             rows={2}
             onChange={(event) => setNote(event.target.value)}
           />
           <div className="review-verdict-actions">
-            <button type="button" disabled={busy !== null} onClick={() => send("approve")}>
-              {busy === "approve" ? "Approving…" : "Approve and open PR"}
+            <button type="button" disabled={busy !== null || file === null} onClick={() => file && decide("approve", file)}>
+              {busy === "approve" ? "Approving…" : file ? `Approve ${file.path}` : "Pick a file to approve"}
             </button>
-            <button type="button" disabled={busy !== null || note.trim() === ""} onClick={() => send("changes")}>
+            <button
+              type="button"
+              disabled={busy !== null || file === null || note.trim() === ""}
+              onClick={() => file && decide("changes", file)}
+            >
               {busy === "changes" ? "Requesting…" : "Request changes"}
+            </button>
+            <button
+              type="button"
+              disabled={busy !== null || state.files.length === 0}
+              onClick={() =>
+                run(
+                  "all",
+                  approveAllFiles({
+                    id: state.id,
+                    files: Object.fromEntries(state.files.map((f) => [f.path, f.diff_hash])),
+                    note,
+                    post_in_slack: slack,
+                  }),
+                )
+              }
+            >
+              {busy === "all" ? "Approving…" : "Approve all"}
             </button>
             {state.can_post_in_slack && (
               <label>
@@ -235,6 +290,11 @@ export function ReviewPage({ counts }: { counts: Counts }) {
     () => fetchPersonalReview(Number(repo), head),
   );
   const reload = useCallback(() => setVerdicts((n) => n + 1), []);
+  const reviewOf = new Map(
+    personal !== null && personal.state === "ready" && personal.data !== null
+      ? personal.data.files.map((f) => [f.path, f.state] as const)
+      : [],
+  );
 
   const [definition, setDefinition] = useState<{ side: ReviewSide; target: ReviewDefinitionTarget } | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -253,7 +313,7 @@ export function ReviewPage({ counts }: { counts: Counts }) {
     <>
       <FilterBar counts={counts} />
       {personal !== null && personal.state === "ready" && personal.data !== null && (
-        <PersonalReviewBar state={personal.data} onDone={reload} />
+        <PersonalReviewBar state={personal.data} selected={file === "" ? null : file} onDone={reload} />
       )}
       {!ready ? (
         <div className="empty">Pick a repo and give a base and a head revision to see what changed between them.</div>
@@ -269,6 +329,7 @@ export function ReviewPage({ counts }: { counts: Counts }) {
                 <button type="button" aria-pressed={f.path === file} title={STATUS_TITLE[f.status]} onClick={() => open(f.path)}>
                   <span className={`review-status review-status-${f.status}`}>{f.status}</span>
                   {f.old_path === null ? f.path : `${f.old_path} → ${f.path}`}
+                  {reviewOf.get(f.path) ? ` ${FILE_GLYPH[reviewOf.get(f.path) as keyof typeof FILE_GLYPH]}` : ""}
                 </button>
               </li>
             ))}

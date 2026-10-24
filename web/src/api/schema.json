@@ -929,6 +929,35 @@
       "title": "AggregateSamples",
       "type": "object"
     },
+    "ApproveAllRequest": {
+      "additionalProperties": false,
+      "description": "The body of ``POST /api/review/approve-all``: approve every file's diff\nas the page showed it.",
+      "properties": {
+        "files": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "id": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        },
+        "post_in_slack": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "files",
+        "note"
+      ],
+      "title": "ApproveAllRequest",
+      "type": "object"
+    },
     "AutonomousSpend": {
       "additionalProperties": false,
       "description": "What autonomous agent runs cost: exactly, from each run's own record\n(not estimated from transcripts like the interactive figures).",
@@ -1468,23 +1497,12 @@
         },
         "validated": {
           "type": "boolean"
-        },
-        "verdict": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ReviewVerdictInfo"
-            },
-            {
-              "type": "null"
-            }
-          ]
         }
       },
       "required": [
         "can_validate",
         "validated",
         "result",
-        "verdict",
         "opening_pr",
         "notice"
       ],
@@ -2686,6 +2704,99 @@
       "title": "FetchedBranch",
       "type": "object"
     },
+    "FileApprovalRequest": {
+      "additionalProperties": false,
+      "description": "The body of ``POST /api/review/file``: approve one file's diff, or\nrequest changes to it with a note.",
+      "properties": {
+        "diff_hash": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "post_in_slack": {
+          "default": false,
+          "type": "boolean"
+        },
+        "state": {
+          "$ref": "#/$defs/FileApprovalState"
+        }
+      },
+      "required": [
+        "id",
+        "path",
+        "diff_hash",
+        "state",
+        "note"
+      ],
+      "title": "FileApprovalRequest",
+      "type": "object"
+    },
+    "FileApprovalState": {
+      "enum": [
+        "approved",
+        "changes_requested"
+      ],
+      "type": "string"
+    },
+    "FileReviewInfo": {
+      "additionalProperties": false,
+      "description": "A changed file of a branch awaiting its personal review, and where your\nreview of it stands.",
+      "properties": {
+        "diff_hash": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        },
+        "old_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "unreviewed",
+            "approved",
+            "changes_requested"
+          ],
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "A",
+            "M",
+            "D",
+            "R"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "old_path",
+        "status",
+        "diff_hash",
+        "state",
+        "note"
+      ],
+      "title": "FileReviewInfo",
+      "type": "object"
+    },
     "FilterKey": {
       "enum": [
         "next",
@@ -3672,8 +3783,11 @@
         "can_post_in_slack": {
           "type": "boolean"
         },
-        "head_sha": {
-          "type": "string"
+        "files": {
+          "items": {
+            "$ref": "#/$defs/FileReviewInfo"
+          },
+          "type": "array"
         },
         "id": {
           "type": "string"
@@ -3710,22 +3824,11 @@
               "type": "null"
             }
           ]
-        },
-        "verdict": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ReviewVerdictInfo"
-            },
-            {
-              "type": "null"
-            }
-          ]
         }
       },
       "required": [
         "id",
-        "head_sha",
-        "verdict",
+        "files",
         "result",
         "summary",
         "opening_pr",
@@ -4389,65 +4492,6 @@
       ],
       "title": "ReviewState",
       "type": "string"
-    },
-    "ReviewVerdict": {
-      "enum": [
-        "approved",
-        "changes_requested"
-      ],
-      "type": "string"
-    },
-    "ReviewVerdictInfo": {
-      "additionalProperties": false,
-      "description": "The user's review of a branch before its PR (``review_verdicts``).",
-      "properties": {
-        "at": {
-          "type": "string"
-        },
-        "head_sha": {
-          "type": "string"
-        },
-        "note": {
-          "type": "string"
-        },
-        "verdict": {
-          "$ref": "#/$defs/ReviewVerdict"
-        }
-      },
-      "required": [
-        "verdict",
-        "note",
-        "head_sha",
-        "at"
-      ],
-      "title": "ReviewVerdictInfo",
-      "type": "object"
-    },
-    "ReviewVerdictRequest": {
-      "additionalProperties": false,
-      "description": "The body of ``POST /api/review/approve`` and ``.../request-changes``.",
-      "properties": {
-        "head_sha": {
-          "type": "string"
-        },
-        "id": {
-          "type": "string"
-        },
-        "note": {
-          "type": "string"
-        },
-        "post_in_slack": {
-          "default": false,
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "id",
-        "head_sha",
-        "note"
-      ],
-      "title": "ReviewVerdictRequest",
-      "type": "object"
     },
     "ReviewersCatalogState": {
       "additionalProperties": false,
@@ -6479,6 +6523,9 @@
     "aggregate": {
       "$ref": "#/$defs/Aggregate"
     },
+    "approve_all_request": {
+      "$ref": "#/$defs/ApproveAllRequest"
+    },
     "decision_answer_request": {
       "$ref": "#/$defs/DecisionAnswerRequest"
     },
@@ -6493,6 +6540,9 @@
     },
     "event": {
       "$ref": "#/$defs/ServerEvent"
+    },
+    "file_approval_request": {
+      "$ref": "#/$defs/FileApprovalRequest"
     },
     "merge_queue_info": {
       "$ref": "#/$defs/MergeQueueInfo"
@@ -6520,9 +6570,6 @@
     },
     "review_hover": {
       "$ref": "#/$defs/ReviewHover"
-    },
-    "review_verdict_request": {
-      "$ref": "#/$defs/ReviewVerdictRequest"
     },
     "slack_accepted": {
       "$ref": "#/$defs/SlackAccepted"
@@ -6558,7 +6605,8 @@
     "review_hover",
     "review_definition",
     "personal_review_state",
-    "review_verdict_request",
+    "file_approval_request",
+    "approve_all_request",
     "merge_queue_info",
     "slack_draft_request",
     "slack_draft",

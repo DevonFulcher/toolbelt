@@ -7,9 +7,9 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from toolbelt.autonomous_agents.dispatcher import Dispatcher
+from toolbelt.autonomous_agents.limits import VALIDATE
 from toolbelt.git.stack.store import (
     AgentRun,
-    ReviewVerdict,
     StackStore,
     TrackedBranchFacts,
 )
@@ -17,7 +17,7 @@ from toolbelt.ui import aggregate
 from toolbelt.ui import api_models as api
 from toolbelt.ui.agents_view import reason_info, run_info
 from toolbelt.ui.lane_history import build_lanes
-from toolbelt.ui.personal_review import VALIDATE, validated_tasks
+from toolbelt.ui.personal_review import validated_tasks
 from toolbelt.ui.pr_activity import PrFacts
 from toolbelt.ui.snapshot import row_id
 
@@ -93,7 +93,6 @@ def _validation(
     facts: TrackedBranchFacts,
     runs: list[AgentRun],
     validated: set[str],
-    verdicts: list[ReviewVerdict],
     *,
     has_pr: bool,
     opening: tuple[bool, str | None],
@@ -105,19 +104,10 @@ def _validation(
         and run.trigger == VALIDATE
         and run.state == "succeeded"
     ]
-    latest = verdicts[-1] if verdicts else None
     return api.CardValidation(
         can_validate=not has_pr,
         validated=facts.task_id in validated,
         result=results[0].result if results else None,  # type: ignore[arg-type]
-        verdict=api.ReviewVerdictInfo(
-            verdict=latest.verdict,  # type: ignore[arg-type]
-            note=latest.note,
-            head_sha=latest.head_sha,
-            at=latest.at.isoformat(),
-        )
-        if latest
-        else None,
         opening_pr=opening[0],
         notice=opening[1],
     )
@@ -149,9 +139,6 @@ def build_card_extras(
     lanes = build_lanes(store, now, repo_slug)
     with_next = next_lanes(store, now, lanes, repo_slug, pr_facts)
     validated = validated_tasks(store)
-    verdicts: dict[str, list[ReviewVerdict]] = {}
-    for verdict in store.review_verdicts():
-        verdicts.setdefault(verdict.task_id, []).append(verdict)
     branches = []
     for facts in store.tracked_branch_facts():
         key = (facts.repo_id, facts.name)
@@ -180,7 +167,6 @@ def build_card_extras(
                         facts,
                         runs,
                         validated,
-                        verdicts.get(facts.task_id, []),
                         has_pr=facts.pr is not None or pr_facts(*key) is not None,
                         opening=opening_pr(*key),
                     ),

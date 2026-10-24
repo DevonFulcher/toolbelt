@@ -1,6 +1,7 @@
 """Git access for the diff review: the files that changed between two
 revisions, and a file's text on either side."""
 
+import hashlib
 import subprocess
 from dataclasses import dataclass
 from enum import Enum
@@ -44,6 +45,19 @@ def _known_revision(repo: Path, ref: str) -> str:
         f"{ref!r} is not a branch, tag or commit in {repo.name}, and there is no "
         f"origin/{ref} either: git does not have it (fetch it, or pick another revision)"
     )
+
+
+@dataclass(frozen=True)
+class FileDiff:
+    """One changed file of ``base...head`` and a hash of its own diff: the
+    same while that file's patch is, whatever else changes (see
+    ``RevisionPair.file_diffs``)."""
+
+    path: str
+    #: Where a renamed file was (``None``: it was not renamed).
+    old_path: str | None
+    status: str
+    diff_hash: str
 
 
 @dataclass(frozen=True)
@@ -112,6 +126,47 @@ class RevisionPair:
                         )
                     )
         return files
+
+    def file_diffs(self) -> list[FileDiff]:
+        """Each changed file with the hash of its diff. The hash covers what the
+        file's patch does (``git patch-id --stable``: not line numbers, not the
+        commit, not the blobs' ids) and the file's identity (status and paths,
+        since a pure rename has an empty patch), so it is unchanged by a new
+        commit elsewhere or a rebase onto a moved parent that leaves the file's
+        diff as it was, and changes with any edit to that diff. A rename is one
+        file, as git's rename detection says."""
+        found: list[FileDiff] = []
+        for changed in self.changed_files():
+            paths = [changed.path]
+            if changed.old_path is not None:
+                paths.insert(0, changed.old_path)
+            patch = _git(
+                self.repo, "diff", "-M", f"{self.base}...{self.head}", "--", *paths
+            )
+            try:
+                result = logged_process.run(
+                    ["git", "-C", str(self.repo), "patch-id", "--stable"],
+                    input=patch,
+                    capture_output=True,
+                    check=True,
+                )
+            except subprocess.CalledProcessError as err:
+                raise RevisionError(
+                    err.stderr.decode(errors="replace").strip()
+                ) from err
+            patch_id = result.stdout.decode().split(" ", 1)[0]
+            identity = "\0".join(
+                [changed.status, changed.old_path or "", changed.path, patch_id]
+            )
+            found.append(
+                FileDiff(
+                    path=changed.path,
+                    old_path=changed.old_path,
+                    status=changed.status,
+                    diff_hash=hashlib.sha256(identity.encode()).hexdigest()[:16],
+                )
+            )
+        return found
 
     def text(self, side: Side, path: str) -> str:
         out = _git(self.repo, "show", f"{self.commit(side)}:{path}")

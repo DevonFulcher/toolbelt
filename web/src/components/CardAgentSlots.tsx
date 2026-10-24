@@ -149,7 +149,7 @@ export function AgentSlots({
 
 /** Where the task stands on validate, personal review and publish. */
 function ValidationNote({ validation }: { validation: CardValidation }) {
-  const { validated, result, verdict, opening_pr: opening, notice } = validation;
+  const { validated, result, opening_pr: opening, notice } = validation;
   return (
     <>
       {opening && (
@@ -160,10 +160,7 @@ function ValidationNote({ validation }: { validation: CardValidation }) {
       )}
       {notice && <span className="error">{` ${notice}`}</span>}
       {validated && (
-        <span className="muted">{` validated (${result === "fail" ? "the agent would ask for changes" : "the agent would approve"}): awaiting your review`}</span>
-      )}
-      {!validated && verdict?.verdict === "changes_requested" && (
-        <span className="muted">{` you requested changes: ${verdict.note || "(no note)"}`}</span>
+        <span className="muted">{` validated (${result === "fail" ? "the agent would ask for changes" : "the agent would approve"}): awaiting your review of its files`}</span>
       )}
     </>
   );

@@ -265,8 +265,9 @@ def test_the_seeded_demo_shows_validate_personal_review_and_publish(tmp_path: Pa
     the PR (nothing reaches GitHub)."""
     import os
 
+    from toolbelt.diff_review.revisions import RevisionPair
     from toolbelt.git.stack.store import StackStore, default_db_path
-    from toolbelt.ui.personal_review import current_verdict, validated_tasks
+    from toolbelt.ui.personal_review import file_reviews, validated_tasks
 
     spec = importlib.util.spec_from_file_location("ui_demo_seed4", DEMO / "seed.py")
     assert spec and spec.loader
@@ -282,7 +283,7 @@ def test_the_seeded_demo_shows_validate_personal_review_and_publish(tmp_path: Pa
     try:
         task = {f.name: f.task_id for f in store.tracked_branch_facts()}
         waiting = validated_tasks(store)
-        sent_back = store.review_verdicts(task_id=task["devon/auth-audit"])
+        decisions = store.file_approvals()
         results = {
             run.branch: run.result
             for run in store.agent_runs()
@@ -290,10 +291,21 @@ def test_the_seeded_demo_shows_validate_personal_review_and_publish(tmp_path: Pa
         }
     finally:
         store.close()
-    assert waiting == {task["devon/auth-sso"]}
+    assert waiting == {task["devon/auth-sso"], task["devon/auth-audit"]}
     assert results == {"devon/auth-sso": "pass", "devon/auth-audit": "fail"}
-    assert [v.verdict for v in sent_back] == ["changes_requested"]
-    assert current_verdict(sent_back, "any") is not None
+    pair = RevisionPair.resolve(
+        tmp_path / "repos" / "demo-app", base="main", head="devon/auth-sso"
+    )
+    states = {
+        r.diff.path: r.state
+        for r in file_reviews(
+            pair.file_diffs(), [d for d in decisions if d.branch == "devon/auth-sso"]
+        )
+    }
+    assert states == {"sso.py": "approved", "test_sso.py": "unreviewed"}
+    assert [(d.path, d.state) for d in decisions if d.branch == "devon/auth-audit"] == [
+        ("audit.py", "changes_requested")
+    ]
     assert "devon/auth-lockout" in task  # tracked, never validated
 
     repo = tmp_path / "repos" / "demo-app"

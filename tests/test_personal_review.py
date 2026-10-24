@@ -26,11 +26,12 @@ from toolbelt.autonomous_agents.instructions import (
     report_verdict,
 )
 from toolbelt.autonomous_agents.limits import VALIDATE, AgentLimits
+from toolbelt.diff_review.revisions import FileDiff, RevisionPair
 from toolbelt.git.stack.status import NO_PR, BranchStatus, CiState, PrState, ReviewState
 from toolbelt.git.stack.store import (
     AgentRun,
+    FileApproval,
     RepoIdentity,
-    ReviewVerdict,
     StackStore,
     TokenCounts,
     default_db_path,
@@ -41,11 +42,13 @@ from toolbelt.ui.app import create_app
 from toolbelt.ui.personal_review import (
     APPROVED,
     CHANGES_REQUESTED,
+    UNREVIEWED,
     ReviewRefused,
-    current_verdict,
+    file_reviews,
+    fully_approved,
     open_pr,
+    validated_since,
     validated_tasks,
-    validation_spans,
 )
 from toolbelt.ui.pr_activity import PrFacts
 
@@ -76,19 +79,6 @@ def validate_run(
         tokens=TokenCounts(),
         summary=None,
         error=None,
-    )
-
-
-def verdict(hours: float, kind: str, head: str = "abc") -> ReviewVerdict:
-    return ReviewVerdict(
-        id=int(hours * 10),
-        task_id="t1",
-        repo_id=1,
-        branch="a",
-        head_sha=head,
-        verdict=kind,
-        note="n",
-        at=at(hours),
     )
 
 
@@ -126,18 +116,10 @@ def test_a_pending_question_comes_before_personal_review():
 # ---- the replay of its inputs --------------------------------------------------------------
 
 
-def test_a_succeeded_validate_run_validates_until_changes_are_requested():
-    runs = [validate_run(2)]
+def test_a_task_is_validated_from_its_first_succeeded_validate_run():
+    runs = [validate_run(5), validate_run(2)]
 
-    assert validation_spans(runs, []) == [(at(2), None)]
-    assert validation_spans(runs, [verdict(3, CHANGES_REQUESTED)]) == [(at(2), at(3))]
-
-
-def test_a_later_validate_run_validates_again_after_changes_were_requested():
-    runs = [validate_run(2), validate_run(5)]
-    verdicts = [verdict(3, CHANGES_REQUESTED)]
-
-    assert validation_spans(runs, verdicts) == [(at(2), at(3)), (at(5), None)]
+    assert validated_since(runs) == at(2)
 
 
 def test_only_a_run_that_succeeded_validates_and_only_a_validate_run():
@@ -148,22 +130,7 @@ def test_only_a_run_that_succeeded_validates_and_only_a_validate_run():
         validate_run(4, trigger="fix_ci"),
     ]
 
-    assert validation_spans(runs, []) == []
-
-
-def test_an_approval_does_not_end_validation_but_only_stands_for_its_commit():
-    runs = [validate_run(2)]
-    approved = [verdict(3, APPROVED, head="abc")]
-
-    assert validation_spans(runs, approved) == [(at(2), None)]
-    assert current_verdict(approved, "abc") == approved[0]
-    assert current_verdict(approved, "def") is None  # a new commit invalidates it
-
-
-def test_a_request_for_changes_stands_whatever_the_head():
-    requested = [verdict(3, CHANGES_REQUESTED, head="abc")]
-
-    assert current_verdict(requested, "def") == requested[0]
+    assert validated_since(runs) is None
 
 
 def test_validated_tasks_reads_the_tables():
@@ -178,32 +145,173 @@ def test_validated_tasks_reads_the_tables():
     store.set_parent(repo_id, "a", "main")
     store.set_parent(repo_id, "b", "main")
     ids = {f.name: f.task_id for f in store.tracked_branch_facts()}
-    for name in ("a", "b"):
-        run_id = store.start_agent_run(
-            task_id=ids[name],
-            repo_id=repo_id,
-            branch=name,
-            trigger=VALIDATE,
-            head_sha="abc",
-            model="m",
-            at=T0,
-        )
-        store.finish_agent_run(run_id, state="succeeded", ended_at=at(1), result="pass")
-    store.add_review_verdict(
-        task_id=ids["b"],
+    run_id = store.start_agent_run(
+        task_id=ids["a"],
         repo_id=repo_id,
-        branch="b",
+        branch="a",
+        trigger=VALIDATE,
         head_sha="abc",
-        verdict=CHANGES_REQUESTED,
-        note="x",
-        at=at(2),
+        model="m",
+        at=T0,
     )
+    store.finish_agent_run(run_id, state="succeeded", ended_at=at(1), result="pass")
     try:
         assert validated_tasks(store) == {ids["a"]}
-        (run, _) = store.agent_runs()
+        (run,) = store.agent_runs()
         assert run.result == "pass"
     finally:
         store.close()
+
+
+def diff(path: str, hash_: str) -> FileDiff:
+    return FileDiff(path=path, old_path=None, status="M", diff_hash=hash_)
+
+
+def approval(path: str, hash_: str, state: str, hours: float = 1) -> FileApproval:
+    return FileApproval(
+        id=int(hours * 10),
+        task_id="t1",
+        repo_id=1,
+        branch="a",
+        path=path,
+        diff_hash=hash_,
+        state=state,
+        note=f"note on {path}",
+        decided_at=at(hours),
+    )
+
+
+def test_a_decision_counts_only_for_its_path_and_the_hash_of_its_diff():
+    diffs = [diff("a.py", "h1"), diff("b.py", "h2")]
+    decisions = [
+        approval("a.py", "h1", APPROVED),
+        approval("b.py", "old", APPROVED),  # b's diff changed since
+        approval("gone.py", "h9", APPROVED),  # no longer in the diff
+    ]
+
+    reviews = file_reviews(diffs, decisions)
+
+    assert [(r.diff.path, r.state) for r in reviews] == [
+        ("a.py", APPROVED),
+        ("b.py", UNREVIEWED),
+    ]
+    assert not fully_approved(reviews)
+
+
+def test_the_latest_decision_for_a_diff_wins_and_all_files_must_be_approved():
+    diffs = [diff("a.py", "h1")]
+    asked = [
+        approval("a.py", "h1", APPROVED, 1),
+        approval("a.py", "h1", CHANGES_REQUESTED, 2),
+    ]
+
+    (review,) = file_reviews(diffs, asked)
+    assert (review.state, review.note) == (CHANGES_REQUESTED, "note on a.py")
+
+    again = [*asked, approval("a.py", "h1", APPROVED, 3)]
+    assert fully_approved(file_reviews(diffs, again))
+    assert not fully_approved([])  # nothing to approve is not approved
+
+
+def hashes(repo: Path, base: str = "main", head: str = "devon/a") -> dict[str, str]:
+    pair = RevisionPair.resolve(repo, base=base, head=head)
+    return {d.path: d.diff_hash for d in pair.file_diffs()}
+
+
+def commit(repo: Path, name: str, text: str, message: str) -> None:
+    (repo / name).parent.mkdir(parents=True, exist_ok=True)
+    (repo / name).write_text(text)
+    git("add", name, cwd=repo)
+    git("commit", "-m", message, cwd=repo)
+
+
+def test_a_commit_that_does_not_touch_a_file_keeps_its_hash(repo: Path):
+    git("switch", "-c", "devon/a", cwd=repo)
+    commit(repo, "a.txt", "one\n", "Add a")
+    before = hashes(repo)
+
+    commit(repo, "b.txt", "two\n", "Add b")
+    after = hashes(repo)
+
+    assert after["a.txt"] == before["a.txt"]
+    assert set(after) == {"a.txt", "b.txt"}
+
+
+def test_a_rebase_onto_a_moved_parent_keeps_the_hash_of_an_unchanged_diff(repo: Path):
+    commit(repo, "f.txt", "".join(f"line {n}\n" for n in range(1, 11)), "Add f")
+    git("switch", "-c", "devon/a", cwd=repo)
+    commit(
+        repo,
+        "f.txt",
+        "".join(f"line {n}\n" for n in range(1, 10)) + "line 10 edited\n",
+        "Edit the end of f",
+    )
+    before = hashes(repo)
+    git("switch", "main", cwd=repo)
+    # The parent moves: three lines are added at the top of f, so every line
+    # number in the branch's patch shifts.
+    commit(
+        repo,
+        "f.txt",
+        "new 1\nnew 2\nnew 3\n" + "".join(f"line {n}\n" for n in range(1, 11)),
+        "Parent adds lines on top",
+    )
+    git("switch", "devon/a", cwd=repo)
+    git("rebase", "main", cwd=repo)
+
+    assert hashes(repo) == before
+
+
+def test_an_edit_to_the_file_changes_its_hash_and_not_the_others(repo: Path):
+    git("switch", "-c", "devon/a", cwd=repo)
+    commit(repo, "a.txt", "one\n", "Add a")
+    commit(repo, "b.txt", "two\n", "Add b")
+    before = hashes(repo)
+
+    commit(repo, "a.txt", "one edited\n", "Edit a")
+    after = hashes(repo)
+
+    assert after["a.txt"] != before["a.txt"]
+    assert after["b.txt"] == before["b.txt"]
+
+
+def test_a_file_that_enters_the_diff_is_new_and_one_that_leaves_it_is_gone(repo: Path):
+    git("switch", "-c", "devon/a", cwd=repo)
+    commit(repo, "a.txt", "one\n", "Add a")
+    commit(repo, "b.txt", "two\n", "Add b")
+    approved = {path: h for path, h in hashes(repo).items()}
+    decisions = [approval(path, h, APPROVED) for path, h in approved.items()]
+
+    git("rm", "-q", "b.txt", cwd=repo)
+    git("commit", "-m", "Drop b", cwd=repo)
+    commit(repo, "c.txt", "three\n", "Add c")
+    pair = RevisionPair.resolve(repo, base="main", head="devon/a")
+    reviews = {r.diff.path: r.state for r in file_reviews(pair.file_diffs(), decisions)}
+
+    assert reviews == {"a.txt": APPROVED, "c.txt": UNREVIEWED}  # b left, c entered
+
+
+def test_a_renamed_file_is_one_file_and_its_hash_survives_other_commits(repo: Path):
+    commit(repo, "old.txt", "".join(f"line {n}\n" for n in range(1, 21)), "Add old")
+    git("switch", "-c", "devon/a", cwd=repo)
+    git("mv", "old.txt", "new.txt", cwd=repo)
+    git("commit", "-m", "Rename", cwd=repo)
+    pair = RevisionPair.resolve(repo, base="main", head="devon/a")
+    (renamed,) = pair.file_diffs()
+    assert (renamed.status, renamed.old_path, renamed.path) == (
+        "R",
+        "old.txt",
+        "new.txt",
+    )
+
+    commit(repo, "other.txt", "x\n", "Elsewhere")
+    after = {
+        d.path: d
+        for d in RevisionPair.resolve(repo, base="main", head="devon/a").file_diffs()
+    }
+
+    assert after["new.txt"].diff_hash == renamed.diff_hash
+    assert after["new.txt"].old_path == "old.txt"
 
 
 # ---- the validate job ----------------------------------------------------------------------
@@ -407,9 +515,8 @@ class Rig:
     def __init__(self, repo: Path, git_remote: Path):
         self.repo = repo
         git("switch", "-c", "devon/a", cwd=repo)
-        (repo / "a.txt").write_text("one\n")
-        git("add", "a.txt", cwd=repo)
-        git("commit", "-m", "Add a", cwd=repo)
+        commit(repo, "a.txt", "one\n", "Add a")
+        commit(repo, "b.txt", "two\n", "Add b")
         git("push", "-q", "origin", "main", cwd=repo)
         store = StackStore(default_db_path())
         self.repo_id = store.ensure_repo(
@@ -513,109 +620,174 @@ def state_of(r) -> api.PersonalReviewState | None:
     return api.PersonalReviewState.model_validate(body) if body else None
 
 
-def test_the_card_reads_personal_review_and_the_review_view_gets_its_state(review):
+def files_of(r) -> dict[str, api.FileReviewInfo]:
+    state = state_of(r)
+    assert state is not None
+    return {f.path: f for f in state.files}
+
+
+def decide(
+    r, path: str, state: str = "approved", note: str = "", hash_: str | None = None
+):
+    return r.client.post(
+        "/api/review/file",
+        json={
+            "id": f"{r.repo_id}:devon/a",
+            "path": path,
+            "diff_hash": hash_ or files_of(r)[path].diff_hash,
+            "state": state,
+            "note": note,
+        },
+    )
+
+
+def test_the_card_reads_personal_review_and_the_review_view_gets_its_files(review):
     state = state_of(review)
 
     assert state is not None
-    assert (state.head_sha, state.result, state.summary) == (
-        review.head,
-        "pass",
-        "Fine, one nit.",
-    )
-    assert state.verdict is None and not state.opening_pr
-    extras = review.client.get("/api/snapshot").json()
-    assert extras["branches"][0]["status"]["next"]["who"] == "you"
+    assert (state.result, state.summary) == ("pass", "Fine, one nit.")
+    assert {(f.path, f.state) for f in state.files} == {
+        ("a.txt", "unreviewed"),
+        ("b.txt", "unreviewed"),
+    }
+    assert not state.opening_pr
+    assert next_of(review.client)["who"] == "you"
 
 
-def test_approving_opens_the_pr_in_the_background_against_the_parent(review):
+def test_the_pr_opens_when_the_last_file_is_approved_and_not_before(review):
     r = review
-    request = {"id": f"{r.repo_id}:devon/a", "head_sha": r.head, "note": "lgtm"}
 
-    response = r.client.post("/api/review/approve", json=request)
+    first = decide(r, "a.txt", note="fine")
+
+    assert first.status_code == 202
+    assert files_of(r)["a.txt"].state == "approved"
+    assert files_of(r)["a.txt"].note == "fine"
+    assert files_of(r)["b.txt"].state == "unreviewed"
+    assert r.opened == []
+    assert next_of(r.client)["kind"] == "personal_review"
+
+    decide(r, "b.txt")
+
+    r.wait_for(lambda: r.opened == [("devon/a", "main")], "the PR to be opened")
+    r.wait_for(lambda: next_of(r.client)["kind"] != "personal_review", "the card")
+    assert state_of(r) is None  # once the PR exists there is nothing left to ask
+
+
+def test_a_commit_elsewhere_keeps_an_approval_and_an_edit_to_the_file_drops_it(review):
+    r = review
+    decide(r, "a.txt")
+
+    commit(r.repo, "b.txt", "two edited\n", "Edit b")
+    assert files_of(r)["a.txt"].state == "approved"  # a's own diff did not change
+    assert files_of(r)["b.txt"].state == "unreviewed"
+
+    commit(r.repo, "a.txt", "one edited\n", "Edit a")
+    assert files_of(r)["a.txt"].state == "unreviewed"  # a's diff changed
+    assert r.opened == []
+
+
+def test_a_decision_for_a_diff_that_has_changed_is_refused(review):
+    r = review
+    stale = files_of(r)["a.txt"].diff_hash
+    commit(r.repo, "a.txt", "one edited\n", "Edit a")
+
+    response = decide(r, "a.txt", hash_=stale)
+
+    assert response.status_code == 409
+    assert "changed since this page loaded" in response.json()["detail"]
+    assert decide(r, "nope.txt", hash_="x").status_code == 409
+
+
+def test_requesting_changes_to_a_file_blocks_the_pr_and_keeps_the_task_in_review(
+    review,
+):
+    r = review
+    decide(r, "a.txt", "changes_requested", "rename it")
+    decide(r, "b.txt")
+
+    assert files_of(r)["a.txt"].state == "changes_requested"
+    assert files_of(r)["a.txt"].note == "rename it"
+    assert r.opened == []
+    assert next_of(r.client)["kind"] == "personal_review"
+
+    decide(r, "a.txt")  # once it is changed (or reconsidered) and approved
+
+    r.wait_for(lambda: r.opened == [("devon/a", "main")], "the PR to be opened")
+
+
+def test_approve_all_approves_the_diff_as_shown_and_opens_the_pr(review):
+    r = review
+    shown = {path: f.diff_hash for path, f in files_of(r).items()}
+
+    response = r.client.post(
+        "/api/review/approve-all",
+        json={"id": f"{r.repo_id}:devon/a", "files": shown, "note": "all good"},
+    )
 
     assert response.status_code == 202
     r.wait_for(lambda: r.opened == [("devon/a", "main")], "the PR to be opened")
-    r.wait_for(lambda: next_of(r.client)["kind"] != "personal_review", "the card")
-    # Once the PR exists the Review view has nothing left to ask.
-    assert state_of(r) is None
     store = StackStore(default_db_path())
     try:
-        (stored,) = store.review_verdicts()
+        stored = store.file_approvals()
     finally:
         store.close()
-    assert (stored.verdict, stored.note, stored.head_sha) == (APPROVED, "lgtm", r.head)
+    assert {(a.path, a.state, a.note) for a in stored} == {
+        ("a.txt", "approved", "all good"),
+        ("b.txt", "approved", "all good"),
+    }
 
 
-def test_approving_a_commit_that_is_no_longer_the_head_is_refused(review):
+def test_approve_all_refuses_a_diff_that_is_not_the_one_shown(review):
     r = review
-    stale = r.head
-    (r.repo / "a.txt").write_text("two\n")
-    git("commit", "-am", "More", cwd=r.repo)
+    shown = {path: f.diff_hash for path, f in files_of(r).items()}
+    commit(r.repo, "a.txt", "one edited\n", "Edit a")
 
     response = r.client.post(
-        "/api/review/approve",
-        json={"id": f"{r.repo_id}:devon/a", "head_sha": stale, "note": ""},
+        "/api/review/approve-all",
+        json={"id": f"{r.repo_id}:devon/a", "files": shown, "note": ""},
     )
 
     assert response.status_code == 409
-    assert "new commit" in response.json()["detail"]
     assert r.opened == []
 
 
-def test_a_new_commit_invalidates_an_approval_whose_pr_failed(review):
+def test_a_failed_pr_is_reported_and_approve_all_tries_again(review):
     r = review
     r.open_fails = True
-    request = {"id": f"{r.repo_id}:devon/a", "head_sha": r.head, "note": ""}
-    r.client.post("/api/review/approve", json=request)
+    shown = {path: f.diff_hash for path, f in files_of(r).items()}
+    body = {"id": f"{r.repo_id}:devon/a", "files": shown, "note": ""}
+    r.client.post("/api/review/approve-all", json=body)
     r.wait_for(
-        lambda: (
-            (state_of(r) or api.PersonalReviewState).notice  # type: ignore[truthy-function]
-            == "Opening the PR failed: boom"
-        ),
+        lambda: state_of(r) is not None and state_of(r).notice is not None,  # type: ignore[union-attr]
         "the failure to be reported",
     )
-    state = state_of(r)
-    assert state is not None and state.verdict.verdict == "approved"  # type: ignore[union-attr]
-    assert state.opening_pr is False
+    assert state_of(r).notice == "Opening the PR failed: boom"  # type: ignore[union-attr]
+    assert all(f.state == "approved" for f in files_of(r).values())
 
-    (r.repo / "a.txt").write_text("two\n")
-    git("commit", "-am", "More", cwd=r.repo)
+    r.open_fails = False
+    r.client.post("/api/review/approve-all", json=body)
 
-    after = state_of(r)
-    assert after is not None and after.verdict is None
+    r.wait_for(lambda: r.opened == [("devon/a", "main")], "the PR to be opened")
 
 
-def test_requesting_changes_sends_the_task_back_to_open_pr(review):
+def test_a_task_that_was_not_validated_cannot_be_reviewed(review):
     r = review
+    store = StackStore(default_db_path())
+    store.set_parent(r.repo_id, "devon/b", "main")
+    store.close()
 
     response = r.client.post(
-        "/api/review/request-changes",
-        json={"id": f"{r.repo_id}:devon/a", "head_sha": r.head, "note": "rename it"},
-    )
-
-    assert response.status_code == 200
-    r.wait_for(lambda: next_of(r.client)["kind"] == "open_pr", "the card")
-    assert state_of(r) is None
-    extras = r.client.get("/api/snapshot").json()["branches"][0]["id"]
-    assert extras == f"{r.repo_id}:devon/a"
-    assert r.opened == []
-
-
-def test_a_task_that_was_not_validated_cannot_be_approved(review):
-    r = review
-    r.client.post(
-        "/api/review/request-changes",
-        json={"id": f"{r.repo_id}:devon/a", "head_sha": r.head, "note": "no"},
-    )
-    r.wait_for(lambda: next_of(r.client)["kind"] == "open_pr", "the card")
-
-    response = r.client.post(
-        "/api/review/approve",
-        json={"id": f"{r.repo_id}:devon/a", "head_sha": r.head, "note": ""},
+        "/api/review/file",
+        json={
+            "id": f"{r.repo_id}:devon/b",
+            "path": "a.txt",
+            "diff_hash": "x",
+            "state": "approved",
+            "note": "",
+        },
     )
 
     assert response.status_code == 409
-    assert "not waiting for a personal review" in response.json()["detail"]
 
 
 def test_validating_by_hand_answers_202_and_an_unknown_task_404(review):

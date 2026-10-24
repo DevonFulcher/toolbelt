@@ -46,6 +46,7 @@ from history import RECORDED_WEEKS, history, node_id
 
 from toolbelt import logged_process
 from toolbelt.decisions.model import Decision
+from toolbelt.diff_review.revisions import RevisionPair
 from toolbelt.git.stack import lineage
 from toolbelt.git.stack.store import (
     MergeQueueRow,
@@ -95,6 +96,13 @@ LOCAL_BRANCHES = [
     ),
     (
         "demo-app",
+        "devon/auth-sso",
+        "main",
+        "test_sso.py",
+        "from sso import sign_in\n\n\ndef test_sign_in():\n    assert sign_in\n",
+    ),
+    (
+        "demo-app",
         "devon/auth-audit",
         "main",
         "audit.py",
@@ -123,9 +131,19 @@ def write_branches(dest: Path) -> None:
     bare.parent.mkdir(parents=True, exist_ok=True)
     _git(repos, "init", "-q", "--bare", str(bare))
     _git(repos / "demo-app", "config", "remote.origin.pushurl", str(bare))
+    done: set[str] = set()
     for name, branch, parent, filename, text in LOCAL_BRANCHES:
         repo = repos / name
-        _git(repo, "switch", "-q", "-c", branch, parent)
+        known = branch in done
+        done.add(branch)
+        _git(
+            repo,
+            "switch",
+            "-q",
+            *(() if known else ("-c",)),
+            branch,
+            *(() if known else (parent,)),
+        )
         (repo / filename).write_text(text)
         _git(repo, "add", filename)
         _git(
@@ -274,7 +292,7 @@ def write_claims(home: Path, now: datetime) -> None:
     )
 
 
-def write_lanes(now: datetime) -> None:
+def write_lanes(now: datetime, repos: Path) -> None:
     """What `tt ui` would have recorded about the demo branches, so every lane
     of the card timelines (docs/timeline-lanes.md) has something to draw: the
     conflict, CI and review-thread changes it saw, agent runs, claims, Slack
@@ -404,13 +422,34 @@ def write_lanes(now: datetime) -> None:
                 summary=summary,
                 result=result,
             )
-        repo_id, branch, task_id = app("devon/auth-audit")
-        store.add_review_verdict(
+        # Your review of the files: auth-sso has its first file approved,
+        # auth-audit's only file was sent back with a note. A decision is for
+        # the hash of the file's diff, so these are read from the real branches.
+        repo_path = repos / "demo-app"
+
+        def diff_hashes(branch: str) -> dict[str, str]:
+            pair = RevisionPair.resolve(repo_path, base="main", head=branch)
+            return {d.path: d.diff_hash for d in pair.file_diffs()}
+
+        repo_id, branch, task_id = app("devon/auth-sso")
+        store.add_file_approval(
             task_id=task_id,
             repo_id=repo_id,
             branch=branch,
-            head_sha="demo",
-            verdict="changes_requested",
+            path="sso.py",
+            diff_hash=diff_hashes(branch)["sso.py"],
+            state="approved",
+            note="",
+            at=ago(hours=1),
+        )
+        repo_id, branch, task_id = app("devon/auth-audit")
+        store.add_file_approval(
+            task_id=task_id,
+            repo_id=repo_id,
+            branch=branch,
+            path="audit.py",
+            diff_hash=diff_hashes(branch)["audit.py"],
+            state="changes_requested",
             note="Write AUDITED events to the audit log, not only list them.",
             at=ago(days=1),
         )
@@ -749,7 +788,7 @@ def seed(dest: Path, deep: int) -> None:
     write_history(dest, db, now)
     db.commit()
     db.close()
-    write_lanes(now)
+    write_lanes(now, repos)
     write_claims(Path(os.environ["TOOLBELT_HOME"]), now)
     write_activity(Path(os.environ["TOOLBELT_HOME"]), now)
 

@@ -6,8 +6,9 @@ import type {
   DecisionList,
   Agents,
   MergeQueueInfo,
+  ApproveAllRequest,
   PersonalReviewState,
-  ReviewVerdictRequest,
+  FileApprovalRequest,
   Snapshot,
   SlackDraft,
   SlackPrRef,
@@ -300,15 +301,16 @@ export async function fetchPersonalReview(
   return (await response.json()) as PersonalReviewState | null;
 }
 
-/** Approve the branch: it opens its PR in the background (the task reads
- * "Opening PR…" until it does). Rejects with the server's reason, e.g. a new
- * commit since the page loaded. */
-export async function approveBranch(request: ReviewVerdictRequest, fetchImpl: typeof fetch = fetch): Promise<void> {
-  await postJson<unknown>(`${REVIEW_URL}/approve`, request, fetchImpl);
+/** Approve one file's diff (as the page showed it, by its hash), or request
+ * changes to it with a note. Approving the last unapproved file opens the PR in
+ * the background. Rejects with the server's reason, e.g. the file's diff changed
+ * since the page loaded. */
+export async function decideFile(request: FileApprovalRequest, fetchImpl: typeof fetch = fetch): Promise<void> {
+  await postJson<unknown>(`${REVIEW_URL}/file`, request, fetchImpl);
 }
 
-/** Send the branch back with a note: the task reads Open PR again until the next
- * validate run ends. */
-export async function requestChanges(request: ReviewVerdictRequest, fetchImpl: typeof fetch = fetch): Promise<void> {
-  await postJson<unknown>(`${REVIEW_URL}/request-changes`, request, fetchImpl);
+/** Approve every file's diff as the page showed it; the PR opens in the
+ * background. */
+export async function approveAllFiles(request: ApproveAllRequest, fetchImpl: typeof fetch = fetch): Promise<void> {
+  await postJson<unknown>(`${REVIEW_URL}/approve-all`, request, fetchImpl);
 }
