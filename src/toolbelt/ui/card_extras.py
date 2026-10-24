@@ -49,13 +49,14 @@ def next_lanes(
     folded: dict[str, list[aggregate.Segment]] = {}
     for task in tracked:
         task_lanes = lanes.get(task.task_id, [])
-        if task.pr is None:
-            folded[task.task_id] = aggregate.task_segments(
-                None, task.started_at, None, task_lanes, slack_from, now
-            )
-            continue
+        # The PR's facts decide whether it has a PR: the stack DB records the
+        # link only when it first learns it.
         looked_up = pr_facts(task.repo_id, task.name)
         if looked_up is None:
+            if task.pr is None:
+                folded[task.task_id] = aggregate.task_segments(
+                    None, task.started_at, None, task_lanes, slack_from, now
+                )
             continue
         facts, review_now = looked_up
         record = aggregate.PrRecord(

@@ -1,6 +1,6 @@
 """The task card's agent and spend parts (`build_card_extras`)."""
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 from test_dispatcher import NOW, PrSnapshot, holder, rig, status
 from test_token_spend import call, claim
@@ -162,3 +162,32 @@ def test_a_cards_next_lane_is_the_fold_of_its_prs_history():
         ("next_request_review", "2026-10-05T13:00:00Z", None),
     ]
     assert extras.lanes[0].lane == "next"
+
+
+def test_a_cards_next_lane_uses_the_looked_up_pr_even_when_the_db_has_no_link():
+    from test_ui_aggregate import pr, ready
+
+    r = rig(a=PrSnapshot(status(), None))
+    store, _, _ = tracked_store()
+    record = pr(1, created=0, draft=True, items=(ready(13),))
+
+    (extras,) = build_card_extras(
+        r.dispatcher,
+        store,
+        record.facts.created_at.replace(hour=20),
+        pr_facts=lambda rid, name: (record.facts, "none"),
+    ).branches
+
+    (nxt,) = [lane for lane in extras.lanes if lane.lane == "next"]
+    assert [p.kind for p in nxt.phases] == ["next_publish", "next_request_review"]
+
+
+def test_a_branch_with_no_pr_looked_up_is_open_pr_from_its_start():
+    r = rig(a=PrSnapshot(status(), None))
+    store, _, _ = tracked_store()
+    now = datetime.now(UTC) + timedelta(hours=1)
+
+    (extras,) = build_card_extras(r.dispatcher, store, now).branches
+
+    (nxt,) = [lane for lane in extras.lanes if lane.lane == "next"]
+    assert [p.kind for p in nxt.phases] == ["next_open_pr"]
