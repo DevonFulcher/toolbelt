@@ -16,13 +16,27 @@ tools/ui-demo/run.sh --port 8800 --dir /tmp/my-demo
 | `seed.py` | Two git repos (`demo-app`, `demo-search`, each with an `origin` URL) registered in a temp `TOOLBELT_HOME` with stacks, task refs, session deeplinks and backdated task start times, plus the aggregate view's history (below). |
 | `seed.py` (claims) | Task claim files in `home/claims/` (see below). |
 | `history.py` | Generates the aggregate history: about 12 weeks of PRs and the archived task facts of their branches. |
-| `gh` | A fake `gh` that answers the UI's single-PR GraphQL lookup, the untracked-PR search and the aggregate view's history search from canned scenarios. Timestamps in `SCENARIOS` are relative to now; the history's are absolute (written at seed time). |
+| `github_server.py` | A fake GitHub API (stdlib HTTP server) that `tt ui` is pointed at with `TT_GITHUB_API_URL`: `POST /graphql` runs the fake `gh` below with the request's query and variables, REST gets answer "not an admin" / "not modified". `run.sh` starts it (`--github-port`, default 8772) and stops it on exit. |
+| `gh` | A fake `gh` that answers `gh auth token` (a placeholder; `tt ui` reads it once) and the UI's single-PR GraphQL lookup, the untracked-PR search and the aggregate view's history search from canned scenarios. Timestamps in `SCENARIOS` are relative to now; the history's are absolute (written at seed time). |
 | `run.sh` | Seeds, puts the fake `gh` first on `PATH`, and runs this checkout's `toolbelt ui`. |
 
 Scenarios covered by the fake `gh` (branch -> state): approved and waiting to
 merge, requested review with unresolved threads and a failed-then-fixed CI,
 draft with CI running, changes requested with failing CI, merged, merge
-conflicts, ready for review with CI running, and branches with no PR.
+conflicts, ready for review with CI running, approved with CI running and
+on main (`devon/search-cache`: it can be queued to merge), and branches with no
+PR.
+
+## Timeline lanes
+
+`seed.py` (`write_lanes`) records what `tt ui` would have seen of the demo
+branches, so every lane of the card timelines (`docs/timeline-lanes.md`) has
+something to draw: conflict, CI and review-thread changes (git, CI and review
+lanes), agent runs, claim spans (the live claim files add to them), Slack
+posts, a queued merge on `devon/search-cache`, two decisions on
+`devon/auth-docs` (one waiting, one answered) and a tracker move. The "next"
+lane is folded from the fake PRs. `tests/test_ui_demo.py` fails when a lane
+has no seeded rows, so a new lane has to be added there.
 
 ## Task claims
 

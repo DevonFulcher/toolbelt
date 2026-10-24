@@ -13,6 +13,11 @@ It also writes the aggregate view's history (see history.py):
 DEST/history.json, which the fake `gh` serves to the aggregate search, and the
 archived task facts of cleaned-up branches in stacks.db (`removed_branches`).
 
+It records what `tt ui` would have seen of the demo branches, one row set per
+lane of the card timelines (docs/timeline-lanes.md): conflict, CI and review
+thread changes, agent runs, claim spans, Slack posts, a queued merge,
+decisions and a task tracker move (`write_lanes`).
+
 It writes task claims (what a Claude Code session claims; docs/task-claims.md)
 into DEST/home/claims: a working holder on a branch with a failing CI, an idle
 one, a blocked one, an expired one and a revoked one. The live holders have
@@ -36,8 +41,17 @@ sys.path.insert(0, str(Path(__file__).parent))
 from history import RECORDED_WEEKS, history, node_id
 
 from toolbelt import logged_process
+from toolbelt.decisions.model import Decision
 from toolbelt.git.stack import lineage
-from toolbelt.git.stack.store import PrCandidate, PrLink
+from toolbelt.git.stack.store import (
+    MergeQueueRow,
+    PrCandidate,
+    PrLink,
+    SlackPostRow,
+    StackStore,
+    TokenCounts,
+    default_db_path,
+)
 
 # Tracked demo branches whose PR the CLI has already recorded (the others have
 # a PR but no recorded link yet, as a branch that was never synced since).
@@ -58,6 +72,7 @@ STACKS: dict[str, list[tuple[str, str, str | None, int | None, float]]] = {
     "demo-search": [
         ("devon/search-index", "main", "SRCH-9", 6, 3),
         ("devon/search-ranking", "devon/search-index", None, None, 2),
+        ("devon/search-cache", "main", "SRCH-12", None, 1),
     ],
 }
 
@@ -198,6 +213,237 @@ def write_claims(home: Path, now: datetime) -> None:
     )
 
 
+def write_lanes(now: datetime) -> None:
+    """What `tt ui` would have recorded about the demo branches, so every lane
+    of the card timelines (docs/timeline-lanes.md) has something to draw: the
+    conflict, CI and review-thread changes it saw, agent runs, claims, Slack
+    posts, a queued merge, decisions and a task tracker move. The fake `gh`
+    serves the matching PRs; times are relative to now."""
+
+    def ago(**delta: float) -> datetime:
+        return now - timedelta(**delta)
+
+    store = StackStore(default_db_path())
+    try:
+        repo = {r.name: r.id for r in store.repos()}
+        task = {(f.repo_id, f.name): f.task_id for f in store.tracked_branch_facts()}
+
+        def app(branch: str) -> tuple[int, str, str]:
+            return repo["demo-app"], branch, task[(repo["demo-app"], branch)]
+
+        def search(branch: str) -> tuple[int, str, str]:
+            return repo["demo-search"], branch, task[(repo["demo-search"], branch)]
+
+        # Changes of a branch's conflict, CI and open review threads.
+        for (repo_id, branch, _), changes in {
+            app("devon/auth-models"): [
+                ("ci", "running", ago(days=6)),
+                ("ci", "success", ago(days=6, hours=-1)),
+            ],
+            app("devon/auth-api"): [
+                ("ci", "running", ago(days=4)),
+                ("ci", "failed", ago(days=3, hours=23)),
+                ("conflict", "clean", ago(days=4)),
+                ("conflict", "conflicts", ago(days=3, hours=6)),
+                ("conflict", "clean", ago(days=3)),
+                ("ci", "running", ago(days=3, hours=21)),
+                ("ci", "success", ago(days=3, hours=20)),
+                ("comments", "open", ago(days=1)),
+            ],
+            app("devon/auth-docs"): [
+                ("ci", "running", ago(days=3)),
+                ("ci", "failed", ago(days=2, hours=23)),
+                ("comments", "open", ago(days=2)),
+                ("comments", "none", ago(days=1, hours=12)),
+                ("comments", "open", ago(hours=20)),
+            ],
+            app("devon/cache-metrics"): [
+                ("ci", "success", ago(days=2)),
+                ("conflict", "clean", ago(days=2)),
+                ("conflict", "conflicts", ago(days=1)),
+            ],
+            search("devon/search-index"): [
+                ("ci", "running", ago(days=1)),
+            ],
+        }.items():
+            for dimension, value, at in changes:
+                store.record_status_transition(repo_id, branch, dimension, value, at)
+
+        # Autonomous agent runs.
+        for (repo_id, branch, task_id), runs in {
+            app("devon/auth-docs"): [
+                (
+                    "fix_ci",
+                    "succeeded",
+                    ago(days=2, hours=22),
+                    14,
+                    "Fixed two broken links.",
+                ),
+                ("fix_ci", "failed", ago(days=1, hours=10), 31, None),
+                ("resolve_comments", "stopped", ago(hours=5), 6, None),
+            ],
+            app("devon/auth-api"): [
+                ("resolve_conflicts", "succeeded", ago(days=3, hours=5), 9, "Rebased."),
+            ],
+            app("devon/cache-metrics"): [
+                ("resolve_conflicts", "timed_out", ago(hours=18), 40, None),
+                ("resolve_conflicts", "cap_reached", ago(hours=9), 60, None),
+            ],
+        }.items():
+            for trigger, state, started, turns, summary in runs:
+                run_id = store.start_agent_run(
+                    task_id=task_id,
+                    repo_id=repo_id,
+                    branch=branch,
+                    trigger=trigger,
+                    head_sha="demo",
+                    model="claude-haiku-5-5",
+                    at=started,
+                )
+                store.finish_agent_run(
+                    run_id,
+                    state=state,
+                    ended_at=started + timedelta(minutes=turns / 2),
+                    turns=turns,
+                    cost_usd=turns * 0.012,
+                    tokens=TokenCounts(),
+                    summary=summary,
+                )
+
+        # Claims, as the claims feed records them while a holder holds one.
+        for (_, _, task_id), claims in {
+            app("devon/auth-models"): [
+                (
+                    "sess-a",
+                    "agent",
+                    "worktree",
+                    "working",
+                    ago(days=8),
+                    ago(days=7, hours=20),
+                ),
+                (
+                    "sess-b",
+                    "agent",
+                    "ref",
+                    "working",
+                    ago(days=7),
+                    ago(days=6, hours=22),
+                ),
+            ],
+            app("devon/auth-api"): [
+                (
+                    "sess-c",
+                    "agent",
+                    "worktree",
+                    "working",
+                    ago(days=5),
+                    ago(days=4, hours=23),
+                ),
+                (
+                    "sess-c",
+                    "agent",
+                    "worktree",
+                    "idle",
+                    ago(days=4, hours=23),
+                    ago(days=4, hours=22),
+                ),
+                (
+                    "sess-d",
+                    "human",
+                    "ref",
+                    "working",
+                    ago(days=2),
+                    ago(days=1, hours=20),
+                ),
+            ],
+            app("devon/cache-metrics"): [
+                (
+                    "auto.earlier",
+                    "autonomous",
+                    "worktree",
+                    "working",
+                    ago(hours=18),
+                    ago(hours=17, minutes=15),
+                ),
+            ],
+        }.items():
+            for holder, kind, claim_kind, state, first, last in claims:
+                store.record_claim_seen(
+                    holder=holder,
+                    session_id=holder,
+                    agent_id=None,
+                    holder_kind=kind,
+                    claim_kind=claim_kind,
+                    target="/demo/worktree" if claim_kind == "worktree" else "demo-ref",
+                    task_id=task_id,
+                    touched_at=first,
+                    seen_at=last,
+                    max_gap=timedelta(minutes=1),
+                    state=state,
+                )
+
+        # Slack posts of PRs (by repo slug and number, as toolbelt records them).
+        posts = [
+            ("devon/demo-app", 102, "post", ago(days=3, hours=20), "Sam"),
+            ("devon/demo-app", 102, "bump", ago(days=2), "Sam"),
+            ("devon/demo-app", 102, "reassign", ago(days=1, hours=2), "Lee"),
+            ("devon/demo-app", 104, "post", ago(days=2, hours=1), "Lee"),
+            ("devon/demo-search", 57, "post", ago(hours=6), "Lee"),
+        ]
+        store.save_slack_posts(
+            [
+                SlackPostRow(
+                    channel="C0DEMO",
+                    ts=f"{int(at.timestamp())}.{number:06d}",
+                    thread_ts=f"{int(at.timestamp())}.{number:06d}",
+                    repo=slug,
+                    pr_number=number,
+                    kind=kind,
+                    posted_at=at,
+                    assignee_id=None,
+                    assignee_name=name,
+                )
+                for slug, number, kind, at, name in posts
+            ]
+        )
+
+        # A queued merge (approved, CI still running), a decision an agent is
+        # waiting on and one that was answered, and a tracker move.
+        repo_id, branch, task_id = search("devon/search-cache")
+        store.add_to_merge_queue(
+            MergeQueueRow(repo_id, branch, 59, f"{59:07x}", ago(hours=2))
+        )
+        repo_id, branch, task_id = app("devon/auth-docs")
+        for index, (status, created, answered) in enumerate(
+            [
+                ("pending", ago(hours=4), None),
+                ("answered", ago(days=2, hours=3), ago(days=2, hours=2)),
+            ]
+        ):
+            decision = Decision(
+                id=f"demo-decision-{index}",
+                task_id=task_id,
+                repo_id=repo_id,
+                branch=branch,
+                proposer="autonomous",
+                session_id=None,
+                run_id=None,
+                title="Rewrite the broken links or drop them?",
+                points=(),
+                status="pending",
+                created_at=created.isoformat(),
+            )
+            store.add_decision(decision)
+            if status == "answered" and answered:
+                store.answer_decision(decision.id, (), answered)
+        repo_id, branch, _ = app("devon/auth-api")
+        store.record_task_status_move(
+            repo_id, branch, "in_review", 102, ago(days=3, hours=20)
+        )
+    finally:
+        store.close()
+
+
 def seed(dest: Path, deep: int) -> None:
     repos = dest / "repos"
     for name in STACKS:
@@ -259,6 +505,8 @@ def seed(dest: Path, deep: int) -> None:
         db.execute("UPDATE branches SET started_at = ? WHERE name = ?", (when, branch))
     write_history(dest, db, now)
     db.commit()
+    db.close()
+    write_lanes(now)
     write_claims(Path(os.environ["TOOLBELT_HOME"]), now)
 
 

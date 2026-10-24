@@ -2,6 +2,8 @@
 """A fake `gh` for the `tt ui` demo: canned GitHub data, no network.
 
 Answers only what the UI asks of `gh`:
+  * `gh auth token`: a placeholder token (the fake API in `github_server.py`,
+    which answers the UI's HTTP requests with this script, accepts any).
   * `gh api graphql ... -f branch=<name>`: the single per-PR lookup (state, CI,
     reviews, review threads, timeline events). Branch names in SCENARIOS below
     have a PR; every other branch has none.
@@ -20,10 +22,14 @@ import json
 import os
 import re
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 a = sys.argv[1:]
+if a[:2] == ["auth", "token"]:
+    # What `GithubRequests` reads once to authenticate (the fake API ignores it).
+    print("demo-token")
+    sys.exit(0)
 if a[:2] != ["api", "graphql"]:
     sys.exit(1)
 searching = any("search(" in x for x in a)
@@ -34,7 +40,7 @@ branch = next((x.split("=", 1)[1] for x in a if x.startswith("branch=")), None)
 if branch is None and not searching:
     print(json.dumps({"data": {"repository": {"pullRequests": {"nodes": []}}}}))
     sys.exit(0)
-NOW = datetime.now(timezone.utc)
+NOW = datetime.now(UTC)
 
 
 def t(**kw):
@@ -121,6 +127,8 @@ def pr(n, title, **o):
         "baseRefName": "main",
         "mergeable": "MERGEABLE",
         "reviewDecision": None,
+        "additions": 40 + n % 7 * 11,
+        "deletions": 5 + n % 5 * 3,
         "author": user("devon"),
         "reviewRequests": {
             "nodes": [
@@ -241,6 +249,19 @@ SCENARIOS = {
         createdAt=t(days=2),
         items=[commit("f1", "Metrics", "SUCCESS", days=2)],
     ),
+    # Approved with CI still running, on main: it can be queued to merge.
+    "devon/search-cache": pr(
+        59,
+        "Search cache",
+        ci="RUNNING",
+        reviewDecision="APPROVED",
+        createdAt=t(days=1),
+        items=[
+            commit("h1", "Cache query plans", "PENDING", days=1),
+            req("lee", hours=20),
+            review("lee", "APPROVED", hours=5),
+        ],
+    ),
     "devon/search-index": pr(
         57,
         "Search index",
@@ -356,7 +377,7 @@ def history_node(spec):
 
 
 def scenario_search_node(head, node):
-    repo = "demo-search" if head == "devon/search-index" else "demo-app"
+    repo = "demo-search" if head.startswith("devon/search-") else "demo-app"
     return {
         **node,
         "headRefName": head,

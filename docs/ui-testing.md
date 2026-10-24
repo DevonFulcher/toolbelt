@@ -123,7 +123,7 @@ Catch them by measuring the real page.
 ## 3. The demo
 
 ```sh
-tools/ui-demo/run.sh                  # two repos, 8 branches, every scenario
+tools/ui-demo/run.sh                  # two repos, 9 branches, every scenario
 tools/ui-demo/run.sh --deep 14        # plus a 14-deep stack: depth cap, re-rooting
 ```
 

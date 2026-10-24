@@ -20,6 +20,7 @@ The transport is a seam (``httpx.MockTransport`` in tests).
 """
 
 import asyncio
+import os
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
@@ -31,7 +32,9 @@ import httpx
 from toolbelt import logged_process
 from toolbelt.logger import logger
 
-API_URL = "https://api.github.com"
+#: ``TT_GITHUB_API_URL`` points the server at another GitHub API (the demo's
+#: fake, ``tools/ui-demo/github_server.py``).
+API_URL = os.environ.get("TT_GITHUB_API_URL", "https://api.github.com")
 BACKOFF_SECONDS = 60.0
 MAX_BACKOFF_SECONDS = 600.0
 _REQUEST_TIMEOUT_SECONDS = 30.0

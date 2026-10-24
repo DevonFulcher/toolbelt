@@ -12,6 +12,8 @@ from pathlib import Path
 
 from toolbelt.ui import aggregate
 from toolbelt.ui.aggregate_feed import PR_QUERY, parse_page
+from toolbelt.ui.pr_fetch import PR_QUERY as LOOKUP_QUERY
+from toolbelt.ui.pr_fetch import parse_snapshot
 
 DEMO = Path(__file__).parent.parent / "tools" / "ui-demo"
 NOW = datetime(2026, 10, 11, 12, 0, tzinfo=UTC)
@@ -87,7 +89,7 @@ def test_the_fake_gh_answers_the_aggregate_search_in_the_shape_the_view_parses(
 
     assert (more, cursor, hidden) == (False, None, 0)
     # The history plus the live scenarios' PRs.
-    assert len(everything) == len(prs) + 7
+    assert len(everything) == len(prs) + 8
     assert {r.facts.state for r in open_only} == {"OPEN"}
     assert {r.repo for r in everything} == {"devon/demo-app", "devon/demo-search"}
     merged = [r for r in everything if r.facts.state == "MERGED"]
@@ -105,3 +107,74 @@ def test_the_fake_gh_answers_the_aggregate_search_in_the_shape_the_view_parses(
         fetched_at=NOW,
     )
     assert sum(1 for m in result.prs if m.state == "MERGED") >= 25
+
+
+def _fake_gh(*args: str, home: Path) -> str:
+    return subprocess.run(
+        [sys.executable, str(DEMO / "gh"), *args],
+        capture_output=True,
+        text=True,
+        env={"TOOLBELT_HOME": str(home), "PATH": "/usr/bin:/bin"},
+        check=True,
+    ).stdout
+
+
+def test_the_fake_gh_gives_the_token_the_ui_asks_for(tmp_path: Path):
+    assert _fake_gh("auth", "token", home=tmp_path).strip() == "demo-token"
+
+
+def test_every_demo_branch_looks_up_in_the_shape_the_status_lookup_parses(
+    tmp_path: Path,
+):
+    # The per-PR lookup the cards use (not the aggregate search): a field the
+    # query gained and the canned PRs lack would fail every demo card.
+    scenarios = [
+        line.split('"')[1]
+        for line in (DEMO / "gh").read_text().splitlines()
+        if line.startswith('    "devon/') and line.rstrip().endswith("pr(")
+    ]
+    assert len(scenarios) == 8
+    for branch in scenarios:
+        payload = json.loads(
+            _fake_gh(
+                "api",
+                "graphql",
+                "-f",
+                f"query={LOOKUP_QUERY}",
+                "-f",
+                f"branch={branch}",
+                home=tmp_path,
+            )
+        )
+        snapshot = parse_snapshot(payload)
+        assert snapshot.facts is not None, branch
+
+
+def test_the_seeded_demo_gives_every_lane_something_to_draw(tmp_path: Path):
+    """A lane added to the registry needs a row in ``write_lanes`` (seed.py),
+    or the demo cannot show it."""
+    from toolbelt.git.stack.store import StackStore, default_db_path
+    from toolbelt.ui.lane_history import build_lanes
+    from toolbelt.ui.timeline_lanes import LANE_SOURCES
+    from toolbelt.ui.untracked_prs import repo_slug
+
+    spec = importlib.util.spec_from_file_location("ui_demo_seed", DEMO / "seed.py")
+    assert spec and spec.loader
+    seed = importlib.util.module_from_spec(spec)
+    sys.path.insert(0, str(DEMO))
+    try:
+        spec.loader.exec_module(seed)
+    finally:
+        sys.path.remove(str(DEMO))
+    seed.seed(tmp_path, 0)
+
+    store = StackStore(default_db_path())
+    try:
+        slugs = {r.id: repo_slug(r.remote_url) for r in store.repos()}
+        lanes = build_lanes(store, datetime.now(UTC), slugs.get)
+        drawn = {lane.lane for task in lanes.values() for lane in task}
+    finally:
+        store.close()
+
+    # "next" is folded from each PR's facts (card_extras), not recorded.
+    assert drawn == {source.id for source in LANE_SOURCES} - {"next"}
