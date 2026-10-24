@@ -1,9 +1,9 @@
-"""Records when a branch's conflict and CI status change, as the status
-refresher observes them (``status_transitions`` table).
+"""Records when a branch's conflict, CI and open-comments status change, as
+the status refresher observes them (``status_transitions`` table).
 
-GitHub has no event for a PR becoming conflicting or for a CI rollup moving
-between running, failing and passing, so the card timeline can only draw those
-spans from what ``tt ui`` itself saw. A value is recorded when it differs from
+GitHub has no event for a PR becoming conflicting, for review threads opening
+or resolving, or for a CI rollup moving between running, failing and passing,
+so the card timeline can only draw those spans from what ``tt ui`` itself saw. A value is recorded when it differs from
 the last one recorded for the branch; the first lookup of a branch records its
 baseline at that moment.
 """
@@ -19,6 +19,7 @@ from toolbelt.git.stack.store import StackStore, default_db_path
 #: is only meaningful for an open PR (``none`` otherwise), like the card's Merge.
 CONFLICT = "conflict"
 CI = "ci"
+COMMENTS = "comments"
 
 
 def observed(status: BranchStatus) -> dict[str, str]:
@@ -27,7 +28,10 @@ def observed(status: BranchStatus) -> dict[str, str]:
         conflict = "conflicts" if status.has_conflicts else "clean"
     else:
         conflict = "none"
-    return {CONFLICT: conflict, CI: status.ci.value}
+    comments = (
+        "open" if status.pr is not PrState.NONE and status.open_comments else "none"
+    )
+    return {CONFLICT: conflict, CI: status.ci.value, COMMENTS: comments}
 
 
 class StatusTransitionRecorder:

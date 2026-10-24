@@ -133,3 +133,32 @@ def test_the_extras_say_when_the_agents_last_decided_and_spend_was_last_read():
     assert (before.agents_decided_at, before.spend_read_at) == (None, None)
     assert after.agents_decided_at == NOW.isoformat()
     assert after.spend_read_at == (NOW - timedelta(seconds=40)).isoformat()
+
+
+def test_a_cards_next_lane_is_the_fold_of_its_prs_history():
+    from datetime import UTC
+
+    from test_ui_aggregate import MONDAY, pr, ready
+
+    from toolbelt.git.stack.store import PrCandidate, PrLink
+
+    r = rig(a=PrSnapshot(status(), None))
+    store, repo_id, _ = tracked_store()
+    created = MONDAY.astimezone(UTC)
+    store.link_pr(repo_id, "a", [PrCandidate(PrLink(1, "node"), created)])
+    record = pr(1, created=0, draft=True, items=(ready(13),))
+    branch_now = MONDAY.replace(hour=20)
+
+    (extras,) = build_card_extras(
+        r.dispatcher,
+        store,
+        branch_now,
+        pr_facts=lambda rid, name: (record.facts, "none"),
+    ).branches
+
+    (nxt,) = [lane for lane in extras.lanes if lane.lane == "next"]
+    assert [(p.kind, p.start, p.end) for p in nxt.phases] == [
+        ("next_publish", "2026-10-05T00:00:00Z", "2026-10-05T13:00:00Z"),
+        ("next_request_review", "2026-10-05T13:00:00Z", None),
+    ]
+    assert extras.lanes[0].lane == "next"

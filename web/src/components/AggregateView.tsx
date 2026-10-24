@@ -3,9 +3,9 @@
 // refreshes its history in the background.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchAggregate } from "../api/client";
-import type { Aggregate, MixWho, Tone } from "../api/generated";
+import type { Aggregate, Tone, WaitingOnKey } from "../api/generated";
 import { formatBucketDate } from "../logic/aggregateChart";
-import { laneLayers } from "../logic/aggregateLanes";
+import { laneLayers, STATUS_LANE } from "../logic/aggregateLanes";
 import { bucketDays, leadTimeSeries, STAGES, type StageKey } from "../logic/leadTime";
 import { formatAbsolute } from "../logic/format";
 import { browserTimeZone, formatLocalDate, windowStart } from "../logic/localTime";
@@ -20,7 +20,7 @@ type Load =
   | { weeks: number; repo: string; state: "ready"; data: Aggregate }
   | { weeks: number; repo: string; state: "error"; message: string };
 
-const storedKey = (weeks: number, repo: string): string => `toolbelt:aggregate:v2:${weeks}:${repo}`;
+const storedKey = (weeks: number, repo: string): string => `toolbelt:aggregate:v3:${weeks}:${repo}`;
 
 function storedAggregate(weeks: number, repo: string): Aggregate | null {
   if (weeks > 12) return null;
@@ -116,7 +116,7 @@ export function useAggregate(
 
 /** The coarse classes: the sections of the grouped view, so the legend reads
  * as the cards do. */
-const WHO_TONE: Record<MixWho, Tone> = { you: "accent", agent: "purple", ci: "amber", others: "gray" };
+const WHO_TONE: Record<WaitingOnKey, Tone> = { you: "accent", agent: "purple", auto: "purple", ci: "amber", others: "gray" };
 
 /** The lead-time steps' lines use the page's existing tones. */
 const LEAD_TONES: Record<StageKey, Tone> = {
@@ -195,7 +195,7 @@ export function AggregatePanels({
   onExcludeWeekends?: (exclude: boolean) => void;
 }) {
   const catalog = useApp((s) => s.catalog);
-  const { mix, coverage } = data;
+  const { samples, coverage } = data;
   const opened = catalog?.events.opened;
   const merged = catalog?.events.merged;
   const now = Date.parse(data.window_end);
@@ -219,11 +219,8 @@ export function AggregatePanels({
   const withStart = inWindow.filter((pr) => pr.task_started !== null);
   const byName = withStart.filter((pr) => pr.matched_by === "name").length;
 
-  const stateSeries = withHatches(
-    mix.states.map((s) => ({ key: s.key, label: s.label, tone: s.tone, legend: s.legend })),
-  );
   const whoSeries = withHatches(
-    mix.who.map((w) => {
+    data.waiting_on.map((w) => {
       const section = NEXT_SECTIONS.find((s) => s.key === w.key);
       return {
         key: w.key,
@@ -250,6 +247,7 @@ export function AggregatePanels({
     })),
   ) as LeadStageStyle[];
   const layers = catalog ? laneLayers(data, catalog) : [];
+  const statusLayer = layers.find((layer) => layer.lane === STATUS_LANE);
   const startsAfterWindow = Date.parse(coverage.task_starts_since) > start;
 
   return (
@@ -307,31 +305,33 @@ export function AggregatePanels({
         onModeChange={(exclude) => onExcludeWeekends?.(exclude)}
         startsSince={coverage.task_starts_since}
       />
-      <MixChart
-        title="Status mix"
-        description="A stacked snapshot at every task state change, with each change at its exact time on the x-axis. Each task in flight has one state, so the shares sum to 100%. Gaps mean nothing was in flight. Merge conflicts and unresolved comments have no history, so they are not separated."
-        series={stateSeries}
-        shares={mix.series.map((s) => s.share)}
-        counts={mix.series.map((s) => s.count)}
-        starts={mix.starts}
-        inflight={mix.inflight}
-        timeZone={timeZone}
-        empty={`No task was in flight in this window${startsAfterWindow ? ` (task starts are recorded since ${formatBucketDate(coverage.task_starts_since)})` : ""}.`}
-        transitionTicks={weeks <= 12}
-      />
+      {statusLayer && (
+        <MixChart
+          title="Status over time"
+          description="A stacked snapshot at every change of a task or lane, each at its exact time on the x-axis. Each task in flight has one status: its Next, the same one its card shows (the rules of the Next column, run over its history). So the shares sum to 100%. Gaps mean nothing was in flight. Conflicts, review threads, claims, decisions and Slack posts are only known from when they were recorded; before that they are left out."
+          series={withHatches(statusLayer.styles)}
+          shares={statusLayer.shares}
+          counts={statusLayer.counts}
+          starts={samples.starts}
+          inflight={samples.inflight}
+          timeZone={timeZone}
+          empty={`No task was in flight in this window${startsAfterWindow ? ` (task starts are recorded since ${formatBucketDate(coverage.task_starts_since)})` : ""}.`}
+          transitionTicks={weeks <= 12}
+        />
+      )}
       <MixChart
         title="Who is it waiting on"
         description="Stacked snapshots at every task state change, placed at their exact times on the x-axis and grouped by who the next action waits on: you (open, publish, fix, address review, merge), an agent that holds a claim on the task, CI, or others (a reviewer, or a parent PR that waits on one). Derived with the rules of the Next column."
         series={whoSeries}
-        shares={mix.who.map((s) => s.share)}
-        counts={mix.who.map((s) => s.count)}
-        starts={mix.starts}
-        inflight={mix.inflight}
+        shares={data.waiting_on.map((s) => s.share)}
+        counts={data.waiting_on.map((s) => s.count)}
+        starts={samples.starts}
+        inflight={samples.inflight}
         timeZone={timeZone}
         empty="No task was in flight in this window."
         transitionTicks={weeks <= 12}
       />
-      {layers.map((layer) => (
+      {layers.filter((layer) => layer.lane !== STATUS_LANE).map((layer) => (
         <div key={layer.lane} className={`agg-lane agg-lane-${layer.lane}`}>
           <MixChart
             title={`Lane: ${layer.label}`}
@@ -339,8 +339,8 @@ export function AggregatePanels({
             series={withHatches(layer.styles)}
             shares={layer.shares}
             counts={layer.counts}
-            starts={mix.starts}
-            inflight={mix.inflight}
+            starts={samples.starts}
+            inflight={samples.inflight}
             timeZone={timeZone}
             empty="No task was in flight in this window."
             transitionTicks={weeks <= 12}

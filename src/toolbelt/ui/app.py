@@ -141,6 +141,7 @@ from toolbelt.ui.merge_queue import (
 )
 from toolbelt.ui.merge_queue import LandResult, MergeQueue, MergeQueueRefused
 from toolbelt.ui.next_action import MERGE, next_action
+from toolbelt.ui.pr_activity import PrFacts
 from toolbelt.ui.pr_fetch import (
     GraphqlRunner,
     PrSnapshot,
@@ -381,6 +382,17 @@ def _record_task_status_move(
         store.close()
 
 
+def _looked_up_facts(
+    refresher: StatusRefresher, repo_id: int, name: str
+) -> tuple[PrFacts, str] | None:
+    """The PR facts of the branch's last lookup with its review state (what
+    the card timeline's "next" lane is folded from)."""
+    looked_up = refresher.get(repo_id, name)
+    if looked_up is None or looked_up.facts is None or looked_up.status is None:
+        return None
+    return looked_up.facts, looked_up.status.review.value
+
+
 def _claims_dir() -> Path:
     return state_dir() / CLAIMS_DIRNAME
 
@@ -399,6 +411,7 @@ def _record_claim(observation: ClaimObservation) -> None:
             touched_at=observation.touched_at,
             seen_at=observation.seen_at,
             max_gap=SPAN_MAX_GAP,
+            state=observation.state,
         )
     finally:
         store.close()
@@ -638,6 +651,8 @@ def create_app(
         # The cache already holds ``fetched``, so parent contexts see it.
         parents = _all_parents(branch.repo_id)
         publish_branches(branch.repo_id, parents, descendants(parents, branch.branch))
+        # The card timeline's "next" lane is folded from the PR's history.
+        views.notify("extras")
 
     def publish_slack(changed: set[BranchKey]) -> None:
         """What a branch's PR is to do next in Slack changes its own status
@@ -787,6 +802,7 @@ def create_app(
         launching=_agents_launching,
         wall_clock=wall_clock,
         repo_slug=lambda repo_id: slug_of_repo(repo_id),
+        pr_facts=lambda repo_id, name: _looked_up_facts(refresher, repo_id, name),
     )
     dispatcher.on_tick = lambda: views.notify("agents", "extras")
     runner.on_change = lambda: views.notify("agents", "extras")

@@ -689,63 +689,31 @@ class Snapshot(Model):
 
 # ---- the aggregate view (see aggregate.py) --------------------------------------
 
-#: The states a task can be in on the status-mix chart, in stacking order:
-#: the Next rules (``next_action.py``) that can be told apart from history.
-type MixState = Literal[
-    "working",
-    "draft",
-    "ready",
-    "waiting",
-    "changes",
-    "ci_running",
-    "ci_failing",
-    "approved",
-    "blocked",
-    "agent",
-]
-#: The coarse classes the Next rules fall into (``Who`` without ``none``).
-type MixWho = Literal["you", "agent", "ci", "others"]
+#: Who a task in flight can be waiting on (``Who`` without ``none``).
+type WaitingOnKey = Literal["you", "agent", "auto", "ci", "others"]
 
 
-class MixStateInfo(Model):
-    """One band of the status mix: its label, tone and legend come from the
-    state catalog (``pr_states``), so it reads like the cards."""
+class WaitingOn(Model):
+    """The tasks in flight that are waiting on this one, at each sampled
+    instant: the "next" lane's phases grouped by who the next action waits
+    on."""
 
-    key: MixState
-    label: str
-    tone: Tone
-    legend: str
-
-
-class MixSeries(Model):
-    key: MixState
-    #: The share (0..1) of the tasks in flight at each sampled instant that
-    #: are in this state; ``None`` where no task was in flight. Across the
-    #: states the shares of an instant sum to 1.
+    key: WaitingOnKey
+    #: The share (0..1) of the tasks in flight; ``None`` where no task was in
+    #: flight. Across the keys the shares of an instant sum to 1.
     share: list[float | None]
     #: How many tasks that is.
     count: list[int]
 
 
-class MixWhoSeries(Model):
-    key: MixWho
-    share: list[float | None]
-    count: list[int]
+class AggregateSamples(Model):
+    """The instants every series of the aggregate view is sampled at: a
+    snapshot of the tasks in flight at each (not an average over time)."""
 
-
-class StatusMix(Model):
-    """A snapshot of the tasks in flight at each transition instant (not an
-    average over time)."""
-
-    #: Zero for event-driven instants.
-    step_hours: int
-    #: ISO time of each task transition, plus the window start and now.
+    #: ISO time of each change of a task or lane, plus the window start and now.
     starts: list[str]
     #: How many tasks were in flight at each instant.
     inflight: list[int]
-    states: list[MixStateInfo]
-    series: list[MixSeries]
-    who: list[MixWhoSeries]
 
 
 class PrMilestones(Model):
@@ -834,7 +802,9 @@ class Aggregate(Model):
     repo: str | None
     #: The PRs of (a little more than) the window, with their milestones.
     prs: list[PrMilestones]
-    mix: StatusMix
+    samples: AggregateSamples
+    #: Who the tasks' Next waits on (the "next" lane, grouped).
+    waiting_on: list[WaitingOn]
     #: One layer per lane the aggregate counts (``timeline_lanes.LANE_SOURCES``
     #: without an ``aggregate_skip``), sampled at ``mix.starts``.
     lanes: list[AggregateLane]
@@ -1174,6 +1144,9 @@ class LanePhase(Model):
     end: str | None
     kind: LanePhaseKind
     detail: str
+    #: The lane's own sub-status of the span (a claim: its holder's state;
+    #: ``""``: the lane has none).
+    state: str = ""
 
 
 class TimelineLane(Model):

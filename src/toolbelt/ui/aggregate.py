@@ -10,33 +10,33 @@ start is known; or, for a branch that never got a PR, only the stack DB row.
 Time in flight runs from the task's start (else the PR's creation) until the
 PR merged or closed (a reopened PR counts again from the reopening).
 
-**States.** Each task, at each moment of its life, is in one of the states of
-``STATES``: the Next rules of ``next_action.py`` that history can tell apart,
-checked in the same priority order (changes requested, CI failing, CI
-running, draft, approved/blocked, review requested, ready without a
-reviewer). The label, tone and legend of each come from the state catalog
-(``pr_states``), so the charts read like the cards. The draft, waiting,
-approved and CI-failing spans follow the card timeline's phase rules exactly
-(``phase_spans`` mirrors ``phaseSpans`` in ``web/src/logic/timeline.ts``; one
-shared set of vectors is checked against both).
+**Status over time is Next.** A task's status at each moment is its Next
+(``next_action.py``), the same one the card shows: ``task_segments`` runs
+``next_action`` itself at every moment something it reads changed, so there is
+no second set of states to keep in step. The PR's own state (draft, review,
+CI) is replayed from its timeline; conflicts, open review threads, claims,
+decisions and Slack posts come from the task's lanes (``lane_history``), which
+hold what ``tt ui`` recorded. The card timeline draws the same function's
+result as its "next" lane, and ``Aggregate.lanes`` aggregates every lane the
+registry counts (``timeline_lanes.LANE_SOURCES`` without an ``aggregate_skip``):
+at each sampled instant, how many of the tasks in flight had a span of each of
+its kinds, and when its markers happened. "Who is it waiting on" groups the
+"next" lane by ``who``. A lane added to the registry gets a layer, or says why
+not. The draft, waiting, approved and CI-failing spans still follow the card
+timeline's phase rules exactly (``phase_spans`` mirrors ``phaseSpans`` in
+``web/src/logic/timeline.ts``; one shared set of vectors is checked against
+both).
 
-**Claims and lanes.** The time a claim was held on a task (``claim_spans``,
-via the claim lane of ``lane_history``) is the "agent" state: it replaces the
-PR's own state for that time, as the claimed Next action does. Every other
-lane that the aggregate counts (``timeline_lanes.LANE_SOURCES`` without an
-``aggregate_skip``) is a layer in ``Aggregate.lanes``: at each sampled instant,
-how many of the tasks in flight had a span of each of its kinds, and when its
-markers happened. A lane added to the registry gets a layer, or says why not.
-
-**What history cannot give.** Merge conflicts and unresolved review threads
-are only known now (``pr_states.NOT_REPRESENTED``) apart from what ``tt ui``
-recorded, so "Resolve conflicts" / "Resolve comments" never appear in the mix;
-time spent there is shown as whatever else applies. CI follows ``pr_activity.commit_ci_phases``, as the card does:
-"running" is the time from a push until its check suites completed (their
-``updatedAt``) whatever the outcome, or until now for a still-pending head
-commit; "failing" is the time from that completion with a failing result
-until the next push. A PR whose timeline is longer than the fetched 100 items is
-truncated at its newest end.
+**What history cannot give.** Where nothing was recorded (before ``tt ui``
+first saw a branch, or for a PR that was never a tracked branch), conflicts,
+unresolved review threads, claims, decisions and Slack posts are absent, so
+Next there is what the PR's own timeline alone gives, and the Slack rules
+apply only from when posts began to be recorded. CI follows
+``pr_activity.commit_ci_phases``, as the card does: "running" is the time from
+a push until its check suites completed (their ``updatedAt``) whatever the
+outcome, or until now for a still-pending head commit; "failing" is the time
+from that completion with a failing result until the next push. A PR whose
+timeline is longer than the fetched 100 items is truncated at its newest end.
 """
 
 import bisect
@@ -45,57 +45,39 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 
+from toolbelt.git.stack.status import (
+    NO_PR,
+    BranchStatus,
+    CiState,
+    PrState,
+    ReviewState,
+    is_bot,
+)
 from toolbelt.ui import api_models as api
+from toolbelt.ui import next_action as na
 from toolbelt.ui import pr_activity as act
-from toolbelt.ui import pr_states
 from toolbelt.ui.pr_activity import PrFacts, TimelineItem
-from toolbelt.ui.timeline_lanes import LANE_SOURCES
+from toolbelt.ui.slack_posts import DEFAULT_BUMP_AFTER
+from toolbelt.ui.timeline_lanes import LANE_SOURCES, next_phase
 
 WINDOWS = (4, 12, 26, 52)
 DEFAULT_WEEKS = 12
 
-WHO_YOU = "you"
-WHO_AGENT = "agent"
-WHO_CI = "ci"
-WHO_OTHERS = "others"
-WHOS = (WHO_YOU, WHO_AGENT, WHO_CI, WHO_OTHERS)
+WHO_YOU = na.WHO_YOU
+WHO_AGENT = na.WHO_AGENT
+WHO_AUTO = na.WHO_AUTO
+WHO_CI = na.WHO_CI
+WHO_OTHERS = na.WHO_OTHERS
+#: Who a task can be waiting on, in the order "needs me first" sorts them
+#: (``next_action.WHO_ORDER`` without "none": a finished task is not in flight).
+WHOS = tuple(who for who in na.WHO_ORDER if who != na.WHO_NONE)
 
+#: The Slack rules of Next (post it, bump it) apply from this long after the
+#: last post (``slack_posts.DEFAULT_BUMP_AFTER``).
+SLACK_BUMP_AFTER = DEFAULT_BUMP_AFTER
 
-@dataclass(frozen=True)
-class StateDef:
-    key: str
-    #: The catalog entry the label/tone/legend come from: ``("phase", key)``
-    #: or ``("state", "<dimension>:<value>")``.
-    source: tuple[str, str]
-    #: Who it waits on; ``None`` for "blocked", which follows the parent.
-    who: str | None
-
-
-#: Stacking order, bottom to top: early in a task's life to late.
-STATES: tuple[StateDef, ...] = (
-    StateDef("working", ("phase", "working"), WHO_YOU),
-    StateDef("draft", ("phase", "draft"), WHO_YOU),
-    StateDef("ready", ("state", "next:request_review"), WHO_YOU),
-    StateDef("waiting", ("phase", "waiting"), WHO_OTHERS),
-    StateDef("changes", ("state", "review:reviewed"), WHO_YOU),
-    StateDef("ci_running", ("phase", "ci_running"), WHO_CI),
-    StateDef("ci_failing", ("phase", "ci_failing"), WHO_YOU),
-    StateDef("approved", ("phase", "approved"), WHO_YOU),
-    StateDef("blocked", ("state", "next:blocked"), None),
-    StateDef("agent", ("state", "next:claimed"), WHO_AGENT),
-)
-_STATE_BY_KEY = {state.key: state for state in STATES}
 
 NOTES: tuple[tuple[str, str], ...] = (
-    (
-        "Merge conflicts and unresolved threads",
-        (
-            "GitHub keeps no history of either, so 'Resolve conflicts' and "
-            "'Resolve comments' are not separated in the status mix: that time "
-            "is counted as whatever else applies. The conflicts lane layer shows "
-            "the conflicts `tt ui` saw."
-        ),
-    ),
     (
         "Waiting on CI",
         (
@@ -125,23 +107,22 @@ NOTES: tuple[tuple[str, str], ...] = (
         ),
     ),
     (
-        "Agent claims and lane layers",
+        "Recorded lanes",
         (
-            "'With an agent' is the time a claim was held on the task (an agent "
-            "session, a person or an autonomous agent), from the claim record "
-            "`tt ui` keeps: it takes precedence over the PR's own state while "
-            "it lasts. The lane layers (conflicts, claims by kind, agent runs, "
-            "merge queue, decisions, Slack, task moves) are drawn from what "
-            "`tt ui` recorded, so they begin when it first recorded each "
-            "(claims and runs the earliest; conflicts only from when it first "
-            "looked at the branch) and cover only tasks that were tracked "
-            "branches. Before that they are unknown, not zero."
+            "Claims, conflicts, open review threads, decisions, Slack posts, "
+            "agent runs, the merge queue and task moves are drawn from what "
+            "`tt ui` recorded, so each begins when it was first recorded and "
+            "covers only tasks that were tracked branches; before that it is "
+            'unknown, not zero. A claim takes the task ("With an agent" or '
+            '"Autonomous agent") only while its holder was working, and a '
+            'question for you ("Deciding") takes it over any claim, as on the '
+            "cards."
         ),
     ),
     (
         "Days, weeks and weekends",
         (
-            "The server sends UTC instants and the status-mix samples; the page "
+            "The server sends UTC instants and the status samples; the page "
             "decides what a day, a week (Monday first) and a weekend are from "
             "your browser's time zone, so throughput buckets, lead-time dates, the "
             "weekend bands and the day labels all follow it (a Friday 7pm merge "
@@ -163,10 +144,10 @@ NOTES: tuple[tuple[str, str], ...] = (
         ),
     ),
     (
-        "Status mix is a snapshot",
+        "Status over time is a snapshot",
         (
-            "At the start of the window, at every task state change, and now, "
-            "every task in flight is in exactly one state, and the "
+            "At the start of the window, at every task or lane change, and now, "
+            "every task in flight is in exactly one Next state, and the "
             "chart shows each state's share of those tasks. It is not averaged "
             "over time. An instant with no task in flight is a gap, and with only "
             "a few tasks the percentages are coarse: the number of tasks in "
@@ -397,23 +378,6 @@ class Segment:
     who: str
 
 
-def _state_of(flags: Flags) -> str:
-    # The Next rules' priority order (see the module docstring).
-    if flags.changes:
-        return "changes"
-    if flags.failing:
-        return "ci_failing"
-    if flags.running:
-        return "ci_running"
-    if flags.draft:
-        return "draft"
-    if flags.approved:
-        return "approved"
-    if flags.waiting:
-        return "waiting"
-    return "ready"
-
-
 def _life(record: PrRecord, now: datetime) -> list[tuple[datetime, datetime]]:
     """The intervals the PR was open: from creation to its merge/close,
     minus the time between a close and a reopening."""
@@ -439,33 +403,163 @@ def _life(record: PrRecord, now: datetime) -> list[tuple[datetime, datetime]]:
     return [(a, b) for a, b in intervals if b > a]
 
 
-def open_segments(record: PrRecord, now: datetime) -> list[Segment]:
-    life = _life(record, now)
-    if not life:
+def _active(
+    lanes: Sequence[api.TimelineLane], lane: str, now: datetime
+) -> list[tuple[datetime, datetime, api.LanePhase]]:
+    """A lane's spans as ``(start, end, span)``; one still going ends at
+    ``now``."""
+    return [
+        (
+            datetime.fromisoformat(phase.start),
+            datetime.fromisoformat(phase.end) if phase.end else now,
+            phase,
+        )
+        for found in lanes
+        if found.lane == lane
+        for phase in found.phases
+    ]
+
+
+def _on(
+    spans: Sequence[tuple[datetime, datetime, api.LanePhase]], at: datetime
+) -> bool:
+    return any(lo <= at < hi for lo, hi, _ in spans)
+
+
+def _review_of(flags: Flags) -> ReviewState:
+    if flags.changes:
+        return ReviewState.REVIEWED
+    if flags.approved:
+        return ReviewState.APPROVED
+    if flags.waiting:
+        return ReviewState.REQUESTED
+    return ReviewState.NONE
+
+
+def task_segments(
+    pr: PrRecord | None,
+    started: datetime | None,
+    ended: datetime | None,
+    lanes: Sequence[api.TimelineLane],
+    slack_from: datetime | None,
+    now: datetime,
+) -> list[Segment]:
+    """A task's Next over its life: ``next_action`` run at every moment
+    something it reads changed, on what history gives it. The PR's own state
+    is replayed from its timeline (``replay``); conflicts, open review threads,
+    claims (a *working* holder takes the task), pending decisions and Slack
+    posts come from the task's lanes (what was recorded), and are absent where
+    nothing was. The Slack rules apply from ``slack_from`` (when Slack posts
+    began to be recorded). A task is in flight from its recorded start (else
+    its PR's creation) until the PR ended; time with the PR closed is not.
+    "Blocked on a parent" needs the other tasks: see ``with_blocked``."""
+    slices: list[tuple[datetime, datetime]] = []
+    points: list[tuple[datetime, Flags]] = []
+    if pr is not None:
+        life = _life(pr, now)
+        if started is not None and started < pr.facts.created_at:
+            slices.append((started, pr.facts.created_at))
+        slices += life
+        if life:
+            points = replay(pr.facts, review_now=pr.review_now, until=life[-1][1])
+    elif started is not None and (ended or now) > started:
+        slices.append((started, ended or now))
+    if not slices:
         return []
-    points = replay(
-        record.facts,
-        review_now=record.review_now,
-        until=life[-1][1],
+
+    conflicts = _active(lanes, "git", now)
+    threads = _active(lanes, "review", now)
+    claims = _active(lanes, "claim", now)
+    decisions = _active(lanes, "decision", now)
+    posts = sorted(
+        datetime.fromisoformat(event.t)
+        for lane in lanes
+        if lane.lane == "slack"
+        for event in lane.events
     )
+    changes = {when for when, _ in points}
+    for spans in (conflicts, threads, claims, decisions):
+        changes.update(edge for lo, hi, _ in spans for edge in (lo, hi))
+    if slack_from is not None:
+        changes.update(
+            {slack_from, *posts, *(post + SLACK_BUMP_AFTER for post in posts)}
+        )
     times = [when for when, _ in points]
+
+    def action_at(at: datetime) -> na.NextAction:
+        flags = None
+        if pr is not None and points and at >= pr.facts.created_at:
+            flags = points[bisect.bisect_right(times, at) - 1][1]
+        has_threads = _on(threads, at)
+        if flags is None:
+            status = NO_PR
+        else:
+            status = BranchStatus(
+                pr=PrState.DRAFT if flags.draft else PrState.OPEN,
+                ci=CiState.FAILED
+                if flags.failing
+                else CiState.RUNNING
+                if flags.running
+                else CiState.SUCCESS,
+                review=_review_of(flags),
+                url=None,
+                open_comments=int(has_threads),
+                has_conflicts=_on(conflicts, at),
+            )
+        working = [
+            phase.kind.split("_")[1]
+            for lo, hi, phase in claims
+            if lo <= at < hi and phase.state in ("", "working")
+        ]
+        slack = None
+        if slack_from is not None and at >= slack_from:
+            before = [post for post in posts if post <= at]
+            slack = na.SlackContext(posted=bool(before))
+            if before and at - before[-1] >= SLACK_BUMP_AFTER:
+                looked = (
+                    has_threads
+                    or status.review in (ReviewState.APPROVED, ReviewState.REVIEWED)
+                    or (
+                        pr is not None
+                        and any(
+                            item.kind == act.REVIEW
+                            and before[0] < item.time <= at
+                            and item.actor != pr.facts.author
+                            and not is_bot(item.actor)
+                            for item in pr.facts.items
+                        )
+                    )
+                )
+                slack = na.SlackContext(posted=True, bump_due=not looked)
+        return na.next_action(
+            status,
+            None,
+            claimed=any(holder != "autonomous" for holder in working),
+            autonomous="autonomous" in working,
+            slack=slack,
+            deciding=_on(decisions, at),
+        )
+
     segments: list[Segment] = []
-    for a, b in life:
-        cuts = sorted({a, b, *(t for t in times if a < t < b)})
-        for lo, hi in pairwise(cuts):
-            index = bisect.bisect_right(times, lo) - 1
-            state = _state_of(points[index][1])
+    for lo, hi in slices:
+        cuts = sorted({lo, hi, *(when for when in changes if lo < when < hi)})
+        for start, end in pairwise(cuts):
+            action = action_at(start)
             previous = segments[-1] if segments else None
-            if previous and previous.state == state and previous.end == lo:
-                segments[-1] = Segment(previous.start, hi, state, previous.who)
+            if (
+                previous
+                and previous.end == start
+                and (previous.state, previous.who) == (action.kind, action.who)
+            ):
+                segments[-1] = Segment(previous.start, end, action.kind, action.who)
             else:
-                segments.append(Segment(lo, hi, state, _who(state)))
+                segments.append(Segment(start, end, action.kind, action.who))
     return segments
 
 
-def _who(state: str) -> str:
-    who = _STATE_BY_KEY[state].who
-    return who if who is not None else WHO_OTHERS
+def open_segments(record: PrRecord, now: datetime) -> list[Segment]:
+    """A PR's Next while it was open, on its own timeline alone."""
+    return task_segments(record, None, None, (), None, now)
 
 
 def _base_at(record: PrRecord, when: datetime) -> str:
@@ -535,7 +629,7 @@ def with_blocked(
         candidates = parents_of(index)
         out: list[Segment] = []
         for segment in segments[index]:
-            if segment.state != "approved" or not candidates:
+            if segment.state != na.MERGE or not candidates:
                 out.append(segment)
                 continue
             cuts = {segment.start, segment.end}
@@ -562,10 +656,10 @@ def with_blocked(
                 base = _base_at(record, lo)
                 blocking = _unmerged_parent(records, candidates, base, lo)
                 if blocking is None:
-                    out.append(Segment(lo, hi, "approved", WHO_YOU))
+                    out.append(Segment(lo, hi, na.MERGE, WHO_YOU))
                 else:
                     who = WHO_YOU if who_at(blocking, lo) == WHO_YOU else WHO_OTHERS
-                    out.append(Segment(lo, hi, "blocked", who))
+                    out.append(Segment(lo, hi, na.BLOCKED, who))
         visiting.discard(index)
         resolved[index] = out
         return out
@@ -746,27 +840,6 @@ def milestones(task: Task, matched_by: str | None) -> api.PrMilestones:
 # ---- the aggregate -----------------------------------------------------------------------
 
 
-def _describe(state: StateDef) -> api.MixStateInfo:
-    kind, key = state.source
-    if kind == "phase":
-        span = pr_states.PHASES[key]
-        label, tone, legend = span.label, span.tone, span.legend
-    else:
-        dimension, value = key.split(":")
-        value_state = pr_states.lookup(dimension, value)
-        label, tone, legend = value_state.label, value_state.tone, value_state.legend
-    return api.MixStateInfo(
-        key=state.key,  # type: ignore[arg-type]
-        label=label,
-        tone=tone,
-        legend=legend,
-    )
-
-
-def mix_state_infos() -> list[api.MixStateInfo]:
-    return [_describe(state) for state in STATES]
-
-
 def _bucket_edges(start: datetime, now: datetime, step: timedelta) -> list[datetime]:
     edges = [start]
     while edges[-1] + step < now:
@@ -797,35 +870,38 @@ def compute(
     tasks = match_tasks(prs, facts, now)
     with_pr = [task for task in tasks if task.pr is not None]
     records = [task.pr for task in with_pr if task.pr is not None]
-    plain = [open_segments(record, now) for record in records]
+    slack_from = min(
+        (
+            datetime.fromisoformat(event.t)
+            for task in tasks
+            for lane in task.lanes
+            if lane.lane == "slack"
+            for event in lane.events
+        ),
+        default=None,
+    )
+    plain = [
+        task_segments(task.pr, task.started, None, task.lanes, slack_from, now)
+        for task in with_pr
+    ]
     resolved = with_blocked(records, plain, now)
 
-    # Every task's life as segments: working, then the PR's states, with the
-    # time a claim was held as "With an agent".
+    # Every task's Next over its life, and the lanes the layers are drawn from
+    # (its own plus the "next" lane that life is).
     lives: list[list[Segment]] = []
     task_lanes: list[tuple[api.TimelineLane, ...]] = []
     for task, segments in zip(with_pr, resolved, strict=True):
-        assert task.pr is not None
-        life = list(segments)
-        if task.started is not None and task.started < task.pr.facts.created_at:
-            life.insert(
-                0,
-                Segment(task.started, task.pr.facts.created_at, "working", WHO_YOU),
-            )
-        lives.append(with_claims(life, claimed_intervals(task.lanes, now)))
-        task_lanes.append(task.lanes)
+        lives.append(list(segments))
+        task_lanes.append(with_next_lane(task.lanes, segments, now))
     tasks_without_pr = 0
     for task in tasks:
         if task.pr is None and task.started is not None:
-            end = task.ended or now
-            if end > task.started:
-                lives.append(
-                    with_claims(
-                        [Segment(task.started, end, "working", WHO_YOU)],
-                        claimed_intervals(task.lanes, now),
-                    )
-                )
-                task_lanes.append(task.lanes)
+            segments = task_segments(
+                None, task.started, task.ended, task.lanes, slack_from, now
+            )
+            if segments:
+                lives.append(segments)
+                task_lanes.append(with_next_lane(task.lanes, segments, now))
                 tasks_without_pr += 1
 
     instants = sample_instants(start, now, lives, lane_boundaries(task_lanes, now))
@@ -841,7 +917,11 @@ def compute(
             for task in with_pr
             if task.pr is not None and _in_window(task.pr, margin_start, now)
         ],
-        mix=_mix(lives, instants),
+        samples=api.AggregateSamples(
+            starts=[_iso(instant) for instant in instants],
+            inflight=_inflight_counts(lives, instants),
+        ),
+        waiting_on=waiting_on(lives, instants),
         lanes=lane_layers(lives, task_lanes, instants, start, now),
         coverage=api.AggregateCoverage(
             task_starts_since=_iso(archive_since),
@@ -881,48 +961,30 @@ def sample_instants(
     )
 
 
-def claimed_intervals(
-    lanes: Sequence[api.TimelineLane], now: datetime
-) -> list[tuple[datetime, datetime]]:
-    """When a claim was held on the task, any holder and kind, as merged
-    intervals (a claim still held runs to ``now``)."""
-    spans = sorted(
-        (
-            datetime.fromisoformat(phase.start),
-            datetime.fromisoformat(phase.end) if phase.end else now,
-        )
-        for lane in lanes
-        if lane.lane == "claim"
-        for phase in lane.phases
+def with_next_lane(
+    lanes: Sequence[api.TimelineLane], segments: Sequence[Segment], now: datetime
+) -> tuple[api.TimelineLane, ...]:
+    """The task's lanes with its Next (``segments``) as the "next" lane; the
+    span that runs to ``now`` is still going."""
+    return (
+        api.TimelineLane(
+            lane="next",
+            events=[],
+            phases=[
+                api.LanePhase.model_validate(
+                    {
+                        "start": _iso(segment.start),
+                        "end": _iso(segment.end) if segment.end < now else None,
+                        "kind": next_phase(segment.state),
+                        "detail": "",
+                        "state": "",
+                    }
+                )
+                for segment in segments
+            ],
+        ),
+        *lanes,
     )
-    merged: list[tuple[datetime, datetime]] = []
-    for lo, hi in spans:
-        if merged and lo <= merged[-1][1]:
-            merged[-1] = (merged[-1][0], max(merged[-1][1], hi))
-        else:
-            merged.append((lo, hi))
-    return merged
-
-
-def with_claims(
-    life: Sequence[Segment], claimed: Sequence[tuple[datetime, datetime]]
-) -> list[Segment]:
-    """``life`` with the parts under a claim in the "agent" state: a claim
-    takes the task, whatever its PR was waiting for (as the Next rules do)."""
-    result: list[Segment] = []
-    for segment in life:
-        cursor = segment.start
-        for lo, hi in claimed:
-            lo, hi = max(lo, segment.start), min(hi, segment.end)
-            if hi <= lo:
-                continue
-            if lo > cursor:
-                result.append(Segment(cursor, lo, segment.state, segment.who))
-            result.append(Segment(lo, hi, "agent", WHO_AGENT))
-            cursor = hi
-        if cursor < segment.end:
-            result.append(Segment(cursor, segment.end, segment.state, segment.who))
-    return result
 
 
 def lane_boundaries(
@@ -1034,45 +1096,36 @@ def lane_layers(
     return layers
 
 
-def _mix(
-    lives: Sequence[Sequence[Segment]],
-    instants: Sequence[datetime],
-) -> api.StatusMix:
-    """A snapshot of the tasks in flight at each instant: every task has
-    exactly one state then, and the series are each state's share of them
-    (and its count). An instant with no task in flight has no shares."""
+def _inflight_counts(
+    lives: Sequence[Sequence[Segment]], instants: Sequence[datetime]
+) -> list[int]:
+    """How many tasks are in flight at each instant."""
+    counts = [0] * len(instants)
+    for life in lives:
+        for index, segment in enumerate(_in_flight(life, instants)):
+            counts[index] += segment is not None
+    return counts
+
+
+def waiting_on(
+    lives: Sequence[Sequence[Segment]], instants: Sequence[datetime]
+) -> list[api.WaitingOn]:
+    """Who the tasks in flight are waiting on at each instant: their Next,
+    grouped by who it waits on (the "next" lane, by ``who``)."""
     count = len(instants)
-    by_state = {state.key: [0] * count for state in STATES}
     by_who = {who: [0] * count for who in WHOS}
     for life in lives:
         for index, segment in enumerate(_in_flight(life, instants)):
             if segment is not None:
-                by_state[segment.state][index] += 1
                 by_who[segment.who][index] += 1
-    inflight = [sum(by_state[state.key][i] for state in STATES) for i in range(count)]
-
-    def share(counts: list[int]) -> list[float | None]:
-        return [c / n if n else None for c, n in zip(counts, inflight, strict=True)]
-
-    return api.StatusMix(
-        step_hours=0,
-        starts=[_iso(instant) for instant in instants],
-        inflight=inflight,
-        states=mix_state_infos(),
-        series=[
-            api.MixSeries(
-                key=state.key,  # type: ignore[arg-type]
-                share=share(by_state[state.key]),
-                count=by_state[state.key],
-            )
-            for state in STATES
-        ],
-        who=[
-            api.MixWhoSeries(
-                key=who,  # type: ignore[arg-type]
-                share=share(by_who[who]),
-                count=by_who[who],
-            )
-            for who in WHOS
-        ],
-    )
+    inflight = _inflight_counts(lives, instants)
+    return [
+        api.WaitingOn(
+            key=who,  # type: ignore[arg-type]
+            share=[
+                c / n if n else None for c, n in zip(by_who[who], inflight, strict=True)
+            ],
+            count=by_who[who],
+        )
+        for who in WHOS
+    ]

@@ -71,6 +71,8 @@ class ClaimObservation:
     task_id: str | None
     touched_at: datetime
     seen_at: datetime
+    #: The holder's state when it was read (``working``, ``idle``, ``blocked``).
+    state: str | None = None
 
 
 def _target(claim: Claim) -> str:
@@ -235,7 +237,13 @@ class ClaimsFeed:
                     None
                 ]
                 for task_id in task_ids:
-                    key = (holder.holder, claim.kind, _target(claim), task_id)
+                    key = (
+                        holder.holder,
+                        claim.kind,
+                        _target(claim),
+                        task_id,
+                        holder.file.state,
+                    )
                     last = self._recorded_at.get(key)
                     if last is None or now - last >= RECORD_INTERVAL:
                         self._record(
@@ -249,6 +257,7 @@ class ClaimsFeed:
                                 task_id=task_id,
                                 touched_at=claim.touched_at,
                                 seen_at=now,
+                                state=holder.file.state,
                             )
                         )
                         last = now

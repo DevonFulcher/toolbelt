@@ -131,11 +131,42 @@
   },
   "lanes": [
     {
+      "id": "next",
+      "label": "Next",
+      "events": [],
+      "phases": [
+        "next_open_pr",
+        "next_publish",
+        "next_request_review",
+        "next_post_slack",
+        "next_bump_slack",
+        "next_wait_review",
+        "next_address_review",
+        "next_resolve_comments",
+        "next_resolve_conflicts",
+        "next_wait_ci",
+        "next_fix_ci",
+        "next_merge",
+        "next_blocked",
+        "next_claimed",
+        "next_autonomous",
+        "next_deciding"
+      ]
+    },
+    {
       "id": "git",
       "label": "Git",
       "events": [],
       "phases": [
         "git_conflicting"
+      ]
+    },
+    {
+      "id": "review",
+      "label": "Review threads",
+      "events": [],
+      "phases": [
+        "comments_open"
       ]
     },
     {
@@ -246,10 +277,95 @@
     }
   },
   "lane_phases": {
+    "next_open_pr": {
+      "label": "Open PR",
+      "tone": "amber",
+      "legend": "No PR yet: open one."
+    },
+    "next_publish": {
+      "label": "Publish PR in GitHub",
+      "tone": "accent",
+      "legend": "A draft with green CI: mark it ready."
+    },
+    "next_request_review": {
+      "label": "Request review",
+      "tone": "accent",
+      "legend": "Ready, but nobody was asked to review."
+    },
+    "next_post_slack": {
+      "label": "Post in Slack",
+      "tone": "accent",
+      "legend": "Ready for review: post it in the review channel in Slack."
+    },
+    "next_bump_slack": {
+      "label": "Bump in Slack",
+      "tone": "amber",
+      "legend": "Posted in Slack over a day ago and nobody has reviewed or commented: bump it."
+    },
+    "next_wait_review": {
+      "label": "Waiting for review",
+      "tone": "gray",
+      "legend": "Waiting for a reviewer."
+    },
+    "next_address_review": {
+      "label": "Address review",
+      "tone": "red",
+      "legend": "A reviewer requested changes."
+    },
+    "next_resolve_comments": {
+      "label": "Resolve comments",
+      "tone": "amber",
+      "legend": "Unresolved review threads remain."
+    },
+    "next_resolve_conflicts": {
+      "label": "Resolve conflicts",
+      "tone": "red",
+      "legend": "The PR has merge conflicts."
+    },
+    "next_wait_ci": {
+      "label": "Waiting on CI",
+      "tone": "amber",
+      "legend": "CI is running."
+    },
+    "next_fix_ci": {
+      "label": "Fix / re-run CI",
+      "tone": "red",
+      "legend": "CI failed."
+    },
+    "next_merge": {
+      "label": "Merge",
+      "tone": "green",
+      "legend": "Approved and ready to merge."
+    },
+    "next_blocked": {
+      "label": "Blocked on parent",
+      "tone": "gray",
+      "legend": "Approved, but its parent PR is not merged yet."
+    },
+    "next_claimed": {
+      "label": "With an agent",
+      "tone": "purple",
+      "legend": "An agent session has claimed this task and is working on it (a claim file; the action it replaced is in the tooltip)."
+    },
+    "next_autonomous": {
+      "label": "Autonomous agent",
+      "tone": "purple",
+      "legend": "One of toolbelt's autonomous agents is working on this task (a claim file; the action it replaced is in the tooltip)."
+    },
+    "next_deciding": {
+      "label": "Deciding",
+      "tone": "amber",
+      "legend": "An agent asked a question about this task and is waiting for the answer (the action it replaced is in the tooltip)."
+    },
     "git_conflicting": {
       "label": "Conflicting",
       "tone": "red",
       "legend": "The PR conflicted with its base, as `tt ui` saw it (the start is when it was first seen)."
+    },
+    "comments_open": {
+      "label": "Unresolved threads",
+      "tone": "amber",
+      "legend": "The PR had unresolved review threads, as `tt ui` saw (the start is when it was first seen)."
     },
     "ci_seen_running": {
       "label": "CI running",

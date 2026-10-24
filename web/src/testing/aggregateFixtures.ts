@@ -1,17 +1,18 @@
 // A small `Aggregate` payload for the aggregate view's tests.
-import type { Aggregate, MixState, MixWho, PrMilestones } from "../api/generated";
+import type { Aggregate, LanePhaseKind, PrMilestones, WaitingOnKey } from "../api/generated";
 
-const STATES: { key: MixState; label: string; tone: Aggregate["mix"]["states"][number]["tone"] }[] = [
-  { key: "working", label: "Working (no PR yet)", tone: "accent" },
-  { key: "draft", label: "In draft", tone: "gray" },
-  { key: "ready", label: "Request review", tone: "accent" },
-  { key: "waiting", label: "Waiting for review", tone: "amber" },
-  { key: "changes", label: "changes requested", tone: "red" },
-  { key: "ci_running", label: "Waiting on CI", tone: "amber" },
-  { key: "ci_failing", label: "CI failing", tone: "red" },
-  { key: "approved", label: "Approved", tone: "green" },
-  { key: "blocked", label: "Blocked on parent", tone: "gray" },
-  { key: "agent", label: "With an agent", tone: "purple" },
+/** The Next kinds the fixture's status chart uses, in stacking order. */
+const KINDS: LanePhaseKind[] = [
+  "next_open_pr",
+  "next_publish",
+  "next_request_review",
+  "next_wait_review",
+  "next_address_review",
+  "next_wait_ci",
+  "next_fix_ci",
+  "next_merge",
+  "next_blocked",
+  "next_claimed",
 ];
 
 function milestones(number: number, parts: Partial<PrMilestones>): PrMilestones {
@@ -79,20 +80,21 @@ const PRS: PrMilestones[] = [
 export function aggregate(overrides: Partial<Aggregate> = {}): Aggregate {
   const days = ["2026-10-05T00:00:00Z", "2026-10-05T06:00:00Z", "2026-10-05T12:00:00Z", "2026-10-05T18:00:00Z"];
   const inflight = [2, 4, 0, 10];
-  // Shares per sample for the ten states; null where nothing was in flight.
+  // Shares per sample for the ten Next kinds; null where nothing was in flight.
   const columns: (number[] | null)[] = [
     [0.5, 0.5, 0, 0, 0, 0, 0, 0, 0, 0],
     [0.25, 0.25, 0.25, 0.25, 0, 0, 0, 0, 0, 0],
     null,
     [0, 0, 0, 0.4, 0.1, 0, 0.1, 0.4, 0, 0],
   ];
-  const whoOf = (c: number[]): [number, number, number, number] => [
+  const whoOf = (c: number[]): number[] => [
     c[0] + c[1] + c[2] + c[4] + c[6] + c[7],
     c[9],
+    0,
     c[5],
     c[3] + c[8],
   ];
-  const who: MixWho[] = ["you", "agent", "ci", "others"];
+  const who: WaitingOnKey[] = ["you", "agent", "auto", "ci", "others"];
   return {
     weeks: 12,
     window_start: "2026-09-21T00:00:00Z",
@@ -101,23 +103,23 @@ export function aggregate(overrides: Partial<Aggregate> = {}): Aggregate {
     refreshed: 4,
     repo: null,
     prs: PRS,
-    mix: {
-      step_hours: 6,
-      starts: days,
-      inflight,
-      states: STATES.map((s) => ({ ...s, legend: `${s.label}.` })),
-      series: STATES.map((s, k) => ({
-        key: s.key,
-        share: columns.map((c) => (c ? c[k] : null)),
-        count: columns.map((c, i) => (c ? Math.round(c[k] * inflight[i]) : 0)),
-      })),
-      who: who.map((key, k) => ({
-        key,
-        share: columns.map((c) => (c ? whoOf(c)[k] : null)),
-        count: columns.map((c, i) => (c ? Math.round(whoOf(c)[k] * inflight[i]) : 0)),
-      })),
-    },
-    lanes: [],
+    samples: { starts: days, inflight },
+    waiting_on: who.map((key, k) => ({
+      key,
+      share: columns.map((c) => (c ? whoOf(c)[k] : null)),
+      count: columns.map((c, i) => (c ? Math.round(whoOf(c)[k] * inflight[i]) : 0)),
+    })),
+    lanes: [
+      {
+        lane: "next",
+        events: [],
+        phases: KINDS.map((kind, k) => ({
+          kind,
+          share: columns.map((c) => (c ? c[k] : null)),
+          count: columns.map((c, i) => (c ? Math.round(c[k] * inflight[i]) : 0)),
+        })),
+      },
+    ],
     coverage: {
       task_starts_since: "2026-09-30T08:00:00Z",
       tasks_without_pr: 1,

@@ -106,6 +106,9 @@ class PrFacts:
     #: the facts does not carry them, as in the aggregate history).
     additions: int = 0
     deletions: int = 0
+    #: When the PR's base branch changed, as ``(time, previous, current)`` in
+    #: time order (a stacked PR is retargeted when its parent merges).
+    base_changes: tuple[tuple[datetime, str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -339,6 +342,10 @@ def facts_to_dict(facts: PrFacts) -> dict:
         "commit_rollups": [list(r) for r in facts.commit_rollups],
         "additions": facts.additions,
         "deletions": facts.deletions,
+        "base_changes": [
+            [when.isoformat(), previous, current]
+            for when, previous, current in facts.base_changes
+        ],
         "items": [
             {
                 "time": item.time.isoformat(),
@@ -384,4 +391,8 @@ def facts_from_dict(f: dict) -> PrFacts:
         ),
         additions=f["additions"],
         deletions=f["deletions"],
+        base_changes=tuple(
+            (datetime.fromisoformat(when), previous, current)
+            for when, previous, current in f.get("base_changes", [])
+        ),
     )

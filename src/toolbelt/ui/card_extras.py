@@ -8,9 +8,11 @@ from datetime import UTC, datetime, timedelta
 
 from toolbelt.autonomous_agents.dispatcher import Dispatcher
 from toolbelt.git.stack.store import AgentRun, StackStore
+from toolbelt.ui import aggregate
 from toolbelt.ui import api_models as api
 from toolbelt.ui.agents_view import reason_info, run_info
 from toolbelt.ui.lane_history import build_lanes
+from toolbelt.ui.pr_activity import PrFacts
 from toolbelt.ui.snapshot import row_id
 
 #: How many of a branch's runs a card lists.
@@ -20,12 +22,73 @@ RECENT_RUNS = 50
 _EPOCH = datetime(2000, 1, 1, tzinfo=UTC)
 
 
+def next_lanes(
+    store: StackStore,
+    now: datetime,
+    lanes: dict[str, list[api.TimelineLane]],
+    repo_slug: Callable[[int], str | None],
+    pr_facts: Callable[[int, str], tuple[PrFacts, str] | None],
+) -> dict[str, tuple[api.TimelineLane, ...]]:
+    """Each tracked task's lanes with its Next (the "next" lane) first: the
+    same fold of ``next_action`` the aggregate view runs, on the PR's facts as
+    last looked up. A task whose PR facts are not in yet has no "next" lane."""
+    tracked = store.tracked_branch_facts()
+    slack_from = min(
+        (
+            datetime.fromisoformat(event.t)
+            for task_lanes in lanes.values()
+            for lane in task_lanes
+            if lane.lane == "slack"
+            for event in lane.events
+        ),
+        default=None,
+    )
+    records: list[aggregate.PrRecord] = []
+    with_pr = []
+    plain: list[list[aggregate.Segment]] = []
+    folded: dict[str, list[aggregate.Segment]] = {}
+    for task in tracked:
+        task_lanes = lanes.get(task.task_id, [])
+        if task.pr is None:
+            folded[task.task_id] = aggregate.task_segments(
+                None, task.started_at, None, task_lanes, slack_from, now
+            )
+            continue
+        looked_up = pr_facts(task.repo_id, task.name)
+        if looked_up is None:
+            continue
+        facts, review_now = looked_up
+        record = aggregate.PrRecord(
+            repo=repo_slug(task.repo_id) or f"repo:{task.repo_id}",
+            head_branch=task.name,
+            facts=facts,
+            review_now=review_now,
+            base_changes=facts.base_changes,
+        )
+        records.append(record)
+        with_pr.append(task)
+        plain.append(
+            aggregate.task_segments(
+                record, task.started_at, None, task_lanes, slack_from, now
+            )
+        )
+    for task, segments in zip(
+        with_pr, aggregate.with_blocked(records, plain, now), strict=True
+    ):
+        folded[task.task_id] = segments
+    return {
+        task_id: aggregate.with_next_lane(lanes.get(task_id, []), segments, now)
+        for task_id, segments in folded.items()
+    }
+
+
 def build_card_extras(
     dispatcher: Dispatcher,
     store: StackStore,
     now: datetime,
     spend_read_at: datetime | None = None,
     repo_slug: Callable[[int], str | None] = lambda repo_id: None,
+    pr_facts: Callable[[int, str], tuple[PrFacts, str] | None] = lambda *_: None,
 ) -> api.CardExtras:
     repo_names = {repo.id: repo.name for repo in store.repos()}
     runs_by_branch: dict[tuple[int, str], list[AgentRun]] = {}
@@ -37,6 +100,7 @@ def build_card_extras(
         if usage.task_id is not None
     }
     lanes = build_lanes(store, now, repo_slug)
+    with_next = next_lanes(store, now, lanes, repo_slug, pr_facts)
     branches = []
     for facts in store.tracked_branch_facts():
         key = (facts.repo_id, facts.name)
@@ -46,7 +110,7 @@ def build_card_extras(
         branches.append(
             api.BranchExtras(
                 id=row_id(*key),
-                lanes=lanes.get(facts.task_id, []),
+                lanes=list(with_next.get(facts.task_id, lanes.get(facts.task_id, []))),
                 agent=api.CardAgent(
                     has_action=decision is not None,
                     trigger=decision.trigger if decision else None,  # type: ignore[arg-type]

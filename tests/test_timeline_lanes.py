@@ -21,9 +21,7 @@ PR_TRACK_STATUS = {
     "PrState",
     "CiState",
     "ReviewState",
-    "CommentsValue",
     "MergeValue",
-    "NextKind",
     "ActivityKind",
     "EventKind",
     "PhaseKind",
@@ -191,6 +189,7 @@ def test_a_lookup_records_conflict_and_ci_once_per_change():
     assert [(t.dimension, t.value, t.task_id) for t in store.status_transitions()] == [
         ("conflict", "clean", facts.task_id),
         ("ci", "running", facts.task_id),
+        ("comments", "none", facts.task_id),
         ("conflict", "conflicts", facts.task_id),
     ]
 

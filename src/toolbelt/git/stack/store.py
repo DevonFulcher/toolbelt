@@ -469,6 +469,13 @@ _MIGRATIONS: list[tuple[str, ...]] = [
             )
         ),
     ),
+    (
+        # The holder's state (``working`` / ``idle`` / ``blocked``) while a
+        # claim was held, so history can tell a working claim (which takes the
+        # task) from one that is only held. Spans recorded before this have
+        # none: they count as working.
+        "ALTER TABLE claim_spans ADD COLUMN state TEXT",
+    ),
 ]
 
 
@@ -628,6 +635,8 @@ class ClaimSpan:
     task_id: str | None
     first_seen: datetime
     last_seen: datetime
+    #: The holder's state during the span (``None``: not recorded).
+    state: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1160,6 +1169,7 @@ class StackStore:
         touched_at: datetime,
         seen_at: datetime,
         max_gap: timedelta,
+        state: str | None = None,
     ) -> None:
         """Note that ``holder`` held this claim at ``seen_at``. Extends the
         holder's latest span for the same claim when it was last seen within
@@ -1170,8 +1180,8 @@ class StackStore:
             row = conn.execute(
                 "SELECT id, last_seen FROM claim_spans WHERE holder = ? "
                 "AND claim_kind = ? AND target = ? AND task_id IS ? "
-                "ORDER BY id DESC LIMIT 1",
-                (holder, claim_kind, target, task_id),
+                "AND state IS ? ORDER BY id DESC LIMIT 1",
+                (holder, claim_kind, target, task_id, state),
             ).fetchone()
             if (
                 row is not None
@@ -1188,7 +1198,7 @@ class StackStore:
             conn.execute(
                 "INSERT INTO claim_spans (holder, session_id, agent_id, "
                 "holder_kind, claim_kind, target, task_id, first_seen, "
-                "last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "last_seen, state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     holder,
                     session_id,
@@ -1199,6 +1209,7 @@ class StackStore:
                     task_id,
                     _iso(min(touched_at, seen)),
                     _iso(seen),
+                    state,
                 ),
             )
 
@@ -1220,6 +1231,7 @@ class StackStore:
                 task_id=r["task_id"],
                 first_seen=datetime.fromisoformat(r["first_seen"]),
                 last_seen=datetime.fromisoformat(r["last_seen"]),
+                state=r["state"],
             )
             for r in rows
         ]

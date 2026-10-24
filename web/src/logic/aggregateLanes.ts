@@ -25,12 +25,17 @@ export interface LaneLayer {
   events: { kind: LaneEventKind; label: string; count: number }[];
 }
 
+/** The lane every task is always in exactly one span of (its status). */
+export const STATUS_LANE: LaneId = "next";
+
 /**
  * The layers worth drawing: lanes with a span on some task in flight or a
- * marker in the window. Lanes without any are left out (nothing was recorded).
+ * marker in the window (lanes without any are left out: nothing was
+ * recorded), and always the status lane, whose spans tile each task's life, so
+ * it has no "no activity" remainder.
  */
 export function laneLayers(data: Aggregate, catalog: Catalog): LaneLayer[] {
-  const { inflight } = data.mix;
+  const { inflight } = data.samples;
   const specs = new Map(catalog.lanes.map((lane) => [lane.id, lane]));
   const layers: LaneLayer[] = [];
   for (const lane of data.lanes) {
@@ -40,11 +45,28 @@ export function laneLayers(data: Aggregate, catalog: Catalog): LaneLayer[] {
       .filter((e) => e.times.length > 0)
       .map((e) => ({ kind: e.kind, label: catalog.lane_events[e.kind].label, count: e.times.length }));
     const used = lane.phases.filter((p) => p.count.some((n) => n > 0));
-    if (used.length === 0 && events.length === 0) continue;
+    const status = lane.lane === STATUS_LANE;
+    if (!status && used.length === 0 && events.length === 0) continue;
     const styles: LaneLayerStyle[] = used.map((p) => {
       const info = catalog.lane_phases[p.kind as LanePhaseKind];
       return { key: p.kind, label: info.label, tone: info.tone, legend: info.legend };
     });
+    if (status) {
+      // Every kind, in the catalog's stacking order, so the legend is complete.
+      const all = lane.phases;
+      layers.push({
+        lane: lane.lane,
+        label: spec.label,
+        styles: all.map((p) => {
+          const info = catalog.lane_phases[p.kind as LanePhaseKind];
+          return { key: p.kind, label: info.label, tone: info.tone, legend: info.legend };
+        }),
+        shares: all.map((p) => p.share),
+        counts: all.map((p) => p.count),
+        events,
+      });
+      continue;
+    }
     const sums = inflight.map((_, i) => used.reduce((total, p) => total + p.count[i], 0));
     layers.push({
       lane: lane.lane,

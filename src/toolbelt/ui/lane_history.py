@@ -19,7 +19,7 @@ from toolbelt.git.stack.store import (
 )
 from toolbelt.ui import api_models as api
 from toolbelt.ui.claims_feed import SPAN_MAX_GAP
-from toolbelt.ui.status_transitions import CI, CONFLICT
+from toolbelt.ui.status_transitions import CI, COMMENTS, CONFLICT
 from toolbelt.ui.timeline_lanes import LANE_SOURCES, LANES
 
 type TaskId = str
@@ -56,6 +56,7 @@ class _Lanes:
         end: datetime | None,
         kind: str,
         detail: str,
+        state: str = "",
     ):
         self.phases.setdefault((key, lane), []).append(
             api.LanePhase.model_validate(
@@ -64,6 +65,7 @@ class _Lanes:
                     "end": _iso(end) if end else None,
                     "kind": kind,
                     "detail": detail,
+                    "state": state,
                 }
             )
         )
@@ -94,23 +96,25 @@ def build_lanes(
         return end if end is not None else archived_at.get(task)
 
     # Observed changes: each value lasts until the next one is recorded.
-    git_kinds = _kinds("git", "MergeValue")
-    ci_kinds = _kinds("ci", "CiState")
+    seen_lanes = {
+        CONFLICT: ("git", _kinds("git", "MergeValue")),
+        CI: ("ci", _kinds("ci", "CiState")),
+        COMMENTS: ("review", _kinds("review", "CommentsValue")),
+    }
     latest: dict[tuple[TaskId, str], tuple[datetime, str]] = {}
     for change in store.status_transitions():
         if change.task_id is None:
             continue
         key = change.task_id
-        lane, kinds = {CONFLICT: ("git", git_kinds), CI: ("ci", ci_kinds)}[
-            change.dimension
-        ]
+        lane, kinds = seen_lanes[change.dimension]
         if (key, lane) in latest:
             start, value = latest[(key, lane)]
             for kind in kinds[value]:
                 found.phase(key, lane, start, change.at, kind, "")
         latest[(key, lane)] = (change.at, change.value)
+    kinds_of = dict(seen_lanes.values())
     for (key, lane), (start, value) in latest.items():
-        for kind in (git_kinds if lane == "git" else ci_kinds)[value]:
+        for kind in kinds_of[lane][value]:
             found.phase(key, lane, start, end_of(key, None), kind, "")
 
     run_kinds = _kinds("agent", "AgentRunState")
@@ -139,6 +143,7 @@ def build_lanes(
             end_of(span.task_id, None) if live else span.last_seen,
             kind,
             f"{span.holder}: {span.target}",
+            span.state or "working",
         )
 
     posts: dict[tuple[str, int], list[SlackPostRow]] = {}

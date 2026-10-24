@@ -23,6 +23,8 @@ builds its wire types from this module).
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from toolbelt.ui import next_action as na
+from toolbelt.ui import pr_states
 from toolbelt.ui.pr_states import ACCENT, AMBER, GRAY, GREEN, PURPLE, RED, Marker, Span
 
 
@@ -59,7 +61,54 @@ def _claim_phases(holder: str) -> tuple[str, ...]:
     return (f"claim_{holder}_worktree", f"claim_{holder}_ref")
 
 
+#: The Next kinds the "next" lane draws, in the order they stack (a task's
+#: life, early to late). ``done`` is the end of a task, not a span.
+NEXT_LANE_KINDS: tuple[str, ...] = (
+    na.OPEN_PR,
+    na.PUBLISH,
+    na.REQUEST_REVIEW,
+    na.POST_SLACK,
+    na.BUMP_SLACK,
+    na.WAIT_REVIEW,
+    na.ADDRESS_REVIEW,
+    na.RESOLVE_COMMENTS,
+    na.RESOLVE_CONFLICTS,
+    na.WAIT_CI,
+    na.FIX_CI,
+    na.MERGE,
+    na.BLOCKED,
+    na.CLAIMED,
+    na.AUTONOMOUS,
+    na.DECIDING,
+)
+
+
+def next_phase(kind: str) -> str:
+    """The lane phase kind of a Next kind."""
+    return f"next_{kind}"
+
+
+def _next_span(kind: str) -> Span:
+    state = pr_states.lookup("next", kind)
+    return Span(state.label, state.tone, state.legend)
+
+
 LANE_SOURCES: tuple[LaneSource, ...] = (
+    LaneSource(
+        id="next",
+        label="Next",
+        events={},
+        phases={next_phase(kind): _next_span(kind) for kind in NEXT_LANE_KINDS},
+        covers=(
+            Coverage(
+                "NextKind",
+                {
+                    kind: (() if kind == na.DONE else (next_phase(kind),))
+                    for kind in na.KINDS
+                },
+            ),
+        ),
+    ),
     LaneSource(
         id="git",
         label="Git",
@@ -78,6 +127,20 @@ LANE_SOURCES: tuple[LaneSource, ...] = (
                 {"conflicts": ("git_conflicting",), "clean": (), "none": ()},
             ),
         ),
+    ),
+    LaneSource(
+        id="review",
+        label="Review threads",
+        events={},
+        phases={
+            "comments_open": Span(
+                "Unresolved threads",
+                AMBER,
+                "The PR had unresolved review threads, as `tt ui` saw (the start "
+                "is when it was first seen).",
+            ),
+        },
+        covers=(Coverage("CommentsValue", {"open": ("comments_open",), "none": ()}),),
     ),
     LaneSource(
         id="ci",
@@ -205,6 +268,9 @@ LANE_SOURCES: tuple[LaneSource, ...] = (
                 {"worktree": (), "ref": ()},
                 detail=True,
             ),
+            # The state is carried on each span (``LanePhase.state``): the
+            # "next" lane takes the task only while a holder is working.
+            Coverage("HolderState", {}, detail=True),
         ),
     ),
     LaneSource(
@@ -317,12 +383,10 @@ assert len(LANE_PHASES) == sum(len(s.phases) for s in LANE_SOURCES), (
 #: The type's name, then the reason. A type not here and not covered by a lane
 #: or by the PR track (``pr_states``) fails ``tests/test_timeline_lanes.py``.
 NOT_TIMELINE_STATUS: dict[str, str] = {
-    "HolderState": "Claim spans record that a claim was held, not whether its holder was working, idle or blocked; the live card shows that.",
     "AgentReasonCode": "Why no agent is on a task is a decision of the moment, not recorded.",
     "FilterKey": "A filter's name, not a status.",
-    "MixState": "The aggregate view's bands, drawn from the PR catalog.",
-    "MixWho": "Who the aggregate view's bands wait on.",
+    "WaitingOnKey": "A grouping of the next lane by who its next action waits on, not a status of its own.",
     "CiResult": "A commit's CI result: drawn by the PR track's commit markers.",
     "Tone": "A colour token, not a status.",
-    "Who": "Who a next action waits on: shown as the card's Next chip.",
+    "Who": "Who a next action waits on: a property of the next lane's kinds, shown as the card's Next chip.",
 }

@@ -27,12 +27,12 @@ function show(search = "?view=aggregate", branches = [branch(1, "devon/a", { sta
 
 describe("the aggregate view", () => {
   test("a page refresh shows the saved short-window result while the server request is pending", () => {
-    sessionStorage.setItem("toolbelt:aggregate:v2:4:", JSON.stringify(aggregate({ weeks: 4 })));
+    sessionStorage.setItem("toolbelt:aggregate:v3:4:", JSON.stringify(aggregate({ weeks: 4 })));
     const fetchMock = vi.fn(() => new Promise<Response>(() => {}));
     vi.stubGlobal("fetch", fetchMock);
     show("?view=aggregate&weeks=4");
 
-    expect(screen.getByRole("heading", { name: "Status mix" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Status over time" })).toBeInTheDocument();
     expect(screen.queryByText(/Loading the last 4 weeks/)).not.toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith("/api/aggregate?weeks=4", expect.anything());
   });
@@ -45,14 +45,14 @@ describe("the aggregate view", () => {
     await screen.findByRole("heading", { name: "Throughput" });
 
     expect(fetchMock).toHaveBeenCalledWith("/api/aggregate?weeks=12", expect.anything());
-    for (const name of ["Throughput", "Lines changed", "Lead time over time (All time)", "Status mix", "Who is it waiting on"]) {
+    for (const name of ["Throughput", "Lines changed", "Lead time over time (All time)", "Status over time", "Who is it waiting on"]) {
       expect(screen.getByRole("heading", { name })).toBeInTheDocument();
     }
     // The status legend carries the catalog's labels (as served), and the
     // coarse one the grouped view's section names.
-    const mix = screen.getByRole("region", { name: "Status mix" });
+    const mix = screen.getByRole("region", { name: "Status over time" });
     expect(within(mix).getByText("Waiting for review")).toBeInTheDocument();
-    expect(within(mix).getByText("CI failing")).toBeInTheDocument();
+    expect(within(mix).getByText("Fix / re-run CI")).toBeInTheDocument();
     const who = screen.getByRole("region", { name: "Who is it waiting on" });
     expect(within(who).getByText("Needs me")).toBeInTheDocument();
     expect(within(who).getByText("Waiting on CI")).toBeInTheDocument();
@@ -95,9 +95,9 @@ describe("the aggregate view", () => {
     expect(leadHelp).toHaveTextContent("Time from the recorded task start until its PR was opened.");
     expect(leadButton).toHaveAttribute("aria-describedby", leadHelp.id);
 
-    const mix = screen.getByRole("region", { name: "Status mix" });
+    const mix = screen.getByRole("region", { name: "Status over time" });
     expect(within(within(mix).getByText("Waiting for review").closest("li")!).getByRole("tooltip", { hidden: true }))
-      .toHaveTextContent("Waiting for review.");
+      .toHaveTextContent("Waiting for a reviewer.");
     const who = screen.getByRole("region", { name: "Who is it waiting on" });
     expect(within(within(who).getByText("Needs me").closest("li")!).getByRole("tooltip", { hidden: true }))
       .toHaveTextContent("Your move: fix, resolve, publish, request review or merge.");
@@ -199,10 +199,10 @@ describe("the aggregate view", () => {
     await screen.findByRole("heading", { name: "Throughput" });
   });
 
-  test("the status mix has an exact-values tooltip, by keyboard", async () => {
+  test("the status chart has an exact-values tooltip, by keyboard", async () => {
     serve(aggregate());
     show();
-    const mix = await screen.findByRole("region", { name: "Status mix" });
+    const mix = await screen.findByRole("region", { name: "Status over time" });
     const chart = within(mix).getByRole("img");
 
     chart.focus();
@@ -211,7 +211,7 @@ describe("the aggregate view", () => {
     const tip = within(mix).getByRole("status");
     expect(tip).toHaveTextContent("Mon Oct 5, 00:00");
     expect(tip).toHaveTextContent("2 tasks in flight");
-    expect(within(tip).getByText("In draft").nextSibling).toHaveTextContent("50% (1 of 2)");
+    expect(within(tip).getByText("Publish PR in GitHub").nextSibling).toHaveTextContent("50% (1 of 2)");
 
     fireEvent.keyDown(chart, { key: "ArrowRight" });
     expect(within(mix).getByRole("status")).toHaveTextContent("Mon Oct 5, 06:00");
@@ -221,10 +221,10 @@ describe("the aggregate view", () => {
     expect(within(mix).queryByRole("status")).not.toBeInTheDocument();
   });
 
-  test("the 12-week status mix keeps its stacked chart and marks exact transition times", async () => {
+  test("the 12-week status chart keeps its stacked chart and marks exact transition times", async () => {
     serve(aggregate());
     show();
-    const mix = await screen.findByRole("region", { name: "Status mix" });
+    const mix = await screen.findByRole("region", { name: "Status over time" });
 
     expect(mix.querySelectorAll("path.agg-band").length).toBeGreaterThan(0);
     expect(mix.querySelectorAll("path.agg-line")).toHaveLength(0);
@@ -236,7 +236,7 @@ describe("the aggregate view", () => {
   test("the mix charts show shares by default and can switch to the number of tasks", async () => {
     serve(aggregate());
     show();
-    const mix = await screen.findByRole("region", { name: "Status mix" });
+    const mix = await screen.findByRole("region", { name: "Status over time" });
     const ticks = (): string[] => [...mix.querySelectorAll("text.agg-tick")].map((t) => t.textContent ?? "");
 
     expect(within(mix).getByRole("button", { name: "Share of tasks" })).toHaveAttribute("aria-pressed", "true");
@@ -277,10 +277,10 @@ describe("the aggregate view", () => {
     expect(who.querySelectorAll("line.agg-transition-tick")).toHaveLength(2);
   });
 
-  test("the 26-week mix keeps its area view", async () => {
+  test("the 26-week status chart keeps its area view", async () => {
     serve(aggregate({ weeks: 26 }));
     show("?view=aggregate&weeks=26");
-    const mix = await screen.findByRole("region", { name: "Status mix" });
+    const mix = await screen.findByRole("region", { name: "Status over time" });
     expect(mix.querySelectorAll("path.agg-band").length).toBeGreaterThan(0);
     expect(mix.querySelectorAll("path.agg-line")).toHaveLength(0);
     expect(mix.querySelectorAll("line.agg-transition-tick")).toHaveLength(0);
@@ -291,8 +291,8 @@ describe("the aggregate view", () => {
     const base = aggregate();
     serve(
       aggregate({
-        mix: {
-          ...base.mix,
+        samples: {
+          ...base.samples,
           starts: [
             "2026-10-09T18:00:00Z",
             "2026-10-10T12:00:00Z",
@@ -303,7 +303,7 @@ describe("the aggregate view", () => {
       }),
     );
     show();
-    for (const name of ["Status mix", "Who is it waiting on"]) {
+    for (const name of ["Status over time", "Who is it waiting on"]) {
       const chart = await screen.findByRole("region", { name });
       const svg = chart.querySelector("svg[role=img]")!;
       const strips = [...svg.querySelectorAll("rect.agg-weekend-strip")];
@@ -324,7 +324,7 @@ describe("the aggregate view", () => {
   test("each chart can collapse weekends independently", async () => {
     const base = aggregate();
     serve(aggregate({
-      mix: { ...base.mix, starts: [
+      samples: { ...base.samples, starts: [
         "2026-10-09T18:00:00Z", "2026-10-10T12:00:00Z",
         "2026-10-11T12:00:00Z", "2026-10-12T18:00:00Z",
       ] },
@@ -332,7 +332,7 @@ describe("the aggregate view", () => {
     show();
     const flow = await screen.findByRole("region", { name: "Throughput" });
     const lead = screen.getByRole("region", { name: "Lead time over time (All time)" });
-    const mix = screen.getByRole("region", { name: "Status mix" });
+    const mix = screen.getByRole("region", { name: "Status over time" });
     const who = screen.getByRole("region", { name: "Who is it waiting on" });
 
     const bars = flow.querySelectorAll("g.agg-col").length;
@@ -356,7 +356,7 @@ describe("the aggregate view", () => {
   test("few tasks in flight are called out as coarse, and the table gives counts", async () => {
     serve(aggregate());
     show();
-    const mix = await screen.findByRole("region", { name: "Status mix" });
+    const mix = await screen.findByRole("region", { name: "Status over time" });
 
     expect(mix).toHaveTextContent("Typically 4 tasks in flight: the percentages are coarse.");
     fireEvent.click(within(mix).getByRole("button", { name: "Show data table" }));
@@ -375,8 +375,8 @@ describe("the aggregate view", () => {
     expect(within(throughput).getByRole("img")).toHaveAccessibleName(
       "9 PRs opened and 4 merged over 81 days, from Mon Jul 20.",
     );
-    const mix = screen.getByRole("region", { name: "Status mix" });
-    expect(within(mix).getByRole("img").getAttribute("aria-label")).toMatch(/\(10 tasks\): .*Approved 40%/);
+    const mix = screen.getByRole("region", { name: "Status over time" });
+    expect(within(mix).getByRole("img").getAttribute("aria-label")).toMatch(/\(10 tasks\): .*Merge 40%/);
   });
 
   test("the data table toggle shows exact values, per local day", async () => {
@@ -513,14 +513,17 @@ describe("the aggregate view", () => {
 
   test("an empty window says why", async () => {
     const empty = aggregate();
-    empty.mix.inflight = empty.mix.inflight.map(() => 0);
-    empty.mix.series = empty.mix.series.map((s) => ({ ...s, share: s.share.map(() => null), count: s.count.map(() => 0) }));
-    empty.mix.who = empty.mix.who.map((s) => ({ ...s, share: s.share.map(() => null), count: s.count.map(() => 0) }));
+    empty.samples.inflight = empty.samples.inflight.map(() => 0);
+    empty.lanes = empty.lanes.map((lane) => ({
+      ...lane,
+      phases: lane.phases.map((p) => ({ ...p, share: p.share.map(() => null), count: p.count.map(() => 0) })),
+    }));
+    empty.waiting_on = empty.waiting_on.map((s) => ({ ...s, share: s.share.map(() => null), count: s.count.map(() => 0) }));
     empty.prs = [];
     serve(empty);
     show();
 
-    await screen.findByRole("heading", { name: "Status mix" });
+    await screen.findByRole("heading", { name: "Status over time" });
 
     expect(screen.getByText(/None of your PRs were updated in the last 12 weeks/)).toBeInTheDocument();
     expect(screen.getAllByText(/No task was in flight in this window/)).toHaveLength(2);

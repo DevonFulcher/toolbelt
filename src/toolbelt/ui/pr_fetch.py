@@ -43,7 +43,8 @@ _TIMELINE_ITEMS = 100
 _TIMELINE_TYPES = (
     "READY_FOR_REVIEW_EVENT, CONVERT_TO_DRAFT_EVENT, REVIEW_REQUESTED_EVENT, "
     "REVIEW_REQUEST_REMOVED_EVENT, PULL_REQUEST_REVIEW, PULL_REQUEST_COMMIT, "
-    "HEAD_REF_FORCE_PUSHED_EVENT, MERGED_EVENT, CLOSED_EVENT, REOPENED_EVENT"
+    "HEAD_REF_FORCE_PUSHED_EVENT, MERGED_EVENT, CLOSED_EVENT, REOPENED_EVENT, "
+    "BASE_REF_CHANGED_EVENT"
 )
 
 _REVIEWER = "requestedReviewer { __typename ... on User { login } ... on Team { name } ... on Mannequin { login } }"
@@ -94,6 +95,7 @@ query($owner: String!, $repo: String!, $branch: String!) {{
             ... on MergedEvent {{ createdAt actor {{ login }} }}
             ... on ClosedEvent {{ createdAt actor {{ login }} }}
             ... on ReopenedEvent {{ createdAt actor {{ login }} }}
+            ... on BaseRefChangedEvent {{ createdAt previousRefName currentRefName }}
           }}
         }}
       }}
@@ -382,6 +384,17 @@ def parse_snapshot(payload: dict) -> PrSnapshot:
             for entry in node["recent"]["nodes"]
         ),
         items=items,
+        base_changes=tuple(
+            sorted(
+                (
+                    _parse_time(entry["createdAt"]),
+                    entry["previousRefName"],
+                    entry["currentRefName"],
+                )
+                for entry in node["timelineItems"]["nodes"]
+                if entry["__typename"] == "BaseRefChangedEvent"
+            )
+        ),
     )
     return PrSnapshot(status=status, facts=facts)
 

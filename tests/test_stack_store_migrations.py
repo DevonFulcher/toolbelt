@@ -246,7 +246,8 @@ def test_rows_that_predate_task_ids_get_the_task_alive_at_their_time(tmp_path: P
     """A branch name reused over time: an old row belongs to the archived task
     that was removed after it, a later one to the tracked task."""
     db = tmp_path / "stacks.db"
-    conn = _build_at(db, len(store._MIGRATIONS) - 1)
+    # The version just before the task ids were added to these tables.
+    conn = _build_at(db, len(store._MIGRATIONS) - 2)
     _seed(conn)
     # ``seeded-old`` (branch "old") was removed on REMOVED; "old" is tracked
     # again afterwards.

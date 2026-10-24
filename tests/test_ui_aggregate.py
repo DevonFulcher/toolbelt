@@ -5,7 +5,7 @@ from them, the GitHub fetch and the endpoint. Pure inputs and an injected
 import asyncio
 import json
 import re
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -35,7 +35,7 @@ from toolbelt.ui.aggregate_feed import (
 )
 from toolbelt.ui.app import create_app
 from toolbelt.ui.pr_activity import PrFacts, TimelineItem
-from toolbelt.ui.timeline_lanes import LANE_SOURCES
+from toolbelt.ui.timeline_lanes import LANE_SOURCES, NEXT_LANE_KINDS
 
 # A Monday, so the window's weeks line up with the test's hours.
 MONDAY = datetime(2026, 10, 5, tzinfo=UTC)
@@ -215,12 +215,12 @@ def test_a_prs_whole_life_draft_to_merged():
     )
 
     assert states(record, now_hours=100) == [
-        (0, 24, "draft"),
-        (24, 48, "waiting"),
+        (0, 24, "publish"),
+        (24, 48, "wait_review"),
         # Changes requested outranks CI (the Next rule order), until sam
         # approves.
-        (48, 60, "changes"),
-        (60, 72, "approved"),
+        (48, 60, "address_review"),
+        (60, 72, "merge"),
     ]
 
 
@@ -235,11 +235,11 @@ def test_ci_failing_then_running_then_waiting_for_review():
     )
 
     assert states(record, now_hours=10) == [
-        (0, 1, "ready"),
-        (1, 2, "waiting"),
-        (2, 4, "ci_failing"),
-        (4, 5, "ci_running"),
-        (5, 10, "waiting"),
+        (0, 1, "request_review"),
+        (1, 2, "wait_review"),
+        (2, 4, "fix_ci"),
+        (4, 5, "wait_ci"),
+        (5, 10, "wait_review"),
     ]
 
 
@@ -254,19 +254,19 @@ def test_a_failing_commit_waits_on_ci_until_its_checks_complete_then_fails():
     )
 
     assert states(record, now_hours=10) == [
-        (0, 1, "ready"),
-        (1, 2, "waiting"),
-        (2, 3, "ci_running"),  # CI took an hour to fail
-        (3, 6, "ci_failing"),
-        (6, 7, "ci_running"),
-        (7, 10, "waiting"),
+        (0, 1, "request_review"),
+        (1, 2, "wait_review"),
+        (2, 3, "wait_ci"),  # CI took an hour to fail
+        (3, 6, "fix_ci"),
+        (6, 7, "wait_ci"),
+        (7, 10, "wait_review"),
     ]
 
 
 def test_a_failed_commit_with_no_completion_time_fails_from_its_push():
     record = pr(items=(commit(2, "FAILURE", "c1"),))
 
-    assert states(record, now_hours=6) == [(0, 2, "ready"), (2, 6, "ci_failing")]
+    assert states(record, now_hours=6) == [(0, 2, "request_review"), (2, 6, "fix_ci")]
 
 
 def test_a_commit_that_is_superseded_while_running_stops_running_at_the_push():
@@ -276,22 +276,22 @@ def test_a_commit_that_is_superseded_while_running_stops_running_at_the_push():
     )
 
     assert states(record, now_hours=12) == [
-        (0, 2, "ready"),
-        (2, 3, "ci_running"),
-        (3, 12, "ready"),
+        (0, 2, "request_review"),
+        (2, 3, "wait_ci"),
+        (3, 12, "request_review"),
     ]
 
 
 def test_commits_made_before_the_pr_was_opened_set_its_starting_state():
     record = pr(created=5, items=(commit(1, "FAILURE", "c0"), request(6)))
 
-    assert states(record, now_hours=10) == [(5, 10, "ci_failing")]
+    assert states(record, now_hours=10) == [(5, 10, "fix_ci")]
 
 
 def test_a_pending_head_commit_is_running_until_the_end():
     record = pr(items=(commit(2, "PENDING", "c1"),))
 
-    assert states(record, now_hours=6) == [(0, 2, "ready"), (2, 6, "ci_running")]
+    assert states(record, now_hours=6) == [(0, 2, "request_review"), (2, 6, "wait_ci")]
 
 
 def test_a_force_push_ends_failing_and_the_pr_is_ready_without_a_request():
@@ -303,9 +303,9 @@ def test_a_force_push_ends_failing_and_the_pr_is_ready_without_a_request():
     )
 
     assert states(record, now_hours=5) == [
-        (0, 1, "ready"),
-        (1, 3, "ci_failing"),
-        (3, 5, "ready"),
+        (0, 1, "request_review"),
+        (1, 3, "fix_ci"),
+        (3, 5, "request_review"),
     ]
 
 
@@ -320,16 +320,16 @@ def test_a_closed_pr_stops_and_a_reopened_one_resumes():
     )
 
     assert states(record, now_hours=40) == [
-        (0, 1, "ready"),
-        (1, 10, "waiting"),
-        (30, 40, "waiting"),
+        (0, 1, "request_review"),
+        (1, 10, "wait_review"),
+        (30, 40, "wait_review"),
     ]
 
 
 def test_a_merged_pr_has_no_state_after_the_merge():
     record = pr(merged_at=10, items=(request(2), merged(10)))
 
-    assert states(record, now_hours=50)[-1] == (2, 10, "waiting")
+    assert states(record, now_hours=50)[-1] == (2, 10, "wait_review")
 
 
 def test_an_approved_child_is_blocked_while_its_parent_is_open_and_who_follows_the_parent():
@@ -350,11 +350,11 @@ def test_an_approved_child_is_blocked_while_its_parent_is_open_and_who_follows_t
     )[1]
 
     assert [(s.state, s.who) for s in segments] == [
-        ("ready", "you"),
-        ("waiting", "others"),
+        ("request_review", "you"),
+        ("wait_review", "others"),
         ("blocked", "others"),
         # The base became main: no longer blocked, it is yours to merge.
-        ("approved", "you"),
+        ("merge", "you"),
     ]
     assert segments[-1].start == at(30)
 
@@ -394,10 +394,10 @@ def test_blocked_stops_when_the_parent_merges():
     )[1]
 
     assert [(s.state, (s.end - s.start).total_seconds() / 3600) for s in segments] == [
-        ("ready", 1),
-        ("waiting", 1),
+        ("request_review", 1),
+        ("wait_review", 1),
         ("blocked", 3),
-        ("approved", 5),
+        ("merge", 5),
     ]
 
 
@@ -574,14 +574,55 @@ DEFAULT_NOW = at(24 * 4)
 DEFAULT_SINCE = at(-1000)
 
 
+@dataclass(frozen=True)
+class Band:
+    key: str
+    share: list[float | None]
+    count: list[int]
+
+
+@dataclass(frozen=True)
+class StatusView:
+    """The "next" lane's layer and the waiting-on groups, read as one chart:
+    each band is a Next kind (``key``), sampled at ``starts``."""
+
+    starts: list[str]
+    inflight: list[int]
+    series: list[Band]
+    who: list[api.WaitingOn]
+
+
+class Computed:
+    """``agg.compute``'s result, with ``mix``: the status bands of its "next"
+    lane."""
+
+    def __init__(self, result: api.Aggregate) -> None:
+        self._result = result
+        (layer,) = [lane for lane in result.lanes if lane.lane == "next"]
+        self.mix = StatusView(
+            starts=result.samples.starts,
+            inflight=result.samples.inflight,
+            series=[
+                Band(p.kind.removeprefix("next_"), p.share, p.count)
+                for p in layer.phases
+            ],
+            who=result.waiting_on,
+        )
+
+    def __getattr__(self, name: str):
+        return getattr(self._result, name)
+
+
 def compute(prs, facts=(), *, now=DEFAULT_NOW, weeks=4, since=DEFAULT_SINCE):
-    return agg.compute(
-        prs,
-        list(facts),
-        now=now,
-        weeks=weeks,
-        archive_since=since,
-        fetched_at=now,
+    return Computed(
+        agg.compute(
+            prs,
+            list(facts),
+            now=now,
+            weeks=weeks,
+            archive_since=since,
+            fetched_at=now,
+        )
     )
 
 
@@ -624,7 +665,6 @@ def test_every_sample_sums_to_one_and_has_counts_that_agree():
 
     mix = compute([record], facts=[fact("branch-1", 12), fact("idea", 1)]).mix
 
-    assert mix.step_hours == 0
     for index in range(len(mix.starts)):
         column = [s.share[index] for s in mix.series]
         counts = [s.count[index] for s in mix.series]
@@ -640,14 +680,14 @@ def test_every_sample_sums_to_one_and_has_counts_that_agree():
         assert sum(v for v in who if v is not None) == pytest.approx(
             1 if mix.inflight[index] else 0
         )
-    assert {s.key for s in mix.series} == {s.key for s in agg.STATES}
+    assert {s.key for s in mix.series} == {kind for kind in NEXT_LANE_KINDS}
 
 
 def test_an_instant_with_nothing_in_flight_is_a_gap_not_zero():
     # Started Monday 12:00 and removed Tuesday 12:00 (an idea, no PR).
     mix = compute([], facts=[fact("idea", 12, removed=36)], now=at(60)).mix
 
-    working = {s.key: s for s in mix.series}["working"]
+    working = {s.key: s for s in mix.series}["open_pr"]
     before = mix.starts.index("2026-09-14T00:00:00Z")
     during = mix.starts.index("2026-10-05T12:00:00Z")
     after = mix.starts.index("2026-10-06T12:00:00Z")
@@ -662,20 +702,20 @@ def test_a_sample_is_a_snapshot_of_each_tasks_state_at_that_instant():
     a = pr(1, created=0, draft=True, items=(ready(13),))
     mix = compute([a], facts=[fact("idea", 3)], now=at(30)).mix
 
-    assert _column(mix, at(0)) == {"draft": 1}
-    assert _column(mix, at(6)) == {"draft": 1, "working": 1}
-    assert _column(mix, at(12)) == {"draft": 1, "working": 1}
-    assert _column(mix, at(18)) == {"ready": 1, "working": 1}
+    assert _column(mix, at(0)) == {"publish": 1}
+    assert _column(mix, at(6)) == {"publish": 1, "open_pr": 1}
+    assert _column(mix, at(12)) == {"publish": 1, "open_pr": 1}
+    assert _column(mix, at(18)) == {"request_review": 1, "open_pr": 1}
     assert "2026-10-05T13:00:00Z" in mix.starts
     index = mix.starts.index("2026-10-05T13:00:00Z")
     shares = {s.key: s.share[index] for s in mix.series}
-    assert shares["ready"] == 0.5 and shares["working"] == 0.5
+    assert shares["request_review"] == 0.5 and shares["open_pr"] == 0.5
 
 
 def test_a_task_that_ended_at_the_instant_is_no_longer_in_flight():
     mix = compute([pr(created=0, merged_at=6, items=(merged(6),))], now=at(24)).mix
 
-    assert _column(mix, at(0)) == {"ready": 1}
+    assert _column(mix, at(0)) == {"request_review": 1}
     assert _column(mix, at(6)) == {}
 
 
@@ -703,9 +743,9 @@ def test_the_working_time_before_a_pr_counts_as_in_flight():
     record = pr(created=24, items=(ready(36),))
     mix = compute([record], facts=[fact("branch-1", 12)]).mix
 
-    assert _column(mix, at(12)) == {"working": 1}
-    assert _column(mix, at(24)) == {"draft": 1}
-    assert _column(mix, at(36)) == {"ready": 1}
+    assert _column(mix, at(12)) == {"open_pr": 1}
+    assert _column(mix, at(24)) == {"publish": 1}
+    assert _column(mix, at(36)) == {"request_review": 1}
 
 
 def test_who_classes_follow_the_state_rules():
@@ -722,7 +762,6 @@ def test_who_classes_follow_the_state_rules():
 def test_a_long_window_uses_transitions_too():
     result = compute([pr(created=0)], weeks=26, now=at(24 * 4))
 
-    assert result.mix.step_hours == 0
     assert len(result.mix.starts) == 3
 
 
@@ -789,8 +828,8 @@ def test_tasks_without_a_pr_are_working_until_removed():
 
     assert result.coverage.tasks_without_pr == 1
     mix = result.mix
-    assert _column(mix, at(24)) == {"working": 1}
-    assert _column(mix, at(42)) == {"working": 1}
+    assert _column(mix, at(24)) == {"open_pr": 1}
+    assert _column(mix, at(42)) == {"open_pr": 1}
     assert _column(mix, at(48)) == {}  # removed: nothing in flight
 
 
@@ -805,15 +844,20 @@ def test_coverage_says_how_much_has_a_recorded_start():
     assert result.coverage.task_starts_since == "2026-10-04T19:00:00Z"
 
 
-def test_the_legend_is_taken_from_the_state_catalog():
-    infos = {s.key: s for s in agg.mix_state_infos()}
+def test_the_next_lanes_legend_is_taken_from_the_state_catalog():
+    from toolbelt.ui.timeline_lanes import LANES, NEXT_LANE_KINDS, next_phase
 
-    assert infos["draft"].label == pr_states.PHASES["draft"].label
-    assert infos["approved"].tone == pr_states.PHASES["approved"].tone
-    assert infos["working"].legend == pr_states.PHASES["working"].legend
-    assert infos["changes"].label == pr_states.lookup("review", "reviewed").label
-    assert infos["blocked"].tone == pr_states.lookup("next", "blocked").tone
-    assert [s.key for s in agg.STATES] == [i.key for i in agg.mix_state_infos()]
+    phases = LANES["next"].phases
+
+    assert list(phases) == [next_phase(kind) for kind in NEXT_LANE_KINDS]
+    for kind in NEXT_LANE_KINDS:
+        state = pr_states.lookup("next", kind)
+        span = phases[next_phase(kind)]
+        assert (span.label, span.tone, span.legend) == (
+            state.label,
+            state.tone,
+            state.legend,
+        )
 
 
 # ---- fetching and the endpoint ------------------------------------------------------------------
@@ -1550,7 +1594,7 @@ def test_the_repo_filter_narrows_prs_and_tasks_to_one_repo():
     # The task without a PR of the other repo is not counted for this one.
     assert by_name.coverage.tasks_without_pr == 0
     assert by_id.coverage.tasks_without_pr == 1
-    assert max(by_name.mix.inflight) == 1
+    assert max(by_name.samples.inflight) == 1
     assert len(github.calls) > 0
 
 
@@ -1601,8 +1645,9 @@ def test_the_aggregate_endpoint_serves_the_computed_view(client_and_pages):
     assert (pr_["number"], pr_["state"]) == (1, "MERGED")
     assert pr_["opened"] == "2026-10-06T09:00:00Z"
     assert pr_["ended"] == "2026-10-07T09:00:00Z"
-    assert body["mix"]["step_hours"] == 0
-    assert body["mix"]["states"][0]["label"] == pr_states.PHASES["working"].label
+    assert body["samples"]["starts"][-1] == "2026-10-08T12:00:00Z"
+    (next_layer,) = [lane for lane in body["lanes"] if lane["lane"] == "next"]
+    assert next_layer["phases"][0]["kind"] == "next_open_pr"
     assert body["notes"]
 
 
@@ -1687,9 +1732,9 @@ def test_a_claim_takes_the_task_from_its_prs_state_while_it_is_held():
         now=at(30),
     ).mix
 
-    assert _column(mix, at(3)) == {"ready": 1}
-    assert _column(mix, at(8)) == {"agent": 1}
-    assert _column(mix, at(18)) == {"ready": 1}
+    assert _column(mix, at(3)) == {"request_review": 1}
+    assert _column(mix, at(8)) == {"claimed": 1}
+    assert _column(mix, at(18)) == {"request_review": 1}
     who = {w.key: w.count[mix.starts.index("2026-10-05T06:00:00Z")] for w in mix.who}
     assert who["agent"] == 1 and who["you"] == 0
 
@@ -1701,21 +1746,86 @@ def test_a_claim_still_held_runs_to_now():
         now=at(30),
     ).mix
 
-    assert _column(mix, at(30)) == {"agent": 1}
+    assert _column(mix, at(30)) == {"autonomous": 1}
 
 
-def test_overlapping_claims_are_one_interval():
-    claimed = agg.claimed_intervals(
-        lanes_of(
-            "claim",
-            lane_phase("claim_agent_worktree", 1, 5),
-            lane_phase("claim_human_ref", 4, 8),
-            lane_phase("claim_agent_ref", 10, 11),
-        ),
-        at(20),
+def test_overlapping_claims_are_one_claimed_span():
+    mix = compute(
+        [pr(1, created=0, node_id="n1")],
+        facts=[
+            claimed_task(
+                lane_phase("claim_agent_worktree", 1, 5),
+                lane_phase("claim_human_ref", 4, 8),
+            )
+        ],
+        now=at(30),
+    ).mix
+
+    assert _column(mix, at(2)) == {"claimed": 1}
+    assert _column(mix, at(6)) == {"claimed": 1}
+    assert _column(mix, at(9)) == {"request_review": 1}
+
+
+def test_a_claim_whose_holder_is_only_idle_does_not_take_the_task():
+    idle = lane_phase("claim_agent_worktree", 1, 5).model_copy(update={"state": "idle"})
+    mix = compute(
+        [pr(1, created=0, node_id="n1")], facts=[claimed_task(idle)], now=at(30)
+    ).mix
+
+    assert _column(mix, at(2)) == {"request_review": 1}
+
+
+def test_a_pending_decision_beats_a_claim_and_an_autonomous_run_yields_to_a_person():
+    both = claimed_task(
+        lane_phase("claim_autonomous_worktree", 1, 10),
+        lane_phase("claim_agent_worktree", 4, 6),
     )
+    decided = replace(
+        both,
+        lanes=(
+            *both.lanes,
+            api.TimelineLane(
+                lane="decision",
+                events=[],
+                phases=[lane_phase("decision_pending", 8, 9)],
+            ),
+        ),
+    )
+    mix = compute([pr(1, created=0, node_id="n1")], facts=[decided], now=at(30)).mix
 
-    assert claimed == [(at(1), at(8)), (at(10), at(11))]
+    assert _column(mix, at(2)) == {"autonomous": 1}
+    assert _column(mix, at(5)) == {"claimed": 1}
+    assert _column(mix, at(8.5)) == {"deciding": 1}
+
+
+def test_conflicts_threads_and_slack_enter_next_from_what_was_recorded():
+    recorded = replace(
+        fact("branch-1", None, node_id="n1", number=1),
+        lanes=(
+            *lanes_of("git", lane_phase("git_conflicting", 2, 4)),
+            *lanes_of("review", lane_phase("comments_open", 6, 8)),
+            api.TimelineLane(
+                lane="slack",
+                events=[
+                    api.LaneEvent(
+                        t=at(10).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        kind="slack_post",
+                        detail="",
+                    )
+                ],
+                phases=[],
+            ),
+        ),
+    )
+    mix = compute([pr(1, created=0, node_id="n1")], facts=[recorded], now=at(48)).mix
+
+    assert _column(mix, at(1)) == {"request_review": 1}
+    assert _column(mix, at(3)) == {"resolve_conflicts": 1}
+    assert _column(mix, at(7)) == {"resolve_comments": 1}
+    # Slack rules apply from the first recorded post: posted, then a day on
+    # with nobody having looked, a bump is due.
+    assert _column(mix, at(12)) == {"request_review": 1}
+    assert _column(mix, at(40)) == {"bump_slack": 1}
 
 
 def test_a_lane_layer_counts_the_tasks_in_flight_that_had_its_span():

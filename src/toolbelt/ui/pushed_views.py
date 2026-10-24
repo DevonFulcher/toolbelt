@@ -25,6 +25,7 @@ from toolbelt.ui import api_models as api
 from toolbelt.ui.agents_view import build_agents
 from toolbelt.ui.card_extras import build_card_extras
 from toolbelt.ui.live_status import EventHub
+from toolbelt.ui.pr_activity import PrFacts
 from toolbelt.ui.spend_feed import BREAKDOWN_DAYS, SpendFeed
 
 #: How often the transcripts of the runs that are working are looked at.
@@ -72,8 +73,10 @@ class PushedViews:
         wall_clock: Callable[[], datetime],
         conversation_tick: float = CONVERSATION_TICK_SECONDS,
         repo_slug: Callable[[int], str | None] = lambda repo_id: None,
+        pr_facts: Callable[[int, str], tuple[PrFacts, str] | None] = lambda *_: None,
     ) -> None:
         self._repo_slug = repo_slug
+        self._pr_facts = pr_facts
         self._hub = hub
         self._dispatcher = dispatcher
         self._runner = runner
@@ -104,6 +107,7 @@ class PushedViews:
                 self._wall_clock(),
                 self._spend.ingested_at,
                 self._repo_slug,
+                self._pr_facts,
             )
         finally:
             store.close()

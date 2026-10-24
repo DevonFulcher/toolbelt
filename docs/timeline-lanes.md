@@ -50,18 +50,30 @@ alive at their time.
 Lanes reach the page in `BranchExtras.lanes`, rebuilt whenever the database
 changes (`PushedViews`).
 
-## The aggregate view
+## Next is a lane, and the aggregate view aggregates lanes
 
-The aggregate view uses the same registry (`aggregate.py`):
+A task's status over time is its **Next** (`next_action.py`), the same one the
+card shows. `aggregate.task_segments` runs `next_action` itself at every moment
+something it reads changed, on the PR's replayed state plus the recorded lanes
+(conflicts, open review threads, working claims, pending decisions, Slack
+posts). The result is the "next" lane: first on the card timeline, and the
+status chart of the aggregate view. There is no separate "status mix" to keep in
+step: a new Next rule is a new kind of the "next" lane (the registry test makes
+sure), and the aggregate and the card both fold the same function.
 
-- Time under a claim is the status mix's "With an agent" state, replacing the
-  PR's own state while the claim was held.
-- Each lane without an `aggregate_skip` reason gets a layer in
-  `Aggregate.lanes`: per sampled instant, how many of the tasks in flight had a
-  span of each kind (drawn like the status mix, the rest as "no activity"), and
-  the times of its markers. A lane that is not counted says why in
-  `LaneSource.aggregate_skip`; `tests/test_ui_aggregate.py` checks that every
-  other lane has a layer.
-- Lane history is recorded history: it covers tasks that were tracked
-  branches and begins when each source was first recorded. It is joined to a
-  task by `task_id`.
+The aggregate view is an aggregation of the lanes:
+
+- `Aggregate.lanes` has one layer per lane without an `aggregate_skip` reason
+  (the CI lane is skipped: the replay already has CI from GitHub's history).
+  Each layer is, per sampled instant, how many tasks in flight had a span of
+  each kind of the lane, plus the times of its markers.
+- `Aggregate.waiting_on` groups the "next" lane by who its next action waits on.
+- `Aggregate.samples` are the instants everything is sampled at (every change
+  of a task or lane) and how many tasks were in flight.
+- "Blocked on a parent" needs the other tasks (`aggregate.with_blocked`): the
+  card's lane and the aggregate's use the PR's base-branch changes
+  (`PrFacts.base_changes`) the same way.
+- Lane history is recorded history: it covers tasks that were tracked branches
+  and begins when each source was first recorded; before that Next is what the
+  PR's own timeline gives. The Slack rules apply from the first recorded post.
+  It is joined to a task by `task_id`.

@@ -27,9 +27,27 @@ export type AgentTrigger = "resolve_conflicts" | "resolve_comments" | "fix_ci";
 export type AgentRunState =
   "running" | "succeeded" | "failed" | "timed_out" | "cap_reached" | "stopped" | "abandoned" | "deciding";
 export type LaneEventKind = "slack_post" | "slack_bump" | "slack_reassign" | "decision_answered" | "task_in_review";
-export type LaneId = "git" | "ci" | "agent" | "claim" | "slack" | "merge_queue" | "decision" | "task";
+export type LaneId =
+  "next" | "git" | "review" | "ci" | "agent" | "claim" | "slack" | "merge_queue" | "decision" | "task";
 export type LanePhaseKind =
+  | "next_open_pr"
+  | "next_publish"
+  | "next_request_review"
+  | "next_post_slack"
+  | "next_bump_slack"
+  | "next_wait_review"
+  | "next_address_review"
+  | "next_resolve_comments"
+  | "next_resolve_conflicts"
+  | "next_wait_ci"
+  | "next_fix_ci"
+  | "next_merge"
+  | "next_blocked"
+  | "next_claimed"
+  | "next_autonomous"
+  | "next_deciding"
   | "git_conflicting"
+  | "comments_open"
   | "ci_seen_running"
   | "ci_seen_failed"
   | "ci_seen_success"
@@ -49,19 +67,7 @@ export type LanePhaseKind =
   | "claim_autonomous_ref"
   | "merge_queued"
   | "decision_pending";
-export type MixState =
-  | "working"
-  | "draft"
-  | "ready"
-  | "waiting"
-  | "changes"
-  | "ci_running"
-  | "ci_failing"
-  | "approved"
-  | "blocked"
-  | "agent";
-export type Tone = "green" | "red" | "amber" | "gray" | "purple" | "accent";
-export type MixWho = "you" | "agent" | "ci" | "others";
+export type WaitingOnKey = "you" | "agent" | "auto" | "ci" | "others";
 export type DecisionStatus = "pending" | "answered";
 export type ServerEvent =
   | HelloEvent
@@ -120,6 +126,7 @@ export type TaskLive = TaskLoading | TaskDetails | TaskUnavailable;
 export type HolderKind = "agent" | "human" | "autonomous";
 export type HolderState = "working" | "idle" | "blocked";
 export type UntrackedPrs = UntrackedLoading | UntrackedLoaded | UntrackedFailed;
+export type Tone = "green" | "red" | "amber" | "gray" | "purple" | "accent";
 export type CatalogDimension =
   "pr" | "ci" | "review" | "comments" | "merge" | "task" | "draft" | "reviewers" | "blocked" | "next";
 export type CatalogState =
@@ -301,11 +308,12 @@ export interface Aggregate {
   coverage: AggregateCoverage;
   fetched_at: string;
   lanes: AggregateLane[];
-  mix: StatusMix;
   notes: AggregateNote[];
   prs: PrMilestones[];
   refreshed: number;
   repo: string | null;
+  samples: AggregateSamples;
+  waiting_on: WaitingOn[];
   weeks: number;
   window_end: string;
   window_start: string;
@@ -341,38 +349,6 @@ export interface AggregateLanePhase {
   kind: LanePhaseKind;
   share: (number | null)[];
 }
-/**
- * A snapshot of the tasks in flight at each transition instant (not an
- * average over time).
- */
-export interface StatusMix {
-  inflight: number[];
-  series: MixSeries[];
-  starts: string[];
-  states: MixStateInfo[];
-  step_hours: number;
-  who: MixWhoSeries[];
-}
-export interface MixSeries {
-  count: number[];
-  key: MixState;
-  share: (number | null)[];
-}
-/**
- * One band of the status mix: its label, tone and legend come from the
- * state catalog (``pr_states``), so it reads like the cards.
- */
-export interface MixStateInfo {
-  key: MixState;
-  label: string;
-  legend: string;
-  tone: Tone;
-}
-export interface MixWhoSeries {
-  count: number[];
-  key: MixWho;
-  share: (number | null)[];
-}
 export interface AggregateNote {
   label: string;
   why: string;
@@ -397,6 +373,24 @@ export interface PrMilestones {
   task_started: string | null;
   title: string;
   url: string;
+}
+/**
+ * The instants every series of the aggregate view is sampled at: a
+ * snapshot of the tasks in flight at each (not an average over time).
+ */
+export interface AggregateSamples {
+  inflight: number[];
+  starts: string[];
+}
+/**
+ * The tasks in flight that are waiting on this one, at each sampled
+ * instant: the "next" lane's phases grouped by who the next action waits
+ * on.
+ */
+export interface WaitingOn {
+  count: number[];
+  key: WaitingOnKey;
+  share: (number | null)[];
 }
 /**
  * The body of ``POST /api/decisions/answer``: one answer per point, each an
@@ -781,6 +775,7 @@ export interface LanePhase {
   end: string | null;
   kind: LanePhaseKind;
   start: string;
+  state?: string;
 }
 /**
  * What a task has cost, over all the spend on record.
@@ -1196,9 +1191,26 @@ export interface LanePhaseSpans {
   claim_autonomous_worktree: Span;
   claim_human_ref: Span;
   claim_human_worktree: Span;
+  comments_open: Span;
   decision_pending: Span;
   git_conflicting: Span;
   merge_queued: Span;
+  next_address_review: Span;
+  next_autonomous: Span;
+  next_blocked: Span;
+  next_bump_slack: Span;
+  next_claimed: Span;
+  next_deciding: Span;
+  next_fix_ci: Span;
+  next_merge: Span;
+  next_open_pr: Span;
+  next_post_slack: Span;
+  next_publish: Span;
+  next_request_review: Span;
+  next_resolve_comments: Span;
+  next_resolve_conflicts: Span;
+  next_wait_ci: Span;
+  next_wait_review: Span;
 }
 export interface Span {
   label: string;

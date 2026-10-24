@@ -595,9 +595,6 @@
           },
           "type": "array"
         },
-        "mix": {
-          "$ref": "#/$defs/StatusMix"
-        },
         "notes": {
           "items": {
             "$ref": "#/$defs/AggregateNote"
@@ -623,6 +620,15 @@
             }
           ]
         },
+        "samples": {
+          "$ref": "#/$defs/AggregateSamples"
+        },
+        "waiting_on": {
+          "items": {
+            "$ref": "#/$defs/WaitingOn"
+          },
+          "type": "array"
+        },
         "weeks": {
           "type": "integer"
         },
@@ -641,7 +647,8 @@
         "refreshed",
         "repo",
         "prs",
-        "mix",
+        "samples",
+        "waiting_on",
         "lanes",
         "coverage",
         "notes"
@@ -773,6 +780,30 @@
         "why"
       ],
       "title": "AggregateNote",
+      "type": "object"
+    },
+    "AggregateSamples": {
+      "additionalProperties": false,
+      "description": "The instants every series of the aggregate view is sampled at: a\nsnapshot of the tasks in flight at each (not an average over time).",
+      "properties": {
+        "inflight": {
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "starts": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "starts",
+        "inflight"
+      ],
+      "title": "AggregateSamples",
       "type": "object"
     },
     "AutonomousSpend": {
@@ -2622,7 +2653,9 @@
     },
     "LaneId": {
       "enum": [
+        "next",
         "git",
+        "review",
         "ci",
         "agent",
         "claim",
@@ -2654,6 +2687,10 @@
         },
         "start": {
           "type": "string"
+        },
+        "state": {
+          "default": "",
+          "type": "string"
         }
       },
       "required": [
@@ -2667,7 +2704,24 @@
     },
     "LanePhaseKind": {
       "enum": [
+        "next_open_pr",
+        "next_publish",
+        "next_request_review",
+        "next_post_slack",
+        "next_bump_slack",
+        "next_wait_review",
+        "next_address_review",
+        "next_resolve_comments",
+        "next_resolve_conflicts",
+        "next_wait_ci",
+        "next_fix_ci",
+        "next_merge",
+        "next_blocked",
+        "next_claimed",
+        "next_autonomous",
+        "next_deciding",
         "git_conflicting",
+        "comments_open",
         "ci_seen_running",
         "ci_seen_failed",
         "ci_seen_success",
@@ -2744,6 +2798,9 @@
         "claim_human_worktree": {
           "$ref": "#/$defs/Span"
         },
+        "comments_open": {
+          "$ref": "#/$defs/Span"
+        },
         "decision_pending": {
           "$ref": "#/$defs/Span"
         },
@@ -2752,10 +2809,75 @@
         },
         "merge_queued": {
           "$ref": "#/$defs/Span"
+        },
+        "next_address_review": {
+          "$ref": "#/$defs/Span"
+        },
+        "next_autonomous": {
+          "$ref": "#/$defs/Span"
+        },
+        "next_blocked": {
+          "$ref": "#/$defs/Span"
+        },
+        "next_bump_slack": {
+          "$ref": "#/$defs/Span"
+        },
+        "next_claimed": {
+          "$ref": "#/$defs/Span"
+        },
+        "next_deciding": {
+          "$ref": "#/$defs/Span"
+        },
+        "next_fix_ci": {
+          "$ref": "#/$defs/Span"
+        },
+        "next_merge": {
+          "$ref": "#/$defs/Span"
+        },
+        "next_open_pr": {
+          "$ref": "#/$defs/Span"
+        },
+        "next_post_slack": {
+          "$ref": "#/$defs/Span"
+        },
+        "next_publish": {
+          "$ref": "#/$defs/Span"
+        },
+        "next_request_review": {
+          "$ref": "#/$defs/Span"
+        },
+        "next_resolve_comments": {
+          "$ref": "#/$defs/Span"
+        },
+        "next_resolve_conflicts": {
+          "$ref": "#/$defs/Span"
+        },
+        "next_wait_ci": {
+          "$ref": "#/$defs/Span"
+        },
+        "next_wait_review": {
+          "$ref": "#/$defs/Span"
         }
       },
       "required": [
+        "next_open_pr",
+        "next_publish",
+        "next_request_review",
+        "next_post_slack",
+        "next_bump_slack",
+        "next_wait_review",
+        "next_address_review",
+        "next_resolve_comments",
+        "next_resolve_conflicts",
+        "next_wait_ci",
+        "next_fix_ci",
+        "next_merge",
+        "next_blocked",
+        "next_claimed",
+        "next_autonomous",
+        "next_deciding",
         "git_conflicting",
+        "comments_open",
         "ci_seen_running",
         "ci_seen_failed",
         "ci_seen_success",
@@ -3123,124 +3245,6 @@
         "none"
       ],
       "type": "string"
-    },
-    "MixSeries": {
-      "additionalProperties": false,
-      "properties": {
-        "count": {
-          "items": {
-            "type": "integer"
-          },
-          "type": "array"
-        },
-        "key": {
-          "$ref": "#/$defs/MixState"
-        },
-        "share": {
-          "items": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "key",
-        "share",
-        "count"
-      ],
-      "title": "MixSeries",
-      "type": "object"
-    },
-    "MixState": {
-      "enum": [
-        "working",
-        "draft",
-        "ready",
-        "waiting",
-        "changes",
-        "ci_running",
-        "ci_failing",
-        "approved",
-        "blocked",
-        "agent"
-      ],
-      "type": "string"
-    },
-    "MixStateInfo": {
-      "additionalProperties": false,
-      "description": "One band of the status mix: its label, tone and legend come from the\nstate catalog (``pr_states``), so it reads like the cards.",
-      "properties": {
-        "key": {
-          "$ref": "#/$defs/MixState"
-        },
-        "label": {
-          "type": "string"
-        },
-        "legend": {
-          "type": "string"
-        },
-        "tone": {
-          "$ref": "#/$defs/Tone"
-        }
-      },
-      "required": [
-        "key",
-        "label",
-        "tone",
-        "legend"
-      ],
-      "title": "MixStateInfo",
-      "type": "object"
-    },
-    "MixWho": {
-      "enum": [
-        "you",
-        "agent",
-        "ci",
-        "others"
-      ],
-      "type": "string"
-    },
-    "MixWhoSeries": {
-      "additionalProperties": false,
-      "properties": {
-        "count": {
-          "items": {
-            "type": "integer"
-          },
-          "type": "array"
-        },
-        "key": {
-          "$ref": "#/$defs/MixWho"
-        },
-        "share": {
-          "items": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "key",
-        "share",
-        "count"
-      ],
-      "title": "MixWhoSeries",
-      "type": "object"
     },
     "NextActionInfo": {
       "additionalProperties": false,
@@ -5483,55 +5487,6 @@
       "title": "StatusEvent",
       "type": "object"
     },
-    "StatusMix": {
-      "additionalProperties": false,
-      "description": "A snapshot of the tasks in flight at each transition instant (not an\naverage over time).",
-      "properties": {
-        "inflight": {
-          "items": {
-            "type": "integer"
-          },
-          "type": "array"
-        },
-        "series": {
-          "items": {
-            "$ref": "#/$defs/MixSeries"
-          },
-          "type": "array"
-        },
-        "starts": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "states": {
-          "items": {
-            "$ref": "#/$defs/MixStateInfo"
-          },
-          "type": "array"
-        },
-        "step_hours": {
-          "type": "integer"
-        },
-        "who": {
-          "items": {
-            "$ref": "#/$defs/MixWhoSeries"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "step_hours",
-        "starts",
-        "inflight",
-        "states",
-        "series",
-        "who"
-      ],
-      "title": "StatusMix",
-      "type": "object"
-    },
     "StructureEvent": {
       "additionalProperties": false,
       "description": "The stack DB was written: the client re-fetches the snapshot.",
@@ -5932,6 +5887,51 @@
           "$ref": "#/$defs/UntrackedFailed"
         }
       ]
+    },
+    "WaitingOn": {
+      "additionalProperties": false,
+      "description": "The tasks in flight that are waiting on this one, at each sampled\ninstant: the \"next\" lane's phases grouped by who the next action waits\non.",
+      "properties": {
+        "count": {
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "key": {
+          "$ref": "#/$defs/WaitingOnKey"
+        },
+        "share": {
+          "items": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "key",
+        "share",
+        "count"
+      ],
+      "title": "WaitingOn",
+      "type": "object"
+    },
+    "WaitingOnKey": {
+      "enum": [
+        "you",
+        "agent",
+        "auto",
+        "ci",
+        "others"
+      ],
+      "type": "string"
     },
     "WebhooksEvent": {
       "additionalProperties": false,
