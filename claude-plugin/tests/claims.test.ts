@@ -283,6 +283,8 @@ type World = {
 
 // how long a test's tool call takes, by the text it carries
 const delays = new Map<string, number>()
+// commands the world refuses
+const denied = new Set<string>()
 
 const EDIT = (file_path: string, agentId?: string) =>
   ({ tool: 'Edit', file_path, old_string: 'a', new_string: 'b', agentId }) as never
@@ -339,6 +341,7 @@ function world(
     // a test makes a call take time with delay(): keyed by what the call says
     const fields = e as unknown as Record<string, unknown>
     const key = String(fields['command'] ?? fields['prompt'] ?? fields['pattern'] ?? '')
+    if (denied.has(key)) return { deny: 'blocked by a hook' }
     const ms = delays.get(key) ?? 0
     if (ms > 0) await new Promise(resolve => setTimeout(resolve, ms))
     return { result: 'ok' }
@@ -933,6 +936,34 @@ describe('activity', () => {
     await endTurn($, w)
 
     expect(lastChunk(w).calls[0]?.ok).toBe(false)
+  })
+
+  test('a call the engine refuses is not ok, and neither is one the user denied', async ($, on) => {
+    const w = world(on)
+    await startTurn($, w)
+    denied.add('sleep 99')
+    await $.tool.call(BASH('sleep 99')).catch(() => undefined)
+    const asked = $.tool.call(BASH('rm x', 40))
+    await wait(10)
+    await $.classic.PermissionDenied({ tool_name: 'Bash', tool_input: {}, tool_use_id: 'u', reason: 'no' } as never)
+    await asked
+    await endTurn($, w)
+
+    expect(lastChunk(w).calls.map(c => [c.detail, c.ok])).toEqual([
+      ['sleep 99', false],
+      ['rm x', false],
+    ])
+  })
+
+  test('a call says what it is about by whatever field its tool has', async ($, on) => {
+    const w = world(on)
+    await startTurn($, w)
+    await $.tool.call(CALL('mcp__x__js', { text: 'document.title' }))
+    await $.tool.call(CALL('Task', { description: 'explore the cache', prompt: 'a long brief' }))
+    await $.tool.call(CALL('WebFetch', { url: 'https://example.com/a' }))
+    await endTurn($, w)
+
+    expect(lastChunk(w).calls.map(c => c.detail)).toEqual(['document.title', 'explore the cache', 'https://example.com/a'])
   })
 
   test('a call still running when the turn ends is closed with it and marked unended', async ($, on) => {

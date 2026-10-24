@@ -429,7 +429,7 @@ const bashActivityDirectories = (command: string, start: string | null): string[
 
 // The paths a tool call names, by the field each tool uses.
 const callDetail = (e: Record<string, unknown>): string => {
-  for (const key of ['command', 'file_path', 'notebook_path', 'path', 'pattern', 'url', 'query']) {
+  for (const key of ['command', 'file_path', 'notebook_path', 'path', 'pattern', 'url', 'query', 'text', 'description', 'prompt']) {
     const value = e[key]
     if (typeof value === 'string' && value !== '') return value.slice(0, MAX_DETAIL)
   }
@@ -964,6 +964,7 @@ export const register: Register = on => {
 
   on('classic.PermissionDenied', ($, e, next) => {
     try {
+      failCall(e.agent_id)
       resume($, e.agent_id)
     } catch (error) {
       debug($, `PermissionDenied failed: ${String(error)}`)
@@ -994,7 +995,9 @@ export const register: Register = on => {
     }
     try {
       const result = await next(e)
-      if (call !== null) endCall(call, e.agentId, true)
+      // a call the engine refused answers { deny } rather than throwing
+      const isDenied = typeof result === 'object' && result !== null && 'deny' in result
+      if (call !== null) endCall(call, e.agentId, !isDenied)
       return result
     } catch (error) {
       if (call !== null) endCall(call, e.agentId, false)
