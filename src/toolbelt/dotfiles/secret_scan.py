@@ -1,7 +1,11 @@
-"""Heuristic scan for secret-looking content, used before publishing dotfiles.
+"""Heuristic scan for secret-looking content and machine-specific paths, used
+before publishing dotfiles.
 
 Findings never include the matched text, so output is safe to paste. A line
-containing ``tt:allow-secret`` is skipped, for deliberate false positives.
+containing ``tt:allow-secret`` is skipped by the secret rules, for deliberate
+false positives. A line containing ``tt:allow-user-path`` is skipped by the
+``/Users/<name>/`` rule: a path under a home directory only works on the
+laptop whose account it names, so dotfiles use ``$HOME`` or ``~`` instead.
 """
 
 import re
@@ -11,6 +15,7 @@ from pathlib import Path
 from toolbelt import logged_process
 
 ALLOW_MARKER = "tt:allow-secret"
+USER_PATH_ALLOW_MARKER = "tt:allow-user-path"
 _MAX_BYTES = 2 * 1024 * 1024
 
 _RULES: dict[str, re.Pattern[str]] = {
@@ -32,6 +37,11 @@ _RULES: dict[str, re.Pattern[str]] = {
     ),
 }
 
+# /Users/Shared is the same on every Mac.
+_USER_PATH_RULES: dict[str, re.Pattern[str]] = {
+    "literal /Users/<name>/ path": re.compile(r"/Users/(?!Shared/)[A-Za-z0-9._-]+/"),
+}
+
 
 @dataclass(frozen=True)
 class Finding:
@@ -46,11 +56,14 @@ class Finding:
 def scan_text(text: str, *, path: Path) -> list[Finding]:
     findings: list[Finding] = []
     for number, line in enumerate(text.splitlines(), start=1):
-        if ALLOW_MARKER in line:
-            continue
-        for rule, pattern in _RULES.items():
-            if pattern.search(line):
-                findings.append(Finding(path, number, rule))
+        if ALLOW_MARKER not in line:
+            for rule, pattern in _RULES.items():
+                if pattern.search(line):
+                    findings.append(Finding(path, number, rule))
+        if USER_PATH_ALLOW_MARKER not in line:
+            for rule, pattern in _USER_PATH_RULES.items():
+                if pattern.search(line):
+                    findings.append(Finding(path, number, rule))
     return findings
 
 

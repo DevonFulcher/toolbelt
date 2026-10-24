@@ -362,6 +362,46 @@ def test_scan_text_ignores_references_and_allow_marker() -> None:
     assert scan_text(allowed, path=Path("f")) == []
 
 
+def test_scan_text_flags_a_literal_user_home_path() -> None:
+    flagged = [
+        "alias a=/Users/someone/.local/bin/a",
+        'export P="/Users/some.one-2/Library/pnpm"',
+        "see /Users/devon/git/x",
+    ]
+    for line in flagged:
+        findings = scan_text(line, path=Path("f"))
+        assert [f.rule for f in findings] == ["literal /Users/<name>/ path"]
+        assert all(line not in str(f) for f in findings)
+
+
+def test_scan_text_allows_user_paths_that_are_not_user_specific() -> None:
+    clean = [
+        'alias a="$HOME/.local/bin/a"',
+        "cd ~/git",
+        "/Users/Shared/data",
+        "the /Users/<name>/ placeholder",
+        "/Users/someone",  # no trailing path, so nothing is hard-coded
+    ]
+    for line in clean:
+        assert scan_text(line, path=Path("f")) == []
+    marked = "/Users/someone/x  # tt:allow-user-path"
+    assert scan_text(marked, path=Path("f")) == []
+    # The secret marker does not excuse a path, nor the reverse.
+    assert scan_text("/Users/someone/x  # tt:allow-secret", path=Path("f"))
+    token = "ghp_" + "c" * 36 + "  # tt:allow-user-path"
+    assert scan_text(token, path=Path("f"))
+
+
+def test_check_fails_on_a_user_path_in_a_tracked_file(machine: Machine) -> None:
+    repo = machine.public
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    write(repo / "files/.zshrc", "export X=/Users/someone/bin\n")
+    result = machine.cli("check", str(repo))
+    assert result.exit_code == 1
+    assert "files/.zshrc:1: literal /Users/<name>/ path" in result.output
+    assert "/Users/someone" not in result.output.replace(str(repo), "")
+
+
 def test_check_scans_tracked_and_untracked_but_not_ignored(machine: Machine) -> None:
     repo = machine.public
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True)

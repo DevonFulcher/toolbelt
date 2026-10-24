@@ -132,7 +132,7 @@ def check(
         typer.Argument(help="Repo names or paths. Default: every public repo."),
     ] = None,
 ) -> None:
-    """Scan public repos for secret-looking content; exit 1 if any is found"""
+    """Scan public repos for secret-looking content and literal /Users/<name>/ paths; exit 1 if any is found"""
     manifests = _context(ctx).manifests()
     if repo:
         selected = [_choose_repo(manifests, name) for name in repo]
@@ -142,6 +142,8 @@ def check(
     for finding in findings:
         typer.echo(str(finding))
     if findings:
-        typer.echo(f"{len(findings)} possible secret(s) found")
+        typer.echo(
+            f"{len(findings)} finding(s): possible secret(s) or user-specific path(s)"
+        )
         raise typer.Exit(1)
-    typer.echo(f"No secrets found in {len(selected)} repo(s)")
+    typer.echo(f"No secrets or user-specific paths found in {len(selected)} repo(s)")
