@@ -170,6 +170,19 @@ describe("a card's labelled slots", () => {
     expect(a.descendants[2]).toBe("1");
   });
 
+  test("a branch card links to the Review view of its changes against its parent", () => {
+    const { store } = showCards([branch(1, "devon/a"), branch(1, "devon/b", { parent: "main" })]);
+    const card = (name: string) => document.querySelector(`article[data-id="1:${name}"]`) as HTMLElement;
+
+    // A branch with no known parent has nothing to compare against.
+    expect(within(card("devon/a")).queryByRole("link", { name: "review changes →" })).toBeNull();
+    const link = within(card("devon/b")).getByRole("link", { name: "review changes →" });
+    expect(link).toHaveAttribute("href", "?view=review&repo=1&base=main&head=devon%2Fb");
+    fireEvent.click(link);
+
+    expect(store.getState().view).toMatchObject({ view: "review", repo: "1", base: "main", head: "devon/b", file: "" });
+  });
+
   test("the task age counts from when the task started, and says so when unknown", () => {
     showCards([
       branch(1, "devon/a", { started_at: new Date(NOW - 8 * DAY).toISOString(), status: noPr() }),

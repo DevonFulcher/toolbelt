@@ -16,7 +16,7 @@ import type {
 import { sessionLink } from "../logic/claimSession";
 import type { RailSegment } from "../logic/layout";
 import { stackViewRoot } from "../logic/focus";
-import { serializeState } from "../logic/viewState";
+import { serializeState, type ViewState } from "../logic/viewState";
 import { rollup, youText } from "../logic/rollup";
 import { LOADING, subtreeIds } from "../store/selectors";
 import { useApp, useAppStore } from "../store/StoreContext";
@@ -197,6 +197,13 @@ export const Card = memo(
       s.view.view === "stacked" && s.view.root !== id ? serializeState({ ...s.view, root: id }) : null,
     );
     const branch = useApp((s) => s.branchesById[id]);
+    // The Review view of this branch's changes against its parent (the trunk,
+    // for a branch directly on it).
+    const view = useApp((s) => s.view);
+    const reviewState: ViewState | null =
+      branch.parent === null
+        ? null
+        : { ...view, view: "review", repo: String(branch.repo_id), base: branch.parent, head: branch.name, file: "" };
     // Stacked view only: this card and what is stacked below it can be rolled
     // up into one line. `rolled` is the roll-up (as JSON, so the selector
     // returns a primitive) while it is.
@@ -321,6 +328,19 @@ export const Card = memo(
                 }}
               >
                 open in stacked view →
+              </a>
+            )}{" "}
+            {reviewState !== null && (
+              <a
+                className="stack-open"
+                href={serializeState(reviewState)}
+                title={`Review what ${branch.name} changes against ${reviewState.base}`}
+                onClick={(event) => {
+                  event.preventDefault();
+                  store.getState().setView(reviewState);
+                }}
+              >
+                review changes →
               </a>
             )}{" "}
             {focusHref !== null && hasChildren && (
