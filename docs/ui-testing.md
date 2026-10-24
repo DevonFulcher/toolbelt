@@ -48,6 +48,14 @@ own private repo.
     and **excluding weekends** (elapsed time minus the time on
     Saturday/Sunday in the viewer's zone, no holiday calendar: Friday 17:00 to
     Monday 09:00 is 64h elapsed, 16h without weekends).
+- **The finish estimate** (`tests/test_finish_estimate.py`,
+  `tests/test_ui_estimate.py`, `web/src/logic/finishEstimate.test.ts`,
+  `web/src/components/AggregateView.test.tsx`): see
+  [`finish-estimate.md`](finish-estimate.md). Pure functions on fixed synthetic
+  histories (exact quantiles, the fallback level, working time across a
+  Friday evening, a stacked parent landing late, a regime change, coverage near
+  80% on a generated history, tuning), the stage rows from a PR's replay, the
+  stored backtest and the card and accuracy payloads, and the client's text.
 - **The stack DB** (`tests/test_stack_store.py`,
   `tests/test_stack_store_migrations.py`): the migration list is applied from
   scratch and from every historical `user_version` with rows in place.

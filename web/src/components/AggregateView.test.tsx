@@ -25,6 +25,88 @@ function show(search = "?view=aggregate", branches = [branch(1, "devon/a", { sta
   return renderWith(<App clock={() => NOW} />, snapshot(branches), { search });
 }
 
+describe("the estimate accuracy section", () => {
+  const params = { half_life_weeks: 4, min_samples: 3, shrinkage: 10 };
+  const stage = (name: string, n: number, coverage: number | null) => ({
+    stage: name,
+    n,
+    unknown: 1,
+    coverage,
+    median_abs_error_seconds: 3.5 * 3600,
+    median_width_seconds: 12 * 3600,
+  });
+  const run = (day: number, coverage: number) => ({
+    ran_at: `2026-10-0${day}T00:00:00Z`,
+    params,
+    overall: stage("all", 100, coverage),
+    by_stage: [stage("merge", 10, 0.9), stage("wait_review", 60, coverage)],
+    regime: [],
+  });
+
+  test("shows the last backtest, the parameters in use, a regime change and every stage", async () => {
+    const latest = {
+      ...run(3, 0.82),
+      regime: [
+        {
+          stage: "wait_review",
+          weeks: 4,
+          change: -0.45,
+          recent_median_seconds: 4 * 3600,
+          prior_median_seconds: 7.3 * 3600,
+          n_recent: 12,
+          n_prior: 15,
+        },
+      ],
+    };
+    serve(
+      aggregate({
+        estimate: {
+          working_day_seconds: 8 * 3600,
+          current: params,
+          backtests: [run(1, 0.7), run(2, 0.78), latest],
+          live_made: 6,
+          live_finished: 4,
+          live_coverage: 0.75,
+        },
+      }),
+    );
+    show();
+
+    const section = await screen.findByRole("region", { name: "Estimate accuracy" });
+
+    expect(within(section).getByText(/82% of 99 predictions finished at or under their p80 \(target 80%\), median error 3\.5h/)).toBeInTheDocument();
+    expect(within(section).getByText(/half-life 4 weeks, at least 3 samples per group, shrinkage 10/)).toBeInTheDocument();
+    expect(within(section).getByText(/wait review estimates are now 45% shorter than 4 weeks ago/)).toBeInTheDocument();
+    expect(within(section).getByRole("img", { name: "Coverage of the p80 over time" })).toBeInTheDocument();
+    const rows = within(section).getAllByRole("row").map((row) => row.textContent);
+    expect(rows[1]).toContain("wait review");
+    expect(rows[2]).toContain("merge");
+    expect(within(section).getByText(/Of 6 estimates shown, 4 tasks have finished: 75% of them at or before their p80/)).toBeInTheDocument();
+  });
+
+  test("says so when no backtest has run", async () => {
+    serve(
+      aggregate({
+        estimate: { working_day_seconds: 8 * 3600, current: null, backtests: [], live_made: 0, live_finished: 0, live_coverage: null },
+      }),
+    );
+    show();
+
+    const section = await screen.findByRole("region", { name: "Estimate accuracy" });
+
+    expect(within(section).getByText(/No backtest yet/)).toBeInTheDocument();
+    expect(within(section).getByText(/0 estimates shown so far/)).toBeInTheDocument();
+  });
+
+  test("is left out when the server sent none", async () => {
+    serve(aggregate());
+    show();
+
+    await screen.findByRole("heading", { name: "Throughput" });
+    expect(screen.queryByRole("region", { name: "Estimate accuracy" })).not.toBeInTheDocument();
+  });
+});
+
 describe("the aggregate view", () => {
   test("a page refresh shows the saved short-window result while the server request is pending", () => {
     sessionStorage.setItem("toolbelt:aggregate:v3:4:", JSON.stringify(aggregate({ weeks: 4 })));

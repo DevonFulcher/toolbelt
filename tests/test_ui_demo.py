@@ -353,3 +353,80 @@ def test_the_seeded_demo_shows_validate_personal_review_and_publish(tmp_path: Pa
     ).stdout
     (found,) = json.loads(lookup)["data"]["repository"]["pullRequests"]["nodes"]
     assert (found["number"], found["state"], found["isDraft"]) == (200, "OPEN", False)
+
+
+def _demo_records(tmp_path: Path):
+    module = _load_history()
+    prs, _ = module.history(NOW, random.Random(1))
+    home = tmp_path / "home"
+    home.mkdir()
+    (tmp_path / "history.json").write_text(json.dumps(prs))
+    payload = json.loads(
+        _fake_gh(
+            "api",
+            "graphql",
+            "-f",
+            f"query={PR_QUERY}",
+            "-f",
+            "search=is:pr author:@me updated:>=2026-07-01",
+            home=home,
+        )
+    )
+    records, *_ = parse_page(payload)
+    return records
+
+
+def test_the_demo_history_is_enough_for_estimates_and_a_backtest(tmp_path: Path):
+    """The demo shows estimates and the accuracy section only if its history
+    has enough finished PRs per stage, several reviewers, and a backtest that
+    predicts most of them."""
+    from collections import Counter
+
+    from toolbelt.finish_estimate.backtest import run_backtest
+    from toolbelt.finish_estimate.working_hours import WorkingHours
+    from toolbelt.ui.estimate_feed import samples_of, stage_rows
+
+    records = _demo_records(tmp_path)
+    tasks = [aggregate.Task(pr=record, started=None) for record in records]
+    with_pr, resolved, _ = aggregate.pr_lives(tasks, NOW)
+    rows = stage_rows(list(zip(with_pr, resolved, strict=True)), NOW)
+
+    reviews = [row for row in rows if row.stage == "wait_review"]
+    assert len(reviews) >= 25
+    by_reviewer = Counter(row.reviewer for row in reviews)
+    assert {"sam", "lee", "kim"} <= set(by_reviewer)
+    assert all(by_reviewer[name] >= 5 for name in ("sam", "lee", "kim"))
+
+    result = run_backtest(samples_of(rows, WorkingHours()), WorkingHours(), NOW)
+    assert result.overall.n >= 100
+    assert result.overall.unknown < result.overall.n * 0.25
+    assert (
+        result.overall.coverage is not None and 0.6 <= result.overall.coverage <= 0.95
+    )
+
+
+def test_the_seeded_demo_has_earlier_backtests_for_the_accuracy_chart(tmp_path: Path):
+    from toolbelt.finish_estimate.working_hours import WorkingHours
+    from toolbelt.git.stack.store import StackStore, default_db_path
+    from toolbelt.ui.estimate_feed import accuracy
+
+    spec = importlib.util.spec_from_file_location("ui_demo_seed3", DEMO / "seed.py")
+    assert spec and spec.loader
+    seed = importlib.util.module_from_spec(spec)
+    sys.path.insert(0, str(DEMO))
+    try:
+        spec.loader.exec_module(seed)
+    finally:
+        sys.path.remove(str(DEMO))
+    seed.seed(tmp_path, 0)
+
+    store = StackStore(default_db_path())
+    try:
+        track = accuracy(store, WorkingHours())
+    finally:
+        store.close()
+
+    assert len(track.backtests) >= 3
+    assert track.current is not None
+    assert all(b.overall.coverage is not None for b in track.backtests)
+    assert {s.stage for s in track.backtests[-1].by_stage} >= {"wait_review", "merge"}

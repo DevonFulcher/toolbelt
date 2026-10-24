@@ -48,7 +48,12 @@ from toolbelt.ui import aggregate
 from toolbelt.ui import api_models as api
 from toolbelt.ui.github_requests import GithubRequests, GithubUnavailable
 from toolbelt.ui.lane_history import build_lanes
-from toolbelt.ui.pr_activity import PrFacts, facts_from_dict, facts_to_dict
+from toolbelt.ui.pr_activity import (
+    PrFacts,
+    facts_from_dict,
+    facts_to_dict,
+    pending_reviewers,
+)
 from toolbelt.ui.pr_fetch import timeline_items
 from toolbelt.ui.repo_visibility import visible_repos
 from toolbelt.ui.untracked_prs import (
@@ -197,6 +202,7 @@ def _review_now(node: dict) -> str:
 def parse_pr(node: dict) -> aggregate.PrRecord:
     """One PR node of a ``PR_QUERY`` page."""
     entries = node["timelineItems"]["nodes"]
+    items = timeline_items(entries)
     facts = PrFacts(
         number=node["number"],
         title=node["title"],
@@ -208,9 +214,9 @@ def parse_pr(node: dict) -> aggregate.PrRecord:
         created_at=_time(node["createdAt"]),
         merged_at=_time(node["mergedAt"]) if node.get("mergedAt") else None,
         closed_at=_time(node["closedAt"]) if node.get("closedAt") else None,
-        requested_reviewers=(),
+        requested_reviewers=pending_reviewers(items) if node["state"] == "OPEN" else (),
         commit_rollups=(),
-        items=timeline_items(entries),
+        items=items,
         additions=node.get("additions") or 0,
         deletions=node.get("deletions") or 0,
     )
@@ -433,7 +439,9 @@ class AggregateService:
         db_path: Callable[[], Path] = default_db_path,
         max_pages: int = MAX_PAGES,
         margin: timedelta = UPDATED_MARGIN,
+        estimate_accuracy: Callable[[], api.EstimateAccuracy | None] = lambda: None,
     ) -> None:
+        self._estimate_accuracy = estimate_accuracy
         self._search = search
         self._history = history
         self._remote_of = remote_of
@@ -675,7 +683,7 @@ class AggregateService:
             # A repo whose remote cannot be resolved cannot be matched to PRs.
             prs = [p for p in prs if slug is not None and p.repo == slug]
             facts = [f for f in facts if slug is not None and f.repo == slug]
-        return aggregate.compute(
+        computed = aggregate.compute(
             prs,
             facts,
             now=self._wall_clock(),
@@ -692,3 +700,24 @@ class AggregateService:
                 if chosen is None or turn.repo_id == chosen.id
             ],
         )
+        accuracy = await asyncio.to_thread(self._estimate_accuracy)
+        return computed.model_copy(update={"estimate": accuracy})
+
+    async def lives(self) -> list[tuple[aggregate.Task, list[aggregate.Segment]]]:
+        """Every cached PR's task and its Next over its life, as stored (no
+        request to GitHub): what the finish estimate's history is built from."""
+        ready = self._cache
+        if ready is None:
+            ready = self._cache = await asyncio.to_thread(self._load)
+        if ready is None:
+            return []
+        history = await asyncio.to_thread(self._history)
+        facts = await task_facts(history, self._remote_of, self._finished)
+        now = self._wall_clock()
+
+        def work() -> list[tuple[aggregate.Task, list[aggregate.Segment]]]:
+            tasks = aggregate.match_tasks(list(ready.records.values()), facts, now)
+            with_pr, resolved, _ = aggregate.pr_lives(tasks, now)
+            return list(zip(with_pr, resolved, strict=True))
+
+        return await asyncio.to_thread(work)

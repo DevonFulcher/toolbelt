@@ -868,6 +868,30 @@ def _bucket_edges(start: datetime, now: datetime, step: timedelta) -> list[datet
     return edges
 
 
+def pr_lives(
+    tasks: Sequence[Task], now: datetime
+) -> tuple[list[Task], list[list[Segment]], datetime | None]:
+    """The tasks that have a PR and each one's Next over its life (blocked on
+    a parent resolved), and when Slack posts began to be recorded."""
+    with_pr = [task for task in tasks if task.pr is not None]
+    records = [task.pr for task in with_pr if task.pr is not None]
+    slack_from = min(
+        (
+            datetime.fromisoformat(event.t)
+            for task in tasks
+            for lane in task.lanes
+            if lane.lane == "slack"
+            for event in lane.events
+        ),
+        default=None,
+    )
+    plain = [
+        task_segments(task.pr, task.started, None, task.lanes, slack_from, now)
+        for task in with_pr
+    ]
+    return with_pr, with_blocked(records, plain, now), slack_from
+
+
 def compute(
     prs: Sequence[PrRecord],
     facts: Sequence[TaskFact],
@@ -889,23 +913,7 @@ def compute(
     # one (UTC): hand it the PRs of a little more than the window.
     margin_start = start - timedelta(days=2)
     tasks = match_tasks(prs, facts, now)
-    with_pr = [task for task in tasks if task.pr is not None]
-    records = [task.pr for task in with_pr if task.pr is not None]
-    slack_from = min(
-        (
-            datetime.fromisoformat(event.t)
-            for task in tasks
-            for lane in task.lanes
-            if lane.lane == "slack"
-            for event in lane.events
-        ),
-        default=None,
-    )
-    plain = [
-        task_segments(task.pr, task.started, None, task.lanes, slack_from, now)
-        for task in with_pr
-    ]
-    resolved = with_blocked(records, plain, now)
+    with_pr, resolved, slack_from = pr_lives(tasks, now)
 
     # Every task's Next over its life, and the lanes the layers are drawn from
     # (its own plus the "next" lane that life is).

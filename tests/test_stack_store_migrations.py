@@ -292,3 +292,29 @@ def test_rows_that_predate_task_ids_get_the_task_alive_at_their_time(tmp_path: P
         ("old", "seeded-old-again"),
         ("gone", None),
     ]
+
+
+def test_the_finish_estimate_tables_arrive_with_existing_rows_kept(tmp_path: Path):
+    first = next(
+        v
+        for v in VERSIONS
+        if "task_stage_durations"
+        in {
+            r[0]
+            for r in _build_at(tmp_path / f"{v}.db", v).execute(
+                "SELECT name FROM sqlite_master"
+            )
+        }
+    )
+    before = _build_at(tmp_path / "old.db", first - 1)
+    _seed(before)
+    before.close()
+
+    store = StackStore(tmp_path / "old.db")
+    try:
+        assert store.stage_durations() == []
+        assert store.predictions() == []
+        assert store.backtests() == []
+        assert store.repos()  # the rows of the older schema are still there
+    finally:
+        store.close()

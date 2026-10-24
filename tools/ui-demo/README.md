@@ -27,6 +27,16 @@ conflicts, ready for review with CI running, approved with CI running and
 on main (`devon/search-cache`: it can be queued to merge), and branches with no
 PR.
 
+## Finish estimate
+
+Every card has an "Estimated finish" slot and the aggregate view an "Estimate
+accuracy" section (`docs/finish-estimate.md`). The estimate is made from the
+demo's own 12 weeks of PRs (three reviewers, so the reviewer factor shows): a
+few seconds after start `tt ui` rebuilds the stage history from them and runs
+the first backtest. `seed.py` (`write_estimates`) adds five made-up earlier
+nightly backtests so the coverage chart has a history; the newest backtest is
+the demo's own. `tests/test_ui_demo.py` checks the history is enough.
+
 ## Timeline lanes
 
 `seed.py` (`write_lanes`) records what `tt ui` would have seen of the demo

@@ -7,6 +7,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from toolbelt.autonomous_agents.dispatcher import Dispatcher
+from toolbelt.finish_estimate.working_hours import WorkingHours
 from toolbelt.git.stack.store import (
     AgentRun,
     ReviewVerdict,
@@ -16,6 +17,7 @@ from toolbelt.git.stack.store import (
 from toolbelt.ui import aggregate
 from toolbelt.ui import api_models as api
 from toolbelt.ui.agents_view import reason_info, run_info
+from toolbelt.ui.estimate_feed import LiveTask, live_estimates
 from toolbelt.ui.lane_history import build_lanes
 from toolbelt.ui.personal_review import VALIDATE, validated_tasks
 from toolbelt.ui.pr_activity import PrFacts
@@ -28,16 +30,17 @@ RECENT_RUNS = 50
 _EPOCH = datetime(2000, 1, 1, tzinfo=UTC)
 
 
-def next_lanes(
+def folded_next(
     store: StackStore,
     now: datetime,
     lanes: dict[str, list[api.TimelineLane]],
     repo_slug: Callable[[int], str | None],
     pr_facts: Callable[[int, str], tuple[PrFacts, str] | None],
-) -> dict[str, tuple[api.TimelineLane, ...]]:
-    """Each tracked task's lanes with its Next (the "next" lane) first: the
-    same fold of ``next_action`` the aggregate view runs, on the PR's facts as
-    last looked up. A task whose PR facts are not in yet has no "next" lane."""
+) -> tuple[dict[str, list[aggregate.Segment]], list[LiveTask]]:
+    """Each tracked task's Next over its life (the same fold of
+    ``next_action`` the aggregate view runs, on the PR's facts as last looked
+    up; a task whose PR facts are not in yet has none), and the tasks that
+    have a PR as the finish estimate needs them."""
     tracked = store.tracked_branch_facts()
     slack_from = min(
         (
@@ -79,10 +82,32 @@ def next_lanes(
                 record, task.started_at, None, task_lanes, slack_from, now
             )
         )
-    for task, segments in zip(
-        with_pr, aggregate.with_blocked(records, plain, now), strict=True
+    live: list[LiveTask] = []
+    for task, record, segments in zip(
+        with_pr,
+        records,
+        aggregate.with_blocked(records, plain, now),
+        strict=True,
     ):
         folded[task.task_id] = segments
+        live.append(
+            LiveTask(
+                task_id=task.task_id,
+                repo=record.repo,
+                branch=task.name,
+                facts=record.facts,
+                segments=segments,
+            )
+        )
+    return folded, live
+
+
+def next_lanes(
+    lanes: dict[str, list[api.TimelineLane]],
+    folded: dict[str, list[aggregate.Segment]],
+    now: datetime,
+) -> dict[str, tuple[api.TimelineLane, ...]]:
+    """Each tracked task's lanes with its Next (the "next" lane) first."""
     return {
         task_id: aggregate.with_next_lane(lanes.get(task_id, []), segments, now)
         for task_id, segments in folded.items()
@@ -134,6 +159,7 @@ def build_card_extras(
         False,
         None,
     ),
+    working_hours: WorkingHours | None = None,
 ) -> api.CardExtras:
     """``opening_pr(repo_id, branch)``: whether the PR of an approved branch is
     being opened, and why it could not be."""
@@ -147,11 +173,13 @@ def build_card_extras(
         if usage.task_id is not None
     }
     lanes = build_lanes(store, now, repo_slug)
-    with_next = next_lanes(store, now, lanes, repo_slug, pr_facts)
     validated = validated_tasks(store)
     verdicts: dict[str, list[ReviewVerdict]] = {}
     for verdict in store.review_verdicts():
         verdicts.setdefault(verdict.task_id, []).append(verdict)
+    folded, live = folded_next(store, now, lanes, repo_slug, pr_facts)
+    with_next = next_lanes(lanes, folded, now)
+    estimates = live_estimates(store, live, working_hours or WorkingHours(), now)
     branches = []
     for facts in store.tracked_branch_facts():
         key = (facts.repo_id, facts.name)
@@ -185,6 +213,7 @@ def build_card_extras(
                         opening=opening_pr(*key),
                     ),
                 ),
+                estimate=estimates.get(facts.task_id),
                 spend=api.CardSpend(
                     interactive_usd=usage.cost_usd if usage else 0.0,
                     interactive_unpriced_calls=usage.unpriced_calls if usage else 0.0,

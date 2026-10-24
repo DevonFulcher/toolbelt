@@ -139,6 +139,42 @@ class PrActivity:
     timeline: tuple[Event, ...]
 
 
+def pending_reviewers(
+    items: tuple[TimelineItem, ...], at: datetime | None = None
+) -> tuple[str, ...]:
+    """The reviewers with a request outstanding at ``at`` (default: after
+    the last item), the longest waiting first. A review settles its author's
+    request."""
+    pending: dict[str, datetime] = {}
+    for item in sorted(items, key=lambda i: i.time):
+        if at is not None and item.time > at:
+            break
+        if item.kind == REVIEW_REQUESTED and item.subject:
+            pending[item.subject] = item.time
+        elif item.kind == REVIEW_REQUEST_REMOVED:
+            pending.pop(item.subject, None)
+        elif item.kind == REVIEW:
+            pending.pop(item.subject or item.actor, None)
+    return tuple(sorted(pending, key=lambda who: (pending[who], who)))
+
+
+def reviewer_of(items: tuple[TimelineItem, ...], at: datetime, author: str) -> str:
+    """The reviewer a task is concerned with at ``at``: the one asked for a
+    review the longest ago and not yet heard from, else whoever reviewed last
+    (other than the author); empty when there is none."""
+    asked = pending_reviewers(items, at)
+    if asked:
+        return asked[0]
+    reviewers = [
+        item.subject or item.actor
+        for item in sorted(items, key=lambda i: i.time)
+        if item.kind == REVIEW
+        and item.time <= at
+        and (item.subject or item.actor) != author
+    ]
+    return reviewers[-1] if reviewers else ""
+
+
 def _is_done(facts: PrFacts) -> bool:
     return facts.state in ("MERGED", "CLOSED")
 

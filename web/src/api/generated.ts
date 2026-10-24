@@ -334,6 +334,7 @@ export interface AgentsLaunching {
 export interface Aggregate {
   activity: AggregateActivity;
   coverage: AggregateCoverage;
+  estimate?: EstimateAccuracy | null;
   fetched_at: string;
   lanes: AggregateLane[];
   notes: AggregateNote[];
@@ -386,6 +387,56 @@ export interface AggregateCoverage {
   task_starts_since: string;
   tasks_without_pr: number;
   truncated: boolean;
+}
+/**
+ * The finish estimate's track record: the stored backtests, oldest
+ * first, and the shown estimates compared with the actual finishes.
+ */
+export interface EstimateAccuracy {
+  backtests: EstimateBacktest[];
+  current: EstimateParams | null;
+  live_coverage: number | null;
+  live_finished: number;
+  live_made: number;
+  working_day_seconds: number;
+}
+export interface EstimateBacktest {
+  by_stage: EstimateStageAccuracy[];
+  overall: EstimateStageAccuracy;
+  params: EstimateParams;
+  ran_at: string;
+  regime: EstimateRegime[];
+}
+/**
+ * How a backtest's predictions fared for one stage (``all`` for every).
+ */
+export interface EstimateStageAccuracy {
+  coverage: number | null;
+  median_abs_error_seconds: number | null;
+  median_width_seconds: number | null;
+  n: number;
+  stage: string;
+  unknown: number;
+}
+/**
+ * The estimator's hyperparameters (what backtesting tunes).
+ */
+export interface EstimateParams {
+  half_life_weeks: number;
+  min_samples: number;
+  shrinkage: number;
+}
+/**
+ * A stage whose median duration moved between two windows.
+ */
+export interface EstimateRegime {
+  change: number;
+  n_prior: number;
+  n_recent: number;
+  prior_median_seconds: number;
+  recent_median_seconds: number;
+  stage: string;
+  weeks: number;
 }
 /**
  * A lane's layer of the aggregate view: how often its spans were on the
@@ -832,6 +883,7 @@ export interface CardExtras {
  */
 export interface BranchExtras {
   agent: CardAgent;
+  estimate?: CardEstimate | null;
   id: string;
   lanes: TimelineLane[];
   spend: CardSpend;
@@ -871,6 +923,22 @@ export interface ReviewVerdictInfo {
   head_sha: string;
   note: string;
   verdict: ReviewVerdict;
+}
+/**
+ * When a task is estimated to be finished (merged): a median and a p80
+ * as UTC instants, or unknown. Working-time arithmetic is the server's (the
+ * working hours are in its config); the client formats the instants.
+ */
+export interface CardEstimate {
+  explanation: string;
+  finish_p50: string | null;
+  finish_p80: string | null;
+  known: boolean;
+  level: string;
+  n: number;
+  overdue: boolean;
+  partial: boolean;
+  stage: string;
 }
 /**
  * One lane of a card's timeline, under the PR track (see
@@ -1395,6 +1463,7 @@ export interface SlotDimensions {
   conflict_commit: CatalogDimension | null;
   cost: CatalogDimension | null;
   descendants: CatalogDimension | null;
+  estimate: CatalogDimension | null;
   in_draft: CatalogDimension | null;
   lines: CatalogDimension | null;
   merge: CatalogDimension | null;

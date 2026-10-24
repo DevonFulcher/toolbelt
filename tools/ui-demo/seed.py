@@ -46,6 +46,7 @@ from history import RECORDED_WEEKS, history, node_id
 
 from toolbelt import logged_process
 from toolbelt.decisions.model import Decision
+from toolbelt.finish_estimate.model import MODEL_VERSION
 from toolbelt.git.stack import lineage
 from toolbelt.git.stack.store import (
     MergeQueueRow,
@@ -169,6 +170,58 @@ def write_history(dest: Path, db: sqlite3.Connection, now: datetime) -> None:
     # Removals before this were never archived, so their tasks have no start.
     since = (now - timedelta(weeks=RECORDED_WEEKS)).isoformat()
     db.execute("UPDATE archive_info SET since = ?", (since,))
+
+
+def write_estimates(db: sqlite3.Connection, now: datetime) -> None:
+    """Earlier nightly backtests, so the aggregate view's "Estimate accuracy"
+    has a history to draw. They are made up (the demo has no earlier nights);
+    the stage history and the backtest of the demo's own data are computed when
+    `tt ui` starts, and the newest backtest is that one."""
+    stages = {
+        "wait_review": (60, 0.78, 5.1 * 3600, 9.0 * 3600),
+        "wait_ci": (40, 0.83, 0.4 * 3600, 0.9 * 3600),
+        "address_review": (25, 0.72, 3.0 * 3600, 6.0 * 3600),
+        "merge": (35, 0.81, 1.0 * 3600, 2.0 * 3600),
+    }
+    for night, coverage in enumerate((0.66, 0.71, 0.74, 0.77, 0.79), start=1):
+        by_stage = [
+            {
+                "stage": stage,
+                "n": n,
+                "unknown": 3,
+                "coverage": round(min(0.95, share + (coverage - 0.76)), 3),
+                "median_abs_error_seconds": error,
+                "median_width_seconds": width,
+            }
+            for stage, (n, share, error, width) in stages.items()
+        ]
+        metrics = {
+            "loss": 11000.0 - 500 * night,
+            "overall": {
+                "stage": "all",
+                "n": sum(n for n, *_ in stages.values()),
+                "unknown": 12,
+                "coverage": coverage,
+                "median_abs_error_seconds": (7.5 - 0.3 * night) * 3600,
+                "median_width_seconds": 6.0 * 3600,
+            },
+            "by_stage": by_stage,
+            "regime": [],
+        }
+        db.execute(
+            "INSERT INTO estimate_backtests (ran_at, model_version, params, metrics) "
+            "VALUES (?, ?, ?, ?)",
+            (
+                (now - timedelta(days=6 - night)).strftime(
+                    "%Y-%m-%dT%H:%M:%S.%f+00:00"
+                ),
+                MODEL_VERSION,
+                json.dumps(
+                    {"half_life_weeks": 12.0, "min_samples": 5, "shrinkage": 5.0}
+                ),
+                json.dumps(metrics),
+            ),
+        )
 
 
 def write_claims(home: Path, now: datetime) -> None:
@@ -747,6 +800,7 @@ def seed(dest: Path, deep: int) -> None:
         when = (now - timedelta(days=days)).isoformat()
         db.execute("UPDATE branches SET started_at = ? WHERE name = ?", (when, branch))
     write_history(dest, db, now)
+    write_estimates(db, now)
     db.commit()
     db.close()
     write_lanes(now)

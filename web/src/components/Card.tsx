@@ -23,6 +23,7 @@ import { rollup, youText } from "../logic/rollup";
 import { LOADING, subtreeIds } from "../store/selectors";
 import { useApp, useAppStore } from "../store/StoreContext";
 import { AgentSlots, SpendSlots } from "./CardAgentSlots";
+import { EstimateValue } from "./EstimateValue";
 import { MergeDialog } from "./MergeDialog";
 import { MergeQueueControls } from "./MergeQueueControls";
 import { DecisionsDialog } from "./DecisionsDialog";
@@ -408,6 +409,9 @@ export const Card = memo(
             ) : (
               "no start recorded"
             )}
+          </Slot>
+          <Slot id="estimate" label="Estimated finish" state={extras?.estimate?.known ? "ok" : "na"}>
+            <EstimateValue extras={extras} now={now} />
           </Slot>
           <Slot id="task" label="Task" state={branch.task ? "ok" : "gap"}>
             {branch.task ? (

@@ -680,6 +680,17 @@
         "coverage": {
           "$ref": "#/$defs/AggregateCoverage"
         },
+        "estimate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EstimateAccuracy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "fetched_at": {
           "type": "string"
         },
@@ -1269,6 +1280,17 @@
         "agent": {
           "$ref": "#/$defs/CardAgent"
         },
+        "estimate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CardEstimate"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "id": {
           "type": "string"
         },
@@ -1370,6 +1392,66 @@
         "validation"
       ],
       "title": "CardAgent",
+      "type": "object"
+    },
+    "CardEstimate": {
+      "additionalProperties": false,
+      "description": "When a task is estimated to be finished (merged): a median and a p80\nas UTC instants, or unknown. Working-time arithmetic is the server's (the\nworking hours are in its config); the client formats the instants.",
+      "properties": {
+        "explanation": {
+          "type": "string"
+        },
+        "finish_p50": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "finish_p80": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "known": {
+          "type": "boolean"
+        },
+        "level": {
+          "type": "string"
+        },
+        "n": {
+          "type": "integer"
+        },
+        "overdue": {
+          "type": "boolean"
+        },
+        "partial": {
+          "type": "boolean"
+        },
+        "stage": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "known",
+        "stage",
+        "finish_p50",
+        "finish_p80",
+        "overdue",
+        "partial",
+        "level",
+        "n",
+        "explanation"
+      ],
+      "title": "CardEstimate",
       "type": "object"
     },
     "CardExtras": {
@@ -2495,6 +2577,207 @@
         "value"
       ],
       "title": "DraftCatalogState",
+      "type": "object"
+    },
+    "EstimateAccuracy": {
+      "additionalProperties": false,
+      "description": "The finish estimate's track record: the stored backtests, oldest\nfirst, and the shown estimates compared with the actual finishes.",
+      "properties": {
+        "backtests": {
+          "items": {
+            "$ref": "#/$defs/EstimateBacktest"
+          },
+          "type": "array"
+        },
+        "current": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EstimateParams"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "live_coverage": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "live_finished": {
+          "type": "integer"
+        },
+        "live_made": {
+          "type": "integer"
+        },
+        "working_day_seconds": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "working_day_seconds",
+        "current",
+        "backtests",
+        "live_made",
+        "live_finished",
+        "live_coverage"
+      ],
+      "title": "EstimateAccuracy",
+      "type": "object"
+    },
+    "EstimateBacktest": {
+      "additionalProperties": false,
+      "properties": {
+        "by_stage": {
+          "items": {
+            "$ref": "#/$defs/EstimateStageAccuracy"
+          },
+          "type": "array"
+        },
+        "overall": {
+          "$ref": "#/$defs/EstimateStageAccuracy"
+        },
+        "params": {
+          "$ref": "#/$defs/EstimateParams"
+        },
+        "ran_at": {
+          "type": "string"
+        },
+        "regime": {
+          "items": {
+            "$ref": "#/$defs/EstimateRegime"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "ran_at",
+        "params",
+        "overall",
+        "by_stage",
+        "regime"
+      ],
+      "title": "EstimateBacktest",
+      "type": "object"
+    },
+    "EstimateParams": {
+      "additionalProperties": false,
+      "description": "The estimator's hyperparameters (what backtesting tunes).",
+      "properties": {
+        "half_life_weeks": {
+          "type": "number"
+        },
+        "min_samples": {
+          "type": "integer"
+        },
+        "shrinkage": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "half_life_weeks",
+        "min_samples",
+        "shrinkage"
+      ],
+      "title": "EstimateParams",
+      "type": "object"
+    },
+    "EstimateRegime": {
+      "additionalProperties": false,
+      "description": "A stage whose median duration moved between two windows.",
+      "properties": {
+        "change": {
+          "type": "number"
+        },
+        "n_prior": {
+          "type": "integer"
+        },
+        "n_recent": {
+          "type": "integer"
+        },
+        "prior_median_seconds": {
+          "type": "number"
+        },
+        "recent_median_seconds": {
+          "type": "number"
+        },
+        "stage": {
+          "type": "string"
+        },
+        "weeks": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "stage",
+        "weeks",
+        "change",
+        "recent_median_seconds",
+        "prior_median_seconds",
+        "n_recent",
+        "n_prior"
+      ],
+      "title": "EstimateRegime",
+      "type": "object"
+    },
+    "EstimateStageAccuracy": {
+      "additionalProperties": false,
+      "description": "How a backtest's predictions fared for one stage (``all`` for every).",
+      "properties": {
+        "coverage": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "median_abs_error_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "median_width_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "n": {
+          "type": "integer"
+        },
+        "stage": {
+          "type": "string"
+        },
+        "unknown": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "stage",
+        "n",
+        "unknown",
+        "coverage",
+        "median_abs_error_seconds",
+        "median_width_seconds"
+      ],
+      "title": "EstimateStageAccuracy",
       "type": "object"
     },
     "EventKind": {
@@ -5243,6 +5526,16 @@
             }
           ]
         },
+        "estimate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogDimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "in_draft": {
           "anyOf": [
             {
@@ -5454,6 +5747,7 @@
         "branch",
         "task",
         "task_title",
+        "estimate",
         "task_status",
         "session",
         "ancestors",
