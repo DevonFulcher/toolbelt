@@ -104,6 +104,10 @@ def merge(
     refused (GitHub only merges those asynchronously); unlink the stack in
     GitHub first with `gh stack unstack <stack-number>`.
 
+    The merge on GitHub runs without the repo lock (it changes no local
+    state), so it does not wait for, or hold up, other toolbelt commands; the
+    lineage updates and the sync after it hold the lock.
+
     Then runs `sync` rooted at the merged branch's own worktree, so it works
     from any directory. That sync merges the base the branch landed on into
     each child (a merge commit computed over snapshots, with the squash
@@ -116,8 +120,8 @@ def merge(
     deletes its local branch and stack entry. If the branch has no worktree,
     only `branch-clean` runs.
     """
-    with repo_lock(repo_root()):
-        git_merge(pr)
+    root = repo_root()
+    git_merge(pr, sync_lock=lambda: repo_lock(root))
 
 
 @git_typer.command(name="branch-clean")

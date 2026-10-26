@@ -5,6 +5,7 @@ import re
 import subprocess
 import time
 from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 
 import typer
@@ -130,7 +131,9 @@ def _github_stack(number: int) -> dict | None:
     return json.loads(stack) if stack else None
 
 
-def git_merge(pr: str) -> None:
+def git_merge(
+    pr: str, *, sync_lock: Callable[[], AbstractContextManager[None]] = nullcontext
+) -> None:
     """Squash-merge a PR, then sync the stack the merged branch belongs to.
 
     ``pr`` is passed through to ``gh pr merge``/``gh pr view`` as-is (a PR
@@ -141,6 +144,9 @@ def git_merge(pr: str) -> None:
     the branch has no tracked worktree (already removed, or never tracked),
     there's no stack to restack, so this just runs the repo-wide
     branch/lineage cleanup instead.
+
+    The merge on GitHub touches no local repo state, so it runs without
+    ``sync_lock``; the lineage writes and the sync after it run inside it.
     """
     # Lazy import: worktrees -> bootstrap.repo_setup -> workflow would be a
     # circular import at module load time.
@@ -159,15 +165,9 @@ def git_merge(pr: str) -> None:
         )
     )
     branch = viewed["headRefName"]
-    # Record which PR the branch's task landed as before the merge cleanup
-    # archives it (a no-op for an untracked branch or one already linked).
-    from toolbelt.git.stack import lineage
-
     root = get_current_repo_root_path()
     main_wt = main_worktree(root)
     ensure_not_inside_worktree(branch, root=main_wt, caller_dirs=[Path.cwd()])
-    lineage.link_pr(branch, [candidate_from_json(viewed)], root=root)
-    links = lineage.get_links(branch, root=root)
     merged = _merge_on_github(pr)
     if merged.returncode and _STACKED_MERGE_ERROR in merged.stderr:
         stack = _github_stack(viewed["number"])
@@ -183,16 +183,23 @@ def git_merge(pr: str) -> None:
         typer.echo(merged.stderr, err=True)
         raise typer.Exit(merged.returncode)
 
-    _finish_task(links)
-    worktree = worktree_paths(root=root).get(branch)
-    if worktree is None:
-        logger.warning(
-            f"No worktree tracked for '{branch}'; skipping stack sync, just "
-            "cleaning up local branches."
-        )
-        git_branch_clean(root, forge=GhForge(root))
-        return
-    sync_repo(main_wt, branch=branch)
+    with sync_lock():
+        # Lazy import: see above.
+        from toolbelt.git.stack import lineage
+
+        # Record which PR the branch's task landed as before the merge cleanup
+        # archives it (a no-op for an untracked branch or one already linked).
+        lineage.link_pr(branch, [candidate_from_json(viewed)], root=root)
+        _finish_task(lineage.get_links(branch, root=root))
+        worktree = worktree_paths(root=root).get(branch)
+        if worktree is None:
+            logger.warning(
+                f"No worktree tracked for '{branch}'; skipping stack sync, just "
+                "cleaning up local branches."
+            )
+            git_branch_clean(root, forge=GhForge(root))
+            return
+        sync_repo(main_wt, branch=branch)
 
 
 def _finish_task(links: BranchLinks | None) -> None:

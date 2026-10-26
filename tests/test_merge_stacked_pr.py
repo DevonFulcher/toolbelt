@@ -4,6 +4,7 @@
 GitHub rejects stacked PRs.
 """
 
+import contextlib
 import json
 import subprocess
 from pathlib import Path
@@ -251,3 +252,30 @@ def test_a_refusal_is_not_tried_again(monkeypatch: pytest.MonkeyPatch, worktree:
         workflow.git_merge("7")
 
     assert gh.merges == 1
+
+
+def test_the_github_merge_runs_outside_the_sync_lock_and_the_sync_inside_it(
+    monkeypatch: pytest.MonkeyPatch, worktree: Path
+):
+    gh = Gh(merge_stderr="", api_responses=[])
+    _install(monkeypatch, gh, worktree)
+    events: list[str] = []
+    real_run = gh.run
+    monkeypatch.setattr(
+        workflow.logged_process,
+        "run",
+        lambda cmd, **kw: (events.append("merge"), real_run(cmd, **kw))[1],
+    )
+    monkeypatch.setattr(
+        workflow, "sync_repo", lambda root, branch: events.append("sync")
+    )
+
+    @contextlib.contextmanager
+    def lock():
+        events.append("lock")
+        yield
+        events.append("unlock")
+
+    workflow.git_merge("7", sync_lock=lock)
+
+    assert events == ["merge", "lock", "sync", "unlock"]
