@@ -36,6 +36,12 @@ from toolbelt.decisions.model import (
     points_from_json,
     points_to_json,
 )
+from toolbelt.proposals.model import (
+    Guidelines,
+    Proposal,
+    content_from_json,
+    content_to_json,
+)
 
 STATE_DIR_ENV_VAR = "TOOLBELT_HOME"
 DB_FILENAME = "stacks.db"
@@ -675,6 +681,57 @@ _MIGRATIONS: list[tuple[str, ...]] = [
         )
         """,
     ),
+    (
+        # Work a proposer agent proposed (see ``toolbelt.proposals``). A row is
+        # never deleted: the user's decision is recorded on it (``status``,
+        # ``decided_at``, ``decision_reason``, ``decision_tags`` as JSON) and
+        # decided rows are only hidden by the UI, because the proposals with
+        # their decisions are what the proposer learns from. A source item is
+        # proposed once: ``(source, source_ref)`` is unique. ``content`` is the
+        # JSON the proposer wrote. ``task_key``, ``branch`` and
+        # ``worker_run_id`` are filled in as the worker picks an approved
+        # proposal up. ``agent_runs.proposal_id`` ties a run to its proposal
+        # (a worker run) or is empty (a proposer run, which has no task), and
+        # ``agent_runs.slots`` is how many proposals a proposer run was asked
+        # for (the free ones when it started).
+        """
+        CREATE TABLE proposals (
+            id TEXT PRIMARY KEY,
+            source TEXT NOT NULL,
+            source_ref TEXT NOT NULL,
+            source_url TEXT NOT NULL,
+            content TEXT NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            run_id TEXT,
+            decided_at TEXT,
+            decision_reason TEXT NOT NULL DEFAULT '',
+            decision_tags TEXT NOT NULL DEFAULT '[]',
+            task_key TEXT,
+            branch TEXT,
+            worker_run_id TEXT,
+            work_note TEXT NOT NULL DEFAULT '',
+            sources_read TEXT NOT NULL DEFAULT '[]',
+            model TEXT NOT NULL DEFAULT '',
+            prompt_version TEXT NOT NULL DEFAULT '',
+            UNIQUE (source, source_ref)
+        )
+        """,
+        "CREATE INDEX proposals_by_status ON proposals (status, created_at)",
+        "ALTER TABLE agent_runs ADD COLUMN proposal_id TEXT",
+        "ALTER TABLE agent_runs ADD COLUMN slots INTEGER",
+        # The guidelines the proposer is given (see ``proposals.model``): one
+        # row per version, newest last, never edited or deleted.
+        """
+        CREATE TABLE proposal_guidelines (
+            id INTEGER PRIMARY KEY,
+            body TEXT NOT NULL,
+            author TEXT NOT NULL,
+            decisions_seen INTEGER NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """,
+    ),
 ]
 
 
@@ -1005,6 +1062,10 @@ class AgentRun:
     #: A validate run's verdict: ``pass`` or ``fail`` (``None``: not a validate
     #: run, or it did not report one).
     result: str | None = None
+    #: The proposal a worker run implements (``None``: any other run).
+    proposal_id: str | None = None
+    #: How many proposals a proposer run was asked for.
+    slots: int | None = None
 
 
 @dataclass(frozen=True)
@@ -1162,6 +1223,31 @@ def _agent_run(r: sqlite3.Row) -> AgentRun:
         activity=r["activity"],
         resumed_from=r["resumed_from"],
         result=r["result"],
+        proposal_id=r["proposal_id"],
+        slots=r["slots"],
+    )
+
+
+def _proposal(r: sqlite3.Row) -> Proposal:
+    return Proposal(
+        id=r["id"],
+        source=r["source"],
+        source_ref=r["source_ref"],
+        source_url=r["source_url"],
+        content=content_from_json(r["content"]),
+        status=r["status"],
+        created_at=r["created_at"],
+        run_id=r["run_id"],
+        decided_at=r["decided_at"],
+        decision_reason=r["decision_reason"],
+        decision_tags=tuple(json.loads(r["decision_tags"])),
+        task_key=r["task_key"],
+        branch=r["branch"],
+        worker_run_id=r["worker_run_id"],
+        work_note=r["work_note"],
+        sources_read=tuple(json.loads(r["sources_read"])),
+        model=r["model"],
+        prompt_version=r["prompt_version"],
     )
 
 
@@ -1791,6 +1877,8 @@ class StackStore:
         at: datetime,
         session_id: str | None = None,
         resumed_from: str | None = None,
+        proposal_id: str | None = None,
+        slots: int | None = None,
     ) -> str:
         """Record that a run has started; returns its id. ``session_id`` is
         the Claude session it will use, when known up front (so the session's
@@ -1800,7 +1888,8 @@ class StackStore:
             conn.execute(
                 "INSERT INTO agent_runs (run_id, task_id, repo_id, branch, "
                 "trigger, head_sha, model, state, started_at, session_id, "
-                "resumed_from) VALUES (?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)",
+                "resumed_from, proposal_id, slots) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?)",
                 (
                     run_id,
                     task_id,
@@ -1812,6 +1901,8 @@ class StackStore:
                     _iso(at),
                     session_id,
                     resumed_from,
+                    proposal_id,
+                    slots,
                 ),
             )
         return run_id
@@ -2265,6 +2356,130 @@ class StackStore:
                     decision.answered_at,
                     decision.delivered_at,
                 ),
+            )
+
+    # ---- proposals ---------------------------------------------------------
+
+    def add_proposals(self, proposals: Sequence[Proposal], cap: int) -> list[Proposal]:
+        """Stores the proposals that fit: at most ``cap`` pending in all, and
+        none whose source item was proposed before (whatever was decided about
+        it). Returns the ones stored. The count and the inserts share one
+        transaction, so two writers cannot both fill the last slot."""
+        stored: list[Proposal] = []
+        with self._write() as conn:
+            free = (
+                cap
+                - conn.execute(
+                    "SELECT COUNT(*) AS n FROM proposals WHERE status = 'pending'"
+                ).fetchone()["n"]
+            )
+            for proposal in proposals:
+                if len(stored) >= free:
+                    break
+                inserted = conn.execute(
+                    "INSERT OR IGNORE INTO proposals (id, source, source_ref, "
+                    "source_url, content, status, created_at, run_id, "
+                    "sources_read, model, prompt_version) "
+                    "VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)",
+                    (
+                        proposal.id,
+                        proposal.source,
+                        proposal.source_ref,
+                        proposal.source_url,
+                        content_to_json(proposal.content),
+                        proposal.created_at,
+                        proposal.run_id,
+                        json.dumps(list(proposal.sources_read)),
+                        proposal.model,
+                        proposal.prompt_version,
+                    ),
+                ).rowcount
+                if inserted:
+                    stored.append(proposal)
+        return stored
+
+    def proposals(self, *, status: str | None = None) -> list[Proposal]:
+        """Every proposal (with this status, when given), oldest first."""
+        if status is None:
+            rows = self._conn.execute(
+                "SELECT * FROM proposals ORDER BY created_at, rowid"
+            )
+        else:
+            rows = self._conn.execute(
+                "SELECT * FROM proposals WHERE status = ? ORDER BY created_at, rowid",
+                (status,),
+            )
+        return [_proposal(r) for r in rows]
+
+    def proposal(self, proposal_id: str) -> Proposal | None:
+        row = self._conn.execute(
+            "SELECT * FROM proposals WHERE id = ?", (proposal_id,)
+        ).fetchone()
+        return _proposal(row) if row else None
+
+    def decide_proposal(
+        self,
+        proposal_id: str,
+        *,
+        status: str,
+        reason: str,
+        tags: Sequence[str],
+        at: datetime,
+    ) -> bool:
+        """Records the decision on a pending proposal. ``False`` when there is
+        no such proposal, or it was decided already."""
+        with self._write() as conn:
+            changed = conn.execute(
+                "UPDATE proposals SET status = ?, decision_reason = ?, "
+                "decision_tags = ?, decided_at = ? WHERE id = ? AND status = 'pending'",
+                (status, reason, json.dumps(list(tags)), _iso(at), proposal_id),
+            ).rowcount
+        return changed > 0
+
+    def add_guidelines(
+        self, body: str, *, author: str, decisions_seen: int, at: datetime
+    ) -> None:
+        with self._write() as conn:
+            conn.execute(
+                "INSERT INTO proposal_guidelines (body, author, decisions_seen, "
+                "created_at) VALUES (?, ?, ?, ?)",
+                (body, author, decisions_seen, _iso(at)),
+            )
+
+    def latest_guidelines(self) -> Guidelines | None:
+        row = self._conn.execute(
+            "SELECT * FROM proposal_guidelines ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        return (
+            Guidelines(
+                id=row["id"],
+                body=row["body"],
+                author=row["author"],
+                decisions_seen=row["decisions_seen"],
+                created_at=row["created_at"],
+            )
+            if row
+            else None
+        )
+
+    def set_proposal_work(
+        self,
+        proposal_id: str,
+        *,
+        task_key: str | None = None,
+        branch: str | None = None,
+        worker_run_id: str | None = None,
+        work_note: str | None = None,
+    ) -> None:
+        """Records what the worker has made of an approved proposal; a field
+        left ``None`` keeps its value."""
+        with self._write() as conn:
+            conn.execute(
+                "UPDATE proposals SET task_key = COALESCE(?, task_key), "
+                "branch = COALESCE(?, branch), "
+                "worker_run_id = COALESCE(?, worker_run_id), "
+                "work_note = COALESCE(?, work_note) WHERE id = ?",
+                (task_key, branch, worker_run_id, work_note, proposal_id),
             )
 
     def add_file_approval(

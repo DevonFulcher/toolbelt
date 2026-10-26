@@ -39,7 +39,7 @@ from toolbelt.autonomous_agents.instructions import (
     report_summary,
     report_verdict,
 )
-from toolbelt.autonomous_agents.limits import VALIDATE, AgentLimits
+from toolbelt.autonomous_agents.limits import IMPLEMENT, VALIDATE, AgentLimits
 from toolbelt.decisions.book import DecisionBook
 from toolbelt.decisions.model import (
     Decision as AskedDecision,
@@ -74,6 +74,8 @@ ALLOWED_TOOLS = [
 #: changing anything through Bash).
 VALIDATE_TOOLS = [tool for tool in ALLOWED_TOOLS if tool not in ("Edit", "Write")]
 DISALLOWED_TOOLS = ["Task", "WebFetch", "WebSearch", "NotebookEdit"]
+#: An implement run also uses the user's skills (see ``_options``).
+IMPLEMENT_TOOLS = [*ALLOWED_TOOLS, "Skill"]
 #: Longest summary kept on a run.
 SUMMARY_LIMIT = 4000
 #: A working run's progress (turns, cost, what it is doing) is saved this often
@@ -186,6 +188,18 @@ class AgentRunner:
     def _store(self) -> StackStore:
         return StackStore(self._db_path())
 
+    def _model_for(self, trigger: str) -> str:
+        return (
+            self._limits.implement_model if trigger == IMPLEMENT else self._limits.model
+        )
+
+    def _timeout_for(self, trigger: str) -> int:
+        return (
+            self._limits.implement_timeout_seconds
+            if trigger == IMPLEMENT
+            else self._limits.run_timeout_seconds
+        )
+
     def _decisions_server(
         self, decision: Decision, run_id: str, session_id: str
     ) -> Any:
@@ -265,19 +279,28 @@ class AgentRunner:
         *,
         resuming: bool = False,
     ) -> Any:
+        implementing = decision.trigger == IMPLEMENT
         return ClaudeAgentOptions(
-            model=self._limits.model,
+            model=self._model_for(decision.trigger),
             cwd=str(decision.worktree),
-            max_turns=self._limits.run_turns,
-            max_budget_usd=self._limits.run_usd,
+            max_turns=implementing
+            and self._limits.implement_run_turns
+            or self._limits.run_turns,
+            max_budget_usd=implementing
+            and self._limits.implement_run_usd
+            or self._limits.run_usd,
             allowed_tools=VALIDATE_TOOLS
             if decision.trigger == VALIDATE
+            else IMPLEMENT_TOOLS
+            if implementing
             else ALLOWED_TOOLS,
             disallowed_tools=DISALLOWED_TOOLS,
             permission_mode="acceptEdits",
             # The repo's own CLAUDE.md applies, not this machine's plugins,
-            # skills or MCP servers.
-            setting_sources=["project"],
+            # skills or MCP servers. An implement run is the exception: it
+            # does the work an interactive session would, so it follows the
+            # user's own CLAUDE.md and skills too.
+            setting_sources=["user", "project"] if implementing else ["project"],
             system_prompt={
                 "type": "preset",
                 "preset": "claude_code",
@@ -291,9 +314,10 @@ class AgentRunner:
             session_id=None if resuming else session_id,
         )
 
-    async def start(self, decision: Decision) -> str:
-        """Record a run for ``decision`` and start it in the background.
-        Returns its id."""
+    async def start(self, decision: Decision, proposal_id: str | None = None) -> str:
+        """Record a run for ``decision`` and start it in the background
+        (``proposal_id``: the proposal an implement run works on). Returns its
+        id."""
         if decision.worktree is None:
             raise ValueError("a run needs the branch's worktree")
         now = self._wall_clock()
@@ -308,9 +332,10 @@ class AgentRunner:
                     branch=decision.branch,
                     trigger=decision.trigger,
                     head_sha=decision.head_sha,
-                    model=self._limits.model,
+                    model=self._model_for(decision.trigger),
                     at=now,
                     session_id=session_id,
+                    proposal_id=proposal_id,
                 )
             finally:
                 store.close()
@@ -365,10 +390,11 @@ class AgentRunner:
                     branch=decision.branch,
                     trigger=prior.trigger,
                     head_sha=decision.head_sha,
-                    model=self._limits.model,
+                    model=self._model_for(prior.trigger),
                     at=now,
                     session_id=session_id,
                     resumed_from=prior.run_id,
+                    proposal_id=prior.proposal_id,
                 )
                 store.settle_deciding_run(prior.run_id, state="succeeded")
                 store.mark_decision_delivered(answered.id, now)
@@ -420,7 +446,7 @@ class AgentRunner:
         error: str | None = "the run ended without a result"
         try:
             query = self._query or sdk_query
-            async with asyncio.timeout(self._limits.run_timeout_seconds):
+            async with asyncio.timeout(self._timeout_for(decision.trigger)):
                 async for message in query(
                     prompt=prompt,
                     options=self._options(
@@ -445,7 +471,9 @@ class AgentRunner:
                 state = "deciding"
         except TimeoutError:
             state = "timed_out"
-            error = f"ran longer than {self._limits.run_timeout_seconds // 60} minutes"
+            error = (
+                f"ran longer than {self._timeout_for(decision.trigger) // 60} minutes"
+            )
         except asyncio.CancelledError:
             state, error = "stopped", "stopped by request"
         except Exception as failure:  # noqa: BLE001 - recorded on the run

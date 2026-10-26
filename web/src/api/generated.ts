@@ -24,7 +24,8 @@ export type AgentReasonCode =
   | "screen_asleep"
   | "screen_locked"
   | "backoff";
-export type AgentTrigger = "resolve_conflicts" | "resolve_comments" | "fix_ci" | "validate";
+export type AgentTrigger =
+  "resolve_conflicts" | "resolve_comments" | "fix_ci" | "validate" | "propose" | "implement" | "curate";
 export type ValidateResult = "pass" | "fail";
 export type AgentRunState =
   "running" | "succeeded" | "failed" | "timed_out" | "cap_reached" | "stopped" | "abandoned" | "deciding";
@@ -101,6 +102,7 @@ export type ServerEvent =
   | ExtrasEvent
   | WebhooksEvent
   | AgentsEvent
+  | ProposalsEvent
   | SpendEvent
   | ConversationEvent;
 export type SiblingConflictState = "conflict" | "inherited" | "unknown";
@@ -149,6 +151,8 @@ export type TaskLive = TaskLoading | TaskDetails | TaskUnavailable;
 export type HolderKind = "agent" | "human" | "autonomous";
 export type HolderState = "working" | "idle" | "blocked";
 export type UntrackedPrs = UntrackedLoading | UntrackedLoaded | UntrackedFailed;
+export type ProposalTag = "not_relevant" | "too_big" | "already_done" | "wrong_repo" | "low_value" | "unclear";
+export type ProposalStatus = "pending" | "approved" | "rejected";
 export type FileApprovalState = "approved" | "changes_requested";
 export type Tone = "green" | "red" | "amber" | "gray" | "purple" | "accent";
 export type CatalogDimension =
@@ -1150,6 +1154,77 @@ export interface AgentsEvent {
   v: number;
 }
 /**
+ * The proposals changed (what the Proposals view shows).
+ */
+export interface ProposalsEvent {
+  proposals: ProposalList;
+  type: "proposals";
+  v: number;
+}
+/**
+ * The Proposals view: every proposal, oldest first, and what the proposer
+ * is doing.
+ */
+export interface ProposalList {
+  guidelines: ProposalGuidelines | null;
+  max_pending: number;
+  proposals: ProposalInfo[];
+  proposer: string;
+  tags: ProposalTag[];
+}
+/**
+ * What the proposer is told the user wants, learned from the decisions.
+ */
+export interface ProposalGuidelines {
+  author: "curator" | "user";
+  body: string;
+  created_at: string;
+  decisions_seen: number;
+}
+/**
+ * Work an agent proposed. A proposal is never deleted: a decided one stays,
+ * with its decision, and the page hides it unless history is shown.
+ */
+export interface ProposalInfo {
+  branch: string | null;
+  content: ProposalContentInfo;
+  created_at: string;
+  decided_at: string | null;
+  decision_reason: string;
+  decision_tags: ProposalTag[];
+  id: string;
+  source: string;
+  source_ref: string;
+  source_url: string;
+  status: ProposalStatus;
+  task_key: string | null;
+  work: string | null;
+}
+/**
+ * What the proposer wrote: enough to decide on without opening the source.
+ */
+export interface ProposalContentInfo {
+  acceptance_criteria: string[];
+  approach: string;
+  confidence: "low" | "medium" | "high";
+  evidence: ProposalEvidence[];
+  on_approve: string;
+  problem: string;
+  related: string[];
+  repo: string;
+  risks: string[];
+  size: "S" | "M" | "L";
+  summary: string;
+  title: string;
+  why_now: string;
+}
+export interface ProposalEvidence {
+  author: string;
+  date: string;
+  quote: string;
+  url: string;
+}
+/**
  * The spend ledger was read again: the Spend view's data for each of its
  * windows (a one-, seven- and thirty-day breakdown).
  */
@@ -1463,6 +1538,7 @@ export interface Snapshot {
   extras: CardExtras | null;
   fetched: FetchedBranch[];
   filters: FilterSpec[];
+  proposals: ProposalList | null;
   repos: Repo[];
   spend: Spend[];
   untracked: UntrackedPrs;

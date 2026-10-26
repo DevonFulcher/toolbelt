@@ -20,6 +20,9 @@ export const TRIGGER_LABEL: Record<AgentTrigger, string> = {
   resolve_comments: "Resolve comments",
   fix_ci: "Fix / re-run CI",
   validate: "Validate",
+  propose: "Propose",
+  implement: "Implement",
+  curate: "Curate guidelines",
 };
 
 export const RUN_TONE: Record<AgentRunInfo["state"], Tone> = {

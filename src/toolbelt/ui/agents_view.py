@@ -28,7 +28,9 @@ def run_info(run: AgentRun, repo_names: dict[int, str]) -> api.AgentRunInfo:
     return api.AgentRunInfo(
         run_id=run.run_id,
         id=row_id(run.repo_id, run.branch),
-        repo=repo_names.get(run.repo_id, "?"),
+        repo="proposals"
+        if run.trigger == "propose"
+        else repo_names.get(run.repo_id, "?"),
         branch=run.branch,
         trigger=run.trigger,  # type: ignore[arg-type]
         model=run.model,

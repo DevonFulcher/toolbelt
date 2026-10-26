@@ -84,7 +84,9 @@ class PushedViews:
         working_hours: Callable[[], WorkingHours] = WorkingHours,
         estimate_hub: ModelHub | None = None,
         priors: Callable[[], dict[str, Prior]] = dict,
+        build_proposals: Callable[[], api.ProposalList] | None = None,
     ) -> None:
+        self._build_proposals = build_proposals
         self._estimate_hub = estimate_hub
         self._priors = priors
         #: Every model's answer for each task in flight, by card id: what the
@@ -106,6 +108,7 @@ class PushedViews:
         self._conversation_tick = conversation_tick
         self.extras: api.CardExtras | None = None
         self.agents: api.Agents | None = None
+        self.proposals: api.ProposalList | None = None
         self.spend: list[api.Spend] = []
         self._last: dict[str, str] = {}
         self._running: set[str] = set()
@@ -147,6 +150,10 @@ class PushedViews:
         finally:
             store.close()
 
+    def _compute_proposals(self) -> api.ProposalList:
+        assert self._build_proposals is not None
+        return self._build_proposals()
+
     def _compute_spend(self) -> list[api.Spend]:
         return [self._spend.spend(days) for days in BREAKDOWN_DAYS]
 
@@ -154,6 +161,7 @@ class PushedViews:
         compute = {
             "extras": self._compute_extras,
             "agents": self._compute_agents,
+            "proposals": self._compute_proposals,
             "spend": self._compute_spend,
         }[kind]
         value = await asyncio.to_thread(compute)
@@ -203,7 +211,12 @@ class PushedViews:
             task.add_done_callback(self._tasks.discard)
 
     def everything_changed(self) -> None:
-        self.notify("extras", "agents", "spend")
+        self.notify(
+            "extras",
+            "agents",
+            "spend",
+            *(("proposals",) if self._build_proposals else ()),
+        )
 
     # ---- conversations of runs that are working ----
 

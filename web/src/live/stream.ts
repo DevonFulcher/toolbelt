@@ -46,6 +46,7 @@ const EVENT_TYPES = [
   "extras",
   "webhooks",
   "agents",
+  "proposals",
   "spend",
   "conversation",
 ] as const;
@@ -116,6 +117,9 @@ export function startLiveUpdates(deps: LiveDeps): LiveUpdates {
         return undefined;
       case "agents":
         state.agentsChanged(event.agents, event.v);
+        return undefined;
+      case "proposals":
+        state.proposalsChanged(event.proposals, event.v);
         return undefined;
       case "spend":
         state.spendChanged(event.spend, event.v);

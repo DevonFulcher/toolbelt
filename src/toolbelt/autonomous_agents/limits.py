@@ -29,11 +29,27 @@ TRIGGERS = ("resolve_conflicts", "resolve_comments", "fix_ci")
 #: started by hand. Not one of ``TRIGGERS``: the dispatcher never starts it.
 VALIDATE = "validate"
 
+#: The trigger recorded for a worker run: it implements an approved proposal on
+#: a branch made for it (see ``toolbelt.proposals``). Not one of ``TRIGGERS``:
+#: the dispatcher never starts it, ``ui.proposal_worker`` does.
+IMPLEMENT = "implement"
+
 
 class AgentLimits(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     model: str = "claude-haiku-5-5"
+    #: A proposer run reads several systems and writes long proposals, so it
+    #: gets a better model and more room than a run on one PR.
+    propose_model: str = "claude-sonnet-5-5"
+    propose_run_usd: float = Field(default=1.0, gt=0)
+    propose_run_turns: int = Field(default=60, gt=0)
+    propose_timeout_seconds: int = Field(default=20 * 60, gt=0)
+    #: A worker run implements an approved proposal on a new branch.
+    implement_model: str = "claude-sonnet-5-5"
+    implement_run_usd: float = Field(default=3.0, gt=0)
+    implement_run_turns: int = Field(default=120, gt=0)
+    implement_timeout_seconds: int = Field(default=45 * 60, gt=0)
     #: One run: dollars (the SDK stops it), turns, and wall-clock seconds.
     run_usd: float = Field(default=0.25, gt=0)
     run_turns: int = Field(default=40, gt=0)

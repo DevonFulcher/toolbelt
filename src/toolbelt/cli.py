@@ -25,6 +25,7 @@ app.add_typer(dotfiles_typer, name="dotfiles")
 app.add_typer(task_typer, name="task")
 app.add_typer(machine_typer, name="machine")
 
+
 slack_typer = typer.Typer(
     help="Slack: link messages posted by hand to their PRs.", no_args_is_help=True
 )

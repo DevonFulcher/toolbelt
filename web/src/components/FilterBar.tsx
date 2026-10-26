@@ -13,7 +13,7 @@ import type { Counts } from "../store/selectors";
 import { useApp, useAppStore } from "../store/StoreContext";
 
 // The default view first.
-const ORDER: View[] = ["priorities", "grouped", "stacked", "table", "aggregate", "spend", "agents", "review"];
+const ORDER: View[] = ["priorities", "grouped", "stacked", "table", "aggregate", "spend", "agents", "proposals", "review"];
 
 const VIEW_LABELS: Record<View, { label: string; title: string }> = {
   priorities: { label: "Priorities", title: "Tasks that need me without a parent task that needs me" },
@@ -31,6 +31,10 @@ const VIEW_LABELS: Record<View, { label: string; title: string }> = {
   agents: {
     label: "Agents",
     title: "Autonomous agents: what they are on, what they may take next, and why they are not on the rest",
+  },
+  proposals: {
+    label: "Proposals",
+    title: "Work agents propose from your connected systems, for you to approve or reject",
   },
   review: {
     label: "Review",
@@ -95,7 +99,9 @@ export function FilterBar({ counts, aggregate }: { counts: Counts; aggregate?: R
   const isAggregate = view.view === "aggregate";
   const isSpend = view.view === "spend";
   const isAgents = view.view === "agents";
+  const isProposals = view.view === "proposals";
   const isReview = view.view === "review";
+  const pendingProposals = useApp((s) => s.proposalsView?.proposals.filter((p) => p.status === "pending").length ?? 0);
 
   return (
     <form id="controls" onSubmit={(event) => event.preventDefault()}>
@@ -111,12 +117,13 @@ export function FilterBar({ counts, aggregate }: { counts: Counts; aggregate?: R
               onClick={() => set({ view: name })}
             >
               {VIEW_LABELS[name].label}
+              {name === "proposals" && pendingProposals > 0 ? ` (${pendingProposals})` : ""}
             </button>
           ))}
         </span>
       </div>
       <div className="controls-row controls-options">
-        {!isSpend && !isAgents && (
+        {!isSpend && !isAgents && !isProposals && (
           <label>
             Repo
             <select name="repo" value={view.repo} onChange={(event) => set({ repo: event.target.value })}>
@@ -129,7 +136,7 @@ export function FilterBar({ counts, aggregate }: { counts: Counts; aggregate?: R
             </select>
           </label>
         )}
-        {isAgents ? null : isReview ? (
+        {isAgents || isProposals ? null : isReview ? (
           <>
             <RevisionInput label="Base" value={view.base} placeholder="main" onCommit={(base) => set({ base, file: "" })} />
             <RevisionInput label="Head" value={view.head} placeholder="branch" onCommit={(head) => set({ head, file: "" })} />

@@ -6,6 +6,9 @@ import type {
   DecisionInfo,
   DecisionList,
   Agents,
+  ProposalInfo,
+  ProposalList,
+  ProposalTag,
   MergeQueueInfo,
   ApproveAllRequest,
   PersonalReviewState,
@@ -61,6 +64,35 @@ export async function fetchSpend(days: number, fetchImpl: typeof fetch = fetch):
   });
   if (!response.ok) throw new Error(`${SPEND_URL}: HTTP ${response.status}`);
   return (await response.json()) as Spend;
+}
+
+export const PROPOSALS_URL = "/api/proposals";
+
+/** What the proposer has proposed, and what it is doing. */
+export async function fetchProposals(fetchImpl: typeof fetch = fetch): Promise<ProposalList> {
+  const response = await fetchImpl(PROPOSALS_URL, { headers: { Accept: "application/json" } });
+  if (!response.ok) throw new Error(`${PROPOSALS_URL}: HTTP ${response.status}`);
+  return (await response.json()) as ProposalList;
+}
+
+/** Approve a proposal: a worker picks it up. Rejects with the server's reason. */
+export function approveProposal(proposalId: string, fetchImpl: typeof fetch = fetch): Promise<ProposalInfo> {
+  return postJson<ProposalInfo>(`${PROPOSALS_URL}/approve`, { proposal_id: proposalId }, fetchImpl);
+}
+
+/** Reject a proposal, with an optional reason and tags the proposer learns from. */
+export function rejectProposal(
+  proposalId: string,
+  reason: string,
+  tags: ProposalTag[],
+  fetchImpl: typeof fetch = fetch,
+): Promise<ProposalInfo> {
+  return postJson<ProposalInfo>(`${PROPOSALS_URL}/reject`, { proposal_id: proposalId, reason, tags }, fetchImpl);
+}
+
+/** Write a new version of the guidelines the proposer is given. */
+export function writeProposalGuidelines(body: string, fetchImpl: typeof fetch = fetch): Promise<ProposalList> {
+  return postJson<ProposalList>(`${PROPOSALS_URL}/guidelines`, { body }, fetchImpl);
 }
 
 export const AGENTS_URL = "/api/agents";

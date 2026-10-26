@@ -7,6 +7,7 @@ import { FilterBar } from "./FilterBar";
 import { FocusBar } from "./FocusBar";
 import { LiveIndicator } from "./LiveIndicator";
 import { AgentsPage } from "./AgentsView";
+import { ProposalsPage } from "./ProposalsView";
 import { SpendPage } from "./SpendView";
 import { TableView } from "./TableView";
 import { TooltipProvider } from "./Tooltip";
@@ -72,6 +73,9 @@ function Content() {
   }
   if (view === "agents") {
     return <AgentsPage counts={counts} />;
+  }
+  if (view === "proposals") {
+    return <ProposalsPage counts={counts} />;
   }
   if (view === "review") {
     // Review reads git directly: it does not need tracked stacks either.

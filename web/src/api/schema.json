@@ -522,7 +522,10 @@
         "resolve_conflicts",
         "resolve_comments",
         "fix_ci",
-        "validate"
+        "validate",
+        "propose",
+        "implement",
+        "curate"
       ],
       "type": "string"
     },
@@ -5045,6 +5048,323 @@
       "title": "PrState",
       "type": "string"
     },
+    "ProposalContentInfo": {
+      "additionalProperties": false,
+      "description": "What the proposer wrote: enough to decide on without opening the source.",
+      "properties": {
+        "acceptance_criteria": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "approach": {
+          "type": "string"
+        },
+        "confidence": {
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/ProposalEvidence"
+          },
+          "type": "array"
+        },
+        "on_approve": {
+          "type": "string"
+        },
+        "problem": {
+          "type": "string"
+        },
+        "related": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "risks": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "size": {
+          "enum": [
+            "S",
+            "M",
+            "L"
+          ],
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "why_now": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "summary",
+        "problem",
+        "why_now",
+        "evidence",
+        "approach",
+        "acceptance_criteria",
+        "risks",
+        "size",
+        "confidence",
+        "repo",
+        "related",
+        "on_approve"
+      ],
+      "title": "ProposalContentInfo",
+      "type": "object"
+    },
+    "ProposalEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "author": {
+          "type": "string"
+        },
+        "date": {
+          "type": "string"
+        },
+        "quote": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "quote",
+        "url",
+        "author",
+        "date"
+      ],
+      "title": "ProposalEvidence",
+      "type": "object"
+    },
+    "ProposalGuidelines": {
+      "additionalProperties": false,
+      "description": "What the proposer is told the user wants, learned from the decisions.",
+      "properties": {
+        "author": {
+          "enum": [
+            "curator",
+            "user"
+          ],
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string"
+        },
+        "decisions_seen": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "body",
+        "author",
+        "decisions_seen",
+        "created_at"
+      ],
+      "title": "ProposalGuidelines",
+      "type": "object"
+    },
+    "ProposalInfo": {
+      "additionalProperties": false,
+      "description": "Work an agent proposed. A proposal is never deleted: a decided one stays,\nwith its decision, and the page hides it unless history is shown.",
+      "properties": {
+        "branch": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "content": {
+          "$ref": "#/$defs/ProposalContentInfo"
+        },
+        "created_at": {
+          "type": "string"
+        },
+        "decided_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "decision_reason": {
+          "type": "string"
+        },
+        "decision_tags": {
+          "items": {
+            "$ref": "#/$defs/ProposalTag"
+          },
+          "type": "array"
+        },
+        "id": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "source_ref": {
+          "type": "string"
+        },
+        "source_url": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ProposalStatus"
+        },
+        "task_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "work": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "source",
+        "source_ref",
+        "source_url",
+        "content",
+        "status",
+        "created_at",
+        "decided_at",
+        "decision_reason",
+        "decision_tags",
+        "task_key",
+        "branch",
+        "work"
+      ],
+      "title": "ProposalInfo",
+      "type": "object"
+    },
+    "ProposalList": {
+      "additionalProperties": false,
+      "description": "The Proposals view: every proposal, oldest first, and what the proposer\nis doing.",
+      "properties": {
+        "guidelines": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProposalGuidelines"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_pending": {
+          "type": "integer"
+        },
+        "proposals": {
+          "items": {
+            "$ref": "#/$defs/ProposalInfo"
+          },
+          "type": "array"
+        },
+        "proposer": {
+          "type": "string"
+        },
+        "tags": {
+          "items": {
+            "$ref": "#/$defs/ProposalTag"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "proposals",
+        "max_pending",
+        "proposer",
+        "tags",
+        "guidelines"
+      ],
+      "title": "ProposalList",
+      "type": "object"
+    },
+    "ProposalStatus": {
+      "enum": [
+        "pending",
+        "approved",
+        "rejected"
+      ],
+      "type": "string"
+    },
+    "ProposalTag": {
+      "enum": [
+        "not_relevant",
+        "too_big",
+        "already_done",
+        "wrong_repo",
+        "low_value",
+        "unclear"
+      ],
+      "type": "string"
+    },
+    "ProposalsEvent": {
+      "additionalProperties": false,
+      "description": "The proposals changed (what the Proposals view shows).",
+      "properties": {
+        "proposals": {
+          "$ref": "#/$defs/ProposalList"
+        },
+        "type": {
+          "const": "proposals",
+          "type": "string"
+        },
+        "v": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "v",
+        "proposals"
+      ],
+      "title": "ProposalsEvent",
+      "type": "object"
+    },
     "RefreshedEvent": {
       "additionalProperties": false,
       "description": "A polling pass finished: the branches it looked up (changed or not)\nand when, which their cards say they are as old as.",
@@ -5423,6 +5743,7 @@
           "conversation": "#/$defs/ConversationEvent",
           "extras": "#/$defs/ExtrasEvent",
           "hello": "#/$defs/HelloEvent",
+          "proposals": "#/$defs/ProposalsEvent",
           "refreshed": "#/$defs/RefreshedEvent",
           "spend": "#/$defs/SpendEvent",
           "status": "#/$defs/StatusEvent",
@@ -5463,6 +5784,9 @@
         },
         {
           "$ref": "#/$defs/AgentsEvent"
+        },
+        {
+          "$ref": "#/$defs/ProposalsEvent"
         },
         {
           "$ref": "#/$defs/SpendEvent"
@@ -6493,6 +6817,16 @@
           },
           "type": "array"
         },
+        "proposals": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProposalList"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "repos": {
           "items": {
             "$ref": "#/$defs/Repo"
@@ -6529,6 +6863,7 @@
         "fetched",
         "extras",
         "agents",
+        "proposals",
         "spend",
         "webhooks"
       ],

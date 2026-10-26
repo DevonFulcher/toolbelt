@@ -4,7 +4,7 @@ adapted for a run that nobody supervises."""
 import json
 
 from toolbelt.autonomous_agents.dispatcher import Decision
-from toolbelt.autonomous_agents.limits import VALIDATE, AgentLimits
+from toolbelt.autonomous_agents.limits import IMPLEMENT, VALIDATE, AgentLimits
 
 AI_PREFIX = "🤖 AI-generated on behalf of Devon:"
 TRAILER = "Co-Authored-By: AI Assistant <noreply@ai>"
@@ -272,10 +272,62 @@ def _build_validate(decision: Decision, limits: AgentLimits) -> str:
     )
 
 
+_IMPLEMENT = """\
+You are an autonomous agent implementing ONE approved proposal for Devon \
+Fulcher, in the checkout of branch `{branch}` of the repo `{repo}`: {worktree}. \
+Work only there. Follow the repository's and the user's own guidance (the \
+CLAUDE.md files and skills you have) exactly as an interactive session would.
+
+You run unattended: nobody can answer a question. Wherever that guidance tells \
+you to ask the user, to stop and wait for approval, or to get the user in the \
+loop, call `propose_decisions` instead and stop: you are resumed with the \
+answer. That includes every case where `toolbelt` cannot do what you need and \
+plain `git` would be the fallback: ask, naming the exact command, and stop.
+
+## What to do
+
+Implement the proposal below on this branch, run the repo's checks, and commit \
+with `toolbelt git save -m "<message>"`. Do not open a pull request: Devon \
+reviews this branch locally first. Stop at a committed branch.
+
+## The proposal
+
+{brief}
+
+Do not use more than {turns} turns or about {minutes} minutes.
+"""
+
+_IMPLEMENT_REPORT = """\
+## When you finish
+
+Your last message must end with one line of JSON and nothing after it:
+
+{"summary": "<what you changed and what Devon should look at: plain text, at most 200 characters>", "actions_performed": "<what you did>", "pushed": true or false, "needs_human": "<what a person must do, or an empty string>", "next_action": "<one short sentence>"}
+"""
+
+
+def _build_implement(decision: Decision, limits: AgentLimits) -> str:
+    return "\n".join(
+        [
+            _IMPLEMENT.format(
+                worktree=decision.worktree,
+                branch=decision.branch,
+                repo=decision.repo,
+                brief=decision.brief or "(see the conversation so far)",
+                turns=limits.implement_run_turns,
+                minutes=limits.implement_timeout_seconds // 60,
+            ),
+            _IMPLEMENT_REPORT,
+        ]
+    )
+
+
 def build_instructions(decision: Decision, limits: AgentLimits) -> str:
     """The text appended to Claude Code's own system prompt for this run."""
     if decision.trigger == VALIDATE:
         return _build_validate(decision, limits)
+    if decision.trigger == IMPLEMENT:
+        return _build_implement(decision, limits)
     kind = "approved" if decision.approved else "ready for review and not approved yet"
     pr = decision.pr_url or "(no URL known: find it with `gh pr view`)"
     general = _GENERAL.format(
@@ -302,6 +354,11 @@ _PROMPTS = {
 
 
 def build_prompt(decision: Decision) -> str:
+    if decision.trigger == IMPLEMENT:
+        return (
+            f"Please implement the approved proposal on branch `{decision.branch}`. "
+            "Follow the instructions you were given."
+        )
     if decision.trigger == VALIDATE:
         return (
             f"Please validate branch `{decision.branch}` against "

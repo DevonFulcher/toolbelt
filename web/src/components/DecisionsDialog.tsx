@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { answerDecision, deleteDecision, fetchDecisions } from "../api/client";
 import type { DecisionAnswerInfo, DecisionInfo, DecisionOptionInfo, DecisionPointInfo } from "../api/generated";
 import { Dialog } from "./Dialog";
+import { Linkified } from "./Linkified";
 
 type Draft = Record<string, { option_id: string | null; text: string }>;
 
@@ -147,7 +148,11 @@ function PointForm({
   return (
     <fieldset className="decision-point" disabled={disabled}>
       <legend>{`${point.id}: ${point.title}`}</legend>
-      {point.context && <p className="decision-context">{point.context}</p>}
+      {point.context && (
+        <p className="decision-context">
+          <Linkified text={point.context} />
+        </p>
+      )}
       {point.options.map((option) => (
         <OptionChoice
           key={option.id}
@@ -161,7 +166,9 @@ function PointForm({
       {recommended && (
         <details className="decision-recommendation">
           <summary>{`Recommendation${recommended.option_id ? `: ${recommended.option_id}` : ""}`}</summary>
-          <p>{recommended.reasoning}</p>
+          <p>
+            <Linkified text={recommended.reasoning} />
+          </p>
         </details>
       )}
       <label className="decision-text">
@@ -207,7 +214,12 @@ function OptionChoice({
         <input type="radio" name={`${pointId}`} checked={checked} onChange={onChoose} aria-label={`${option.id}: ${option.title}`} />{" "}
         <strong>{`${option.id}: ${option.title}`}</strong>
         {recommended && <span className="decision-recommended">{" (recommended)"}</span>}
-        {option.summary && <span className="muted">{` — ${option.summary}`}</span>}
+        {option.summary && (
+          <span className="muted">
+            {" — "}
+            <Linkified text={option.summary} />
+          </span>
+        )}
       </label>
       {more.length > 0 && (
         <details>
@@ -216,7 +228,9 @@ function OptionChoice({
             {more.map(([label, text]) => (
               <div key={label}>
                 <dt>{label}</dt>
-                <dd>{text}</dd>
+                <dd>
+                  <Linkified text={text} />
+                </dd>
               </div>
             ))}
           </dl>

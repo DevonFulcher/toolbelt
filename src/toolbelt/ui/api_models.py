@@ -731,6 +731,7 @@ class Snapshot(Model):
     #: current.
     extras: CardExtras | None
     agents: Agents | None
+    proposals: ProposalList | None
     spend: list[Spend]
     #: Repos the user administers whose webhook is not working.
     webhooks: list[RepoWebhook]
@@ -1206,7 +1207,13 @@ type AgentReasonCode = Literal[
 ]
 
 type AgentTrigger = Literal[
-    "resolve_conflicts", "resolve_comments", "fix_ci", "validate"
+    "resolve_conflicts",
+    "resolve_comments",
+    "fix_ci",
+    "validate",
+    "propose",
+    "implement",
+    "curate",
 ]
 type ValidateResult = Literal["pass", "fail"]
 
@@ -1641,6 +1648,104 @@ class DecisionDeleteRequest(Model):
     decision_id: str
 
 
+class ProposalEvidence(Model):
+    quote: str
+    url: str
+    author: str
+    date: str
+
+
+class ProposalContentInfo(Model):
+    """What the proposer wrote: enough to decide on without opening the source."""
+
+    title: str
+    summary: str
+    problem: str
+    why_now: str
+    evidence: list[ProposalEvidence]
+    approach: str
+    acceptance_criteria: list[str]
+    risks: list[str]
+    size: Literal["S", "M", "L"]
+    confidence: Literal["low", "medium", "high"]
+    repo: str
+    related: list[str]
+    on_approve: str
+
+
+type ProposalStatus = Literal["pending", "approved", "rejected"]
+type ProposalTag = Literal[
+    "not_relevant", "too_big", "already_done", "wrong_repo", "low_value", "unclear"
+]
+
+
+class ProposalInfo(Model):
+    """Work an agent proposed. A proposal is never deleted: a decided one stays,
+    with its decision, and the page hides it unless history is shown."""
+
+    id: str
+    #: The MCP system it came from and what in it prompted it.
+    source: str
+    source_ref: str
+    source_url: str
+    content: ProposalContentInfo
+    status: ProposalStatus
+    created_at: str
+    decided_at: str | None
+    decision_reason: str
+    decision_tags: list[ProposalTag]
+    #: The ticket and branch the worker made of an approved proposal.
+    task_key: str | None
+    branch: str | None
+    #: What the worker is doing with an approved proposal, in a few words
+    #: (``None``: nothing yet, or not approved).
+    work: str | None
+
+
+class ProposalGuidelines(Model):
+    """What the proposer is told the user wants, learned from the decisions."""
+
+    body: str
+    #: ``curator`` or ``user``.
+    author: Literal["curator", "user"]
+    decisions_seen: int
+    created_at: str
+
+
+class ProposalList(Model):
+    """The Proposals view: every proposal, oldest first, and what the proposer
+    is doing."""
+
+    proposals: list[ProposalInfo]
+    #: At most this many wait for a decision at once.
+    max_pending: int
+    #: What the proposer is doing or why it is not, in a sentence.
+    proposer: str
+    #: The tags a rejection may carry.
+    tags: list[ProposalTag]
+    #: The guidelines the proposer is given now (``None``: none written yet).
+    guidelines: ProposalGuidelines | None
+
+
+class ProposalGuidelinesRequest(Model):
+    """The body of ``POST /api/proposals/guidelines``: a new version."""
+
+    body: str
+
+
+class ProposalApproveRequest(Model):
+    proposal_id: str
+
+
+class ProposalRejectRequest(Model):
+    """The body of ``POST /api/proposals/reject``: the reason and tags are
+    optional."""
+
+    proposal_id: str
+    reason: str
+    tags: list[ProposalTag]
+
+
 class SlackPerson(Model):
     """Someone who can be asked to review: Slack display name and user ID."""
 
@@ -1861,6 +1966,14 @@ class AgentsEvent(Model):
     agents: Agents
 
 
+class ProposalsEvent(Model):
+    """The proposals changed (what the Proposals view shows)."""
+
+    type: Literal["proposals"]
+    v: int
+    proposals: ProposalList
+
+
 class SpendEvent(Model):
     """The spend ledger was read again: the Spend view's data for each of its
     windows (a one-, seven- and thirty-day breakdown)."""
@@ -1914,6 +2027,7 @@ type ServerEvent = Annotated[
     | ExtrasEvent
     | WebhooksEvent
     | AgentsEvent
+    | ProposalsEvent
     | SpendEvent
     | ConversationEvent,
     Field(discriminator="type"),

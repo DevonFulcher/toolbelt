@@ -10,6 +10,7 @@ import { createStore, type StoreApi } from "zustand/vanilla";
 import type {
   AgentConversation,
   Agents,
+  ProposalList,
   BranchExtras,
   CardExtras,
   FetchedBranch,
@@ -92,6 +93,8 @@ export interface AppState {
   spendReadAt: number | null;
   /** The Agents view's data, pushed (``null`` until the server has worked it out). */
   agentsView: Agents | null;
+  /** The Proposals view's data, pushed (``null`` until the server has worked it out). */
+  proposalsView: ProposalList | null;
   /** The Spend view's data by window (days), pushed. */
   spendViews: Record<number, Spend>;
   /** The conversation of each run that was opened or is working, by run id. */
@@ -136,6 +139,7 @@ export interface AppState {
   untrackedChanged(untracked: UntrackedPrs, v: number): void;
   extrasChanged(extras: CardExtras, v?: number): void;
   agentsChanged(agents: Agents, v?: number): void;
+  proposalsChanged(proposals: ProposalList, v?: number): void;
   spendChanged(spend: Spend[], v?: number): void;
   webhooksChanged(webhooks: RepoWebhook[], v?: number): void;
   conversationChanged(conversation: AgentConversation, v?: number): void;
@@ -235,6 +239,7 @@ export function createAppStore(init: StoreInit = {}): AppStore {
     decidedAt: null,
     spendReadAt: null,
     agentsView: null,
+    proposalsView: null,
     spendViews: {},
     conversations: {},
     catalog: null,
@@ -291,6 +296,7 @@ export function createAppStore(init: StoreInit = {}): AppStore {
         webhooks: webhooksByRepo(snapshot.webhooks),
         ...(snapshot.extras ? extrasState(snapshot.extras) : {}),
         agentsView: snapshot.agents ?? prev.agentsView,
+        proposalsView: snapshot.proposals ?? prev.proposalsView,
         // A conversation that was still working may have moved on (or ended)
         // while events were missed: it is asked for again when it is shown.
         conversations: Object.fromEntries(Object.entries(prev.conversations).filter(([, c]) => !c.running)),
@@ -388,6 +394,12 @@ export function createAppStore(init: StoreInit = {}): AppStore {
       const state = get();
       if (v !== undefined && state.version !== null && v <= state.version) return;
       set({ ...(v === undefined ? {} : { version: v }), agentsView: agents });
+    },
+
+    proposalsChanged(proposals, v) {
+      const state = get();
+      if (v !== undefined && state.version !== null && v <= state.version) return;
+      set({ ...(v === undefined ? {} : { version: v }), proposalsView: proposals });
     },
 
     webhooksChanged(webhooks, v) {
