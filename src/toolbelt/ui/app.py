@@ -57,9 +57,11 @@ from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 
 from toolbelt.agent_activity.chunks import ACTIVITY_DIRNAME
 from toolbelt.agent_activity.ingest import ActivityIngest
+from toolbelt.autonomous_agents import implement_setup
 from toolbelt.autonomous_agents.auth import claude_signed_in
 from toolbelt.autonomous_agents.branch_state import RepoFactsCache, inspect_branch
 from toolbelt.autonomous_agents.ci_history import ci_explainer
+from toolbelt.autonomous_agents.curator import CuratorRunner
 from toolbelt.autonomous_agents.dispatcher import (
     DEFAULT_POLL_INTERVAL_SECONDS,
     Dispatcher,
@@ -71,6 +73,7 @@ from toolbelt.autonomous_agents.limits import (
     VALIDATE,
     load_limits,
 )
+from toolbelt.autonomous_agents.proposer import ProposerRunner
 from toolbelt.autonomous_agents.questions import RunQuestions
 from toolbelt.autonomous_agents.runner import AgentRunner
 from toolbelt.autonomous_agents.screen import read_screen_state
@@ -93,6 +96,13 @@ from toolbelt.git.stack.store import (
     default_db_path,
     state_dir,
 )
+from toolbelt.proposals.book import (
+    AlreadyDecided,
+    NoSuchProposal,
+    ProposalBook,
+)
+from toolbelt.proposals.model import InvalidProposal
+from toolbelt.proposals.settings import load_settings as load_proposal_settings
 from toolbelt.task_claims.claim_file import CLAIMS_DIRNAME
 from toolbelt.task_claims.resolution import TrackedTask, git_worktrees, tracked_tasks
 from toolbelt.tasks.config import configured_tracker
@@ -164,6 +174,9 @@ from toolbelt.ui.pr_fetch import (
     graphql_runner,
 )
 from toolbelt.ui.pr_gate import GithubChangeGate, PrGate
+from toolbelt.ui.proposal_feed import ProposalFeed
+from toolbelt.ui.proposal_worker import ProposalWorker, RepoRef
+from toolbelt.ui.proposals_view import build_proposals, proposal_info
 from toolbelt.ui.pushed_views import PushedViews, conversation_of
 from toolbelt.ui.repo_visibility import visible_repos
 from toolbelt.ui.review_routes import review_router
@@ -578,6 +591,7 @@ def create_app(
     webhook_url: str | None = None,
     forwarders: WebhookForwarders | None = None,
     decisions: DecisionBook | None = None,
+    proposals: ProposalBook | None = None,
     review_servers: Sequence[LanguageServer] = (PYTHON_SERVER,),
     open_pr: OpenPr = personal_review_module.open_pr,
 ) -> FastAPI:
@@ -715,6 +729,20 @@ def create_app(
             publish_branches(repo_id, parents, descendants(parents, branch))
 
     decision_book = decisions or DecisionBook(wall_clock=wall_clock)
+
+    def worker_run_states() -> dict[str, str]:
+        store = StackStore(default_db_path())
+        try:
+            return {r.run_id: r.state for r in store.agent_runs() if r.proposal_id}
+        finally:
+            store.close()
+
+    proposal_settings = load_proposal_settings(default_config_path())
+    proposal_book = proposals or ProposalBook(
+        wall_clock=wall_clock, max_pending=proposal_settings.max_pending
+    )
+    #: What the proposer is doing, for the Proposals view (see ``proposal_feed``).
+    proposer_status = {"text": ""}
     #: The branches that have a question the user has not answered.
     deciding_keys: set[BranchKey] = set()
 
@@ -902,9 +930,89 @@ def create_app(
         working_hours=working_hours,
         estimate_hub=estimate_hub,
         priors=lambda: configured_priors(default_config_path()),
+        build_proposals=lambda: build_proposals(
+            proposal_book, lambda: proposer_status["text"], worker_run_states
+        ),
+    )
+
+    def set_proposer_status(text: str) -> None:
+        if text != proposer_status["text"]:
+            proposer_status["text"] = text
+            views.notify("proposals")
+
+    def proposer_repos() -> list[str]:
+        return [
+            repo_slug(remote_url) or path.name
+            for _, path, remote_url in _registered_repos()
+        ]
+
+    proposer = ProposerRunner(
+        db_path=default_db_path,
+        workdir=lambda: state_dir() / "proposer",
+        limits=limits,
+        book=proposal_book,
+        repos=proposer_repos,
+        history=lambda: proposal_book.all()[-proposal_settings.history_shown :],
+        guidelines=lambda: getattr(proposal_book.guidelines(), "body", ""),
+        wall_clock=wall_clock,
+    )
+    curator = CuratorRunner(
+        db_path=default_db_path,
+        workdir=lambda: state_dir() / "proposer",
+        limits=limits,
+        book=proposal_book,
+        wall_clock=wall_clock,
+    )
+    curator.on_change = lambda: views.notify("agents", "proposals")
+    proposer.on_change = lambda: views.notify("agents", "proposals")
+    proposal_feed = ProposalFeed(
+        book=proposal_book,
+        runner=proposer,
+        db_path=default_db_path,
+        settings=proposal_settings,
+        blockers=lambda: dispatcher.blockers,
+        launching=_agents_launching,
+        set_status=set_proposer_status,
+        wall_clock=wall_clock,
+        curator=curator,
+    )
+
+    def worker_repos() -> list[RepoRef]:
+        return [
+            RepoRef(
+                id=repo_id,
+                name=path.name,
+                slug=repo_slug(remote_url),
+                path=path,
+            )
+            for repo_id, path, remote_url in _registered_repos()
+        ]
+
+    async def create_proposal_ticket(proposal, project: str) -> str:
+        return await implement_setup.create_ticket(
+            proposal,
+            project=project,
+            limits=limits,
+            workdir=state_dir() / "proposer",
+        )
+
+    proposal_worker = ProposalWorker(
+        book=proposal_book,
+        db_path=default_db_path,
+        settings=proposal_settings,
+        repos=worker_repos,
+        blockers=lambda: dispatcher.blockers,
+        launching=_agents_launching,
+        checkout_problem=implement_setup.checkout_problem,
+        create_ticket=create_proposal_ticket,
+        append_branch=implement_setup.append_branch,
+        head_sha=implement_setup.head_sha,
+        start=lambda decision, proposal_id: runner.start(decision, proposal_id),
+        wall_clock=wall_clock,
+        changed=lambda: views.notify("agents", "proposals"),
     )
     dispatcher.on_tick = lambda: views.notify("agents", "extras")
-    runner.on_change = lambda: views.notify("agents", "extras")
+    runner.on_change = lambda: views.notify("agents", "extras", "proposals")
     spend.on_ingest = lambda: views.notify("spend", "extras")
 
     async def forwarded_slugs() -> set[str]:
@@ -1293,6 +1401,8 @@ def create_app(
             asyncio.create_task(aggregates.run()),
             asyncio.create_task(estimate_job.run()),
             asyncio.create_task(views.run()),
+            asyncio.create_task(proposal_feed.run()),
+            asyncio.create_task(proposal_worker.run()),
         ]
         if forwarders is not None:
             tasks.append(asyncio.create_task(forwarders.run()))
@@ -1403,6 +1513,7 @@ def create_app(
             claims=claims,
             extras=views.extras,
             agents=views.agents,
+            proposals=views.proposals,
             spend=views.spend,
             webhooks=webhook_problems(),
             slack=slack,
@@ -1539,6 +1650,62 @@ def create_app(
             created_at=decision.created_at,
             answered_at=decision.answered_at,
             delivered_at=decision.delivered_at,
+        )
+
+    @app.get("/api/proposals", response_model=api.ProposalList)
+    async def list_proposals() -> api.ProposalList:
+        return await asyncio.to_thread(
+            build_proposals,
+            proposal_book,
+            lambda: proposer_status["text"],
+            worker_run_states,
+        )
+
+    @app.post("/api/proposals/approve", response_model=api.ProposalInfo)
+    async def approve_proposal(body: api.ProposalApproveRequest) -> api.ProposalInfo:
+        try:
+            decided = await asyncio.to_thread(proposal_book.approve, body.proposal_id)
+        except NoSuchProposal as error:
+            raise HTTPException(status_code=404, detail="no such proposal") from error
+        except AlreadyDecided as error:
+            raise HTTPException(
+                status_code=409, detail="This proposal was decided already."
+            ) from error
+        views.notify("proposals")
+        return proposal_info(decided)
+
+    @app.post("/api/proposals/reject", response_model=api.ProposalInfo)
+    async def reject_proposal(body: api.ProposalRejectRequest) -> api.ProposalInfo:
+        try:
+            decided = await asyncio.to_thread(
+                lambda: proposal_book.reject(
+                    body.proposal_id, reason=body.reason, tags=list(body.tags)
+                )
+            )
+        except NoSuchProposal as error:
+            raise HTTPException(status_code=404, detail="no such proposal") from error
+        except AlreadyDecided as error:
+            raise HTTPException(
+                status_code=409, detail="This proposal was decided already."
+            ) from error
+        except InvalidProposal as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        views.notify("proposals")
+        return proposal_info(decided)
+
+    @app.post("/api/proposals/guidelines", response_model=api.ProposalList)
+    async def write_proposal_guidelines(
+        body: api.ProposalGuidelinesRequest,
+    ) -> api.ProposalList:
+        await asyncio.to_thread(
+            lambda: proposal_book.write_guidelines(body.body, author="user")
+        )
+        views.notify("proposals")
+        return await asyncio.to_thread(
+            build_proposals,
+            proposal_book,
+            lambda: proposer_status["text"],
+            worker_run_states,
         )
 
     @app.get("/api/decisions", response_model=api.DecisionList)

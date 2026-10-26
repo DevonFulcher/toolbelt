@@ -84,6 +84,17 @@ describe("the decisions dialog", () => {
     expect(within(decision).getByRole("link", { name: "Open session" })).toHaveAttribute("href", "claude://s-1");
   });
 
+  test("links in a point's context are clickable", async () => {
+    const base = pending();
+    const points = [{ ...base.points[0], context: "See [the PR](https://github.com/o/r/pull/1) and https://example.com/doc." }];
+    serve({ current: [pending({ points })] });
+
+    const decision = await open();
+
+    expect(within(decision).getByRole("link", { name: "the PR" })).toHaveAttribute("href", "https://github.com/o/r/pull/1");
+    expect(within(decision).getByRole("link", { name: "https://example.com/doc" })).toHaveAttribute("href", "https://example.com/doc");
+  });
+
   test("more context on an option is there on request: context, benefits, costs", async () => {
     serve({ current: [pending()] });
     const decision = await open();

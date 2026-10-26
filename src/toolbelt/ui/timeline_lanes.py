@@ -422,5 +422,7 @@ NOT_TIMELINE_STATUS: dict[str, str] = {
     "Tone": "A colour token, not a status.",
     "SiblingConflictState": "Whether two open tasks' heads merge cleanly is a pure function of the two commits, recomputed whenever a head moves: the card shows the latest result and nothing is recorded, so there is no history to draw.",
     "ValidateResult": "A validate run's verdict: carried in the detail of the run's span on the agent lane.",
+    "ProposalStatus": "Whether you decided a proposal: it belongs to no task yet, so it has no timeline.",
+    "ProposalTag": "A reason tag on a rejected proposal, not a status.",
     "Who": "Who a next action waits on: a property of the next lane's kinds, shown as the card's Next chip.",
 }

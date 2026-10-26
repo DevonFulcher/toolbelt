@@ -31,7 +31,7 @@ from toolbelt.autonomous_agents.eligibility import (
     resume_blocker,
     validate_blocker,
 )
-from toolbelt.autonomous_agents.limits import VALIDATE, AgentLimits
+from toolbelt.autonomous_agents.limits import IMPLEMENT, VALIDATE, AgentLimits
 from toolbelt.autonomous_agents.questions import RunQuestions
 from toolbelt.autonomous_agents.screen import ScreenState
 from toolbelt.decisions.model import Decision as AskedDecision
@@ -85,6 +85,8 @@ class Decision:
     worktree: Path | None = None
     #: A person starting a run by hand would get past ``reason``.
     can_override: bool = False
+    #: What an implement run is asked to do (the approved proposal, as text).
+    brief: str | None = None
 
     @property
     def may_start(self) -> bool:
@@ -324,15 +326,19 @@ class Dispatcher:
             state = await asyncio.to_thread(self._inspect, item)
             if not state.exists:
                 continue
-            validating = prior.trigger == VALIDATE
+            # Validate and implement runs work on a branch with no PR.
+            on_branch = prior.trigger in (VALIDATE, IMPLEMENT)
             facts = self._facts(
-                item, snapshot, VALIDATE if validating else action.kind, state
+                item, snapshot, prior.trigger if on_branch else action.kind, state
             )
             if resume_blocker(facts, world) is not None:
                 continue
             decision = (
-                self._validate_decision(item, snapshot, state, world)
-                if validating
+                dataclasses.replace(
+                    self._validate_decision(item, snapshot, state, world),
+                    trigger=prior.trigger,
+                )
+                if on_branch
                 else await asyncio.to_thread(self._decide, item, snapshot, world, True)
             )
             if decision is None:

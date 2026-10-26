@@ -88,6 +88,24 @@ function el(tag, className, text) {
   return node;
 }
 
+// Text with its links (markdown `[text](https://...)` or bare http(s) URLs) made clickable.
+const LINK = /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<>()[\]]+[^\s<>()[\].,;:!?'"])/g;
+function linked(tag, className, text) {
+  const node = el(tag, className);
+  let last = 0;
+  for (const m of text.matchAll(LINK)) {
+    if (m.index > last) node.append(text.slice(last, m.index));
+    const a = el("a", "", m[2] !== undefined ? m[1] : m[3]);
+    a.href = m[2] !== undefined ? m[2] : m[3];
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    node.append(a);
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) node.append(text.slice(last));
+  return node;
+}
+
 function optionBlock(point, option, recommended, state) {
   const wrap = el("div", "option");
   const label = el("label");
@@ -97,14 +115,14 @@ function optionBlock(point, option, recommended, state) {
   radio.addEventListener("change", () => { state[point.id].option_id = option.id; refresh(); });
   label.append(radio, " ", el("strong", "", option.id + ": " + option.title));
   if (recommended) label.append(el("span", "rec", " (recommended)"));
-  if (option.summary) label.append(el("span", "muted", " — " + option.summary));
+  if (option.summary) label.append(linked("span", "muted", " — " + option.summary));
   wrap.append(label);
   const more = [["Context", option.context], ["Benefits", option.benefits], ["Costs", option.costs], ["Risks", option.risks]].filter((f) => f[1]);
   if (more.length) {
     const details = el("details");
     details.append(el("summary", "", "More context"));
     const dl = el("dl");
-    for (const [name, text] of more) dl.append(el("dt", "", name), el("dd", "", text));
+    for (const [name, text] of more) dl.append(el("dt", "", name), linked("dd", "", text));
     details.append(dl);
     wrap.append(details);
   }
@@ -130,13 +148,13 @@ function render() {
   for (const point of decision.points) {
     const fieldset = el("fieldset");
     fieldset.append(el("legend", "", point.id + ": " + point.title));
-    if (point.context) fieldset.append(el("p", "muted", point.context));
+    if (point.context) fieldset.append(linked("p", "muted", point.context));
     for (const option of point.options) {
       fieldset.append(optionBlock(point, option, point.recommendation && point.recommendation.option_id === option.id, state));
     }
     if (point.recommendation) {
       const details = el("details");
-      details.append(el("summary", "", "Recommendation" + (point.recommendation.option_id ? ": " + point.recommendation.option_id : "")), el("p", "", point.recommendation.reasoning));
+      details.append(el("summary", "", "Recommendation" + (point.recommendation.option_id ? ": " + point.recommendation.option_id : "")), linked("p", "", point.recommendation.reasoning));
       fieldset.append(details);
     }
     const text = el("textarea");

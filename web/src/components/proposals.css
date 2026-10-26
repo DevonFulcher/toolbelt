@@ -1,0 +1,30 @@
+/* The proposals view. Cards reuse the task card's box (`.card`). */
+.proposals { display: grid; gap: 12px; min-width: 0; max-width: 960px; }
+.proposals-status { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap;
+                    background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; }
+.proposals-status p { margin: 0; color: var(--muted); font-size: 13px; }
+.proposals-guidelines { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px;
+                        display: grid; gap: 8px; }
+.proposals-guidelines summary { cursor: pointer; font-weight: 600; }
+.proposals-guidelines p { margin: 0; color: var(--muted); font-size: 13px; }
+.proposals-guidelines label { display: grid; gap: 4px; }
+.proposals-guidelines textarea { width: 100%; font: inherit; }
+.proposals-guidelines button { justify-self: start; }
+.proposal { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px;
+            display: grid; gap: 10px; min-width: 0; }
+.proposal-head { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+.proposal-head h2 { margin: 0; font-size: 15px; }
+.proposal-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.proposal-chips { display: flex; gap: 6px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+.proposal-chip { border: 1px solid var(--line); border-radius: 10px; padding: 0 8px; }
+.proposal p { margin: 0; overflow-wrap: anywhere; }
+.proposal h3 { margin: 0 0 2px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.proposal ul { margin: 0; padding-left: 18px; display: grid; gap: 2px; }
+.proposal-evidence { list-style: none; padding: 0; gap: 6px; }
+.proposal-evidence blockquote { margin: 0; padding-left: 10px; border-left: 3px solid var(--line); overflow-wrap: anywhere; }
+.proposal-evidence cite { display: block; font-size: 12px; color: var(--muted); font-style: normal; }
+.proposal-reject { display: grid; gap: 8px; border-top: 1px solid var(--line); padding-top: 10px; }
+.proposal-reject textarea { width: 100%; font: inherit; }
+.proposal-tags { display: flex; gap: 12px; flex-wrap: wrap; font-size: 13px; }
+.proposal-problem { color: var(--red); font-size: 13px; }
+.proposal-decided { color: var(--muted); font-size: 13px; }

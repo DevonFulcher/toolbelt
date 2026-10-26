@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Literal
 
-from toolbelt.autonomous_agents.limits import TRIGGERS, VALIDATE, AgentLimits
+from toolbelt.autonomous_agents.limits import IMPLEMENT, TRIGGERS, VALIDATE, AgentLimits
 from toolbelt.autonomous_agents.screen import ScreenState
 from toolbelt.git.stack.store import AgentRun
 
@@ -357,8 +357,8 @@ def resume_blocker(task: TaskFacts, world: World) -> Reason | None:
     not, and the worktree may hold what the run left there."""
     if not world.enabled:
         return Reason("disabled", "Autonomous agents are switched off.")
-    # A validate run is resumed on a branch that has no PR.
-    if task.action_kind != VALIDATE and not task.pr_open:
+    # Validate and implement runs are resumed on a branch that has no PR.
+    if task.action_kind not in (VALIDATE, IMPLEMENT) and not task.pr_open:
         return Reason("pr_not_open", "The PR is not open.")
     if any(r.task_id == task.task_id and r.state == "running" for r in world.runs):
         return Reason("working", "An agent is working on this now.")

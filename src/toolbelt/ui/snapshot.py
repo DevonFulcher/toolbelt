@@ -392,6 +392,7 @@ def build_snapshot(
     claims: ClaimLookup = NO_CLAIMS,
     extras: api.CardExtras | None = None,
     agents: api.Agents | None = None,
+    proposals: api.ProposalList | None = None,
     spend: list[api.Spend] | None = None,
     webhooks: list[api.RepoWebhook] | None = None,
     slack: SlackLookup = NO_SLACK,
@@ -505,6 +506,7 @@ def build_snapshot(
             fetched=fetched,
             extras=extras,
             agents=agents,
+            proposals=proposals,
             spend=spend or [],
             webhooks=webhooks or [],
         )

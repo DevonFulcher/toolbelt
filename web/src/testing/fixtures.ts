@@ -152,6 +152,7 @@ export function snapshot(branches: Branch[], repos: Repo[] = [repo(1, "api")], e
     fetched: [],
     extras: null,
     agents: null,
+    proposals: null,
     spend: [],
     webhooks: [],
     filters: [
