@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Software factory</title>
+<style>
+:root {
+  --bg: #f6f6f4; --panel: #fff; --ink: #1c1c1a; --muted: #6b6b66; --line: #e2e2dc;
+  --accent: #3b5bdb; --accent-ink: #fff; --good: #2b8a3e; --warn: #b9770e; --bad: #c92a2a;
+  --add-bg: #e6f6ea; --del-bg: #fdecec; --hunk-bg: #eef1fb; --chip: #eeeee8;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #151514; --panel: #1f1f1d; --ink: #ecece8; --muted: #96968f; --line: #333330;
+    --accent: #7b93ff; --accent-ink: #10131f; --good: #5fc77a; --warn: #e0a64a; --bad: #ff7b7b;
+    --add-bg: #1d3324; --del-bg: #3a2020; --hunk-bg: #232840; --chip: #2b2b28;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+header { display: flex; align-items: center; gap: 24px; padding: 12px 24px;
+  background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 2; flex-wrap: wrap; }
+h1 { font-size: 16px; margin: 0; }
+nav { display: flex; gap: 4px; flex-wrap: wrap; }
+nav button { background: none; border: 0; padding: 6px 12px; border-radius: 6px; color: var(--muted);
+  font: inherit; cursor: pointer; }
+nav button[aria-selected="true"] { background: var(--chip); color: var(--ink); font-weight: 600; }
+nav .count { background: var(--accent); color: var(--accent-ink); border-radius: 10px; padding: 0 7px;
+  font-size: 11px; margin-left: 6px; }
+.spacer { flex: 1; }
+.badge-demo { font-size: 12px; color: var(--warn); border: 1px solid var(--warn); border-radius: 10px; padding: 1px 8px; }
+main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 28px 0 10px; }
+h2:first-child { margin-top: 0; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 10px; }
+.row { display: flex; gap: 12px; align-items: flex-start; }
+.row > .grow { flex: 1; min-width: 0; }
+.title { font-weight: 600; font-size: 15px; }
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.chip { background: var(--chip); border-radius: 10px; padding: 1px 9px; font-size: 12px; color: var(--muted); }
+.chip.good { color: var(--good); } .chip.warn { color: var(--warn); } .chip.bad { color: var(--bad); }
+.why { margin: 8px 0 0; padding-left: 10px; border-left: 3px solid var(--line); color: var(--muted); }
+.actions { display: flex; gap: 8px; flex-shrink: 0; }
+button.btn { font: inherit; padding: 6px 14px; border-radius: 6px; border: 1px solid var(--line);
+  background: var(--panel); color: var(--ink); cursor: pointer; }
+button.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+button.btn:disabled { opacity: .6; cursor: default; }
+a { color: var(--accent); }
+.empty { color: var(--muted); padding: 24px; text-align: center; border: 1px dashed var(--line); border-radius: 10px; }
+.pipeline { display: flex; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+.stage { flex: 1; min-width: 120px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; }
+.stage .n { font-size: 24px; font-weight: 700; }
+pre.diff { margin: 10px 0 0; border: 1px solid var(--line); border-radius: 6px; overflow-x: auto;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 0; }
+pre.diff span { display: block; padding: 0 10px; white-space: pre; }
+.diff .a { background: var(--add-bg); } .diff .d { background: var(--del-bg); } .diff .h { background: var(--hunk-bg); color: var(--muted); }
+.file { margin-top: 12px; }
+.file summary { cursor: pointer; font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
+.add { color: var(--good); } .del { color: var(--bad); }
+.timeline { position: relative; margin: 10px 0 0 6px; padding-left: 18px; border-left: 2px solid var(--line); }
+.event { position: relative; padding: 4px 0 10px; }
+.event::before { content: ""; position: absolute; left: -24px; top: 9px; width: 10px; height: 10px; border-radius: 50%;
+  background: var(--panel); border: 2px solid var(--accent); }
+.event .kind { font: 11px ui-monospace, Menlo, monospace; text-transform: uppercase; color: var(--accent); margin-right: 8px; }
+.pulse { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--good); margin-right: 6px;
+  animation: pulse 1.2s infinite; }
+@keyframes pulse { 50% { opacity: .25; } }
+table { width: 100%; border-collapse: collapse; }
+td, th { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+th { font-size: 12px; color: var(--muted); font-weight: 600; }
+@media (max-width: 640px) { .row { flex-direction: column; } header { padding: 12px 16px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Software factory</h1>
+  <nav id="nav" role="tablist"></nav>
+  <span class="spacer"></span>
+  <span class="badge-demo">fake data</span>
+</header>
+<main id="main"></main>
+<script>
+const TABS = [
+  ["work", "Work items"], ["review", "Changesets"], ["agents", "Agents"],
+  ["harness", "Harness"], ["sources", "Sources"],
+];
+let data = null;
+let tab = location.hash.slice(1) || "work";
+const open = new Set();      // expanded <details> keys, kept across re-renders
+const pending = new Set();   // action keys in flight
+let selectedRun = null;
+let lastKey = "";
+
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const when = (iso) => {
+  const s = Math.round((new Date(data.now) - new Date(iso)) / 1000);
+  const abs = Math.abs(s);
+  const t = abs < 90 ? `${abs}s` : abs < 5400 ? `${Math.round(abs / 60)}m`
+    : abs < 129600 ? `${Math.round(abs / 3600)}h` : `${Math.round(abs / 86400)}d`;
+  return s >= 0 ? `${t} ago` : `in ${t}`;
+};
+const item = (id) => data.work_items.find((w) => w.id === id);
+const source = (id) => data.sources.find((s) => s.id === id);
+
+async function act(key, url, label) {
+  pending.add(key); render();
+  try {
+    const r = await fetch(url, { method: "POST" });
+    if (!r.ok) alert(`${label} failed: ${await r.text()}`);
+  } finally { pending.delete(key); await refresh(); }
+}
+function button(key, url, text, busy, cls = "") {
+  const on = pending.has(key);
+  return `<button class="btn ${cls}" ${on ? "disabled" : ""} data-act="${esc(url)}" data-key="${esc(key)}"
+    data-label="${esc(text)}">${on ? busy : text}</button>`;
+}
+
+function diffHtml(diff) {
+  return `<pre class="diff">${diff.split("\n").map((l) =>
+    `<span class="${l.startsWith("@@") ? "h" : l[0] === "+" ? "a" : l[0] === "-" ? "d" : ""}">${esc(l) || " "}</span>`
+  ).join("")}</pre>`;
+}
+function details(key, summary, body) {
+  return `<details class="file" data-key="${esc(key)}" ${open.has(key) ? "open" : ""}>
+    <summary>${summary}</summary>${body}</details>`;
+}
+
+function workCard(w, actions = "") {
+  const s = source(w.source_id);
+  return `<div class="card"><div class="row"><div class="grow">
+    <div class="title">${esc(w.title)}</div>
+    <div>${esc(w.summary)}</div>
+    <div class="why">${esc(w.rationale)}</div>
+    <div class="chips">
+      <span class="chip">${esc(s.name)} · <a href="${esc(w.source_url)}" target="_blank" rel="noopener">${esc(w.source_ref)}</a></span>
+      <span class="chip">${esc(w.repo)}</span><span class="chip">size ${w.size}</span>
+      <span class="chip">proposed ${when(w.proposed_at)}</span>
+      ${w.pr_url ? `<span class="chip good"><a href="${esc(w.pr_url)}" target="_blank" rel="noopener">PR opened</a></span>` : ""}
+    </div></div><div class="actions">${actions}</div></div></div>`;
+}
+
+function renderWork() {
+  const by = (st) => data.work_items.filter((w) => w.status === st);
+  const proposed = by("proposed");
+  const stages = [["Proposed", proposed.length], ["Implementing", by("implementing").length],
+    ["Changeset ready", by("changeset_ready").length], ["PR opened", by("pr_opened").length],
+    ["Rejected", by("rejected").length]];
+  const group = (title, list, actions) => `<h2>${title}</h2>` + (list.length
+    ? list.map((w) => workCard(w, actions ? actions(w) : "")).join("") : "");
+  return `<div class="pipeline">${stages.map(([n, c]) =>
+    `<div class="stage"><div class="n">${c}</div><div class="muted small">${n}</div></div>`).join("")}</div>
+    <h2>Proposed — needs your approval</h2>` +
+    (proposed.length ? proposed.map((w) => workCard(w,
+      button(`rej-${w.id}`, `/api/work-items/${w.id}/reject`, "Reject", "Rejecting…") +
+      button(`app-${w.id}`, `/api/work-items/${w.id}/approve`, "Approve & start agent", "Starting agent…", "primary"))).join("")
+      : `<div class="empty">Nothing waiting. The next source read will propose more.</div>`) +
+    group("Implementing", by("implementing"), (w) => `<span><span class="pulse"></span>agent running</span>`) +
+    group("Changeset ready", by("changeset_ready"), () => `<button class="btn" data-tab="review">Review changeset</button>`) +
+    group("PR opened", by("pr_opened")) + group("Rejected", by("rejected"));
+}
+
+function renderReview() {
+  const ready = data.changesets.filter((c) => c.status === "ready");
+  const done = data.changesets.filter((c) => c.status !== "ready");
+  const card = (c) => {
+    const w = item(c.work_item_id);
+    const adds = c.files.reduce((n, f) => n + f.additions, 0), dels = c.files.reduce((n, f) => n + f.deletions, 0);
+    const actions = c.status === "ready"
+      ? button(`crej-${c.id}`, `/api/changesets/${c.id}/reject`, "Reject", "Rejecting…") +
+        button(`capp-${c.id}`, `/api/changesets/${c.id}/approve`, "Approve & open PR", "Opening PR…", "primary")
+      : `<span class="chip ${c.status === "pr_opened" ? "good" : "bad"}">${c.status === "pr_opened"
+        ? `<a href="${esc(w.pr_url)}" target="_blank" rel="noopener">PR opened</a>` : "rejected"}</span>`;
+    return `<div class="card"><div class="row"><div class="grow">
+      <div class="title">${esc(w.title)}</div><div>${esc(c.summary)}</div>
+      <div class="chips"><span class="chip">${esc(c.branch)}</span>
+        <span class="chip">${c.files.length} files <span class="add">+${adds}</span> <span class="del">−${dels}</span></span>
+        <span class="chip good">${esc(c.tests)}</span></div></div>
+      <div class="actions">${actions}</div></div>
+      ${c.files.map((f) => details(`${c.id}:${f.path}`,
+        `${esc(f.path)} <span class="add">+${f.additions}</span> <span class="del">−${f.deletions}</span>`,
+        diffHtml(f.diff))).join("")}</div>`;
+  };
+  return `<h2>Awaiting review</h2>` + (ready.length ? ready.map(card).join("")
+    : `<div class="empty">No changesets to review. Approve a work item and the agent will propose one.</div>`) +
+    (done.length ? `<h2>Decided</h2>` + done.map(card).join("") : "");
+}
+
+function renderAgents() {
+  const runs = [...data.runs].reverse();
+  if (!selectedRun || !runs.some((r) => r.id === selectedRun)) selectedRun = runs[0]?.id;
+  const total = runs.reduce((n, r) => n + r.tokens, 0);
+  const table = `<table><tr><th>Run</th><th>Work item</th><th>Model</th><th>Started</th><th>Events</th><th>Tokens</th><th>State</th></tr>` +
+    runs.map((r) => `<tr data-run="${r.id}" style="cursor:pointer;${r.id === selectedRun ? "background:var(--chip)" : ""}">
+      <td>${esc(r.id)}</td><td>${esc(item(r.work_item_id).title)}</td><td>${esc(r.model)}</td><td>${when(r.started_at)}</td>
+      <td>${r.events.length}</td><td>${r.tokens.toLocaleString()}</td>
+      <td>${r.status === "running" ? `<span class="pulse"></span>running` : "done"}</td></tr>`).join("") + `</table>`;
+  const run = runs.find((r) => r.id === selectedRun);
+  return `<div class="pipeline"><div class="stage"><div class="n">${runs.filter((r) => r.status === "running").length}</div>
+      <div class="muted small">running now</div></div>
+    <div class="stage"><div class="n">${runs.length}</div><div class="muted small">runs</div></div>
+    <div class="stage"><div class="n">${total.toLocaleString()}</div><div class="muted small">tokens</div></div></div>
+    <div class="card">${table}</div>` + (run ? `<h2>${esc(run.id)} trace</h2><div class="card"><div class="timeline">` +
+      (run.events.map((e) => `<div class="event"><span class="kind">${esc(e.kind)}</span>${esc(e.text)}
+        <span class="muted small"> · ${when(e.at)} · ${e.tokens.toLocaleString()} tokens</span></div>`).join("")
+        || `<span class="muted">No events yet.</span>`) + `</div></div>` : "");
+}
+
+function renderHarness() {
+  const card = (h) => `<div class="card"><div class="row"><div class="grow">
+    <div class="title">${esc(h.title)}</div><div class="muted small">${esc(h.target)}</div>
+    <div class="why">${esc(h.rationale)}</div>
+    <div class="chips"><span class="chip">proposed ${when(h.proposed_at)}</span>
+      ${h.evidence.map((e) => `<span class="chip">${esc(e)}</span>`).join("")}
+      ${h.status !== "proposed" ? `<span class="chip ${h.status === "applied" ? "good" : "bad"}">${h.status}</span>` : ""}</div>
+    </div><div class="actions">${h.status === "proposed"
+      ? button(`hrej-${h.id}`, `/api/harness-changes/${h.id}/reject`, "Reject", "Rejecting…") +
+        button(`happ-${h.id}`, `/api/harness-changes/${h.id}/apply`, "Apply", "Applying…", "primary") : ""}</div></div>
+    ${details(h.id, "Diff", diffHtml(h.diff))}</div>`;
+  const p = data.harness_changes.filter((h) => h.status === "proposed"), d = data.harness_changes.filter((h) => h.status !== "proposed");
+  return `<h2>Proposed changes to the agent harness</h2>` + (p.length ? p.map(card).join("") : `<div class="empty">None.</div>`) +
+    (d.length ? `<h2>Decided</h2>` + d.map(card).join("") : "");
+}
+
+function renderSources() {
+  return `<h2>MCP systems read on a schedule</h2><div class="card"><table>
+    <tr><th>System</th><th>MCP server</th><th>Schedule</th><th>Last read</th><th>Next read</th><th>Items read</th><th>Proposed</th><th>Health</th></tr>` +
+    data.sources.map((s) => `<tr><td>${esc(s.name)}</td><td>${esc(s.server)}</td><td>${esc(s.schedule)}</td>
+      <td>${when(s.last_read_at)}</td><td>${when(s.next_read_at)}</td><td>${s.items_read}</td><td>${s.proposed}</td>
+      <td class="${s.healthy ? "add" : "del"}">${s.healthy ? "ok" : "auth expired"}</td></tr>`).join("") + `</table></div>`;
+}
+
+function render() {
+  if (!data) return;
+  const counts = {
+    work: data.work_items.filter((w) => w.status === "proposed").length,
+    review: data.changesets.filter((c) => c.status === "ready").length,
+    harness: data.harness_changes.filter((h) => h.status === "proposed").length,
+  };
+  document.getElementById("nav").innerHTML = TABS.map(([id, label]) =>
+    `<button role="tab" data-tab="${id}" aria-selected="${id === tab}">${label}${counts[id] ? `<span class="count">${counts[id]}</span>` : ""}</button>`).join("");
+  const views = { work: renderWork, review: renderReview, agents: renderAgents, harness: renderHarness, sources: renderSources };
+  document.getElementById("main").innerHTML = views[tab]();
+}
+
+document.addEventListener("click", (e) => {
+  const t = e.target.closest("[data-tab],[data-act],[data-run]");
+  if (!t) return;
+  if (t.dataset.tab) { tab = t.dataset.tab; location.hash = tab; render(); }
+  else if (t.dataset.act) act(t.dataset.key, t.dataset.act, t.dataset.label);
+  else if (t.dataset.run) { selectedRun = t.dataset.run; render(); }
+});
+document.addEventListener("toggle", (e) => {
+  const k = e.target.dataset?.key;
+  if (k) e.target.open ? open.add(k) : open.delete(k);
+}, true);
+
+async function refresh() {
+  const text = await (await fetch("/api/state")).text();
+  // "now" changes every poll; only the records decide whether to redraw.
+  const next = JSON.parse(text);
+  const key = JSON.stringify({ ...next, now: 0 });
+  const changed = key !== lastKey;
+  lastKey = key; data = next;
+  if (changed) render();
+}
+refresh();
+setInterval(refresh, 1500);
+</script>
+</body>
+</html>

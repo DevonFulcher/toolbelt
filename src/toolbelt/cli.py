@@ -25,6 +25,25 @@ app.add_typer(dotfiles_typer, name="dotfiles")
 app.add_typer(task_typer, name="task")
 app.add_typer(machine_typer, name="machine")
 
+factory_typer = typer.Typer(
+    help="Software factory: agents propose work, you approve it.", no_args_is_help=True
+)
+app.add_typer(factory_typer, name="factory")
+
+
+@factory_typer.command(name="ui")
+def factory_ui(
+    port: int = typer.Option(8766, "--port", "-p", help="Port to listen on."),
+):
+    """Serve the software factory UI (sample data for now) on 127.0.0.1"""
+    import uvicorn
+
+    from toolbelt.software_factory.app import create_app
+
+    typer.echo(f"http://127.0.0.1:{port}/")
+    uvicorn.run(create_app(), host="127.0.0.1", port=port, log_level="warning")
+
+
 slack_typer = typer.Typer(
     help="Slack: link messages posted by hand to their PRs.", no_args_is_help=True
 )
