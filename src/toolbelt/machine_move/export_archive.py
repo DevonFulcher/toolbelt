@@ -5,7 +5,7 @@ import shutil
 import stat
 import tempfile
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from toolbelt import logged_process
@@ -24,8 +24,14 @@ from toolbelt.machine_move.archive_layout import (
     Member,
     Root,
 )
-from toolbelt.machine_move.in_flight import InFlightItem, find_in_flight
+from toolbelt.machine_move.in_flight import (
+    InFlightItem,
+    find_in_flight,
+    unpushed_branches,
+)
 from toolbelt.machine_move.one_password import DocumentVault
+from toolbelt.machine_move.push_branches import PushResult, push_unpushed
+from toolbelt.machine_move.service import ServiceControl
 
 
 @dataclass(frozen=True)
@@ -39,6 +45,11 @@ class ExportRequest:
     #: Keys besides the signing and GitHub keys; ``None`` for no keys at all.
     ssh_keys: tuple[Path, ...] | None = ()
     force: bool = False
+    #: Push the branches only this laptop has (see ``push_branches``).
+    push_branches: bool = False
+    #: Stop the ``tt ui`` service (and so its webhook forwarders) before the DB
+    #: is copied; needs a ``ServiceControl``.
+    stop_service: bool = False
 
 
 @dataclass(frozen=True)
@@ -49,6 +60,9 @@ class ExportReport:
     in_flight: list[InFlightItem]
     ignored_not_carried: list[str]
     has_database: bool
+    pushed: list[PushResult] = field(default_factory=list)
+    #: What was done to the ``tt ui`` service, when it was stopped.
+    service_note: str | None = None
 
 
 def _expand(value: str, home: Path) -> Path:
@@ -213,64 +227,101 @@ def _blockers(request: ExportRequest, db_copy: Path | None) -> list[str]:
     return reasons
 
 
-def export_machine(request: ExportRequest, vault: DocumentVault) -> ExportReport:
+def export_machine(
+    request: ExportRequest,
+    vault: DocumentVault,
+    service: ServiceControl | None = None,
+) -> ExportReport:
+    """The archive of everything git does not carry. Before it is made, the
+    branches only this laptop has are pushed (``request.push_branches``) and
+    the ``tt ui`` service is stopped (``request.stop_service``) so nothing
+    writes the DB after its snapshot; if the export then fails the service is
+    started again."""
     if request.to_file is None:
         vault.ensure_signed_in()
-    with tempfile.TemporaryDirectory(prefix="toolbelt-machine-export-") as tmp:
-        scratch = Path(tmp)
-        db_copy: Path | None = None
-        if request.db_path.is_file():
-            db_copy = scratch / "stacks.db"
-            database_copy.backup(request.db_path, db_copy)
+    stopped = False
+    service_note: str | None = None
+    pushed: list[PushResult] = []
+    try:
+        with tempfile.TemporaryDirectory(prefix="toolbelt-machine-export-") as tmp:
+            scratch = Path(tmp)
+            db_copy: Path | None = None
+            if request.db_path.is_file():
+                db_copy = scratch / "stacks.db"
+                database_copy.backup(request.db_path, db_copy)
 
-        warnings: list[str] = []
-        blockers = _blockers(request, db_copy)
-        if blockers and not request.force:
-            lines = "\n".join(f"  - {reason}" for reason in blockers)
-            raise MachineMoveError(
-                f"refusing to export while:\n{lines}\nFinish or stop that and run "
-                "this again, or pass --force to export anyway."
+            warnings: list[str] = []
+            blockers = _blockers(request, db_copy)
+            if blockers and not request.force:
+                lines = "\n".join(f"  - {reason}" for reason in blockers)
+                raise MachineMoveError(
+                    f"refusing to export while:\n{lines}\nFinish or stop that and run "
+                    "this again, or pass --force to export anyway."
+                )
+            warnings.extend(
+                f"--force: exporting despite: {reason}" for reason in blockers
             )
-        warnings.extend(f"--force: exporting despite: {reason}" for reason in blockers)
 
-        repos: list[Path] = [request.workdir / name for name in DOTFILES_REPOS]
-        tracked: dict[Path, list[str]] = {}
-        if db_copy:
-            repos += [Path(path) for path, _ in database_copy.repo_rows(db_copy)]
-            for path, branch in database_copy.tracked_branches(db_copy):
-                tracked.setdefault(Path(path), []).append(branch)
-            database_copy.reset_for_export(db_copy)
-        in_flight, worktree_records = find_in_flight(repos, tracked=tracked)
-
-        members = collect_members(request)
-        manifest = ArchiveManifest(
-            version=ARCHIVE_VERSION,
-            old_home=str(request.home),
-            old_workdir=str(request.workdir),
-            members=[member for member, _ in members],
-            worktrees=worktree_records,
-            has_database=db_copy is not None,
-        )
-        archive = scratch / "machine-archive.zip"
-        with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.writestr(MANIFEST_MEMBER, manifest.to_json())
-            for member, source in members:
-                zf.write(source, member.member)
+            repos: list[Path] = [request.workdir / name for name in DOTFILES_REPOS]
+            tracked: dict[Path, list[str]] = {}
+            pr_states: dict[tuple[str, str], str] = {}
             if db_copy:
-                zf.write(db_copy, DATABASE_MEMBER)
-        archive.chmod(0o600)
+                repos += [Path(path) for path, _ in database_copy.repo_rows(db_copy)]
+                for path, branch in database_copy.tracked_branches(db_copy):
+                    tracked.setdefault(Path(path), []).append(branch)
+                pr_states = database_copy.pr_states(db_copy)
+            if request.push_branches:
+                pushed = push_unpushed(
+                    unpushed_branches(repos, tracked=tracked),
+                    pr_states=pr_states,
+                    always_push={request.workdir / name for name in DOTFILES_REPOS},
+                )
+            if request.stop_service and service is not None:
+                service_note = service.stop()
+                stopped = True
+                if db_copy:  # nothing writes the DB now: copy it again
+                    database_copy.backup(request.db_path, db_copy)
+            if db_copy:
+                database_copy.reset_for_export(db_copy)
+            in_flight, worktree_records = find_in_flight(repos, tracked=tracked)
 
-        if request.to_file is not None:
-            request.to_file.parent.mkdir(parents=True, exist_ok=True)
-            descriptor = os.open(
-                request.to_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600
+            members = collect_members(request)
+            manifest = ArchiveManifest(
+                version=ARCHIVE_VERSION,
+                old_home=str(request.home),
+                old_workdir=str(request.workdir),
+                members=[member for member, _ in members],
+                worktrees=worktree_records,
+                has_database=db_copy is not None,
             )
-            with os.fdopen(descriptor, "wb") as target, archive.open("rb") as reader:
-                shutil.copyfileobj(reader, target)
-            request.to_file.chmod(0o600)
-            destination = f"{request.to_file} (holds private keys: keep it safe)"
-        else:
-            destination = vault.store(archive, title=request.title)
+            archive = scratch / "machine-archive.zip"
+            with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr(MANIFEST_MEMBER, manifest.to_json())
+                for member, source in members:
+                    zf.write(source, member.member)
+                if db_copy:
+                    zf.write(db_copy, DATABASE_MEMBER)
+            archive.chmod(0o600)
+
+            if request.to_file is not None:
+                request.to_file.parent.mkdir(parents=True, exist_ok=True)
+                descriptor = os.open(
+                    request.to_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600
+                )
+                with (
+                    os.fdopen(descriptor, "wb") as target,
+                    archive.open("rb") as reader,
+                ):
+                    shutil.copyfileobj(reader, target)
+                request.to_file.chmod(0o600)
+                destination = f"{request.to_file} (holds private keys: keep it safe)"
+            else:
+                destination = vault.store(archive, title=request.title)
+
+    except BaseException:
+        if stopped and service is not None:
+            service.start()
+        raise
 
     return ExportReport(
         members=manifest.members,
@@ -279,4 +330,6 @@ def export_machine(request: ExportRequest, vault: DocumentVault) -> ExportReport
         in_flight=in_flight,
         ignored_not_carried=ignored_not_carried(request.workdir, manifest.members),
         has_database=manifest.has_database,
+        pushed=pushed,
+        service_note=service_note,
     )

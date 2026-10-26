@@ -11,9 +11,10 @@ from toolbelt.machine_move.archive_layout import (
     DEFAULT_DOCUMENT_TITLE,
     MachineMoveError,
 )
-lazy from toolbelt.machine_move.export_archive import ExportRequest, export_machine
+from toolbelt.machine_move.export_archive import ExportRequest, export_machine
 lazy from toolbelt.machine_move.import_archive import ImportRequest, import_machine
 lazy from toolbelt.machine_move.one_password import OpCli
+lazy from toolbelt.machine_move.service import LaunchdService
 
 machine_typer = typer.Typer(
     help="Move to a new laptop: export on the old one, import on the new one",
@@ -81,6 +82,23 @@ def export_command(
             "machine.sh says IS_PERSONAL=true.",
         ),
     ] = False,
+    push_branches: Annotated[
+        bool,
+        typer.Option(
+            "--push-branches/--no-push-branches",
+            help="Push the branches only this laptop has (open PRs and branches "
+            "with an upstream; never by force; stale ones are left alone).",
+        ),
+    ] = True,
+    stop_service: Annotated[
+        bool,
+        typer.Option(
+            "--stop-service/--keep-service",
+            help="Stop the tt ui service and its webhook forwarders before the DB "
+            "is copied, so nothing changes after the snapshot and the new laptop "
+            "can take over the webhooks.",
+        ),
+    ] = True,
     home: Annotated[Path | None, _HOME] = None,
     workdir: Annotated[Path | None, _WORKDIR] = None,
     state_dir: Annotated[Path | None, _STATE] = None,
@@ -102,9 +120,11 @@ def export_command(
         include_history=include_history,
         ssh_keys=None if no_ssh_keys else tuple(ssh_key or ()),
         force=force,
+        push_branches=push_branches,
+        stop_service=stop_service,
     )
     try:
-        report = export_machine(request, OpCli(vault=vault))
+        report = export_machine(request, OpCli(vault=vault), LaunchdService())
     except MachineMoveError as error:
         typer.echo(f"error: {error}", err=True)
         raise typer.Exit(1) from error
@@ -117,20 +137,28 @@ def export_command(
     for member in report.members:
         typer.echo(f"  {member.root}/{member.path}")
     typer.echo(f"Stored: {report.destination}")
+    if report.service_note:
+        typer.echo(f"Service: {report.service_note}")
+    for push in report.pushed:
+        typer.echo(f"Push: {push}")
     for warning in report.warnings:
         typer.echo(f"WARNING: {warning}", err=True)
     if report.ignored_not_carried:
         typer.echo("Ignored by git and not carried (add to CARRIED_FILES if needed):")
         for entry in report.ignored_not_carried:
             typer.echo(f"  {entry}")
-    if report.in_flight:
+    to_do = [item for item in report.in_flight if not item.informational]
+    if to_do:
         typer.echo(
             "\nWARNING: work that git does not carry. Commit and push each item "
             "(or accept losing it) before this laptop is wiped:",
             err=True,
         )
-        for item in report.in_flight:
+        for item in to_do:
             typer.echo(f"  [ ] {item.repo}: {item}", err=True)
+    for item in report.in_flight:
+        if item.informational:
+            typer.echo(f"Not carried: {item.repo}: {item}")
 
 
 @machine_typer.command(name="import")
@@ -195,3 +223,51 @@ def import_command(
         typer.echo("\nStill to do:", err=True)
         for follow_up in report.follow_ups:
             typer.echo(f"  [ ] {follow_up}", err=True)
+
+
+@machine_typer.command(name="setup")
+def setup_command(
+    worktrees: Annotated[
+        bool,
+        typer.Option(
+            "--worktrees",
+            help="Also set up every worktree of those repos (a virtualenv each: "
+            "slow and large; by default only the repos' own checkouts).",
+        ),
+    ] = False,
+    state_dir: Annotated[Path | None, _STATE] = None,
+    home: Annotated[Path | None, _HOME] = None,
+) -> None:
+    """Install the tool versions and Python environment of the restored repos
+
+    Runs `asdf install` and `uv sync` in the checkout of each repo toolbelt
+    tracks (where the checkout has a .tool-versions or a uv.lock). A failure is
+    listed and the rest still runs. Safe to run again."""
+    from toolbelt.git.stack.store import StackStore
+    from toolbelt.machine_move.in_flight import worktrees as git_worktrees
+    from toolbelt.machine_move.setup_repos import set_up
+
+    resolved_home = _home(home)
+    db_path = _state_dir(state_dir, resolved_home) / "stacks.db"
+    if not db_path.is_file():
+        typer.echo("error: there is no toolbelt DB to read the repos from.", err=True)
+        raise typer.Exit(1)
+    store = StackStore(db_path)
+    try:
+        repos = [repo.path for repo in store.repos()]
+    finally:
+        store.close()
+    checkouts = list(repos)
+    if worktrees:
+        for repo in repos:
+            checkouts += [tree.path for tree in git_worktrees(repo)[1:]]
+    failed = False
+    for result in set_up(checkouts):
+        mark = "ok" if result.ok else "FAILED"
+        typer.echo(
+            f"{mark}: {result.path}: {result.command}"
+            + (f" ({result.detail})" if result.detail else "")
+        )
+        failed = failed or not result.ok
+    if failed:
+        raise typer.Exit(1)

@@ -1,8 +1,8 @@
 # Moving to a new laptop (`tt machine`)
 
 Two commands: `tt machine export` on the old laptop, then the dotfiles repo's
-`bootstrap.sh` on the new one (which runs `tt machine import`). The manual steps
-that remain are in the dotfiles README.
+`bootstrap.sh` on the new one (which runs `tt machine import`, then `tt machine
+setup`). The manual steps that remain are in the dotfiles README.
 
 ## `tt machine export`
 
@@ -44,10 +44,33 @@ key on the new laptop with `signing_commits.sh` and add it to GitHub).
 a decision, a decision is pending, or `secrets/machine.sh` says
 `IS_PERSONAL=true` (restoring it would turn a work laptop into a personal one).
 
+**Pushing branches.** Before anything is copied, the export pushes the
+branches only this laptop has (`--no-push-branches` skips it), never by force:
+
+| Branch | Pushed? |
+| --- | --- |
+| its PR is merged or closed | no: the commits are stale (reported) |
+| it has an upstream | yes, a plain push (a rejection is reported) |
+| no upstream, its PR is open or a draft | yes, with `-u` |
+| no upstream, no PR | no: reported, push it yourself if wanted |
+| the default branch of a work repo | no |
+| any branch of `dotfiles`, `dotfiles-private`, `toolbelt` | yes |
+
+The PR state is the last one `tt ui` looked up and saved.
+
+**Stopping the service.** The export then stops the `tt ui` launchd service
+(`--keep-service` leaves it), which ends its webhook forwarders (GitHub allows one
+per repo, so the old laptop's would block the new one's) and means nothing writes
+the DB after its snapshot, which is taken after the stop. If the export fails
+once the service is stopped it is started again; after a successful export it
+stays stopped (`launchctl bootstrap gui/$(id -u)
+~/Library/LaunchAgents/com.user.toolbelt.ui.plist` starts it).
+
 **In-flight work.** Git does not carry uncommitted changes, commits no remote
-has, or stashes. The export prints a checklist of each one found in every
-worktree of the registered repos (and the three dotfiles repos). Commit and push
-them first.
+has (after the push above), or stashes. The export prints a checklist of each
+uncommitted change and unpushed commit found in every worktree of the registered
+repos (and the three dotfiles repos). Commit and push them first. Stashes are
+only counted per repo ("not carried"): old ones are rarely worth moving.
 
 ## `tt machine import`
 
@@ -68,6 +91,14 @@ them first.
   clone or branch that cannot be done is listed under "Still to do".
 
 `TOOLBELT_OP` names the `op` executable (tests use a fake one).
+
+## `tt machine setup`
+
+Runs `asdf install` (for a `.tool-versions`) and `uv sync` (for a `uv.lock`) in
+the checkout of each repo toolbelt tracks, so the restored repos work without
+doing it by hand; `bootstrap.sh` runs it after installing asdf. `--worktrees`
+also sets up every worktree (a virtualenv each: slow and large). A failure is
+listed, the rest still runs, and it is safe to run again.
 
 ## What only a real new laptop verifies
 

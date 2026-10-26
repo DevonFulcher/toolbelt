@@ -18,6 +18,8 @@ class InFlightItem:
     where: str
     branch: str | None
     problem: str
+    #: Nothing to do about it before the move (stashes, which are not carried).
+    informational: bool = False
 
     def __str__(self) -> str:
         branch = f" [{self.branch}]" if self.branch else ""
@@ -110,6 +112,46 @@ def find_in_flight(
                     )
                 )
         _, stashes = _git(main, "stash", "list")
-        for line in stashes.splitlines():
-            items.append(InFlightItem(main.name, str(main), None, f"stash {line}"))
+        count = len(stashes.splitlines())
+        if count:
+            items.append(
+                InFlightItem(
+                    main.name,
+                    str(main),
+                    None,
+                    f"{count} stash(es), not carried",
+                    informational=True,
+                )
+            )
     return items, records
+
+
+@dataclass(frozen=True)
+class UnpushedBranch:
+    repo: Path
+    branch: str
+    #: Its upstream branch, when it has one.
+    has_upstream: bool
+
+
+def unpushed_branches(
+    repos: list[Path], *, tracked: dict[Path, list[str]]
+) -> list[UnpushedBranch]:
+    """The branches (checked out in a worktree, or tracked by toolbelt) with
+    commits no remote has, once per repository."""
+    found: list[UnpushedBranch] = []
+    seen: set[Path] = set()
+    for repo in repos:
+        trees = worktrees(repo) if repo.exists() else []
+        if not trees or trees[0].path in seen:
+            continue
+        main = trees[0].path
+        seen.add(main)
+        branches = [t.branch for t in trees if t.branch] + tracked.get(repo, [])
+        for branch in dict.fromkeys(branches):
+            if _unpushed(main, branch):
+                code, _ = _git(
+                    main, "rev-parse", "--verify", "--quiet", f"{branch}@{{u}}"
+                )
+                found.append(UnpushedBranch(main, branch, has_upstream=code == 0))
+    return found

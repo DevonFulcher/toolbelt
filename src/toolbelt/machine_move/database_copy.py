@@ -6,6 +6,7 @@ copy. Both ends work on plain ``sqlite3`` connections rather than
 ``StackStore``: opening the store would migrate the copy.
 """
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -165,5 +166,26 @@ def tracked_branches(path: Path) -> list[tuple[str, str]]:
                 "JOIN repos r ON r.id = b.repo_id ORDER BY b.id"
             )
         ]
+    finally:
+        conn.close()
+
+
+def pr_states(path: Path) -> dict[tuple[str, str], str]:
+    """The last looked-up PR state (``open``, ``draft``, ``merged``,
+    ``closed``) of each tracked branch, by ``(repo path, branch)``. Call it
+    before ``reset_for_export``, which empties the lookups."""
+    conn = sqlite3.connect(path)
+    try:
+        if not {"repos", "pr_lookups"} <= _tables(conn):
+            return {}
+        found: dict[tuple[str, str], str] = {}
+        for repo_path, branch, record in conn.execute(
+            "SELECT r.path, l.branch, l.record FROM pr_lookups l "
+            "JOIN repos r ON r.id = l.repo_id"
+        ):
+            state = (json.loads(record).get("status") or {}).get("pr")
+            if state:
+                found[(repo_path, branch)] = state
+        return found
     finally:
         conn.close()
