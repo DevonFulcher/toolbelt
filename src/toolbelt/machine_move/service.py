@@ -7,7 +7,9 @@ changes after the snapshot. It is not started again after a successful export:
 the old laptop is on its way out.
 """
 
+import contextlib
 import os
+import signal
 import subprocess
 import time
 from pathlib import Path
@@ -51,21 +53,31 @@ class LaunchdService:
         )
         return [int(pid) for pid in result.stdout.split()]
 
-    def stop(self) -> str:
-        if not self._loaded():
-            return f"{self._label} was not running"
-        self._launchctl("bootout", f"{self._domain}/{self._label}")
+    def _end_forwarders(self) -> int:
+        """Ends the webhook forwarders with Ctrl-C, as the service does, so the
+        extension deletes its webhook (one killed outright leaves an inactive
+        webhook behind that blocks the next forwarder of the repo). Waits for
+        them to go; returns how many were ended."""
+        pids = self._forwarders()
+        for pid in pids:
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(pid, signal.SIGINT)
         deadline = time.monotonic() + _WAIT_SECONDS
         while self._forwarders() and time.monotonic() < deadline:
             time.sleep(0.5)
-        left = self._forwarders()
-        for pid in left:
-            # SIGINT, as the service does: the extension then deletes its webhook.
-            os.kill(pid, 2)
+        return len(pids)
+
+    def stop(self) -> str:
+        if not self._loaded():
+            return f"{self._label} was not running"
+        # The service starts a forwarder again a few seconds after one exits, so
+        # the forwarders go first and the service right after them.
+        ended = self._end_forwarders()
+        self._launchctl("bootout", f"{self._domain}/{self._label}")
+        left = self._end_forwarders()
         return (
-            f"stopped {self._label} and its webhook forwarders"
-            + (f" (ended {len(left)} that were left)" if left else "")
-            + ". Start it again with: launchctl bootstrap "
+            f"stopped {self._label} and ended {ended + left} webhook forwarder(s)"
+            ". Start it again with: launchctl bootstrap "
             f"{self._domain} ~/Library/LaunchAgents/{self._label}.plist"
         )
 

@@ -59,8 +59,11 @@ branches only this laptop has (`--no-push-branches` skips it), never by force:
 The PR state is the last one `tt ui` looked up and saved.
 
 **Stopping the service.** The export then stops the `tt ui` launchd service
-(`--keep-service` leaves it), which ends its webhook forwarders (GitHub allows one
-per repo, so the old laptop's would block the new one's) and means nothing writes
+(`--keep-service` leaves it). It ends the webhook forwarders first, with Ctrl-C,
+so GitHub removes their webhooks (GitHub allows one per repo: a forwarder killed
+outright leaves an inactive webhook that blocks the next one, on either laptop),
+then boots the service out. It only does this for this laptop's own state
+directory. Stopping the service means nothing writes
 the DB after its snapshot, which is taken after the stop. If the export fails
 once the service is stopped it is started again; after a successful export it
 stays stopped (`launchctl bootstrap gui/$(id -u)

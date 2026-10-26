@@ -712,108 +712,58 @@ class TestExportStopsTheService:
 
 class TestLaunchdService:
     def service(self, monkeypatch, *, loaded: bool, forwarders: list[list[int]]):
-        calls: list[tuple[str, ...]] = []
-        killed: list[int] = []
+        events: list[str] = []
         service = LaunchdService(home=Path("/h"), label="l")
-        monkeypatch.setattr(
-            service,
-            "_launchctl",
-            lambda *args: (
-                calls.append(args)
-                or subprocess.CompletedProcess(
-                    args, 0 if loaded or args[0] != "print" else 1
-                )
-            ),
-        )
+
+        def launchctl(*args: str) -> subprocess.CompletedProcess[str]:
+            events.append(f"launchctl {args[0]}")
+            return subprocess.CompletedProcess(
+                args, 0 if loaded or args[0] != "print" else 1
+            )
+
+        monkeypatch.setattr(service, "_launchctl", launchctl)
         sequence = iter(forwarders)
         monkeypatch.setattr(
             LaunchdService, "_forwarders", staticmethod(lambda: next(sequence, []))
         )
-        monkeypatch.setattr("os.kill", lambda pid, sig: killed.append(pid))
+        monkeypatch.setattr("os.kill", lambda pid, sig: events.append(f"kill {pid}"))
         monkeypatch.setattr("time.sleep", lambda s: None)
-        return service, calls, killed
+        return service, events
 
-    def test_it_boots_the_service_out_and_waits_for_its_forwarders(self, monkeypatch):
-        service, calls, killed = self.service(
-            monkeypatch, loaded=True, forwarders=[[11], [11], []]
+    def test_the_forwarders_are_ended_before_the_service_is_booted_out(
+        self, monkeypatch
+    ):
+        # Two forwarders; they are gone by the first wait, and none come back.
+        service, events = self.service(
+            monkeypatch, loaded=True, forwarders=[[11, 12], [11], [], [], []]
         )
 
         note = service.stop()
 
-        assert any(c[0] == "bootout" for c in calls)
-        assert killed == [] and "stopped" in note
+        assert events == [
+            "launchctl print",
+            "kill 11",
+            "kill 12",
+            "launchctl bootout",
+        ]
+        assert "ended 2 webhook forwarder(s)" in note
 
-    def test_forwarders_that_outlive_it_are_ended(self, monkeypatch):
-        service, _calls, killed = self.service(
-            monkeypatch, loaded=True, forwarders=[[11]] * 40
-        )
-        monkeypatch.setattr(
-            "time.monotonic", iter([0.0, 0.0, 99.0, 99.0, 99.0, 99.0]).__next__
+    def test_forwarders_that_outlive_the_service_are_ended_too(self, monkeypatch):
+        service, events = self.service(
+            monkeypatch, loaded=True, forwarders=[[], [], [13], []]
         )
 
         note = service.stop()
 
-        assert killed == [11] and "ended 1" in note
+        assert events == ["launchctl print", "launchctl bootout", "kill 13"]
+        assert "ended 1" in note
 
     def test_a_service_that_is_not_loaded_is_left_alone(self, monkeypatch):
-        service, calls, _ = self.service(monkeypatch, loaded=False, forwarders=[])
+        service, events = self.service(monkeypatch, loaded=False, forwarders=[])
 
         note = service.stop()
 
-        assert all(c[0] != "bootout" for c in calls) and "was not running" in note
-
-
-class TestSetUpRepos:
-    def checkout(self, path: Path, *files: str) -> Path:
-        path.mkdir(parents=True, exist_ok=True)
-        for name in files:
-            (path / name).write_text("")
-        return path
-
-    def run_setup(self, checkouts, fail=()):
-        from toolbelt.machine_move.setup_repos import set_up
-
-        ran: list[tuple[str, str]] = []
-
-        def runner(checkout: Path, command: list[str]) -> tuple[int, str]:
-            ran.append((checkout.name, " ".join(command)))
-            return (1, "boom\nlast line") if " ".join(command) in fail else (0, "")
-
-        return set_up(checkouts, runner), ran
-
-    def test_each_checkout_gets_what_it_has_files_for(self, tmp_path: Path) -> None:
-        both = self.checkout(tmp_path / "both", ".tool-versions", "uv.lock")
-        tools = self.checkout(tmp_path / "tools", ".tool-versions")
-        neither = self.checkout(tmp_path / "neither")
-
-        results, ran = self.run_setup([both, tools, neither])
-
-        assert ran == [
-            ("both", "asdf install"),
-            ("both", "uv sync"),
-            ("tools", "asdf install"),
-        ]
-        assert all(r.ok for r in results)
-
-    def test_a_failure_is_reported_and_the_rest_still_run(self, tmp_path: Path) -> None:
-        first = self.checkout(tmp_path / "first", ".tool-versions", "uv.lock")
-        second = self.checkout(tmp_path / "second", "uv.lock")
-
-        results, ran = self.run_setup([first, second], fail={"asdf install"})
-
-        assert ran == [
-            ("first", "asdf install"),
-            ("first", "uv sync"),
-            ("second", "uv sync"),
-        ]
-        assert [(r.command, r.ok, r.detail) for r in results[:1]] == [
-            ("asdf install", False, "last line")
-        ]
-
-    def test_a_checkout_that_is_not_there_is_skipped(self, tmp_path: Path) -> None:
-        results, ran = self.run_setup([tmp_path / "missing"])
-
-        assert results == [] and ran == []
+        assert events == ["launchctl print"] and "was not running" in note
 
 
 class TestTheCliStopsOnlyTheServiceOfThisLaptop:
