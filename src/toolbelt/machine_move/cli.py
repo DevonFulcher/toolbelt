@@ -12,6 +12,7 @@ from toolbelt.machine_move.archive_layout import (
     MachineMoveError,
 )
 from toolbelt.machine_move.export_archive import ExportRequest, export_machine
+lazy from toolbelt.git.stack.store import default_db_path
 lazy from toolbelt.machine_move.import_archive import ImportRequest, import_machine
 lazy from toolbelt.machine_move.one_password import OpCli
 lazy from toolbelt.machine_move.service import LaunchdService
@@ -123,8 +124,15 @@ def export_command(
         push_branches=push_branches,
         stop_service=stop_service,
     )
+    # The service serves the DB of this laptop's toolbelt: an export of another
+    # state directory (a test, a copy) must not stop it.
+    service = (
+        LaunchdService(home=resolved_home)
+        if request.db_path == default_db_path()
+        else None
+    )
     try:
-        report = export_machine(request, OpCli(vault=vault), LaunchdService())
+        report = export_machine(request, OpCli(vault=vault), service)
     except MachineMoveError as error:
         typer.echo(f"error: {error}", err=True)
         raise typer.Exit(1) from error

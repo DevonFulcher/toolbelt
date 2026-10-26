@@ -814,3 +814,53 @@ class TestSetUpRepos:
         results, ran = self.run_setup([tmp_path / "missing"])
 
         assert results == [] and ran == []
+
+
+class TestTheCliStopsOnlyTheServiceOfThisLaptop:
+    """The service serves the DB in this laptop's state directory; exporting
+    another one (a test, a copy of a home) must never stop it."""
+
+    def run_export(self, monkeypatch, tmp_path: Path, laptop: Laptop, state: Path):
+        stopped: list[str] = []
+
+        class FakeLaunchd:
+            def __init__(self, **kwargs: object) -> None: ...
+
+            def stop(self) -> str:
+                stopped.append("stop")
+                return "stopped"
+
+            def start(self) -> None: ...
+
+        monkeypatch.setattr("toolbelt.machine_move.cli.LaunchdService", FakeLaunchd)
+        result = runner.invoke(
+            machine_typer,
+            [
+                "export",
+                "--to-file",
+                str(tmp_path / "a.zip"),
+                "--home",
+                str(laptop.home),
+                "--workdir",
+                str(laptop.workdir),
+                "--state-dir",
+                str(state),
+                "--no-push-branches",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        return stopped
+
+    def test_another_state_directory_leaves_the_service_alone(
+        self, monkeypatch, tmp_path: Path, old: Laptop
+    ) -> None:
+        assert self.run_export(monkeypatch, tmp_path, old, old.state) == []
+
+    def test_the_state_directory_it_serves_stops_it(
+        self, monkeypatch, tmp_path: Path, old: Laptop
+    ) -> None:
+        from toolbelt.git.stack.store import default_db_path
+
+        stopped = self.run_export(monkeypatch, tmp_path, old, default_db_path().parent)
+
+        assert stopped == ["stop"]

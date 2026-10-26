@@ -174,3 +174,21 @@ def commit(repo: Path):
         git("commit", "-m", message or f"add {filename}", cwd=repo)
 
     return _commit
+
+
+@pytest.fixture(autouse=True)
+def _never_touch_the_real_launchd_service(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`tt machine export` stops the developer's real `tt ui` service. A test
+    that reaches `launchctl` or the webhook forwarders would stop it (it once
+    did): refuse, and let the tests of the service itself patch what they use."""
+
+    def refuse(*args: object, **kwargs: object) -> None:
+        raise AssertionError("a test reached the real launchd service")
+
+    monkeypatch.setattr(
+        "toolbelt.machine_move.service.LaunchdService._launchctl", refuse
+    )
+    monkeypatch.setattr(
+        "toolbelt.machine_move.service.LaunchdService._forwarders",
+        staticmethod(refuse),
+    )
