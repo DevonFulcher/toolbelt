@@ -86,7 +86,7 @@ def bump_pr(number: int, repo="dbt-labs/ai-codegen-api", lines=(96, 6)) -> BumpP
 
 def test_a_bump_names_the_pr_as_a_link_with_its_size_and_asks_the_different_assignee():
     assert compose_bump([bump_pr(1795)], DANIEL) == (
-        "It has been over 24 hours and "
+        "It has been over a working day and "
         "[ai-codegen-api#1795](https://github.com/dbt-labs/ai-codegen-api/pull/1795) `+96/-6` "
         "has no comments or reviews yet. "
         "@daniel.baptista dias, would you mind taking a look? Thanks!"

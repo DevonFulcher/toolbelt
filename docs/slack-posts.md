@@ -2,7 +2,8 @@
 
 With a `slack:` section in `~/.config/toolbelt/config.yaml`, `tt ui` follows a
 PR through the review channel: **Post in Slack** when it is ready and nobody has
-posted it, **Bump in Slack** when a day has passed and no person has looked.
+posted it, **Bump in Slack** when a working day has passed (weekends do not count) and no
+person has looked.
 This is what the `pr-publish` skill does by hand.
 
 ```yaml
@@ -36,7 +37,9 @@ page never names one.
 posted. It comes after the rules that block a PR (conflicts, changes requested,
 open threads, failing CI), so an agent still sees a failing CI first, and before
 `Waiting on CI`, so a PR is posted while its checks run. `Bump in Slack` is
-when the last post or bump is over `bump_after_hours` old and no person has
+when the last post or bump is over `bump_after_hours` old, not counting
+Saturdays and Sundays (in this machine's time zone: a post made on Friday
+afternoon is due on Monday afternoon, not on Saturday), and no person has
 reviewed it, started a thread or approved it since the first post (bots do not
 count). Drafts, merged and approved PRs are never posted.
 

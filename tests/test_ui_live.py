@@ -1117,7 +1117,9 @@ class TestSlackInTheApp:
         assert branch["slack"]["last_kind"] == "post"
         assert branch["status"]["next"]["kind"] == "request_review"
 
-    def test_a_post_a_day_old_with_no_look_says_bump_in_slack(self, tmp_path):
+    def test_a_post_that_waited_over_a_working_day_with_no_look_says_bump_in_slack(
+        self, tmp_path
+    ):
         app, _ = self.seed(tmp_path)
         store = StackStore(default_db_path())
         store.save_slack_posts(
@@ -1129,7 +1131,8 @@ class TestSlackInTheApp:
                     repo="o/r",
                     pr_number=5,
                     kind="post",
-                    posted_at=datetime.now(UTC) - timedelta(hours=25),
+                    # Five days always hold more than a day of weekdays.
+                    posted_at=datetime.now(UTC) - timedelta(days=5),
                 )
             ]
         )

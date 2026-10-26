@@ -96,7 +96,7 @@ def compose_bump(prs: list[BumpPr], assignee: Person | None) -> str:
         subject = f"{', '.join(links[:-1])} and {links[-1]} have"
     ask = f"@{assignee.name}, would you" if assignee else "Would someone"
     return (
-        f"It has been over 24 hours and {subject} no comments or reviews yet. "
+        f"It has been over a working day and {subject} no comments or reviews yet. "
         f"{ask} mind taking a look? Thanks!"
     )
 

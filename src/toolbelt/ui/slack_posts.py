@@ -1,8 +1,8 @@
 """What toolbelt knows about a PR in Slack, from the posts it recorded.
 
 A PR is *posted* once a message of toolbelt's (see ``slack_proxy``) names it,
-and *bump due* when its last post or bump is older than ``bump_after`` and
-nobody but its author has looked at it since the first post. "Looked" is
+and *bump due* when its last post or bump is older than ``bump_after``
+(weekends not counted: see ``weekday_time``) and nobody but its author has looked at it since the first post. "Looked" is
 what GitHub shows: a review by a person, an unresolved thread a person
 started, or an approval. Bots (Copilot, Actions) do not count: they are not a
 reviewer answering the ask.
@@ -12,11 +12,12 @@ reads Slack or GitHub.
 """
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, tzinfo
 
 from toolbelt.git.stack.status import BranchStatus, ReviewState, is_bot
 from toolbelt.git.stack.store import SlackPostRow
 from toolbelt.ui.pr_activity import REVIEW, PrFacts
+from toolbelt.ui.weekday_time import weekday_elapsed
 
 DEFAULT_BUMP_AFTER = timedelta(hours=24)
 
@@ -62,15 +63,17 @@ def slack_state(
     status: BranchStatus,
     now: datetime,
     bump_after: timedelta = DEFAULT_BUMP_AFTER,
+    zone: tzinfo | None = None,
 ) -> SlackState:
-    """``posts`` are the recorded rows that name this PR."""
+    """``posts`` are the recorded rows that name this PR. ``zone`` decides
+    what a weekend is (default: this machine's time zone)."""
     if not posts:
         return NOT_POSTED
     first = min(posts, key=lambda post: post.posted_at)
     last = max(posts, key=lambda post: post.posted_at)
-    bump_due = now - last.posted_at >= bump_after and not someone_looked(
-        facts, status, first.posted_at
-    )
+    bump_due = weekday_elapsed(
+        last.posted_at, now, zone
+    ) >= bump_after and not someone_looked(facts, status, first.posted_at)
     return SlackState(
         posted=True, last_kind=last.kind, last_at=last.posted_at, bump_due=bump_due
     )

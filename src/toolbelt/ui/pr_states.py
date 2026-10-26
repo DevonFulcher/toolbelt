@@ -250,7 +250,7 @@ _NEXT_TONES = {
     ),
     na.BUMP_SLACK: (
         AMBER,
-        "Posted in Slack over a day ago and nobody has reviewed or commented: bump it.",
+        "Posted in Slack over a working day ago (weekends do not count) and nobody has reviewed or commented: bump it.",
     ),
     na.CLAIMED: (
         PURPLE,

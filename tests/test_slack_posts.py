@@ -1,5 +1,6 @@
 """What toolbelt knows about a PR in Slack: posted, bump due, someone looked."""
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 from toolbelt.git.stack.status import BranchStatus, CiState, PrState, ReviewState
@@ -84,6 +85,32 @@ def test_a_bump_is_due_a_day_after_the_last_ask_when_nobody_looked():
     assert not state([post(23)]).bump_due
     # A bump restarts the day.
     assert not state([post(60), post(10, "bump")]).bump_due
+
+
+FRIDAY_5PM = datetime(2026, 10, 23, 17, 0, tzinfo=UTC)
+
+
+def posted_on_friday(now: datetime):
+    """A post made on Friday at 5pm, looked at on ``now``."""
+    row = replace(post(0), posted_at=FRIDAY_5PM)
+    return slack_posts.slack_state(
+        [row], facts=None, status=status(), now=now, zone=UTC
+    )
+
+
+def test_a_weekend_does_not_count_towards_the_wait_before_a_bump():
+    assert not posted_on_friday(
+        datetime(2026, 10, 24, 18, 0, tzinfo=UTC)
+    ).bump_due  # Saturday
+    assert not posted_on_friday(
+        datetime(2026, 10, 25, 23, 0, tzinfo=UTC)
+    ).bump_due  # Sunday
+    assert not posted_on_friday(
+        datetime(2026, 10, 26, 16, 0, tzinfo=UTC)
+    ).bump_due  # Monday 4pm
+    assert posted_on_friday(
+        datetime(2026, 10, 26, 17, 0, tzinfo=UTC)
+    ).bump_due  # Monday 5pm
 
 
 def test_the_wait_before_a_bump_is_configurable():

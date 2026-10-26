@@ -329,7 +329,7 @@
     "next_bump_slack": {
       "label": "Bump in Slack",
       "tone": "amber",
-      "legend": "Posted in Slack over a day ago and nobody has reviewed or commented: bump it."
+      "legend": "Posted in Slack over a working day ago (weekends do not count) and nobody has reviewed or commented: bump it."
     },
     "next_wait_review": {
       "label": "Waiting for review",
@@ -1195,7 +1195,7 @@
     {
       "label": "Bump in Slack",
       "tone": "amber",
-      "legend": "Posted in Slack over a day ago and nobody has reviewed or commented: bump it.",
+      "legend": "Posted in Slack over a working day ago (weekends do not count) and nobody has reviewed or commented: bump it.",
       "reps": [
         {
           "how": "now_state",

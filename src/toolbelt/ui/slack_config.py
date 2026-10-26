@@ -5,7 +5,7 @@ default_config_path``)::
 
     slack:
       channel: C0A0TFP0XC6        # Slack channel ID posts go to; omit to turn Slack off
-      bump_after_hours: 24        # how long a post waits for a look before a bump
+      bump_after_hours: 24        # hours a post waits for a look before a bump, weekends not counted
       reviewers:                  # who may be asked: Slack display name and user ID
         - {name: will.james, id: U08129C20GZ}
         - {name: patrick.yost, id: U06GXCV7REV}
