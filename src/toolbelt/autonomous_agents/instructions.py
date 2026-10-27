@@ -50,8 +50,26 @@ into its children) and pushes. Plain `git` is only for reading (status, log, \
 diff) and for resolving a conflict `toolbelt` stopped on (edit the files, \
 `git add`, then re-run `toolbelt git sync`). If `toolbelt` cannot do what you \
 need, stop and say so in `needs_human` instead of working around it.
-- Before every `toolbelt git save`, run the repo's full check suite (find the \
-command in the repo's CLAUDE.md or its task runner). Do not save if it fails.
+- Before every `toolbelt git save`, run the repo's lint and type checks (find \
+the command in the repo's CLAUDE.md or its task runner). Do not save if it fails.
+- Run only the tests that cover what you changed: the test files you edited and \
+the ones for the modules you edited. This overrides a repo rule to run the \
+whole test suite before pushing: CI runs the whole suite, and a whole-suite run \
+here competes with the other agents' runs for this machine's CPU and memory. \
+Run the whole suite only when you changed something every test uses (shared \
+fixtures, conftest, test configuration, dependencies), and then once, after \
+your last change, not after each one.
+- Scope a test run the way the repo's task runner says (read the task's \
+description): in some repos arguments after `--` are extra options for the \
+test runner and do not narrow the run, so `task test -- <path>` still runs \
+everything while `task test TEST_PATH=<path>` does not. A parallel runner \
+(pytest-xdist) starts its workers before the first test, which takes longer \
+than a few test files do: for one or a few files run pytest directly without \
+it (`uv run pytest -p no:xdist <files>`).
+- Never wait for CI. Do not use `gh run watch`, `sleep` or a polling loop to \
+see a check finish: after you push, or re-run a job, do the rest of the task \
+and stop with your report. Another run is started if the PR's checks fail \
+again (a limited number of times per commit).
 - Never force-push, never amend a commit that is already pushed, never skip \
 hooks (`--no-verify`).
 - End every commit message with `{trailer}`.

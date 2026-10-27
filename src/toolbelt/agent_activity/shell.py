@@ -8,6 +8,7 @@ command to a worktree (``claude-plugin/hooks/register.ts``); what a command
 stored.
 """
 
+import re
 from dataclasses import dataclass
 from typing import Literal
 
@@ -88,7 +89,21 @@ _NAVIGATION = {
     "unset",
     "alias",
     "wait",
+    # The frame of a polling loop (``for i in $(seq 1 9); do gh run view; sleep
+    # 30; done``): the loop is what its body runs.
+    "for",
+    "while",
+    "until",
+    "if",
+    "elif",
+    "done",
+    "fi",
+    "seq",
+    "sleep",
 }
+# Start a command that follows them (``do gh run view``).
+_BLOCK_KEYWORDS = {"do", "then", "else"}
+_PROGRAM_NAME = re.compile(r"[\w./~@-]+")
 _WRAPPERS = {
     "sudo",
     "time",
@@ -302,19 +317,33 @@ def tokenize(command: str) -> list[list[str]]:
 
 
 def _strip(words: list[str]) -> list[str]:
-    """``words`` without leading ``VAR=value`` assignments and wrappers
-    (``sudo``, ``time``, ``env`` ...)."""
+    """``words`` without leading ``VAR=value`` assignments, block keywords
+    (``do``) and wrappers (``sudo``, ``time``, ``env``, ``timeout 90`` ...)."""
     while words:
         head = words[0]
-        if (
+        if head == "timeout":
+            words = _after_timeout(words[1:])
+        elif (
             "=" in head
             and head.split("=", 1)[0].replace("_", "a").isalnum()
             or head in _WRAPPERS
+            or head in _BLOCK_KEYWORDS
         ):
             words = words[1:]
         else:
             break
     return words
+
+
+def _after_timeout(words: list[str]) -> list[str]:
+    """What ``timeout [-k DURATION | -s SIGNAL | -f] DURATION`` runs."""
+    while words and words[0].startswith("-"):
+        words = (
+            words[2:]
+            if words[0] in ("-k", "-s", "--kill-after", "--signal")
+            else words[1:]
+        )
+    return words[1:] if words and words[0][:1].isdigit() else words
 
 
 def _subcommand(program: str, words: list[str]) -> str | None:
@@ -392,7 +421,9 @@ def classify_bash(command: str) -> Command:
     programs = tuple(words[0] for words in segments)
     main: list[str] | None = None
     for words in segments:
-        if words[0] in _NAVIGATION:
+        # Not a program: navigation, or a piece of shell syntax the tokenizer
+        # split off (the ``SECONDS+540`` of ``$((SECONDS+540))``, ``[``).
+        if words[0] in _NAVIGATION or not _PROGRAM_NAME.fullmatch(words[0]):
             continue
         if words[0] in _FILTERS and main is not None:
             continue

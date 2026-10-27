@@ -62,6 +62,17 @@ class ActivityIngest:
         finally:
             store.close()
 
+    def ingest_chunks(self, chunks: list[Chunk]) -> int:
+        """Stores chunks that did not come from files (a run's transcript).
+        Returns how many were new."""
+        store = StackStore(self._db_path())
+        try:
+            tasks = self._tasks()
+            now = self._wall_clock()
+            return sum(self._store(store, chunk, tasks, {}, now) for chunk in chunks)
+        finally:
+            store.close()
+
     def _read(self, store: StackStore, files: list[Path], now: datetime) -> int:
         tasks = self._tasks()
         resolved: dict[str, tuple[str, int] | None] = {}

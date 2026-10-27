@@ -56,6 +56,21 @@ removes a file once it is stored; an unreadable one is kept while it may still
 be being written and dropped after ten minutes. The claim file's optional
 `activity` field (see `task-claims.md`) says what the holder is running now.
 
+## Autonomous runs
+
+A run loads only the project's settings, not the user's plugins, so the plugin
+records nothing for it. When a run has ended, `tt ui` reads its Claude Code
+transcript instead (`agent_activity/run_transcripts.py`, every minute, for the
+runs of the last 60 days that are not stored): each `tool_use` and its
+`tool_result` give a call and its duration, a call with no result when the run
+ended is `unended`, and the entries made while the run was running (a resumed
+run's session holds the runs before it) are the turn. The turn is named
+`run-<run id>` and its time is split like the plugin's, with no blocked time:
+tool time is the union of the calls, subagent calls (`Task`) are delegated, and
+the rest is the model's. The calls are classified and tied to a task by the
+`cwd` the transcript records, then stored and shown like the plugin's. A run
+whose session the plugin also recorded is left to the plugin.
+
 ## In the store
 
 `agent_tool_calls`: the raw calls, classified (`agent_activity/shell.py`: the

@@ -2021,6 +2021,24 @@ class StackStore:
         ).fetchone()
         return _agent_run(row) if row else None
 
+    def runs_without_activity(
+        self, *, since: datetime, turn_prefix: str
+    ) -> list[AgentRun]:
+        """Runs that ended at or after ``since`` whose tool calls are not in
+        ``agent_turns`` yet: no turn named ``turn_prefix`` + the run id, and no
+        turn from another writer (the plugin) for the run's session."""
+        rows = self._conn.execute(
+            "SELECT * FROM agent_runs r WHERE r.ended_at >= ? "
+            "AND r.session_id IS NOT NULL AND r.session_id != '' "
+            "AND NOT EXISTS (SELECT 1 FROM agent_turns t "
+            "WHERE t.holder = r.session_id AND t.turn_id = ? || r.run_id) "
+            "AND NOT EXISTS (SELECT 1 FROM agent_turns t "
+            "WHERE t.session_id = r.session_id AND t.turn_id NOT LIKE ? || '%') "
+            "ORDER BY r.started_at, r.run_id",
+            (_iso(since), turn_prefix, turn_prefix),
+        )
+        return [_agent_run(r) for r in rows]
+
     def deciding_runs(self) -> list[AgentRun]:
         """Every run waiting for the user's answer, whenever it started."""
         rows = self._conn.execute(

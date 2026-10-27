@@ -57,6 +57,7 @@ from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 
 from toolbelt.agent_activity.chunks import ACTIVITY_DIRNAME
 from toolbelt.agent_activity.ingest import ActivityIngest
+from toolbelt.agent_activity.run_transcripts import RunTranscripts
 from toolbelt.autonomous_agents import implement_setup
 from toolbelt.autonomous_agents.auth import claude_signed_in
 from toolbelt.autonomous_agents.branch_state import RepoFactsCache, inspect_branch
@@ -808,6 +809,9 @@ def create_app(
     activity = ActivityIngest(
         directory=activity_dir, tasks=claim_tasks, wall_clock=wall_clock
     )
+    run_transcripts = RunTranscripts(
+        ingest=activity, projects=transcripts_dir, wall_clock=wall_clock
+    )
 
     spend = spend_module.SpendFeed(
         db_path=default_db_path,
@@ -1394,6 +1398,7 @@ def create_app(
             asyncio.create_task(task_feed.run()),
             asyncio.create_task(claims.run()),
             asyncio.create_task(activity.run()),
+            asyncio.create_task(run_transcripts.run()),
             asyncio.create_task(spend.run()),
             asyncio.create_task(dispatcher.run()),
             asyncio.create_task(untracked_feed.run()),
