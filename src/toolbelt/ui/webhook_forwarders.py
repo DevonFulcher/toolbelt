@@ -17,9 +17,12 @@ then polls that repo only as a safety net.
 Only what toolbelt itself created is ever cleaned up (``forwarder_ledger.py``).
 A webhook is recorded as toolbelt's when a forwarder of its own was running as
 it appeared (the repo can hold only one) or exited right after creating it.
-When a forwarder dies before its websocket connects, GitHub leaves the webhook
-behind inactive and it blocks the repo; if that webhook is in the ledger it is
-deleted and the forwarder is started again at once, and a webhook that is not
+When a forwarder dies, or is killed before it can close its websocket (a
+reboot, a server killed hard), GitHub leaves the webhook behind and it blocks
+the repo; GitHub lists it as active until deliveries to it fail, so "active"
+does not mean something is connected. A webhook in the ledger is deleted when no
+forwarder of ours is alive for the repo (or when GitHub says it is inactive),
+and the forwarder is started again at once; one that is not in the ledger
 (somebody else's, or of unknown origin) is left alone and reported as blocking.
 The pid of each forwarder is recorded too, and a forwarder that outlived a
 killed server is stopped at the next start.
@@ -468,9 +471,21 @@ class WebhookForwarders:
         for hook_id in now - before:
             self._ledger.add_hook(slug, hook_id)
 
+    async def _forwarder_alive(self, slug: str) -> bool:
+        """Whether a forwarder recorded for ``slug`` is still running (one that
+        another server of this machine started: ours are cleared when they end
+        and a killed server's are stopped at the next start)."""
+        pid = self._ledger.pids().get(slug)
+        if pid is None:
+            return False
+        command = await self._process_command(pid)
+        return command is not None and _is_forwarder_of(command, slug)
+
     async def _reclaim(self, slug: str) -> bool:
-        """Deletes the inactive webhooks of ``slug`` that toolbelt created
-        (nothing else is ever deleted). Returns whether it deleted any."""
+        """Deletes the webhooks of ``slug`` that toolbelt created and nothing is
+        connected to: GitHub lists them inactive, or no forwarder of ours is
+        alive for the repo (nothing else is ever deleted). Returns whether it
+        deleted any."""
         if self._hooks is None:
             return False
         ours = self._ledger.hooks(slug)
@@ -483,8 +498,9 @@ class WebhookForwarders:
         for gone in ours - {hook.id for hook in found}:
             self._ledger.forget_hook(slug, gone)
         deleted = False
+        alive = await self._forwarder_alive(slug)
         for hook in found:
-            if hook.id in ours and not hook.active:
+            if hook.id in ours and (not hook.active or not alive):
                 try:
                     await self._hooks.delete(slug, hook.id)
                 except RateLimited:
@@ -511,7 +527,9 @@ def _is_forwarder_of(command: str, slug: str) -> bool:
 
 def _problem_of(process: ForwarderProcess) -> Problem:
     error = process.last_error()
-    if error is not None and "Hook already exists" in error:
+    # ``gh`` gives "Hook already exists" or, when GitHub does not say why, only
+    # the 422 status: either way the repo's one forwarded webhook is taken.
+    if error is not None and ("Hook already exists" in error or "HTTP 422" in error):
         return Problem(
             "blocked",
             "GitHub allows one forwarded webhook per repo, and this one is taken: "

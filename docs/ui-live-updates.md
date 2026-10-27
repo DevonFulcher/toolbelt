@@ -53,9 +53,11 @@ forwarder running for each tracked repo where `permissions.admin` is true
 restarts it when it exits (and keeps trying when something else goes wrong while
 supervising it, such as a network error asking GitHub for the repo's webhooks). The extension creates the webhook inactive and
 activates it once its websocket connects; GitHub removes it when the websocket
-closes. A forwarder that dies before connecting leaves an inactive `cli`
-webhook behind, which blocks that repo ("Hook already exists") until it is
-deleted by hand.
+closes. A forwarder that is killed before its websocket closes (a reboot, a
+server killed hard) leaves its `cli` webhook behind, which blocks that repo
+("Hook already exists", or just an HTTP 422) until it is deleted. GitHub lists
+such a webhook as inactive when the forwarder died before connecting, and as
+active until deliveries to it fail otherwise.
 
 Without the extension, or on a repo without admin rights, nothing is forwarded
 and the repo falls back to the two ways below.
@@ -65,10 +67,12 @@ webhook does not say who made it, so `forwarder_ledger.py` writes down (in the
 stack DB's settings) what toolbelt is certain is its own: the ids of webhooks
 that appeared while a forwarder of its own was starting or running (the repo
 holds only one, so it is that forwarder's), and the pid of each forwarder it
-starts. A forwarder that died before connecting leaves its webhook behind
-inactive; if that webhook is in the ledger it is deleted and the forwarder
-starts again at once. A webhook that is not in the ledger (somebody else's, or
-of unknown origin), or that has a forwarder connected, is never deleted. A
+starts. A webhook a killed forwarder left behind, if it is in the ledger, is
+deleted and the forwarder starts again at once: when GitHub lists it inactive,
+or when no forwarder recorded for the repo is still running (GitHub keeps
+listing it active, so "active" does not mean something is connected). A webhook
+that is not in the ledger (somebody else's, or of unknown origin), or that has
+a recorded forwarder still running, is never deleted. A
 forwarder that outlived a killed server is stopped at the next start, if its
 recorded pid is still a `gh webhook forward` for that repo.
 

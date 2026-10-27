@@ -518,6 +518,28 @@ class TestOwnedHooks:
 
         asyncio.run(scenario())
 
+    def test_a_422_without_a_reason_is_a_taken_webhook_not_a_plain_failure(self):
+        async def scenario():
+            s, hooks, _ledger = owned()
+            hooks.create("o/mine", active=False)  # somebody's, or of unknown origin
+
+            def on_spawn(slug, process):
+                process.error = (
+                    "error creating webhook: HTTP 422: Validation Failed "
+                    "(https://api.github.com/repos/o/mine/hooks)"
+                )
+                process.exit(1)
+
+            s.on_spawn = on_spawn
+            await s.forwarders.reconcile()
+            await settle()
+
+            problem = s.forwarders.problem("o/mine")
+            assert problem is not None and problem.state == "leftover"
+            await s.forwarders.stop()
+
+        asyncio.run(scenario())
+
     def test_a_webhook_with_a_forwarder_connected_that_is_not_ours_is_claimed_elsewhere(
         self,
     ):
@@ -587,16 +609,43 @@ class TestOwnedHooks:
 
         asyncio.run(scenario())
 
-    def test_an_active_webhook_is_never_deleted_even_if_it_is_ours(self):
+    def test_an_active_webhook_of_ours_is_kept_while_its_forwarder_is_alive(self):
         async def scenario():
-            s, hooks, ledger = owned()
+            ledger = MemoryLedger()
+            hooks = FakeHooks()
+
+            async def process_command(pid: int) -> str | None:
+                return "gh webhook forward --repo=o/mine"
+
+            s = Setup(
+                {"o/mine"},
+                admin={"o/mine"},
+                hooks=hooks,
+                ledger=ledger,
+                process_command=process_command,
+            )
             hook = hooks.create("o/mine", active=True)
             ledger.add_hook("o/mine", hook.id)
+            ledger.set_pid("o/mine", 4242)
 
             assert await s.forwarders._reclaim("o/mine") is False
 
             assert hooks.deleted == []
             assert ledger.hooks("o/mine") == {hook.id}
+
+        asyncio.run(scenario())
+
+    def test_an_active_webhook_of_ours_with_no_forwarder_alive_is_deleted(self):
+        # GitHub keeps listing the webhook of a forwarder killed hard as active.
+        async def scenario():
+            s, hooks, ledger = owned()
+            hook = hooks.create("o/mine", active=True)
+            ledger.add_hook("o/mine", hook.id)
+
+            assert await s.forwarders._reclaim("o/mine") is True
+
+            assert hooks.deleted == [("o/mine", hook.id)]
+            assert ledger.hooks("o/mine") == set()
 
         asyncio.run(scenario())
 
