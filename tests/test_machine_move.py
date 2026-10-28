@@ -902,6 +902,7 @@ def test_ignored_dotfiles_skip_what_is_rebuilt_too_big_or_tracked(
         ".coverage": 10,
         ".coverage.host.1": 10,
         ".mypy_cache/x": 10,
+        ".venv-3.12/lib/mod.py": 10,
         ".github/actions/a/.ruff_cache/0.9/f": 10,
         ".log-too-big": 300 * 1024,
     }.items():

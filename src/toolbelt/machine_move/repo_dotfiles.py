@@ -17,7 +17,8 @@ from pathlib import Path
 from toolbelt import logged_process
 
 #: Dot entries that are rebuilt, cached or machine state, never carried, at the
-#: top or nested (a ``.ruff_cache`` below ``.github``); ``.coverage.*`` too.
+#: top or nested (a ``.ruff_cache`` below ``.github``); ``.venv-3.12`` and the
+#: like, and ``.coverage.*``, too.
 REBUILT = frozenset(
     {
         ".git",
@@ -41,7 +42,9 @@ MAX_FILE_BYTES = 256 * 1024
 
 def _is_rebuilt(relative: str) -> bool:
     parts = relative.split("/")
-    if any(part in REBUILT for part in parts) or parts[0].startswith(".coverage."):
+    if any(part in REBUILT or part.startswith(".venv") for part in parts):
+        return True
+    if parts[0].startswith(".coverage."):
         return True
     return len(parts) > 1 and _REBUILT_BELOW.get(parts[0]) == parts[1]
 
