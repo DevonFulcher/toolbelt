@@ -50,8 +50,11 @@ into its children) and pushes. Plain `git` is only for reading (status, log, \
 diff) and for resolving a conflict `toolbelt` stopped on (edit the files, \
 `git add`, then re-run `toolbelt git sync`). If `toolbelt` cannot do what you \
 need, stop and say so in `needs_human` instead of working around it.
-- Before every `toolbelt git save`, run the repo's lint and type checks (find \
-the command in the repo's CLAUDE.md or its task runner). Do not save if it fails.
+- A repo's commit and push hooks usually run its lint and type checks and block \
+on failure: do not also run them by hand before `toolbelt git save`, fix what \
+the hooks report. If the repo has no such hooks, run its lint and type checks \
+(find the command in the repo's CLAUDE.md or its task runner) before saving, \
+and do not save if they fail.
 - Run only the tests that cover what you changed: the test files you edited and \
 the ones for the modules you edited. This overrides a repo rule to run the \
 whole test suite before pushing: CI runs the whole suite, and a whole-suite run \
@@ -64,8 +67,9 @@ description): in some repos arguments after `--` are extra options for the \
 test runner and do not narrow the run, so `task test -- <path>` still runs \
 everything while `task test TEST_PATH=<path>` does not. A parallel runner \
 (pytest-xdist) starts its workers before the first test, which takes longer \
-than a few test files do: for one or a few files run pytest directly without \
-it (`uv run pytest -p no:xdist <files>`).
+than a few test files do: for one or a few files run the task's own pytest \
+command (read it in the Taskfile or the task runner's file) with the parallel \
+option removed and the files as its paths.
 - Never wait for CI. Do not use `gh run watch`, `sleep` or a polling loop to \
 see a check finish: after you push, or re-run a job, do the rest of the task \
 and stop with your report. Another run is started if the PR's checks fail \
