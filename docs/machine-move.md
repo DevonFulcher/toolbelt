@@ -18,15 +18,21 @@ What it carries is one declarative list, `CARRIED_FILES` in
 | --- | --- |
 | `dotfiles/secrets/*` (`secret.sh`, `machine.sh`, `toolbelt.sh`, token files) | sourced by `.zshenv` / `.zshrc` / the `tt ui` service; gitignored |
 | `.env`, `.envrc`, `.setup.sh` of `dotfiles`, `dotfiles-private`, `toolbelt` | gitignored direnv / worktree hooks |
+| the gitignored dot-files at the root of every repo the DB tracks that sits directly in the git projects directory (`repo_dotfiles.py`): `.env`, `.envrc`, `.setup.sh`, `.claude/settings.local.json`, `.agents/`, `.codex/`, `.cursor/` | per-repo configuration git does not carry; `tt git append` copies the same files into each new worktree. Not carried: caches and virtualenvs (`.venv`, `.mypy_cache`, `.ruff_cache`, anywhere in the tree), `.claude/worktrees`, a file over 256 KB, a symlink |
 | the toolbelt DB (`stacks.db`) | branches, stacks, tasks, runs, decisions, Slack state, settings, usage |
 | the SSH signing key (`user.signingkey`) and the identity files ssh offers `github.com`, with `.pub`, plus `~/.ssh/config` | the private repos are cloned over SSH; restored with mode 600 |
 | `~/.claude/projects/*/memory/**` | Claude's per-project memory |
 | `~/.zsh_history` | only with `--include-history` |
 
 Not carried: Claude transcripts, caches, histories, `~/.asdf`, `~/.npm`,
-virtualenvs, the Claude app's data, `.claude/` and `.cursor/` project folders
-inside the repos. The export lists anything else that git ignores in the three
-repos, so a new need shows up (`ignored by git and not carried`).
+virtualenvs, the Claude app's data, the `.claude/` and `.cursor/` project folders
+of the three dotfiles repos. The export lists anything else that git ignores in
+those three repos, so a new need shows up (`ignored by git and not carried`).
+
+**On import** the repos the DB tracks are cloned before the repo files are
+restored, so each file lands in its clone; then every recreated worktree gets
+the root's ignored dot-files copied in (only ignored ones: a tracked file on the
+branch is not replaced by the root's).
 
 **The DB** is copied with sqlite's online backup (never a file copy of a WAL
 database). In the copy the machine-specific tables are emptied:

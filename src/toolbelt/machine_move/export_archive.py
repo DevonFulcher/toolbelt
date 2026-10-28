@@ -5,6 +5,7 @@ import shutil
 import stat
 import tempfile
 import zipfile
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -31,6 +32,7 @@ from toolbelt.machine_move.in_flight import (
 )
 from toolbelt.machine_move.one_password import DocumentVault
 from toolbelt.machine_move.push_branches import PushResult, push_unpushed
+from toolbelt.machine_move.repo_dotfiles import ignored_dotfiles
 from toolbelt.machine_move.service import ServiceControl
 
 
@@ -134,7 +136,21 @@ def _relative(path: Path, base: Path) -> str:
         ) from error
 
 
-def collect_members(request: ExportRequest) -> list[tuple[Member, Path]]:
+def _holds_home_paths(relative: str) -> bool:
+    """Whether a repo's dot-file is text that names paths below the home
+    directory, which the import rewrites to the new one."""
+    if "/" in relative:
+        return relative == ".claude/settings.local.json"
+    return relative in (".envrc", ".setup.sh", ".env") or relative.startswith(".env.")
+
+
+def collect_members(
+    request: ExportRequest, repos: Sequence[Path] = ()
+) -> list[tuple[Member, Path]]:
+    """The files to carry. ``repos`` are the checkouts whose ignored dot-files
+    (``repo_dotfiles.py``) are carried too: those directly below the git
+    projects directory, except the dotfiles repos, which ``CARRIED_FILES``
+    names file by file."""
     roots: dict[Root, Path] = {"home": request.home, "workdir": request.workdir}
     found: dict[str, tuple[Member, Path]] = {}
 
@@ -164,6 +180,22 @@ def collect_members(request: ExportRequest) -> list[tuple[Member, Path]]:
                     path,
                     mode=carried.mode,
                     rewrite_home=carried.rewrite_home,
+                )
+    for repo in repos:
+        if (
+            repo.parent != request.workdir
+            or repo.name in DOTFILES_REPOS
+            or not repo.is_dir()
+        ):
+            continue
+        for relative in ignored_dotfiles(repo):
+            path = repo / relative
+            if not path.is_symlink():
+                add(
+                    "workdir",
+                    path,
+                    mode=None,
+                    rewrite_home=_holds_home_paths(relative),
                 )
     for key in ssh_key_files(request):
         add(
@@ -285,7 +317,7 @@ def export_machine(
                 database_copy.reset_for_export(db_copy)
             in_flight, worktree_records = find_in_flight(repos, tracked=tracked)
 
-            members = collect_members(request)
+            members = collect_members(request, repos)
             manifest = ArchiveManifest(
                 version=ARCHIVE_VERSION,
                 old_home=str(request.home),

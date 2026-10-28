@@ -11,7 +11,8 @@ The archive is a zip with this layout:
     so this prefix is a contract with that script.
 ``workdir/<path>``
     A file that restores to ``<git projects dir>/<path>`` (the gitignored
-    files of the dotfiles repos and toolbelt).
+    files of the dotfiles repos and toolbelt, and the ignored dot-files at the
+    root of the other repos the DB tracks).
 ``db/stacks.db``
     A consistent copy of toolbelt's DB with the machine-specific tables emptied.
 """

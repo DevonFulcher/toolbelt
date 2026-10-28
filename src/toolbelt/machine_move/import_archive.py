@@ -27,6 +27,7 @@ from toolbelt.machine_move.archive_layout import (
     Member,
 )
 from toolbelt.machine_move.path_prefixes import PrefixMap
+from toolbelt.machine_move.repo_dotfiles import copy_ignored_dotfiles
 
 BACKUPS_DIRNAME = "machine-import-backups"
 
@@ -76,12 +77,19 @@ class _Importer:
                 new_home=request.home,
                 new_workdir=request.workdir,
             )
+            # The home files first (the SSH keys the clones need), then the repos
+            # the DB tracks are cloned, so the files that belong inside them
+            # have somewhere to go.
             for member in manifest.members:
-                self._restore_member(zf, member)
+                if member.root == "home":
+                    self._restore_member(zf, member)
             repos: list[tuple[str, str | None]] = []
             if manifest.has_database:
                 repos = self._restore_database(zf)
-        self._clone_missing_repos(repos)
+            self._clone_missing_repos(repos)
+            for member in manifest.members:
+                if member.root == "workdir":
+                    self._restore_member(zf, member)
         for record in manifest.worktrees:
             self._restore_worktree(record.repo, record.path, record.branch)
         self._warn_if_personal()
@@ -240,6 +248,8 @@ class _Importer:
         result = _git(repo, *command)
         if result.returncode == 0:
             self.report.done.append(f"worktree   {path} ({branch})")
+            for relative in copy_ignored_dotfiles(repo, path):
+                self.report.done.append(f"copied     {path}/{relative}")
         else:
             self.report.follow_ups.append(
                 f"worktree {path} ({branch}): {result.stderr.strip()}"

@@ -20,6 +20,7 @@ from toolbelt.machine_move.import_archive import ImportRequest, import_machine
 from toolbelt.machine_move.in_flight import UnpushedBranch
 from toolbelt.machine_move.path_prefixes import PrefixMap, claude_project_dirname
 from toolbelt.machine_move.push_branches import push_unpushed
+from toolbelt.machine_move.repo_dotfiles import copy_ignored_dotfiles, ignored_dotfiles
 from toolbelt.machine_move.service import LaunchdService
 
 runner = CliRunner()
@@ -814,3 +815,108 @@ class TestTheCliStopsOnlyTheServiceOfThisLaptop:
         stopped = self.run_export(monkeypatch, tmp_path, old, default_db_path().parent)
 
         assert stopped == ["stop"]
+
+
+def make_origin_ignoring_dotfiles(tmp_path: Path) -> Path:
+    """A bare origin whose tracked ``.gitignore`` ignores the usual dot-files and
+    that tracks a ``.github/ci.yml``."""
+    seed = make_repo(tmp_path / "seed-dotfiles")
+    (seed / ".gitignore").write_text(
+        ".env\n.envrc\n.venv/\n.claude/settings.local.json\n.agents/\n"
+    )
+    (seed / ".github").mkdir()
+    (seed / ".github/ci.yml").write_text("on main\n")
+    git(seed, "add", "-A")
+    git(seed, "commit", "-q", "-m", "ignore dotfiles")
+    path = tmp_path / "origin-dotfiles.git"
+    subprocess.run(["git", "clone", "-q", "--bare", str(seed), str(path)], check=True)
+    return path
+
+
+def test_the_ignored_dotfiles_of_a_tracked_repo_are_carried_and_copied_into_its_worktrees(
+    tmp_path: Path, old: Laptop
+) -> None:
+    wt = seed_db(old, make_origin_ignoring_dotfiles(tmp_path))
+    app = old.workdir / "app"
+    (app / ".env").write_text(f"DIR={old.home}/x\n")
+    (app / ".envrc").write_text("dotenv\n")
+    (app / ".claude").mkdir()
+    (app / ".claude/settings.local.json").write_text(f'{{"dir": "{old.home}/y"}}')
+    (app / ".agents/skills/s").mkdir(parents=True)
+    (app / ".agents/skills/s/SKILL.md").write_text("skill\n")
+    (app / ".agents/big.bin").write_bytes(b"0" * (300 * 1024))
+    (app / ".venv/lib").mkdir(parents=True)
+    (app / ".venv/lib/mod.py").write_text("rebuilt\n")
+    # The feature branch changes a tracked dot-file the root's branch has as it was.
+    (wt / ".github/ci.yml").write_text("on feature\n")
+    git(wt, "add", "-A")
+    git(wt, "commit", "-q", "-m", "ci on feature")
+    git(wt, "push", "-q", "origin", "devon/feature")
+
+    archive = tmp_path / "out" / "archive.zip"
+    report = export_machine(old.export_request(to_file=archive), vault=None)  # type: ignore[arg-type]
+    carried = {m.member for m in report.members}
+    assert {
+        "workdir/app/.env",
+        "workdir/app/.envrc",
+        "workdir/app/.claude/settings.local.json",
+        "workdir/app/.agents/skills/s/SKILL.md",
+    } <= carried
+    assert not any(".venv" in m or "big.bin" in m for m in carried)
+
+    new = Laptop(tmp_path, "newuser")
+    for name in ("dotfiles", "dotfiles-private", "toolbelt"):
+        make_repo(new.workdir / name)
+    result = import_machine(
+        ImportRequest(
+            archive=archive, home=new.home, workdir=new.workdir, state_dir=new.state
+        )
+    )
+
+    assert result.follow_ups == []
+    # The repo was cloned during the import, before its files were restored.
+    assert (new.workdir / "app/.env").read_text() == f"DIR={new.home}/x\n"
+    assert json.loads(
+        (new.workdir / "app/.claude/settings.local.json").read_text()
+    ) == {"dir": f"{new.home}/y"}
+    new_wt = new.workdir / "wt/app/feature"
+    assert (new_wt / ".env").read_text() == f"DIR={new.home}/x\n"
+    assert (new_wt / ".agents/skills/s/SKILL.md").read_text() == "skill\n"
+    assert not (new_wt / ".venv").exists()
+    # The branch's own tracked file is not replaced by the root's.
+    assert (new_wt / ".github/ci.yml").read_text() == "on feature\n"
+    assert git(new_wt, "status", "--porcelain") == ""
+
+
+def test_ignored_dotfiles_skip_what_is_rebuilt_too_big_or_tracked(
+    tmp_path: Path,
+) -> None:
+    repo = make_repo(tmp_path / "repo")
+    (repo / ".gitignore").write_text(".*\n!.gitignore\n")
+    git(repo, "add", ".gitignore")
+    git(repo, "commit", "-q", "-m", "ignore")
+    for relative, size in {
+        ".env": 10,
+        ".claude/settings.local.json": 10,
+        ".claude/worktrees/w/file": 10,
+        ".coverage": 10,
+        ".coverage.host.1": 10,
+        ".mypy_cache/x": 10,
+        ".github/actions/a/.ruff_cache/0.9/f": 10,
+        ".log-too-big": 300 * 1024,
+    }.items():
+        (repo / relative).parent.mkdir(parents=True, exist_ok=True)
+        (repo / relative).write_bytes(b"0" * size)
+    (repo / ".link").symlink_to("/elsewhere")
+
+    assert ignored_dotfiles(repo) == [".claude/settings.local.json", ".env", ".link"]
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    (worktree / ".env").write_text("mine")
+
+    assert copy_ignored_dotfiles(repo, worktree) == [
+        ".claude/settings.local.json",
+        ".link",
+    ]
+    assert (worktree / ".env").read_text() == "mine"  # one that is there is kept
+    assert os.readlink(worktree / ".link") == "/elsewhere"
