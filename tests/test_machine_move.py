@@ -27,9 +27,9 @@ runner = CliRunner()
 
 FAKE_OP = """#!/bin/sh
 # Stores documents as files in $FAKE_OP_DIR.
-[ -f "$FAKE_OP_DIR/signed-out" ] && [ "$1" = whoami ] && exit 1
+[ -f "$FAKE_OP_DIR/signed-out" ] && [ "$1" = vault ] && exit 1
 case "$1 $2" in
-  "whoami "*) echo user ;;
+  "vault list") echo "[]" ;;
   "item list") echo "[]" ;;
   "document create") cp "$3" "$FAKE_OP_DIR/doc.zip" ;;
   "document get") while [ $# -gt 0 ]; do [ "$1" = --out-file ] && out="$2"; shift; done
@@ -394,7 +394,7 @@ def test_cli_round_trip_through_a_fake_op(
     (store_dir / "signed-out").write_text("")
     signed_out = runner.invoke(machine_typer, ["export", *base])
     assert signed_out.exit_code == 1
-    assert "not signed in" in signed_out.output
+    assert "cannot reach your account" in signed_out.output
     (store_dir / "signed-out").unlink()
 
     exported = runner.invoke(machine_typer, ["export", *base])

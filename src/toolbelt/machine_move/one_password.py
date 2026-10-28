@@ -54,15 +54,18 @@ class OpCli:
         return ["--vault", self._vault] if self._vault else []
 
     def ensure_signed_in(self) -> None:
+        # `op whoami` only reports a session that already exists; `op vault list`
+        # needs access, so the 1Password app asks to authorize the CLI.
         try:
-            self._op("whoami")
+            self._op("vault", "list")
         except MachineMoveError as error:
             if "not installed" in str(error):
                 raise
             raise MachineMoveError(
-                "the 1Password CLI is not signed in. Open the 1Password app, turn on "
-                "Settings > Developer > Integrate with the 1Password CLI (or run "
-                "`eval $(op signin)`), then run this again."
+                "the 1Password CLI cannot reach your account. Open the 1Password app "
+                "and unlock it, turn on Settings > Developer > Integrate with the "
+                "1Password CLI, approve the dialog that asks to allow the CLI (or run "
+                f"`eval $(op signin)`), then run this again. op said: {error}"
             ) from error
 
     def store(self, path: Path, *, title: str) -> str:
