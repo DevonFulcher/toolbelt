@@ -17,12 +17,10 @@ lazy from toolbelt.dotfiles.actions import (
 )
 lazy from toolbelt.dotfiles.config import config_path, dotfiles_repos
 lazy from toolbelt.dotfiles.manifest import (
-    MANIFEST_FILENAME,
     RepoManifest,
     load_manifest,
 )
 lazy from toolbelt.dotfiles.plan import Plan, build_plan
-lazy from toolbelt.dotfiles.secret_scan import scan_repo
 lazy from toolbelt.dotfiles.status import State, collect_status
 
 dotfiles_typer = typer.Typer(
@@ -108,42 +106,3 @@ def link(ctx: typer.Context, dry_run: bool = _DRY_RUN) -> None:
     """Link everything in the manifests; displaced files are backed up first"""
     context = _context(ctx)
     _execute(link_actions(context.plan()), home=context.home, dry_run=dry_run)
-
-
-def _choose_repo(manifests: list[RepoManifest], repo: str) -> RepoManifest:
-    for manifest in manifests:
-        if repo in (manifest.root.name, str(manifest.root)):
-            return manifest
-    # Not configured, but a directory with its own manifest (e.g. a git
-    # worktree of a configured repo) can still be scanned.
-    if (Path(repo) / MANIFEST_FILENAME).is_file():
-        return load_manifest(Path(repo))
-    raise ValueError(
-        f"{repo} is neither a configured dotfiles repo nor a directory "
-        f"containing {MANIFEST_FILENAME}"
-    )
-
-
-@dotfiles_typer.command()
-def check(
-    ctx: typer.Context,
-    repo: Annotated[
-        list[str] | None,
-        typer.Argument(help="Repo names or paths. Default: every public repo."),
-    ] = None,
-) -> None:
-    """Scan public repos for secret-looking content and literal /Users/<name>/ paths; exit 1 if any is found"""
-    manifests = _context(ctx).manifests()
-    if repo:
-        selected = [_choose_repo(manifests, name) for name in repo]
-    else:
-        selected = [m for m in manifests if m.public]
-    findings = [f for m in selected for f in scan_repo(m.root)]
-    for finding in findings:
-        typer.echo(str(finding))
-    if findings:
-        typer.echo(
-            f"{len(findings)} finding(s): possible secret(s) or user-specific path(s)"
-        )
-        raise typer.Exit(1)
-    typer.echo(f"No secrets or user-specific paths found in {len(selected)} repo(s)")

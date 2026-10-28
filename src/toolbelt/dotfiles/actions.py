@@ -13,7 +13,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 
-from toolbelt import logged_process
 from toolbelt.dotfiles.plan import Plan, Target
 from toolbelt.dotfiles.status import (
     State,
@@ -21,11 +20,6 @@ from toolbelt.dotfiles.status import (
     stale_links,
     target_state,
 )
-
-# A public repo that ships this hook (a secret scan, see `tt dotfiles check`)
-# gets it activated by `link`.
-HOOKS_DIR = ".githooks"
-PRE_COMMIT_HOOK = f"{HOOKS_DIR}/pre-commit"
 
 
 class BackupDir:
@@ -123,30 +117,6 @@ class RemoveLink:
         self.path.unlink()
 
 
-@dataclass(frozen=True)
-class SetHooksPath:
-    repo: Path
-
-    def describe(self, backups: BackupDir) -> str:
-        return f"hooks   {self.repo}: core.hooksPath = {HOOKS_DIR}"
-
-    def run(self, backups: BackupDir) -> None:
-        logged_process.run(
-            ["git", "config", "core.hooksPath", HOOKS_DIR], cwd=self.repo, check=True
-        )
-
-
-def _hooks_path_unset(repo: Path) -> bool:
-    current = logged_process.run(
-        ["git", "config", "--get", "core.hooksPath"],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        check=False,
-    ).stdout.strip()
-    return current != HOOKS_DIR
-
-
 def _install(target: Target, *, made_dirs: set[Path]) -> list[Action]:
     actions: list[Action] = []
     parent = target.dest.parent
@@ -190,13 +160,6 @@ def link_actions(plan: Plan) -> list[Action]:
             actions.append(MoveToBackup(target.dest))
         actions += _install(target, made_dirs=made_dirs)
     actions += [RemoveLink(entry.dest) for entry in stale_links(plan)]
-    for repo in plan.repos:
-        if (
-            repo.public
-            and (repo.root / PRE_COMMIT_HOOK).is_file()
-            and _hooks_path_unset(repo.root)
-        ):
-            actions.append(SetHooksPath(repo.root))
     return actions
 
 

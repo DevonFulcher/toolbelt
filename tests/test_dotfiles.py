@@ -5,7 +5,6 @@
 """
 
 import os
-import subprocess
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -22,7 +21,6 @@ from toolbelt.dotfiles.cli import dotfiles_typer
 from toolbelt.dotfiles.config import config_path, dotfiles_repos
 from toolbelt.dotfiles.manifest import expand_dest, load_manifest
 from toolbelt.dotfiles.plan import build_plan
-from toolbelt.dotfiles.secret_scan import scan_repo, scan_text
 from toolbelt.dotfiles.status import State, collect_status
 
 runner = CliRunner()
@@ -335,151 +333,3 @@ def test_backup_dir_does_not_collide(machine: Machine) -> None:
     first.root.mkdir(parents=True)
     second = BackupDir(machine.home, lambda: FIXED_NOW)
     assert second.root != first.root
-
-
-# --- check ------------------------------------------------------------------
-
-
-def test_scan_text_flags_secrets_without_echoing_them() -> None:
-    samples = {
-        "AWS access key id": "AKIA" + "ABCDEFGHIJKLMNOP",
-        "GitHub token": "ghp_" + "b" * 36,
-        "private key block": "-----BEGIN OPENSSH PRIVATE KEY-----",
-        "secret assignment": 'export API_TOKEN="' + "Zx9" * 8 + '"',
-        "credential in URL": "https://user:hunter2hunter@example.com/x",
-    }
-    for rule, line in samples.items():
-        findings = scan_text(line, path=Path("f"))
-        assert rule in {f.rule for f in findings}
-        assert all(line not in str(f) for f in findings)
-
-
-def test_scan_text_ignores_references_and_allow_marker() -> None:
-    assert scan_text('export TOKEN="$(op read op://v/i/t)"', path=Path("f")) == []
-    assert scan_text("export TOKEN=${GITHUB_TOKEN}", path=Path("f")) == []
-    assert scan_text("password = <your-password-here-xxxx>", path=Path("f")) == []
-    allowed = "ghp_" + "c" * 36 + "  # tt:allow-secret"
-    assert scan_text(allowed, path=Path("f")) == []
-
-
-def test_scan_text_flags_a_literal_user_home_path() -> None:
-    flagged = [
-        "alias a=/Users/someone/.local/bin/a",
-        'export P="/Users/some.one-2/Library/pnpm"',
-        "see /Users/devon/git/x",
-    ]
-    for line in flagged:
-        findings = scan_text(line, path=Path("f"))
-        assert [f.rule for f in findings] == ["literal /Users/<name>/ path"]
-        assert all(line not in str(f) for f in findings)
-
-
-def test_scan_text_allows_user_paths_that_are_not_user_specific() -> None:
-    clean = [
-        'alias a="$HOME/.local/bin/a"',
-        "cd ~/git",
-        "/Users/Shared/data",
-        "the /Users/<name>/ placeholder",
-        "/Users/someone",  # no trailing path, so nothing is hard-coded
-    ]
-    for line in clean:
-        assert scan_text(line, path=Path("f")) == []
-    marked = "/Users/someone/x  # tt:allow-user-path"
-    assert scan_text(marked, path=Path("f")) == []
-    # The secret marker does not excuse a path, nor the reverse.
-    assert scan_text("/Users/someone/x  # tt:allow-secret", path=Path("f"))
-    token = "ghp_" + "c" * 36 + "  # tt:allow-user-path"
-    assert scan_text(token, path=Path("f"))
-
-
-def test_check_fails_on_a_user_path_in_a_tracked_file(machine: Machine) -> None:
-    repo = machine.public
-    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
-    write(repo / "files/.zshrc", "export X=/Users/someone/bin\n")
-    result = machine.cli("check", str(repo))
-    assert result.exit_code == 1
-    assert "files/.zshrc:1: literal /Users/<name>/ path" in result.output
-    assert "/Users/someone" not in result.output.replace(str(repo), "")
-
-
-def test_check_scans_tracked_and_untracked_but_not_ignored(machine: Machine) -> None:
-    repo = machine.public
-    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
-    write(repo / ".gitignore", "secrets\n")
-    write(repo / "secrets/token", "ghp_" + "d" * 36)
-    assert scan_repo(repo) == []
-    write(repo / "files/.zshrc", "export GH=" + "ghp_" + "e" * 36 + "\n")
-    findings = scan_repo(repo)
-    assert [(f.path.name, f.line, f.rule) for f in findings] == [
-        (".zshrc", 1, "GitHub token")
-    ]
-    result = machine.cli("check")
-    assert result.exit_code == 1
-    assert "ghp_" not in result.output
-
-
-def test_check_passes_for_clean_public_repo(machine: Machine) -> None:
-    subprocess.run(["git", "init", "-q"], cwd=machine.public, check=True)
-    result = machine.cli("check")
-    assert result.exit_code == 0, result.output
-
-
-def test_check_scopes_to_a_repo_path_and_never_prints_the_match(
-    machine: Machine,
-) -> None:
-    for repo in (machine.public, machine.private):
-        subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
-    key = "AKIA" + "ABCDEFGHIJKLMNOP"
-    write(machine.private / "home/.netrc", f"key {key}\n")
-    assert machine.cli("check", str(machine.public)).exit_code == 0
-    leaky = machine.cli("check", str(machine.private))
-    assert leaky.exit_code == 1
-    assert key not in leaky.output
-
-
-# --- pre-commit hook ----------------------------------------------------
-
-
-def hooks_path(repo: Path) -> str:
-    return subprocess.run(
-        ["git", "config", "--get", "core.hooksPath"],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        check=False,
-    ).stdout.strip()
-
-
-def test_link_activates_the_pre_commit_hook_of_a_public_repo(
-    machine: Machine,
-) -> None:
-    for repo in (machine.public, machine.private):
-        subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
-        write(repo / ".githooks/pre-commit", "#!/bin/sh\n")
-    dry = machine.cli("link", "--dry-run")
-    assert "hooks" in dry.output
-    assert hooks_path(machine.public) == ""
-
-    assert machine.cli("link").exit_code == 0
-    assert hooks_path(machine.public) == ".githooks"
-    assert hooks_path(machine.private) == ""  # the scanner targets public repos
-    assert "hooks" not in machine.cli("link").output
-
-
-def test_link_leaves_hooks_alone_when_the_repo_ships_none(machine: Machine) -> None:
-    subprocess.run(["git", "init", "-q"], cwd=machine.public, check=True)
-    assert machine.cli("link").exit_code == 0
-    assert hooks_path(machine.public) == ""
-
-
-def test_check_scans_an_unconfigured_directory_that_has_a_manifest(
-    machine: Machine, tmp_path: Path
-) -> None:
-    """A git worktree of a configured repo is not itself in the config."""
-    worktree = tmp_path / "dotfiles-worktree"
-    write(worktree / "dotfiles.toml", PUBLIC_MANIFEST)
-    subprocess.run(["git", "init", "-q"], cwd=worktree, check=True)
-    assert machine.cli("check", str(worktree)).exit_code == 0
-    write(worktree / "files/.zshrc", "export GH=" + "ghp_" + "f" * 36 + "\n")
-    assert machine.cli("check", str(worktree)).exit_code == 1
-    assert machine.cli("check", str(tmp_path / "nowhere")).exit_code != 0
