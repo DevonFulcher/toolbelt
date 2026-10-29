@@ -301,6 +301,73 @@ def test_link_cli_end_to_end(machine: Machine) -> None:
     assert "Nothing to do." in machine.cli("link").output
 
 
+@pytest.mark.parametrize("existing", [False, True])
+def test_home_skill_aliases_use_layered_sources_on_first_run(
+    machine: Machine, existing: bool
+) -> None:
+    if existing:
+        link_for_real(machine)
+    write(machine.private / "skills/python/SKILL.md", "private override")
+    write(
+        machine.public / "dotfiles.toml",
+        PUBLIC_MANIFEST.replace(
+            'dest = "~/.claude/skills"', 'dest = "~/.agents/skills"'
+        )
+        + '\n[[link]]\nsrc = "~/.agents/skills"\ndest = "~/.claude/skills"\nkind = "merge_dir"\n',
+    )
+    write(
+        machine.private / "dotfiles.toml",
+        PRIVATE_MANIFEST.replace(
+            'dest = "~/.claude/skills"', 'dest = "~/.agents/skills"'
+        ),
+    )
+
+    result = machine.cli("link")
+
+    assert result.exit_code == 0, result.output
+    canonical = machine.home / ".agents/skills/python"
+    alias = machine.home / ".claude/skills/python"
+    assert canonical.readlink() == machine.private / "skills/python"
+    assert alias.readlink() == canonical
+    assert (alias / "SKILL.md").read_text() == "private override"
+    assert (machine.home / ".claude/skills/read-email").readlink() == (
+        machine.home / ".agents/skills/read-email"
+    )
+    assert machine.cli("status").exit_code == 0
+    assert "Nothing to do." in machine.cli("link").output
+
+    (machine.private / "skills/read-email/SKILL.md").unlink()
+    (machine.private / "skills/read-email").rmdir()
+    result = machine.cli("link")
+    assert result.exit_code == 0, result.output
+    assert not (machine.home / ".agents/skills/read-email").is_symlink()
+    assert not (machine.home / ".claude/skills/read-email").is_symlink()
+
+
+def test_home_skill_aliases_preserve_app_synced_skills(machine: Machine) -> None:
+    write(machine.home / ".agents/skills/local/SKILL.md", "local")
+    write(machine.home / ".agents/skills/synced/account/SKILL.md", "codex synced")
+    write(machine.home / ".claude/skills/synced/account/SKILL.md", "claude synced")
+    write(
+        machine.public / "dotfiles.toml",
+        PUBLIC_MANIFEST
+        + '\n[[link]]\nsrc = "~/.agents/skills"\ndest = "~/.claude/skills"\nkind = "merge_dir"\nexclude = ["synced"]\n',
+    )
+
+    result = machine.cli("link")
+
+    assert result.exit_code == 0, result.output
+    assert (machine.home / ".claude/skills/local").readlink() == (
+        machine.home / ".agents/skills/local"
+    )
+    assert (machine.home / ".agents/skills/synced/account/SKILL.md").read_text() == (
+        "codex synced"
+    )
+    assert (machine.home / ".claude/skills/synced/account/SKILL.md").read_text() == (
+        "claude synced"
+    )
+
+
 def test_copy_mode(machine: Machine) -> None:
     write(
         machine.public / "dotfiles.toml",

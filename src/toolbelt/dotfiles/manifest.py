@@ -13,7 +13,9 @@ Each repo declares which of its files land where in the home directory::
 
 ``merge_dir`` makes ``dest`` a real directory holding one entry per child of
 ``src``. Several repos can declare the same ``dest`` and each contributes its
-own children, which is how ``~/.claude/skills`` is assembled from both repos.
+own children, which is how ``~/.agents/skills`` is assembled from both repos.
+``src`` may also start with ``~/`` to link from an installed home directory.
+``exclude`` skips named children of a ``merge_dir`` source.
 """
 
 import tomllib
@@ -35,6 +37,7 @@ class LinkSpec(BaseModel):
     dest: str
     kind: LinkKind = "file"
     mode: LinkMode = "symlink"
+    exclude: list[str] = []
 
 
 class ManifestFile(BaseModel):

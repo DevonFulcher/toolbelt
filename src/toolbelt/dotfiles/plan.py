@@ -32,24 +32,44 @@ def build_plan(manifests: list[RepoManifest], *, home: Path) -> Plan:
     for the same destination (per child entry for ``merge_dir``)."""
     targets: dict[Path, Target] = {}
     containers: list[Path] = []
-    for manifest in manifests:
-        for spec in manifest.links:
-            src = manifest.root / spec.src
-            dest = expand_dest(spec.dest, home=home)
-            if spec.kind == "merge_dir":
-                if dest not in containers:
-                    containers.append(dest)
-                for child in sorted(src.iterdir()):
-                    if child.name.startswith(_HIDDEN_PREFIX):
-                        continue
-                    targets[dest / child.name] = Target(
-                        dest=dest / child.name,
-                        src=child,
-                        kind="dir" if child.is_dir() else "file",
-                        mode=spec.mode,
-                    )
-            else:
-                targets[dest] = Target(
-                    dest=dest, src=src, kind=spec.kind, mode=spec.mode
+    sources = [
+        (
+            expand_dest(spec.src, home=home)
+            if spec.src.startswith("~/")
+            else manifest.root / spec.src,
+            spec,
+        )
+        for manifest in manifests
+        for spec in manifest.links
+    ]
+    # Home aliases need the final layered repo targets, including private
+    # overrides and directories that will be installed for the first time.
+    sources.sort(key=lambda item: item[1].src.startswith("~/"))
+    for src, spec in sources:
+        dest = expand_dest(spec.dest, home=home)
+        if src == dest:
+            raise ValueError(f"Source and destination must differ: {src}")
+        if spec.kind == "merge_dir":
+            children: dict[str, Literal["file", "dir"]] = {}
+            if src.exists() or src not in containers:
+                children = {
+                    child.name: "dir" if child.is_dir() else "file"
+                    for child in src.iterdir()
+                    if not spec.src.startswith("~/") or child.exists()
+                }
+            children.update(
+                (target.dest.name, target.kind)
+                for target in targets.values()
+                if target.dest.parent == src
+            )
+            if dest not in containers:
+                containers.append(dest)
+            for name, kind in sorted(children.items()):
+                if name.startswith(_HIDDEN_PREFIX) or name in spec.exclude:
+                    continue
+                targets[dest / name] = Target(
+                    dest=dest / name, src=src / name, kind=kind, mode=spec.mode
                 )
+        else:
+            targets[dest] = Target(dest=dest, src=src, kind=spec.kind, mode=spec.mode)
     return Plan(repos=manifests, targets=list(targets.values()), containers=containers)

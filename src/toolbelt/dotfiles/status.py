@@ -18,7 +18,7 @@ class State(StrEnum):
     WRONG_TARGET = "wrong-target"
     # The manifest names a source that does not exist in the repo.
     MISSING_SOURCE = "missing-source"
-    # A dangling symlink inside a merge_dir that points into a managed repo.
+    # A dangling symlink into a managed repo or merge_dir source.
     STALE = "stale"
 
 
@@ -33,9 +33,9 @@ class Entry:
 def link_points_to(link: Path, src: Path) -> bool:
     raw = Path(os.readlink(link))
     absolute = raw if raw.is_absolute() else link.parent / raw
-    return Path(os.path.normpath(absolute)) == Path(
-        os.path.normpath(src)
-    ) or os.path.realpath(link) == os.path.realpath(src)
+    # Keep the declared indirection: linking straight to a repo must not
+    # bypass a canonical home-directory link just because both resolve alike.
+    return Path(os.path.normpath(absolute)) == Path(os.path.normpath(src))
 
 
 def _same_content(dest: Path, src: Path) -> bool:
@@ -54,9 +54,11 @@ def _same_content(dest: Path, src: Path) -> bool:
     return dest.is_file() and filecmp.cmp(dest, src, shallow=False)
 
 
-def target_state(target: Target) -> Entry:
+def target_state(
+    target: Target, *, planned_sources: frozenset[Path] = frozenset()
+) -> Entry:
     dest, src = target.dest, target.src
-    if not src.exists():
+    if not src.exists() and src not in planned_sources:
         return Entry(dest, State.MISSING_SOURCE, src, "source not in repo")
     if dest.is_symlink():
         if target.mode == "symlink" and link_points_to(dest, src):
@@ -64,11 +66,11 @@ def target_state(target: Target) -> Entry:
         return Entry(dest, State.WRONG_TARGET, src, f"-> {os.readlink(dest)}")
     if not dest.exists():
         return Entry(dest, State.MISSING, src)
-    if target.mode == "copy":
+    if target.mode == "copy" and src.exists():
         if _same_content(dest, src):
             return Entry(dest, State.OK, src)
         return Entry(dest, State.CONFLICT, src, "copy differs from repo")
-    if os.path.samefile(dest, src):
+    if src.exists() and os.path.samefile(dest, src):
         # Reached through a symlinked parent directory.
         return Entry(dest, State.OK, src)
     return Entry(dest, State.CONFLICT, src, "real file in the way")
@@ -85,9 +87,10 @@ def container_state(path: Path) -> Entry:
 
 
 def stale_links(plan: Plan) -> list[Entry]:
-    """Dangling symlinks in a merge_dir that point into a managed repo."""
+    """Dangling symlinks into a managed repo or merge directory."""
     planned = {target.dest for target in plan.targets}
     roots = [os.path.realpath(repo.root) for repo in plan.repos]
+    roots += [str(path) for path in plan.containers]
     stale: list[Entry] = []
     for container in plan.containers:
         if container.is_symlink() or not container.is_dir():

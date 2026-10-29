@@ -147,15 +147,17 @@ def link_actions(plan: Plan) -> list[Action]:
         elif state is State.MISSING:
             actions.append(MakeDir(container))
             made_dirs.add(container)
+    planned_sources: set[Path] = set()
     for target in plan.targets:
+        entry = target_state(target, planned_sources=frozenset(planned_sources))
+        if entry.state is State.MISSING_SOURCE:
+            raise FileNotFoundError(f"{target.src} (source for {target.dest})")
+        planned_sources.add(target.dest)
         if target.dest.parent in replaced_containers:
             actions += _install(target, made_dirs=made_dirs)
             continue
-        entry = target_state(target)
         if entry.state is State.OK:
             continue
-        if entry.state is State.MISSING_SOURCE:
-            raise FileNotFoundError(f"{target.src} (source for {target.dest})")
         if entry.state is not State.MISSING:
             actions.append(MoveToBackup(target.dest))
         actions += _install(target, made_dirs=made_dirs)
