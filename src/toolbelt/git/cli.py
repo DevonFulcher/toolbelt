@@ -160,18 +160,29 @@ def get(
         os.path.basename(repo_url),
     )
     clone_path = git_projects_workdir / repo_name
-    if not is_git_repo(clone_path):
+    repo_exists = is_git_repo(clone_path)
+    if not repo_exists:
         logged_process.run(
             ["git", "clone", repo_url, str(clone_path)],
             check=True,
         )
         if not os.path.isdir(clone_path):
             raise ValueError(f"Failed to clone {repo_url} to {clone_path}")
-    git_setup(
-        target_path=clone_path,
-        git_projects_workdir=git_projects_workdir,
-        service_name=service_name,
-    )
+    try:
+        git_setup(
+            target_path=clone_path,
+            git_projects_workdir=git_projects_workdir,
+            service_name=service_name,
+        )
+    except Exception:
+        clone_status = "Repository already exists" if repo_exists else "Clone succeeded"
+        typer.echo(
+            f"{clone_status} at {clone_path}, but setup failed.\n"
+            "The clone has been preserved. Fix the setup error below, then rerun "
+            "the same `tt git get` command to retry setup without cloning again.",
+            err=True,
+        )
+        raise
     open_in_editor(clone_path)
 
 
