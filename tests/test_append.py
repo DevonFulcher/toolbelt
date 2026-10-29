@@ -3,6 +3,7 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
 from conftest import git
 
 from toolbelt.git.stack import lineage
@@ -80,6 +81,58 @@ def test_copy_dotfiles_preserves_symlinks(repo: Path, tmp_path: Path):
     # the link is preserved (not dereferenced into an independent copy)
     assert (dest / ".rules").is_symlink()
     assert (dest / ".rules" / "rule").read_text() == "shared\n"
+
+
+@pytest.mark.parametrize("target", ["settings", "missing"])
+def test_copy_dotfiles_merges_existing_nested_symlinks(
+    repo: Path, tmp_path: Path, target: str
+) -> None:
+    config = repo / ".config" / "nested"
+    config.mkdir(parents=True)
+    (config / "settings").write_text("source\n")
+    (config / "rules").symlink_to(target)
+    git("add", ".config", cwd=repo)
+    git("commit", "-m", "Track config symlinks", cwd=repo)
+    dest = tmp_path / "worktree"
+    create_stacked_branch("config", root=repo, wt_path=dest)
+
+    copy_dotfiles(root=repo, wt_path=dest)
+
+    copied = dest / ".config" / "nested"
+    assert (copied / "rules").is_symlink()
+    assert (copied / "rules").readlink() == Path(target)
+    assert (copied / "settings").read_text() == "source\n"
+    (copied / "settings").write_text("worktree\n")
+    assert (config / "settings").read_text() == "source\n"
+
+
+@pytest.mark.parametrize("entry", [".env", ".config/settings", ".config"])
+def test_copy_dotfiles_does_not_write_through_destination_symlinks(
+    repo: Path, tmp_path: Path, entry: str
+) -> None:
+    (repo / ".env").write_text("source\n")
+    (repo / ".config").mkdir()
+    (repo / ".config" / "settings").write_text("source\n")
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    outside = tmp_path / "outside"
+    if entry == ".config":
+        outside.mkdir()
+        (outside / "settings").write_text("outside\n")
+        protected = outside / "settings"
+    else:
+        outside.write_text("outside\n")
+        protected = outside
+    link = dest / entry
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(outside)
+
+    copy_dotfiles(root=repo, wt_path=dest)
+
+    assert not link.is_symlink()
+    assert (dest / ".env").read_text() == "source\n"
+    assert (dest / ".config" / "settings").read_text() == "source\n"
+    assert protected.read_text() == "outside\n"
 
 
 def test_append_stacks_on_current_branch(repo: Path, tmp_path: Path):

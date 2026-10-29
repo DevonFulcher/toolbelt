@@ -1,4 +1,3 @@
-import os
 import re
 import shutil
 import subprocess
@@ -92,9 +91,22 @@ def _branch_name_for_worktree_name(name: str) -> str:
     return f"{GIT_BRANCH_PREFIX}{_normalize_worktree_name(name)}"
 
 
-def _copy_file_if_present(src: Path, dest: Path) -> None:
+def _copy_dotfile(*, src: Path, dest: Path) -> None:
+    # Never follow a destination link into another checkout or shared config.
+    if dest.is_symlink():
+        dest.unlink()
+    if src.is_symlink():
+        dest.unlink(missing_ok=True)
+        dest.symlink_to(src.readlink())
+        return
+    if src.is_dir():
+        dest.mkdir(exist_ok=True)
+        for child in src.iterdir():
+            _copy_dotfile(src=child, dest=dest / child.name)
+        shutil.copystat(src, dest)
+        return
     try:
-        shutil.copy(src, dest)
+        shutil.copy2(src, dest)
     except FileNotFoundError:
         return
 
@@ -114,14 +126,7 @@ def copy_dotfiles(*, root: Path, wt_path: Path) -> None:
     for src in root.glob(".*"):
         if src.name in DOTFILES_COPY_EXCLUDE:
             continue
-        dest = wt_path / src.name
-        if src.is_symlink():
-            dest.unlink(missing_ok=True)
-            os.symlink(os.readlink(src), dest)
-        elif src.is_dir():
-            shutil.copytree(src, dest, dirs_exist_ok=True, symlinks=True)
-        else:
-            _copy_file_if_present(src, dest)
+        _copy_dotfile(src=src, dest=wt_path / src.name)
 
 
 def _has_uncommitted_changes(*, root: Path) -> bool:
