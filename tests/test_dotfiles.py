@@ -368,6 +368,32 @@ def test_home_skill_aliases_preserve_app_synced_skills(machine: Machine) -> None
     )
 
 
+def test_home_instruction_alias_backs_up_existing_instructions(
+    machine: Machine,
+) -> None:
+    write(machine.public / "files/CLAUDE.md", "shared instructions")
+    write(machine.home / ".codex/AGENTS.md", "existing instructions")
+    write(
+        machine.public / "dotfiles.toml",
+        PUBLIC_MANIFEST
+        + '\n[[link]]\nsrc = "files/CLAUDE.md"\ndest = "~/.claude/CLAUDE.md"\n'
+        + '\n[[link]]\nsrc = "~/.claude/CLAUDE.md"\ndest = "~/.codex/AGENTS.md"\n',
+    )
+
+    result = machine.cli("link")
+
+    assert result.exit_code == 0, result.output
+    alias = machine.home / ".codex/AGENTS.md"
+    assert alias.readlink() == machine.home / ".claude/CLAUDE.md"
+    assert alias.read_text() == "shared instructions"
+    backups = list(
+        (machine.home / ".toolbelt/dotfiles-backups").glob("*/.codex/AGENTS.md")
+    )
+    assert len(backups) == 1
+    assert backups[0].read_text() == "existing instructions"
+    assert "Nothing to do." in machine.cli("link").output
+
+
 def test_copy_mode(machine: Machine) -> None:
     write(
         machine.public / "dotfiles.toml",
