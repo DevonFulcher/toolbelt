@@ -35,10 +35,10 @@ def test_sync_propagates_parent_commit_down_the_stack(repo: Path, tmp_path: Path
     assert (tests_wt / "api.txt").read_text() == "api change\n"
 
 
-def test_sync_pulls_landed_base_changes(repo: Path, tmp_path: Path):
+def test_sync_skips_unrelated_changes_on_main(repo: Path, tmp_path: Path):
     api_wt, tests_wt = _build_stack(repo, tmp_path)
 
-    # Simulate work landing on main: commit on main and push to origin.
+    # An unrelated main change that merges cleanly stays out of this stack.
     (repo / "landed.txt").write_text("landed\n")
     git("add", "-A", cwd=repo)
     git("commit", "-m", "landed on main", cwd=repo)
@@ -46,9 +46,26 @@ def test_sync_pulls_landed_base_changes(repo: Path, tmp_path: Path):
 
     sync_stack(root=tests_wt, forge=FakeForge())
 
-    # origin/main's change propagates through the whole stack
-    assert (api_wt / "landed.txt").read_text() == "landed\n"
-    assert (tests_wt / "landed.txt").read_text() == "landed\n"
+    assert not (api_wt / "landed.txt").exists()
+    assert not (tests_wt / "landed.txt").exists()
+
+
+def test_sync_merges_main_when_it_conflicts_with_the_stack(repo: Path, tmp_path: Path):
+    api_wt, tests_wt = _build_stack(repo, tmp_path)
+
+    (api_wt / "README.md").write_text("stack version\n")
+    git("add", "README.md", cwd=api_wt)
+    git("commit", "-m", "stack changes README", cwd=api_wt)
+
+    (repo / "README.md").write_text("main version\n")
+    git("add", "README.md", cwd=repo)
+    git("commit", "-m", "main changes README", cwd=repo)
+    git("push", "origin", "main", cwd=repo)
+
+    with pytest.raises(typer.Exit):
+        sync_stack(root=tests_wt, forge=FakeForge())
+
+    assert "UU README.md" in git("status", "--porcelain", cwd=api_wt)
 
 
 def test_sync_is_idempotent(repo: Path, tmp_path: Path):

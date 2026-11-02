@@ -1,20 +1,22 @@
 """Sync a stack: merge each parent into its child, restacking when one lands.
 
-Day-to-day this merges (not rebases) root -> leaf: no force-push, and a conflict
-is resolved with a single ``git commit`` + re-run (idempotent). When a parent's
-PR has merged, its children get the base it landed on merged in and are
-reparented onto the grandparent ("restack-on-land"), and the landed branch is
-cleaned up. That merge is computed over snapshots (the child's tree, the base's
-tree and the parent's last tip the child contains), so it rewrites no history
-and is only pushed as a fast-forward. Only when it conflicts, or the child's
-remote has diverged from the child, are the child's own commits replayed onto
-the base instead (and force-pushed). A child whose parent
-was rewritten (restacked, or squashed) still holds the old copies of the
-parent's commits, so merging the parent would conflict with itself: the child's
-own commits are replayed onto the parent instead. These are the only places we
-force-push / rewrite history. Whether a parent landed is decided by the injected
-`Forge`, so it is authoritative (a squash-merge can't be detected from local
-ancestry) and testable.
+Day-to-day this merges tracked parents (not rebases) root -> leaf: no
+force-push, and a conflict is resolved with a single ``git commit`` + re-run
+(idempotent). A stack root only merges its untracked base when that merge would
+conflict with a branch in the stack, so clean, unrelated base changes stay out.
+When a parent's PR has merged, its children get the base it landed on merged in and
+are reparented onto the grandparent ("restack-on-land"), and the landed branch
+is cleaned up. That merge is computed over snapshots (the child's tree, the
+base's tree and the parent's last tip the child contains), so it rewrites no
+history and is only pushed as a fast-forward. Only when it conflicts, or the
+child's remote has diverged from the child, are the child's own commits replayed
+onto the base instead (and force-pushed). A child whose parent was rewritten
+(restacked, or squashed) still holds the old copies of the parent's commits, so
+merging the parent would conflict with itself: the child's own commits are
+replayed onto the parent instead. These are the only places we force-push /
+rewrite history. Whether a parent landed is decided by the injected `Forge`, so
+it is authoritative (a squash-merge can't be detected from local ancestry) and
+testable.
 
 Worktree-per-branch is assumed: each branch is synced inside its own worktree.
 """
@@ -105,6 +107,23 @@ def _has_unmerged_paths(worktree: Path) -> bool:
         capture_output=True,
     )
     return bool(result.stdout.strip())
+
+
+def _merge_would_conflict(branch: str, merge_ref: str, *, worktree: Path) -> bool:
+    """Whether merging ``merge_ref`` into ``branch`` has textual conflicts."""
+    result = run(
+        ["git", "merge-tree", "--write-tree", branch, merge_ref],
+        cwd=worktree,
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode not in (0, 1):
+        logger.error(
+            f"Could not check whether '{merge_ref}' conflicts with '{branch}': "
+            f"{result.stderr.strip()}"
+        )
+        raise typer.Exit(1)
+    return result.returncode == 1
 
 
 _MAX_CONFLICT_FILES_LOGGED = 10
@@ -565,10 +584,10 @@ def sync_stack(
     landing a branch whose own worktree is about to be removed).
 
     Processes branches root -> leaf so each parent is up to date before being
-    merged into its children. The stack root merges ``origin/<base>`` so landed
-    work propagates down. When ``forge`` reports a parent's PR merged, that
-    parent's children are rebased onto the nearest surviving ancestor and every
-    landed branch is removed.
+    merged into its children. The stack root merges ``origin/<base>`` only when
+    it would conflict with any branch in the stack. When ``forge`` reports a
+    parent's PR merged, its children are rebased onto the nearest surviving
+    ancestor and every landed branch is removed.
     """
     run(["git", "fetch", "-p"], cwd=root, exit_on_error=True)
 
@@ -614,6 +633,13 @@ def sync_stack(
         ensure_not_inside_worktree(
             landed_branch, root=main_wt, caller_dirs=[root, Path.cwd()]
         )
+
+    base_ref = f"origin/{parents[stack[0]]}"
+    base_conflicts_with_stack = any(
+        _merge_would_conflict(stack_branch, base_ref, worktree=root)
+        for stack_branch in stack
+        if stack_branch not in landed
+    )
 
     def surviving_base(child: str) -> str:
         """Nearest ancestor of ``child`` that has not landed (collapses chains
@@ -741,12 +767,17 @@ def sync_stack(
             # whatever its PR state, since there is nothing to compare to.
             unpublished = not _remote_branch_exists(child, root=root)
 
-            # Integrate the parent (base from the remote) and reconcile the
-            # branch with its own remote so a diverged push won't be rejected.
-            # The base (e.g. main) has no lineage entry; pull it from origin.
-            merge_refs = [
-                direct_parent if direct_parent in tracked else f"origin/{direct_parent}"
-            ]
+            # Tracked parents always propagate to their children. A stack root
+            # only takes its untracked base when it conflicts with any branch
+            # in this stack; clean base changes stay out.
+            merge_refs = []
+            if direct_parent in tracked:
+                merge_refs.append(direct_parent)
+            elif base_conflicts_with_stack:
+                merge_refs.append(base_ref)
+
+            # Reconcile the branch with its own remote so a diverged push won't
+            # be rejected. This is independent of whether its base was merged.
             if _remote_branch_exists(child, root=root):
                 merge_refs.append(f"origin/{child}")
 
