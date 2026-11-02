@@ -198,28 +198,7 @@ def delete_branch_and_worktree(
     lookup keyed by branch name, e.g. ``lineage.remove_parent``.
     """
     root = repo_root
-    branch_to_delete = branch_name
-
-    def branch_exists(name: str) -> bool:
-        result = logged_process.run(
-            ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{name}"],
-            cwd=root,
-            check=False,
-        )
-        return result.returncode == 0
-
-    candidates: list[str] = []
-    candidates.append(branch_name)
-    bare_name = branch_name.removeprefix(GIT_BRANCH_PREFIX)
-    if branch_name == bare_name:
-        candidates.append(f"{GIT_BRANCH_PREFIX}{bare_name}")
-    else:
-        candidates.append(bare_name)
-
-    for candidate in candidates:
-        if candidate and branch_exists(candidate):
-            branch_to_delete = candidate
-            break
+    branch_to_delete = resolve_branch_name(branch_name, root=root) or branch_name
 
     if caller_dirs:
         ensure_not_inside_worktree(branch_to_delete, root=root, caller_dirs=caller_dirs)
@@ -253,3 +232,46 @@ def delete_branch_and_worktree(
         )
     logger.info(f"Deleted branch {branch_to_delete}")
     return branch_to_delete
+
+
+def validate_branch_worktree_removal(
+    branch_name: str,
+    *,
+    repo_root: Path,
+    force: bool = False,
+    caller_dirs: list[Path] | None = None,
+) -> None:
+    """Check the worktree removal conditions without changing the repo."""
+    branch = resolve_branch_name(branch_name, root=repo_root) or branch_name
+    if caller_dirs:
+        ensure_not_inside_worktree(branch, root=repo_root, caller_dirs=caller_dirs)
+    for path in _worktree_paths_for_branch(branch, repo_root):
+        if not force and _is_worktree_dirty(path):
+            message = (
+                f"fatal: '{path}' contains modified or untracked files, use "
+                "--force to delete it"
+            )
+            logger.error(message)
+            raise subprocess.CalledProcessError(
+                1, ["git", "worktree", "remove", str(path)], stderr=message
+            )
+
+
+def resolve_branch_name(branch_name: str, *, root: Path) -> str | None:
+    """Return the existing local branch matching a bare or prefixed name."""
+    candidates = [branch_name]
+    bare_name = branch_name.removeprefix(GIT_BRANCH_PREFIX)
+    candidates.append(
+        f"{GIT_BRANCH_PREFIX}{bare_name}" if branch_name == bare_name else bare_name
+    )
+    for candidate in candidates:
+        if not candidate:
+            continue
+        result = logged_process.run(
+            ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{candidate}"],
+            cwd=root,
+            check=False,
+        )
+        if result.returncode == 0:
+            return candidate
+    return None

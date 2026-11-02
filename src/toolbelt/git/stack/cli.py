@@ -24,7 +24,7 @@ from toolbelt.git.repo_lock import repo_lock
 from toolbelt.git.repo_pull import default_config_path
 from toolbelt.git.stack import lineage
 from toolbelt.git.stack.append import create_stacked_branch
-from toolbelt.git.stack.forge import GhForge
+from toolbelt.git.stack.forge import Forge, GhForge
 from toolbelt.git.stack.ops import (
     compress_branch,
     diff_parent_command,
@@ -43,7 +43,12 @@ from toolbelt.git.worktrees import (
     current_branch,
     repo_root,
 )
-from toolbelt.git.worktrees_ops import delete_branch_and_worktree, main_worktree
+from toolbelt.git.worktrees_ops import (
+    delete_branch_and_worktree,
+    main_worktree,
+    resolve_branch_name,
+    validate_branch_worktree_removal,
+)
 from toolbelt.logger import logger
 from toolbelt.tasks.config import configured_tracker, employer_orgs
 from toolbelt.tasks.requirement import origin_owner, task_required
@@ -202,12 +207,18 @@ def set_parent(
     root = repo_root()
     forge = GhForge(root)
     with repo_lock(root):
-        branch = set_branch_parent(root=root, new_parent=new_parent)
-        sync_stack(root=root, forge=forge)
-        # An untracked new parent is not part of the synced stack; keep an
-        # already-published one current so the retargeted PR diffs cleanly.
-        push_if_fast_forward(new_parent, root=root)
-        retarget_open_pr(branch, new_parent, forge=forge)
+        _set_branch_parent_and_sync(root=root, new_parent=new_parent, forge=forge)
+
+
+def _set_branch_parent_and_sync(*, root: Path, new_parent: str, forge: Forge) -> str:
+    """Apply the full `set-parent` workflow to the current branch."""
+    branch = set_branch_parent(root=root, new_parent=new_parent)
+    sync_stack(root=root, forge=forge)
+    # An untracked new parent is not part of the synced stack; keep an
+    # already-published one current so the retargeted PR diffs cleanly.
+    push_if_fast_forward(new_parent, root=root)
+    retarget_open_pr(branch, new_parent, forge=forge)
+    return branch
 
 
 def _repo_root_or_none() -> Path | None:
@@ -376,15 +387,21 @@ def remove(
         "-f",
         help="Pass --force to git worktree remove (discards uncommitted changes).",
     ),
+    reason: str | None = typer.Option(
+        None,
+        "--reason",
+        help="Comment to leave when closing the branch's open pull request.",
+    ),
 ) -> None:
     """Remove a branch's worktree, force-delete the branch, drop it from the stack.
 
     Runs `git worktree remove`, which refuses a worktree with uncommitted or
     untracked files unless --force (which discards them), then
     `git branch -D`, which deletes the branch even if its commits are
-    unmerged. The remote branch and any PR are left alone. Child branches are
-    not reparented and still point at the removed branch, so run `set-parent`
-    on them first.
+    unmerged. The remote branch is left alone. Direct child branches are
+    reparented to this branch's parent and synced before deletion. If the
+    branch has an open pull request, it is closed; --reason is added as a
+    comment.
     """
     root = repo_root()
     # `name` may be the branch checked out in `root` itself (the caller's own
@@ -417,7 +434,49 @@ def remove(
     # return value (not the raw argument) as the lineage key so a bare name
     # like "feature" still clears "devon/feature"'s parent entry.
     with repo_lock(root):
+        resolved_branch = resolve_branch_name(name, root=main_wt) or name
+        validate_branch_worktree_removal(
+            resolved_branch,
+            repo_root=main_wt,
+            force=force,
+            caller_dirs=[root, Path.cwd()],
+        )
+        parents = lineage.all_parents(root=main_wt)
+        parent = parents.get(resolved_branch)
+        children = lineage.children_map(parents).get(resolved_branch, [])
+        paths = worktree_paths(root=main_wt)
+
+        if children and parent is None:
+            logger.error(
+                f"Cannot remove '{resolved_branch}': it has child branches but no "
+                "tracked parent to reparent them to."
+            )
+            raise typer.Exit(1)
+        missing_worktrees = [child for child in children if child not in paths]
+        if missing_worktrees:
+            logger.error(
+                "Cannot remove branch; no worktree found for child branch(es): "
+                + ", ".join(missing_worktrees)
+            )
+            raise typer.Exit(1)
+
+        forge = GhForge(main_wt)
+        if parent is not None:
+            for child in children:
+                _set_branch_parent_and_sync(
+                    root=paths[child], new_parent=parent, forge=forge
+                )
+
+        open_pr = asyncio.run(forge.open_pr_base(resolved_branch))
+        if open_pr is not None:
+            number, _ = open_pr
+            asyncio.run(forge.close_pr(number, reason))
+            logger.info(f"Closed PR #{number} for '{resolved_branch}'.")
+
         deleted_branch = delete_branch_and_worktree(
-            name, repo_root=main_wt, force=force, caller_dirs=[root, Path.cwd()]
+            resolved_branch,
+            repo_root=main_wt,
+            force=force,
+            caller_dirs=[root, Path.cwd()],
         )
         lineage.remove_parent(deleted_branch, root=main_wt)

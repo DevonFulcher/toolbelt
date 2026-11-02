@@ -101,6 +101,7 @@ class FakeForge:
         #: Open PR per branch as `(number, base)`; `set_pr_base` updates it.
         self.open_prs: dict[str, tuple[int, str]] = {}
         self.retargets: list[tuple[int, str]] = []
+        self.closed_prs: list[tuple[int, str | None]] = []
 
     async def pr_is_merged(self, branch: str) -> bool:
         return branch in self.merged
@@ -116,6 +117,9 @@ class FakeForge:
 
     async def set_pr_base(self, number: int, base: str) -> None:
         self.retargets.append((number, base))
+
+    async def close_pr(self, number: int, reason: str | None = None) -> None:
+        self.closed_prs.append((number, reason))
 
     async def pr_candidates(self, branch: str) -> list[PrCandidate]:
         self.candidate_lookups.append(branch)

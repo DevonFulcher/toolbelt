@@ -10,16 +10,21 @@ Commands that reach `GhForge` (a live `gh` call) — `sync`, `set-parent` — ar
 deliberately NOT invoked here; that path is already covered at the core level
 via `sync_stack` + `FakeForge` in test_sync.py/test_restack.py. Exercising it
 through the CLI would make these tests depend on `gh` auth and network state.
+The remove tests inject `FakeForge`, including for its close-PR operation.
 """
 
+import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from conftest import git
+import typer
+from conftest import FakeForge, git
 from typer.testing import CliRunner
 
 from toolbelt.git.cli import git_typer
+from toolbelt.git.stack import cli as stack_cli
+from toolbelt.git.stack import forge as stack_forge
 from toolbelt.git.stack import lineage
 from toolbelt.git.stack.append import create_stacked_branch
 from toolbelt.git.worktrees_ops import WorktreeInUseError
@@ -573,8 +578,11 @@ def test_is_personal_reads_the_given_environment():
 
 
 def test_remove_deletes_branch_worktree_and_lineage_via_cli(
-    repo: Path, capfd: pytest.CaptureFixture
+    repo: Path,
+    capfd: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ):
+    monkeypatch.setattr(stack_cli, "GhForge", lambda root: FakeForge())
     _invoke(["append", "feature", *_LINKS], cwd=repo, capfd=capfd)
     assert lineage.get_parent("devon/feature", root=repo) == "main"
 
@@ -588,9 +596,118 @@ def test_remove_deletes_branch_worktree_and_lineage_via_cli(
     )
 
 
-def test_remove_refuses_to_delete_the_worktree_it_runs_in(
-    repo: Path, tmp_path: Path, capfd: pytest.CaptureFixture
+def test_remove_reparents_children_and_closes_pr_with_reason(
+    repo: Path,
+    tmp_path: Path,
+    capfd: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ):
+    feature_wt = tmp_path / "wt-feature"
+    child_wt = tmp_path / "wt-child"
+    create_stacked_branch("feature", root=repo, wt_path=feature_wt)
+    create_stacked_branch("child", root=feature_wt, wt_path=child_wt)
+    forge = FakeForge(no_pr=["devon/child"])
+    forge.open_prs["devon/feature"] = (12, "main")
+    monkeypatch.setattr(stack_cli, "GhForge", lambda root: forge)
+
+    result = _invoke(
+        ["remove", "feature", "--force", "--reason", "Superseded by main"],
+        cwd=repo,
+        capfd=capfd,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert lineage.get_parent("devon/child", root=repo) == "main"
+    assert lineage.get_parent("devon/feature", root=repo) is None
+    assert forge.closed_prs == [(12, "Superseded by main")]
+    assert not feature_wt.exists()
+
+
+def test_remove_stops_before_deletion_when_child_reparent_fails(
+    repo: Path,
+    tmp_path: Path,
+    capfd: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    feature_wt = tmp_path / "wt-feature"
+    child_wt = tmp_path / "wt-child"
+    create_stacked_branch("feature", root=repo, wt_path=feature_wt)
+    create_stacked_branch("child", root=feature_wt, wt_path=child_wt)
+    forge = FakeForge()
+    monkeypatch.setattr(stack_cli, "GhForge", lambda root: forge)
+
+    def fail_reparent(*, root: Path, new_parent: str, forge: object) -> str:
+        raise typer.Exit(1)
+
+    monkeypatch.setattr(stack_cli, "_set_branch_parent_and_sync", fail_reparent)
+    result = _invoke(["remove", "feature", "--force"], cwd=repo, capfd=capfd)
+
+    assert result.exit_code == 1
+    assert feature_wt.exists()
+    assert lineage.get_parent("devon/feature", root=repo) == "main"
+    assert lineage.get_parent("devon/child", root=repo) == "devon/feature"
+    assert forge.closed_prs == []
+
+
+def test_remove_does_not_close_pr_when_worktree_is_dirty(
+    repo: Path,
+    tmp_path: Path,
+    capfd: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    feature_wt = tmp_path / "wt-feature"
+    create_stacked_branch("feature", root=repo, wt_path=feature_wt)
+    (feature_wt / "uncommitted.txt").write_text("keep me\n")
+    forge = FakeForge()
+    forge.open_prs["devon/feature"] = (12, "main")
+    monkeypatch.setattr(stack_cli, "GhForge", lambda root: forge)
+
+    result = _invoke(["remove", "feature"], cwd=repo, capfd=capfd)
+
+    assert result.exit_code != 0
+    assert feature_wt.exists()
+    assert (feature_wt / "uncommitted.txt").read_text() == "keep me\n"
+    assert forge.closed_prs == []
+
+
+def test_gh_forge_closes_pr_with_reason_comment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    class Process:
+        returncode = 0
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            return b"", b""
+
+    async def create_process(*args: object, **kwargs: object) -> Process:
+        calls.append((args, kwargs))
+        return Process()
+
+    monkeypatch.setattr(
+        stack_forge.logged_process, "create_subprocess_exec", create_process
+    )
+    asyncio.run(stack_forge.GhForge(tmp_path).close_pr(12, "Superseded"))
+
+    assert calls[0][0] == (
+        "gh",
+        "pr",
+        "close",
+        "12",
+        "--comment",
+        "Superseded",
+    )
+    assert calls[0][1]["cwd"] == tmp_path
+
+
+def test_remove_refuses_to_delete_the_worktree_it_runs_in(
+    repo: Path,
+    tmp_path: Path,
+    capfd: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(stack_cli, "GhForge", lambda root: FakeForge())
     feature_wt = tmp_path / "wt-feature"
     create_stacked_branch("feature", root=repo, wt_path=feature_wt)
 

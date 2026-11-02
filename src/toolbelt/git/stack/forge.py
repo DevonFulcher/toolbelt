@@ -40,6 +40,10 @@ class Forge(Protocol):
         """Retarget PR ``number`` onto ``base``."""
         ...
 
+    async def close_pr(self, number: int, reason: str | None = None) -> None:
+        """Close PR ``number``, optionally leaving ``reason`` as a comment."""
+        ...
+
     async def pr_candidates(self, branch: str) -> list[PrCandidate]:
         """Every PR (any state) whose head is ``branch``, best first: the
         identity ``store.StackStore.link_pr`` records for the branch's task."""
@@ -200,6 +204,21 @@ class GhForge:
                 f"`gh` failed retargeting PR #{number} onto '{base}': "
                 f"{stderr.decode().strip()}"
             )
+            raise typer.Exit(1)
+
+    async def close_pr(self, number: int, reason: str | None = None) -> None:
+        args = ["gh", "pr", "close", str(number)]
+        if reason:
+            args.extend(["--comment", reason])
+        process = await logged_process.create_subprocess_exec(
+            *args,
+            cwd=self._root,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await process.communicate()
+        if process.returncode != 0:
+            logger.error(f"`gh` failed closing PR #{number}: {stderr.decode().strip()}")
             raise typer.Exit(1)
 
     async def pr_candidates(self, branch: str) -> list[PrCandidate]:
