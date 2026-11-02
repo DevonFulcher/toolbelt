@@ -20,8 +20,7 @@ not posted in Slack
 open, not approved,       Bump in Slack              you
 posted, nobody looked
 for a day
-draft, CI running         Waiting on CI              ci
-draft (CI green / none)   Publish PR in GitHub       you
+draft, CI not failed      Publish PR in GitHub       you
 open, CI running          Waiting on CI              ci
 approved, parent PR not   Blocked on <parent>        you if the parent's own
 merged (stacked)                                     next action is yours,
@@ -240,10 +239,10 @@ def _underlying_action(
             return NextAction("Post in Slack", WHO_YOU, POST_SLACK)
         if slack.bump_due:
             return NextAction("Bump in Slack", WHO_YOU, BUMP_SLACK)
-    if status.ci is CiState.RUNNING:
-        return NextAction("Waiting on CI", WHO_CI, WAIT_CI)
     if status.pr is PrState.DRAFT:
         return NextAction("Publish PR in GitHub", WHO_YOU, PUBLISH)
+    if status.ci is CiState.RUNNING:
+        return NextAction("Waiting on CI", WHO_CI, WAIT_CI)
     if status.review is ReviewState.APPROVED:
         if parent is not None and parent.pr is not PrState.MERGED:
             who = WHO_YOU if parent.next_who == WHO_YOU else WHO_OTHERS

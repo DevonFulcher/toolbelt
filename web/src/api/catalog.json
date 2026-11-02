@@ -314,7 +314,7 @@
     "next_publish": {
       "label": "Publish PR in GitHub",
       "tone": "accent",
-      "legend": "A draft with green CI: mark it ready."
+      "legend": "A draft with no failing CI: mark it ready; running checks continue."
     },
     "next_request_review": {
       "label": "Request review",
@@ -1111,7 +1111,7 @@
     {
       "label": "Publish PR in GitHub",
       "tone": "accent",
-      "legend": "A draft with green CI: mark it ready.",
+      "legend": "A draft with no failing CI: mark it ready; running checks continue.",
       "reps": [
         {
           "how": "now_state",

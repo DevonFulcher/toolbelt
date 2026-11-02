@@ -239,7 +239,10 @@ _NEXT_TONES = {
     na.RESOLVE_COMMENTS: (AMBER, "Unresolved review threads remain."),
     na.FIX_CI: (RED, "CI failed."),
     na.WAIT_CI: (AMBER, "CI is running."),
-    na.PUBLISH: (ACCENT, "A draft with green CI: mark it ready."),
+    na.PUBLISH: (
+        ACCENT,
+        "A draft with no failing CI: mark it ready; running checks continue.",
+    ),
     na.BLOCKED: (GRAY, "Approved, but its parent PR is not merged yet."),
     na.MERGE: (GREEN, "Approved and ready to merge."),
     na.WAIT_REVIEW: (GRAY, "Waiting for a reviewer."),

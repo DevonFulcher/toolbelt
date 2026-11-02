@@ -100,9 +100,9 @@ OTHERS_PARENT = ParentContext("devon/base", PrState.OPEN, next_who="others")
             "draft, CI running",
             status(pr=PrState.DRAFT, ci=CiState.RUNNING),
             None,
-            "Waiting on CI",
-            "ci",
-            "wait_ci",
+            "Publish PR in GitHub",
+            "you",
+            "publish",
         ),
         (
             "open, CI running",
@@ -430,7 +430,7 @@ class TestSlackRules:
         [
             (status(pr=PrState.NONE), "open_pr"),
             (status(pr=PrState.DRAFT), "publish"),
-            (status(pr=PrState.DRAFT, ci=CiState.RUNNING), "wait_ci"),
+            (status(pr=PrState.DRAFT, ci=CiState.RUNNING), "publish"),
             (status(pr=PrState.MERGED), "done"),
             (status(pr=PrState.CLOSED), "done"),
             (status(review=ReviewState.APPROVED), "merge"),
