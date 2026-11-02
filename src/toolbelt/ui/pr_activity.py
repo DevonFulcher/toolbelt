@@ -84,6 +84,15 @@ class TimelineItem:
 
 
 @dataclass(frozen=True)
+class ReviewSubmission:
+    """A human-written body submitted with a PR review."""
+
+    submitted_at: datetime
+    author: str
+    body: str
+
+
+@dataclass(frozen=True)
 class PrFacts:
     number: int
     title: str
@@ -106,6 +115,9 @@ class PrFacts:
     #: the facts does not carry them, as in the aggregate history).
     additions: int = 0
     deletions: int = 0
+    #: Non-empty human review bodies, displayed as context rather than open
+    #: review threads that need resolution.
+    review_submissions: tuple[ReviewSubmission, ...] = ()
     #: When the PR's base branch changed, as ``(time, previous, current)`` in
     #: time order (a stacked PR is retargeted when its parent merges).
     base_changes: tuple[tuple[datetime, str, str], ...] = ()

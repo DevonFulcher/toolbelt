@@ -34,7 +34,7 @@ from toolbelt.ui import api_models, pr_states, snapshot
 from toolbelt.ui.app import create_app
 from toolbelt.ui.branch_links import agent_link, owning_tracker, task_link
 from toolbelt.ui.merge_pr import MergeOutcome
-from toolbelt.ui.pr_activity import PrFacts, TimelineItem
+from toolbelt.ui.pr_activity import PrFacts, ReviewSubmission, TimelineItem
 from toolbelt.ui.pr_fetch import PrSnapshot
 
 AGENT_LINK = "claude://claude.ai/epitaxy/local_0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
@@ -629,6 +629,30 @@ class TestPrDetail:
             "subject": "sam",
             "ci_done": None,
         }
+
+    def test_review_submission_bodies_are_serialized_for_the_card(self):
+        detail = snapshot.pr_detail(
+            make_facts(
+                review_submissions=(
+                    ReviewSubmission(
+                        submitted_at=datetime(2026, 10, 5, 9, 0, tzinfo=UTC),
+                        author="sam",
+                        body="Looks good to me.",
+                    ),
+                )
+            ),
+            NOW,
+        )
+
+        assert [
+            submission.model_dump() for submission in detail.review_submissions
+        ] == [
+            {
+                "author": "sam",
+                "body": "Looks good to me.",
+                "submitted_at": "2026-10-05T09:00:00Z",
+            }
+        ]
 
     def test_a_finished_pr_has_a_fixed_age_that_no_longer_ticks(self):
         merged = make_facts(

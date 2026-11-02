@@ -938,7 +938,9 @@ function TimelineSlot({
 function LoadedPrSlots({ status }: { status: LoadedStatus }) {
   const { detail } = status;
   const hasPr = status.pr !== "none";
-  const humanComments = status.open_comments - status.open_comments_bot;
+  const reviewSubmissions = detail?.review_submissions ?? [];
+  const humanComments =
+    status.open_comments - status.open_comments_bot + reviewSubmissions.length;
   return (
     <>
       <Slot id="title" label="PR title" state={detail && hasPr ? "ok" : "na"}>
@@ -976,9 +978,28 @@ function LoadedPrSlots({ status }: { status: LoadedStatus }) {
           )}
           <Slot id="comments" label="Human comments">
             {humanComments > 0 ? (
-              <Pill tone="amber" title="unresolved review threads a person started">
-                {`${humanComments} comment${humanComments === 1 ? "" : "s"}`}
-              </Pill>
+              <>
+                <Pill
+                  tone="amber"
+                  title="unresolved human threads and submitted review text; review text is not an open thread"
+                >
+                  {`${humanComments} comment${humanComments === 1 ? "" : "s"}`}
+                </Pill>
+                {reviewSubmissions.length > 0 && (
+                  <details className="review-submissions">
+                    <summary>{`Read review text (${reviewSubmissions.length})`}</summary>
+                    {reviewSubmissions.map((submission) => (
+                      <div
+                        className="review-submission"
+                        key={`${submission.submitted_at}-${submission.author}`}
+                      >
+                        <span className="review-submission-author">{submission.author}</span>
+                        <p className="review-submission-body">{submission.body}</p>
+                      </div>
+                    ))}
+                  </details>
+                )}
+              </>
             ) : (
               <Pill tone="green">0 comments</Pill>
             )}

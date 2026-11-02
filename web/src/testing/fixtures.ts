@@ -95,6 +95,7 @@ export function detail(overrides: Partial<PrDetail> = {}): PrDetail {
     ended: null,
     is_draft: false,
     events: [event("opened", 5 * DAY, { detail: "Add the thing" })],
+    review_submissions: [],
     ...overrides,
   };
 }

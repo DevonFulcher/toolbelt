@@ -248,6 +248,14 @@ def pr_detail(facts: PrFacts, now: datetime) -> api.PrDetail:
         created=_iso(facts.created_at),
         ended=_iso(ended) if ended else None,
         is_draft=facts.is_draft,
+        review_submissions=[
+            api.ReviewSubmission(
+                author=submission.author,
+                body=submission.body,
+                submitted_at=_iso(submission.submitted_at),
+            )
+            for submission in facts.review_submissions
+        ],
         events=[
             api.TimelineEvent.model_validate(
                 {

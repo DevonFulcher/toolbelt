@@ -197,6 +197,13 @@ a.pill:hover { text-decoration: none; background: color-mix(in srgb, currentColo
 /* The table-row indentation of `.branch` has no meaning inside a card. */
 .s-branch .branch { margin-left: 0; overflow-wrap: anywhere; }
 .s-title .slot-value { color: var(--fg); }
+.s-comments .slot-value { white-space: normal; overflow: visible; }
+.review-submissions { margin-top: 4px; color: var(--muted); font-size: 10px; }
+.review-submissions summary { cursor: pointer; }
+.review-submission { border-top: 1px solid var(--line); margin-top: 4px; padding-top: 4px; }
+.review-submission-author { color: var(--fg); font-weight: 600; }
+.review-submission-body { margin: 2px 0 0; max-height: 20rem; overflow: auto;
+                          overflow-wrap: anywhere; white-space: pre-wrap; }
 .repo-chip { font-size: 11px; color: var(--muted); border: 1px solid var(--line);
              border-radius: 4px; padding: 0 6px; margin-right: 4px; }
 .hook-problem { font-size: 10px; font-weight: 600; color: var(--amber); border: 1px solid var(--amber);

@@ -105,6 +105,13 @@ describe("a card's labelled slots", () => {
         ci_failures: 2,
         additions: 120,
         deletions: 4,
+        review_submissions: [
+          {
+            author: "sam",
+            body: "Looks good to me.",
+            submitted_at: "2026-10-05T09:00:00Z",
+          },
+        ],
       }),
     });
     const draft = pr({
@@ -137,8 +144,12 @@ describe("a card's labelled slots", () => {
     expect(b.pr).toEqual(["PR", "ok", "#8 open"]);
     expect(b.ci[2]).toBe("success");
     expect(b.review[2]).toBe("requested");
-    expect(b.comments).toEqual(["Human comments", "ok", "2 comments"]);
+    expect(b.comments.slice(0, 2)).toEqual(["Human comments", "ok"]);
+    expect(b.comments[2]).toContain("3 comments");
     expect(b.bot_comments).toEqual(["Bot comments", "ok", "1 comment"]);
+    expect(screen.getByText("3 comments")).toBeVisible();
+    fireEvent.click(screen.getByText("Read review text (1)"));
+    expect(screen.getByText("Looks good to me.")).toBeVisible();
     expect(b.merge[2]).toBe("conflicts");
     expect(b.conflict_commit[1]).toBe("ok");
     expect(b.conflict_commit[2]).toContain("abcdef1 Rewrite the loader");

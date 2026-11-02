@@ -307,6 +307,12 @@ class TimelineEvent(Model):
     ci_done: str | None
 
 
+class ReviewSubmission(Model):
+    author: str
+    body: str
+    submitted_at: str
+
+
 class PrDetail(Model):
     title: str
     pr_age: Age
@@ -324,6 +330,8 @@ class PrDetail(Model):
     ended: str | None
     is_draft: bool
     events: list[TimelineEvent]
+    #: Non-empty human review bodies; informational and not resolvable threads.
+    review_submissions: list[ReviewSubmission]
 
 
 class WouldBeAction(Model):

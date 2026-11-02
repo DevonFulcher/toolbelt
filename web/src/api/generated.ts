@@ -848,6 +848,7 @@ export interface PrDetail {
   is_draft: boolean;
   pr_age: Age;
   review_request_age: Age | null;
+  review_submissions: ReviewSubmission[];
   title: string;
 }
 /**
@@ -870,6 +871,11 @@ export interface TimelineEvent {
   kind: ActivityKind;
   subject: string;
   t: string;
+}
+export interface ReviewSubmission {
+  author: string;
+  body: string;
+  submitted_at: string;
 }
 export interface NextActionInfo {
   kind: NextKind;

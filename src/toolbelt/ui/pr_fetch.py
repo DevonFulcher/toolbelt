@@ -3,10 +3,10 @@
 ``fetch_snapshot`` asks GitHub for everything the UI shows about a branch's PR
 in a single GraphQL call: the same state `tt g tree` prints (parsed
 by ``status.parse_status``, so the two cannot disagree on what "CI failed"
-means) plus the review threads, and the timeline and per-commit CI that the
-ages and event feed are derived from (``pr_activity``). That replaces the two
-calls (``gh pr view`` and a review-threads query) a status lookup costs `tt g
-tree`; `tt g tree` itself is unchanged.
+means) plus review threads, submitted review bodies, the timeline and
+per-commit CI that the ages and event feed are derived from (``pr_activity``).
+That replaces the two calls (``gh pr view`` and a review-threads query) a
+status lookup costs `tt g tree`; `tt g tree` itself is unchanged.
 
 The PR is found by head branch name within the checkout's own repository
 (the owner and name of the checkout's GitHub remote), newest first, so a
@@ -28,12 +28,14 @@ from toolbelt.git.stack.status import (
     BranchStatus,
     count_unresolved_bot_nodes,
     count_unresolved_nodes,
+    is_ai_comment,
+    is_bot,
     parse_status,
 )
 from toolbelt.ui import pr_activity
 from toolbelt.ui.conflict_commit import ConflictCommit
 from toolbelt.ui.github_requests import GithubRequests
-from toolbelt.ui.pr_activity import PrFacts, TimelineItem
+from toolbelt.ui.pr_activity import PrFacts, ReviewSubmission, TimelineItem
 
 # How many of the PR's most recent commits / timeline entries are looked at.
 # Beyond these a very long-lived PR's oldest history is simply not shown.
@@ -60,6 +62,7 @@ query($owner: String!, $repo: String!, $branch: String!) {{
         author {{ login }}
         reviewRequests(first: 20) {{ nodes {{ {_REVIEWER} }} }}
         reviewThreads(first: 100) {{ nodes {{ isResolved comments(first: 1) {{ nodes {{ author {{ __typename login }} body }} }} }} }}
+        reviews(last: 100) {{ nodes {{ submittedAt body author {{ __typename login }} }} }}
         head: commits(last: 1) {{ nodes {{ commit {{
           statusCheckRollup {{ state contexts(first: 100) {{ nodes {{
             __typename
@@ -341,6 +344,33 @@ def timeline_items(nodes: list[dict]) -> tuple[TimelineItem, ...]:
     )
 
 
+def _review_submissions(nodes: list[dict]) -> tuple[ReviewSubmission, ...]:
+    """Human review bodies to display; these are not unresolved threads."""
+    submissions = []
+    for node in nodes:
+        submitted_at = _parse_optional_time(node.get("submittedAt"))
+        author_node = node.get("author") or {}
+        author = _login(author_node)
+        body = node.get("body") or ""
+        if (
+            submitted_at is None
+            or not author
+            or not body.strip()
+            or author_node.get("__typename") == "Bot"
+            or is_bot(author)
+            or is_ai_comment(body)
+        ):
+            continue
+        submissions.append(
+            ReviewSubmission(
+                submitted_at=submitted_at,
+                author=author,
+                body=body,
+            )
+        )
+    return tuple(sorted(submissions, key=lambda submission: submission.submitted_at))
+
+
 def parse_snapshot(payload: dict) -> PrSnapshot:
     """Parse a ``PR_QUERY`` response."""
     nodes = payload["data"]["repository"]["pullRequests"]["nodes"]
@@ -379,6 +409,7 @@ def parse_snapshot(payload: dict) -> PrSnapshot:
         requested_reviewers=reviewers,
         additions=node["additions"],
         deletions=node["deletions"],
+        review_submissions=_review_submissions(node["reviews"]["nodes"]),
         commit_rollups=tuple(
             (entry["commit"]["oid"], _rollup_state(entry["commit"]))
             for entry in node["recent"]["nodes"]

@@ -4900,6 +4900,12 @@
             }
           ]
         },
+        "review_submissions": {
+          "items": {
+            "$ref": "#/$defs/ReviewSubmission"
+          },
+          "type": "array"
+        },
         "title": {
           "type": "string"
         }
@@ -4915,7 +4921,8 @@
         "created",
         "ended",
         "is_draft",
-        "events"
+        "events",
+        "review_submissions"
       ],
       "title": "PrDetail",
       "type": "object"
@@ -5693,6 +5700,27 @@
       ],
       "title": "ReviewState",
       "type": "string"
+    },
+    "ReviewSubmission": {
+      "additionalProperties": false,
+      "properties": {
+        "author": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "submitted_at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "author",
+        "body",
+        "submitted_at"
+      ],
+      "title": "ReviewSubmission",
+      "type": "object"
     },
     "ReviewersCatalogState": {
       "additionalProperties": false,

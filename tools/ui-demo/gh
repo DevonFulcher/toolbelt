@@ -150,6 +150,7 @@ def pr(n, title, **o):
         "reviewThreads": {
             "nodes": [{"isResolved": False}] * threads + [{"isResolved": True}]
         },
+        "reviews": {"nodes": []},
         "head": {
             "nodes": [
                 {

@@ -13,6 +13,7 @@ import pytest
 
 from toolbelt.git.stack.status import CiState, PrState, ReviewState
 from toolbelt.ui import pr_activity as pa
+from toolbelt.ui.next_action import next_action
 from toolbelt.ui.pr_fetch import NO_SNAPSHOT, PR_QUERY, fetch_snapshot, parse_snapshot
 
 ROOT = Path("/repo")
@@ -37,6 +38,7 @@ def pr_node(**overrides) -> dict:
         "author": {"login": "devon"},
         "reviewRequests": {"nodes": []},
         "reviewThreads": {"nodes": []},
+        "reviews": {"nodes": []},
         "head": {
             "nodes": [
                 {
@@ -349,6 +351,55 @@ def test_the_query_asks_for_the_first_comments_body_to_tell_who_wrote_it():
         r"reviewThreads\(first: 100\) \{ nodes \{ isResolved comments\(first: 1\) "
         r"\{ nodes \{ author \{ __typename login \} body \}",
         PR_QUERY,
+    )
+
+
+def test_review_submission_bodies_are_displayed_without_counting_as_open_threads():
+    node = pr_node(
+        reviewThreads={
+            "nodes": [_thread(resolved=False, typename="User", login="lee")]
+        },
+        reviews={
+            "nodes": [
+                {
+                    "submittedAt": "2026-10-02T08:00:00Z",
+                    "body": "Looks good to me.",
+                    "author": {"__typename": "User", "login": "sam"},
+                },
+                {
+                    "submittedAt": "2026-10-02T09:00:00Z",
+                    "body": "Automated review.",
+                    "author": {"__typename": "Bot", "login": "reviewer[bot]"},
+                },
+                {
+                    "submittedAt": "2026-10-02T10:00:00Z",
+                    "body": "   ",
+                    "author": {"__typename": "User", "login": "lee"},
+                },
+            ]
+        },
+    )
+
+    snapshot = parse_snapshot(response(node))
+
+    assert snapshot.status.open_comments == 1
+    assert snapshot.status.bot_comments == 0
+    assert snapshot.facts is not None
+    assert [(item.author, item.body) for item in snapshot.facts.review_submissions] == [
+        ("sam", "Looks good to me.")
+    ]
+
+    body_only = parse_snapshot(response(pr_node(reviews=node["reviews"])))
+    assert body_only.status.open_comments == 0
+    assert next_action(body_only.status, None).kind != "resolve_comments"
+
+
+def test_the_query_fetches_review_submission_body_and_author_type():
+    from toolbelt.ui.pr_fetch import PR_QUERY
+
+    assert (
+        "reviews(last: 100) { nodes { submittedAt body author { __typename login } } }"
+        in PR_QUERY
     )
 
 
