@@ -14,16 +14,17 @@ A repo counts as ``live`` once its process has stayed up for ``ready_seconds``
 (it exits at once when it cannot register the webhook). The status refresher
 then polls that repo only as a safety net.
 
-Only what toolbelt itself created is ever cleaned up (``forwarder_ledger.py``).
-A webhook is recorded as toolbelt's when a forwarder of its own was running as
+Only hooks known to be toolbelt's relay are cleaned up (``forwarder_ledger.py``).
+A webhook is recorded in the ledger when a forwarder of its own was running as
 it appeared (the repo can hold only one) or exited right after creating it.
 When a forwarder dies, or is killed before it can close its websocket (a
 reboot, a server killed hard), GitHub leaves the webhook behind and it blocks
 the repo; GitHub lists it as active until deliveries to it fail, so "active"
 does not mean something is connected. A webhook in the ledger is deleted when no
 forwarder of ours is alive for the repo (or when GitHub says it is inactive),
-and the forwarder is started again at once; one that is not in the ledger
-(somebody else's, or of unknown origin) is left alone and reported as blocking.
+and the forwarder is started again at once. An inactive webhook with the exact
+relay URL used by toolbelt is also deleted when it is missing from the ledger;
+active webhooks missing from the ledger are left alone and reported as blocking.
 The pid of each forwarder is recorded too, and a forwarder that outlived a
 killed server is stopped at the next start.
 
@@ -66,9 +67,9 @@ RELAY_URL = "https://webhook-forwarder.github.com/hook"
 class Problem:
     """Why an administered repo's webhook is not working."""
 
-    #: The repo's one forwarded webhook is taken: ``claimed``: by a forwarder
-    #: that toolbelt did not start (it is connected now); ``leftover``: by a
-    #: webhook toolbelt did not create, with nothing connected to it;
+    #: The repo's one forwarded webhook is taken: ``claimed``: by an active
+    #: forwarder not started by this UI; ``leftover``: by an inactive
+    #: toolbelt-relay hook that could not be removed;
     #: ``blocked``: by something not known (the repo's webhooks could not be
     #: read). ``failed``: the forwarder stopped or could not start;
     #: ``not_installed``: the ``gh`` extension is missing.
@@ -172,7 +173,7 @@ class Hook:
 
 class HookApi(Protocol):
     async def list(self, slug: str) -> list[Hook]:
-        """The forwarded webhooks of ``slug``."""
+        """The ``cli`` webhooks of ``slug`` whose URL equals ``RELAY_URL``."""
         ...
 
     async def delete(self, slug: str, hook_id: int) -> None: ...
@@ -428,8 +429,8 @@ class WebhookForwarders:
         return came_up
 
     async def _who_blocks(self, slug: str) -> Problem | None:
-        """Says what holds the repo's one webhook when it is not toolbelt's:
-        a forwarder connected to it, or one nothing is connected to."""
+        """Says what holds the repo's one webhook when its hook is untracked:
+        an active forwarder, or an inactive relay hook that could not be removed."""
         if self._hooks is None:
             return None
         try:
@@ -442,15 +443,15 @@ class WebhookForwarders:
         if any(hook.active for hook in outside):
             return Problem(
                 "claimed",
-                "Another forwarder, not started by toolbelt, is connected to this "
-                "repo's webhook. GitHub allows one per repo, so toolbelt cannot "
-                "forward it until that stops.",
+                "An active forwarder not started by this UI is connected to this "
+                "repo's toolbelt-relay webhook. GitHub allows one per repo, so "
+                "toolbelt cannot forward it until that stops.",
             )
         return Problem(
             "leftover",
-            "A forwarded webhook that toolbelt did not create is registered on this "
-            "repo with nothing connected to it, so toolbelt cannot forward it. "
-            "Delete it in the repo's webhook settings if it is yours.",
+            "An inactive webhook with toolbelt's relay URL is still registered on "
+            "this repo, and toolbelt could not remove it. It blocks forwarding "
+            "until it can be deleted.",
         )
 
     async def _hook_ids(self, slug: str) -> set[int] | None:
@@ -482,15 +483,13 @@ class WebhookForwarders:
         return command is not None and _is_forwarder_of(command, slug)
 
     async def _reclaim(self, slug: str) -> bool:
-        """Deletes the webhooks of ``slug`` that toolbelt created and nothing is
-        connected to: GitHub lists them inactive, or no forwarder of ours is
-        alive for the repo (nothing else is ever deleted). Returns whether it
-        deleted any."""
+        """Deletes inactive toolbelt-relay hooks, and known hooks whose forwarder
+        is gone. An inactive hook missing from the ledger is safe to reclaim
+        because HookApi.list only returns hooks at the exact toolbelt relay URL.
+        Returns whether it deleted any."""
         if self._hooks is None:
             return False
         ours = self._ledger.hooks(slug)
-        if not ours:
-            return False
         try:
             found = await self._hooks.list(slug)
         except RuntimeError:  # rate limited, or GitHub refused: leave it be
@@ -498,9 +497,10 @@ class WebhookForwarders:
         for gone in ours - {hook.id for hook in found}:
             self._ledger.forget_hook(slug, gone)
         deleted = False
-        alive = await self._forwarder_alive(slug)
+        alive = await self._forwarder_alive(slug) if ours else False
         for hook in found:
-            if hook.id in ours and (not hook.active or not alive):
+            recorded = hook.id in ours
+            if not hook.active or (recorded and not alive):
                 try:
                     await self._hooks.delete(slug, hook.id)
                 except RateLimited:
@@ -513,9 +513,12 @@ class WebhookForwarders:
                         failure,
                     )
                     continue
-                self._ledger.forget_hook(slug, hook.id)
+                if recorded:
+                    self._ledger.forget_hook(slug, hook.id)
                 logger.warning(
-                    "deleted toolbelt's leftover webhook %s of %s", hook.id, slug
+                    "deleted inactive toolbelt-relay webhook %s of %s",
+                    hook.id,
+                    slug,
                 )
                 deleted = True
         return deleted

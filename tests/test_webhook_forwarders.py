@@ -6,7 +6,12 @@ import asyncio
 import signal
 
 from toolbelt.ui.forwarder_ledger import MemoryLedger
-from toolbelt.ui.webhook_forwarders import Hook, WebhookForwarders
+from toolbelt.ui.webhook_forwarders import (
+    RELAY_URL,
+    GithubHooks,
+    Hook,
+    WebhookForwarders,
+)
 
 
 class FakeProcess:
@@ -92,6 +97,16 @@ class Setup:
         await self.release_sleep.wait()
 
 
+class FakeGithubRequests:
+    def __init__(self, hook_rows: list[dict[str, object]]) -> None:
+        self.hook_rows = hook_rows
+
+    async def get_json(self, path: str, *, caller: str) -> list[dict[str, object]]:
+        assert path == "repos/o/mine/hooks?per_page=100"
+        assert caller == "webhooks"
+        return self.hook_rows
+
+
 async def settle() -> None:
     for _ in range(10):
         await asyncio.sleep(0)
@@ -112,6 +127,25 @@ def test_a_forwarder_runs_for_each_repo_the_user_administers_only():
         await s.forwarders.stop()
 
     asyncio.run(scenario())
+
+
+def test_github_hooks_only_lists_cli_hooks_with_the_toolbelt_relay_url():
+    requests = FakeGithubRequests(
+        [
+            {"id": 1, "active": False, "name": "cli", "config": {"url": RELAY_URL}},
+            {
+                "id": 2,
+                "active": False,
+                "name": "cli",
+                "config": {"url": "https://other.example/hook"},
+            },
+            {"id": 3, "active": False, "name": "web", "config": {"url": RELAY_URL}},
+        ]
+    )
+
+    assert asyncio.run(GithubHooks(requests).list("o/mine")) == [
+        Hook(id=1, active=False)
+    ]
 
 
 def test_a_repo_is_not_live_until_its_process_has_stayed_up():
@@ -494,26 +528,23 @@ class TestOwnedHooks:
 
         asyncio.run(scenario())
 
-    def test_a_webhook_toolbelt_did_not_create_is_never_deleted(self):
+    def test_an_inactive_untracked_toolbelt_relay_hook_is_deleted_before_forwarding(
+        self,
+    ):
         async def scenario():
             s, hooks, ledger = owned()
-            hooks.create("o/mine", active=False)  # somebody's, or of unknown origin
-
-            def on_spawn(slug, process):
-                process.error = (
-                    "error creating webhook: Hook already exists on this repository"
-                )
-                process.exit(1)
-
-            s.on_spawn = on_spawn
+            hooks.create(
+                "o/mine", active=False
+            )  # exact relay URL, but absent from the ledger
+            s.on_spawn = lambda slug, process: hooks.create(slug, active=True)
             await s.forwarders.reconcile()
             await settle()
 
-            problem = s.forwarders.problem("o/mine")
-            assert problem is not None and problem.state == "leftover"
-            assert "toolbelt did not create" in problem.text
-            assert hooks.deleted == []
-            assert ledger.hooks("o/mine") == set()
+            assert hooks.deleted == [("o/mine", 100)]
+            assert len(s.processes) == 1
+            assert s.forwarders.is_live("o/mine")
+            assert s.forwarders.problem("o/mine") is None
+            assert ledger.hooks("o/mine") == {101}
             await s.forwarders.stop()
 
         asyncio.run(scenario())
@@ -521,7 +552,6 @@ class TestOwnedHooks:
     def test_a_422_without_a_reason_is_a_taken_webhook_not_a_plain_failure(self):
         async def scenario():
             s, hooks, _ledger = owned()
-            hooks.create("o/mine", active=False)  # somebody's, or of unknown origin
 
             def on_spawn(slug, process):
                 process.error = (
@@ -535,7 +565,8 @@ class TestOwnedHooks:
             await settle()
 
             problem = s.forwarders.problem("o/mine")
-            assert problem is not None and problem.state == "leftover"
+            assert problem is not None and problem.state == "blocked"
+            assert hooks.deleted == []
             await s.forwarders.stop()
 
         asyncio.run(scenario())
@@ -559,7 +590,7 @@ class TestOwnedHooks:
 
             problem = s.forwarders.problem("o/mine")
             assert problem is not None and problem.state == "claimed"
-            assert "not started by toolbelt" in problem.text
+            assert "not started by this UI" in problem.text
             assert hooks.deleted == []
             assert ledger.hooks("o/mine") == set()
             await s.forwarders.stop()
@@ -588,23 +619,33 @@ class TestOwnedHooks:
 
         asyncio.run(scenario())
 
-    def test_a_blocked_start_does_not_claim_a_webhook_that_appeared_meanwhile(self):
+    def test_a_blocked_start_reclaims_an_inactive_relay_hook_that_appeared_meanwhile(
+        self,
+    ):
         async def scenario():
             s, hooks, ledger = owned()
+            spawned = []
 
             def on_spawn(slug, process):
-                hooks.create(slug, active=False)  # somebody else won the race
-                process.error = (
-                    "error creating webhook: Hook already exists on this repository"
-                )
-                process.exit(1)
+                spawned.append(process)
+                if len(spawned) == 1:
+                    hooks.create(
+                        slug, active=False
+                    )  # appeared after the pre-start lookup
+                    process.error = (
+                        "error creating webhook: Hook already exists on this repository"
+                    )
+                    process.exit(1)
+                else:
+                    hooks.create(slug, active=True)
 
             s.on_spawn = on_spawn
             await s.forwarders.reconcile()
             await settle()
 
-            assert ledger.hooks("o/mine") == set()
-            assert hooks.deleted == []
+            assert hooks.deleted == [("o/mine", 100)]
+            assert ledger.hooks("o/mine") == {101}
+            assert s.forwarders.is_live("o/mine")
             await s.forwarders.stop()
 
         asyncio.run(scenario())

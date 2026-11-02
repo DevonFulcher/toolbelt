@@ -63,18 +63,17 @@ Without the extension, or on a repo without admin rights, nothing is forwarded
 and the repo falls back to the two ways below.
 
 **What toolbelt cleans up, and only that.** GitHub's record of a forwarded
-webhook does not say who made it, so `forwarder_ledger.py` writes down (in the
-stack DB's settings) what toolbelt is certain is its own: the ids of webhooks
-that appeared while a forwarder of its own was starting or running (the repo
-holds only one, so it is that forwarder's), and the pid of each forwarder it
-starts. A webhook a killed forwarder left behind, if it is in the ledger, is
-deleted and the forwarder starts again at once: when GitHub lists it inactive,
-or when no forwarder recorded for the repo is still running (GitHub keeps
-listing it active, so "active" does not mean something is connected). A webhook
-that is not in the ledger (somebody else's, or of unknown origin), or that has
-a recorded forwarder still running, is never deleted. A
-forwarder that outlived a killed server is stopped at the next start, if its
-recorded pid is still a `gh webhook forward` for that repo.
+webhook does not say who made it. `forwarder_ledger.py` records the ids of
+webhooks that appeared while one of toolbelt's forwarders was starting or
+running, plus the pid of each forwarder it starts. The `cli` hook with the
+exact `RELAY_URL` used by toolbelt identifies its relay endpoint, so an inactive
+hook matching both is deleted even if its id is missing from the ledger. A
+recorded hook is also deleted when no forwarder recorded for the repo is still
+running (GitHub can keep listing it active after a process dies, so "active"
+does not always mean connected). Active untracked hooks are left alone and
+reported as blocking; unrelated webhook URLs are never deleted. A forwarder
+that outlived a killed server is stopped at the next start if its recorded pid
+is still a `gh webhook forward` for that repo.
 
 **When a repo you administer has no working webhook, its cards say so**: a
 badge next to the repo name, with the reason on hover. The reason is the
