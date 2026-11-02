@@ -1,10 +1,9 @@
-// Post (or bump) a PR in Slack: the message toolbelt would send, for the user to
-// read, edit and confirm. Opened by the Post in Slack / Bump in Slack button (or the
-// Reassign button of a posted PR) of a
-// card; nothing is sent until Send is pressed.
+// Lets the user review, edit and confirm a Slack message for a PR. A draft can
+// also be marked ready from this dialog. Opened from a card; nothing is sent
+// until the user confirms.
 import { useEffect, useState } from "react";
-import { fetchSlackDraft, sendSlack } from "../api/client";
-import type { SlackDraft } from "../api/generated";
+import { fetchSlackDraft, publishSlack, sendSlack } from "../api/client";
+import type { SlackDraft, SlackSendRequest } from "../api/generated";
 import { prInfo, renameMention } from "../logic/slackText";
 import { Dialog } from "./Dialog";
 
@@ -26,12 +25,15 @@ export function SlackDialog({
   id,
   onClose,
   reassign = false,
+  publish = false,
 }: {
   id: string;
   onClose: () => void;
   /** Ask someone else to review the PR in the thread it was posted in, instead of the
    * post or bump the branch's next action calls for. */
   reassign?: boolean;
+  /** Publish the draft PR before posting the confirmed Slack message. */
+  publish?: boolean;
 }) {
   const [phase, setPhase] = useState<Phase>({ name: "loading" });
   const [text, setText] = useState("");
@@ -61,7 +63,7 @@ export function SlackDialog({
   }, [id, reassign]);
 
   const draft = phase.name === "loading" || phase.name === "failed" ? null : phase.draft;
-  const title = draft ? TITLES[draft.kind] : "Slack";
+  const title = publish ? "Publish PR and post in Slack" : draft ? TITLES[draft.kind] : "Slack";
 
   const nameOf = (personId: string | null): string | undefined =>
     draft?.candidates.find((person) => person.id === personId)?.name;
@@ -134,9 +136,13 @@ export function SlackDialog({
   const send = (): void => {
     if (phase.name !== "ready") return;
     const { draft: ready } = phase;
+    if (publish && ready.kind !== "post") {
+      setProblem("Publishing a PR requires a new Slack post.");
+      return;
+    }
     setProblem(null);
     setPhase({ name: "sending", draft: ready });
-    sendSlack({
+    const request: SlackSendRequest = {
       id,
       kind: ready.kind,
       text,
@@ -145,7 +151,8 @@ export function SlackDialog({
       prs: ready.prs.flatMap((pr, index) =>
         checked[index] ? [{ repo: pr.repo, number: pr.number, assignee_id: assignees[index] ?? null }] : [],
       ),
-    })
+    };
+    (publish ? publishSlack({ ...request, kind: "post" }) : sendSlack(request))
       .then(onClose) // it posts in the background: the card shows how it went
       .catch((error: unknown) => {
         setProblem(error instanceof Error ? error.message : String(error));
@@ -163,6 +170,13 @@ export function SlackDialog({
       )}
       {draft && (
         <div className="slack-dialog">
+          {publish && (
+            <p className="muted">
+              {draft.prs.some((pr) => pr.pr === "draft")
+                ? "The draft PR will be marked ready for review before this message is posted."
+                : "The PR will be compressed before this message is posted."}
+            </p>
+          )}
           <p className="muted">
             {draft.kind === "post" ? "Posts to" : "Replies in a thread of"} <code>{draft.channel}</code> about{" "}
             {covered.map((pr, index) => (
@@ -267,11 +281,18 @@ export function SlackDialog({
               disabled={phase.name !== "ready" || text.trim() === "" || covered.length === 0}
               onClick={send}
             >
-              {phase.name === "sending" ? "Sending…" : SEND_LABELS[draft.kind]}
+              {phase.name === "sending"
+                ? publish
+                  ? "Publishing PR and posting in Slack…"
+                  : "Sending…"
+                : publish
+                  ? "Publish PR and post in Slack"
+                  : SEND_LABELS[draft.kind]}
             </button>{" "}
             <span className="muted">
-              Sends exactly this text, with @names turned into mentions. It posts in the background: the card shows when
-              it is done.
+              {publish
+                ? "Confirms this text, publishes the PR, and posts in Slack in the background. The card shows when it is done."
+                : "Sends exactly this text, with @names turned into mentions. It posts in the background: the card shows when it is done."}
             </span>
           </p>
         </div>

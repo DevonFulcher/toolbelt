@@ -31,9 +31,16 @@ CONFIG = SlackConfig(
 )
 
 
-def fetched(number: int, title: str, lines=(10, 2)) -> Fetched:
+def fetched(
+    number: int,
+    title: str,
+    lines=(10, 2),
+    *,
+    pr_state: PrState = PrState.OPEN,
+    is_draft: bool = False,
+) -> Fetched:
     status = BranchStatus(
-        pr=PrState.OPEN,
+        pr=pr_state,
         ci=CiState.SUCCESS,
         review=ReviewState.REQUESTED,
         url=f"https://github.com/o/r/pull/{number}",
@@ -45,7 +52,7 @@ def fetched(number: int, title: str, lines=(10, 2)) -> Fetched:
         base_ref="main",
         head_oid="abc",
         state="OPEN",
-        is_draft=False,
+        is_draft=is_draft,
         created_at=NOW - timedelta(days=3),
         merged_at=None,
         closed_at=None,
@@ -201,6 +208,17 @@ def test_a_post_covers_the_branch_and_its_stack_bottom_first_with_one_assignee()
     ]
     assert draft.thread_ts is None
     assert [c.name for c in draft.candidates] == ["will", "alan", "dan"]
+
+
+def test_a_publish_draft_contains_only_the_selected_draft_pr():
+    rig = Rig()
+    rig.kinds["b"] = "publish"
+    rig.looked_up["b"] = fetched(2, "DI-2: Top", pr_state=PrState.DRAFT, is_draft=True)
+
+    draft = rig.service.draft(1, "b", None)
+
+    assert draft.kind == "post"
+    assert [(pr.number, pr.pr, pr.included) for pr in draft.prs] == [(2, "draft", True)]
 
 
 def test_a_stack_member_an_agent_holds_is_listed_unchecked_and_left_out_of_the_text():

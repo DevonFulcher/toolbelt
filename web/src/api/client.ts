@@ -207,6 +207,14 @@ export function sendSlack(request: SlackSendRequest, fetchImpl: typeof fetch = f
   return postJson<SlackAccepted>("/api/slack/send", request, fetchImpl);
 }
 
+/** Compress a ready PR or mark a draft PR ready, then post the confirmed Slack message. */
+export function publishSlack(
+  request: Omit<SlackSendRequest, "kind"> & { kind: "post" },
+  fetchImpl: typeof fetch = fetch,
+): Promise<SlackAccepted> {
+  return postJson<SlackAccepted>("/api/slack/publish", request, fetchImpl);
+}
+
 /** Merge the branch's PR as soon as its CI has passed; rejects with the server's
  * reason when it is not approved and waiting on nothing but CI. */
 export function queueMerge(id: string, fetchImpl: typeof fetch = fetch): Promise<MergeQueueInfo> {

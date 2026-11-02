@@ -490,10 +490,25 @@ describe("claims", () => {
 });
 
 describe("a card whose next action is about Slack", () => {
-  const next = (kind: "post_slack" | "bump_slack", label: string) =>
-    pr({ pr_number: 8, pr: "open", next: { label, who: "you", kind, would_be: null } });
+  const configuredSlack = {
+    assignee: null,
+    bump_due: false,
+    last_at: null,
+    last_kind: null,
+    notice: null,
+    posted: false,
+    posting: false,
+    thread_link: null,
+  };
+  const next = (kind: "publish" | "post_slack" | "bump_slack", label: string) =>
+    pr({
+      pr_number: 8,
+      pr: kind === "publish" ? "draft" : "open",
+      next: { label, who: "you", kind, would_be: null },
+    });
 
   test.each([
+    ["publish", "Publish PR"],
     ["post_slack", "Post in Slack"],
     ["bump_slack", "Bump in Slack"],
   ] as const)("%s is a button that opens the message, and posts nothing by itself", async (kind, label) => {
@@ -501,7 +516,7 @@ describe("a card whose next action is about Slack", () => {
       ok: true,
       status: 200,
       json: async () => ({
-        kind: kind === "post_slack" ? "post" : "bump",
+        kind: kind === "bump_slack" ? "bump" : "post",
         channel: path === "/api/slack/draft" ? "DTEST" : "?",
         text: "the message",
         assignee: null,
@@ -513,16 +528,33 @@ describe("a card whose next action is about Slack", () => {
     }));
     vi.stubGlobal("fetch", fetchMock);
     try {
-      showCards([branch(1, "devon/a", { status: next(kind, label) })]);
+      showCards([
+        branch(1, "devon/a", {
+          status: next(kind, label),
+          ...(kind === "publish" || kind === "post_slack" ? { slack: configuredSlack } : {}),
+        }),
+      ]);
 
-      act(() => screen.getByRole("button", { name: label }).click());
+      const buttonLabel = kind === "bump_slack" ? label : "Publish PR";
+      act(() => screen.getByRole("button", { name: buttonLabel }).click());
 
-      expect(await screen.findByRole("dialog", { name: label })).toBeInTheDocument();
+      expect(
+        await screen.findByRole("dialog", {
+          name: kind === "bump_slack" ? label : "Publish PR and post in Slack",
+        }),
+      ).toBeInTheDocument();
       expect(await screen.findByDisplayValue("the message")).toBeInTheDocument();
       expect(fetchMock.mock.calls.map(([called]) => called)).toEqual(["/api/slack/draft"]);
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  test("a draft without Slack configuration keeps the GitHub-only publish action", () => {
+    showCards([branch(1, "devon/a", { status: next("publish", "Publish PR in GitHub") })]);
+
+    expect(screen.queryByRole("button", { name: "Publish PR" })).toBeNull();
+    expect(screen.getByText("Publish PR in GitHub")).toBeInTheDocument();
   });
 });
 
@@ -635,17 +667,17 @@ describe("a card while a message is posted in the background", () => {
     ...over,
   });
 
-  test("the button is disabled and says it is posting, and the status says so too", () => {
+  test("the button says it is publishing and the status says the Slack post is in progress", () => {
     showCards([branch(1, "devon/a", { status: next, slack: slackInfo({ posting: true }) })]);
 
-    expect(screen.getByRole("button", { name: "Posting in Slack…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Publishing PR…" })).toBeDisabled();
     expect(slotsOf("devon/a").slack_status[2]).toBe("Posting in Slack…");
   });
 
   test("a failed post says why on the card and the button is there to try again", () => {
     showCards([branch(1, "devon/a", { status: next, slack: slackInfo({ notice: "Posting in Slack failed: timed out" }) })]);
 
-    expect(screen.getByRole("button", { name: "Post in Slack" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Publish PR" })).toBeEnabled();
     expect(screen.getByRole("alert")).toHaveTextContent("Posting in Slack failed: timed out");
   });
 

@@ -159,6 +159,8 @@ class SlackService:
         kind = self._next_kind(repo_id, branch)
         if kind == "post_slack":
             return self._draft_post(repo_id, branch, assignee_id, include)
+        if kind == "publish":
+            return self._draft_publish(repo_id, branch, assignee_id, include)
         if kind == "bump_slack":
             return self._draft_bump(repo_id, branch, assignee_id)
         raise SlackNotApplicable(
@@ -191,6 +193,30 @@ class SlackService:
             elif not _held_post(action):
                 continue
             candidates.append(pr)
+        return self._compose_post(repo_id, assignee_id, include, candidates, ready)
+
+    def _draft_publish(
+        self,
+        repo_id: int,
+        branch: str,
+        assignee_id: str | None,
+        include: list[api.SlackPrRef] | None,
+    ) -> api.SlackDraft:
+        action = self._next_action(repo_id, branch)
+        pr = self._pr(repo_id, branch)
+        if action is None or action.kind != "publish" or pr is None:
+            raise SlackNotApplicable("This draft PR is no longer ready to publish.")
+        return self._compose_post(repo_id, assignee_id, include, [pr], {branch})
+
+    def _compose_post(
+        self,
+        repo_id: int,
+        assignee_id: str | None,
+        include: list[api.SlackPrRef] | None,
+        candidates: list[_Pr],
+        ready: set[str],
+    ) -> api.SlackDraft:
+        parents = self._parents(repo_id)
         if include is None:
             wanted: dict[tuple[str, int], str | None] = {
                 (pr.repo, pr.number): None for pr in candidates if pr.branch in ready
@@ -425,6 +451,45 @@ class SlackService:
         Slack session takes tens of seconds, so this returns at once and the
         PRs read ``posting`` (see ``SlackTracker``) until it is done. Raises
         when it cannot go (already posted or being posted, not that thread)."""
+        prs = self.validate_send(request)
+        self._begin_posting(prs)
+        return self._accept(request, prs)
+
+    def begin_publish(self, request: api.SlackSendRequest) -> list[_Pr]:
+        """Reserve the selected PRs while compression and GitHub run."""
+        prs = self.validate_send(request)
+        self._begin_posting(prs)
+        return prs
+
+    def fail_publish(self, prs: list[_Pr], notice: str) -> None:
+        """Release a publish reservation and show its failure on the cards."""
+        keys = [(pr.repo, pr.number) for pr in prs]
+        branches = {(pr.repo_id, pr.branch) for pr in prs}
+        self._tracker.end_posting(keys, notice)
+        self._changed(branches)
+
+    def send_published(
+        self, request: api.SlackSendRequest, prs: list[_Pr]
+    ) -> api.SlackAccepted:
+        """Start Slack posting after the publish reservation did its preparation."""
+        return self._accept(request, prs)
+
+    def _begin_posting(self, prs: list[_Pr]) -> None:
+        keys = [(pr.repo, pr.number) for pr in prs]
+        branches = {(pr.repo_id, pr.branch) for pr in prs}
+        self._tracker.begin_posting(keys)
+        self._changed(branches)
+
+    def _accept(
+        self, request: api.SlackSendRequest, prs: list[_Pr]
+    ) -> api.SlackAccepted:
+        task = asyncio.create_task(self._post(request, prs))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return api.SlackAccepted(prs=request.prs)
+
+    def validate_send(self, request: api.SlackSendRequest) -> list[_Pr]:
+        """Check a post before any publish preparation rewrites the branch."""
         prs = [self._pr_of(ref) for ref in request.prs]
         if not prs:
             raise SlackNotApplicable("The message names no PR.")
@@ -449,14 +514,7 @@ class SlackService:
                 self._require_configured_channel(last, pr)
         if request.kind == "reassign" and len(prs) != 1:
             raise SlackNotApplicable("A reassignment is about one PR.")
-        keys = [(pr.repo, pr.number) for pr in prs]
-        branches = {(pr.repo_id, pr.branch) for pr in prs}
-        self._tracker.begin_posting(keys)
-        self._changed(branches)
-        task = asyncio.create_task(self._post(request, prs))
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
-        return api.SlackAccepted(prs=request.prs)
+        return prs
 
     async def idle(self) -> None:
         """Returns when no post is in flight."""

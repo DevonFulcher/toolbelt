@@ -15,6 +15,7 @@ from toolbelt.git.stack.store import RepoIdentity, StackStore, default_db_path
 from toolbelt.ui.app import create_app
 from toolbelt.ui.pr_activity import PrFacts
 from toolbelt.ui.pr_fetch import PrSnapshot
+from toolbelt.ui.publish_pr import PublishOutcome
 from toolbelt.ui.slack_compose import Person
 from toolbelt.ui.slack_config import AssignRule, SlackConfig
 from toolbelt.ui.slack_proxy import SentMessage, SlackProxyError
@@ -30,6 +31,7 @@ CONFIG = SlackConfig(
 class FakeProxy:
     def __init__(self) -> None:
         self.sent: list[dict] = []
+        self.publish_calls: list[tuple[Path, str, int, bool]] = []
         self.fail: str | None = None
 
     async def send(self, *, channel, text, thread_ts=None) -> SentMessage:
@@ -46,7 +48,18 @@ class FakeProxy:
         )
 
 
-def facts(number: int, title: str) -> PrFacts:
+class FakePublisher:
+    def __init__(self, calls: list[tuple[Path, str, int, bool]]) -> None:
+        self.calls = calls
+
+    def __call__(
+        self, repo_root: Path, branch: str, pr_number: int, *, is_draft: bool
+    ) -> PublishOutcome:
+        self.calls.append((repo_root, branch, pr_number, is_draft))
+        return PublishOutcome(True, "compressed")
+
+
+def facts(number: int, title: str, *, is_draft: bool = False) -> PrFacts:
     return PrFacts(
         number=number,
         title=title,
@@ -54,7 +67,7 @@ def facts(number: int, title: str) -> PrFacts:
         base_ref="main",
         head_oid="abc",
         state="OPEN",
-        is_draft=False,
+        is_draft=is_draft,
         created_at=datetime.now(UTC) - timedelta(days=2),
         merged_at=None,
         closed_at=None,
@@ -66,9 +79,9 @@ def facts(number: int, title: str) -> PrFacts:
     )
 
 
-def status(number: int) -> BranchStatus:
+def status(number: int, *, is_draft: bool = False) -> BranchStatus:
     return BranchStatus(
-        pr=PrState.OPEN,
+        pr=PrState.DRAFT if is_draft else PrState.OPEN,
         ci=CiState.SUCCESS,
         review=ReviewState.NONE,
         url=f"https://github.com/o/r/pull/{number}",
@@ -101,11 +114,47 @@ def rig(tmp_path: Path):
         fetch=fetch,
         slack_settings=CONFIG,
         slack_proxy=proxy,  # type: ignore[arg-type]
+        publisher=FakePublisher(proxy.publish_calls),
         tick=0.05,  # a change another process makes to the database is seen at once
     )
     asyncio.run(app.state.refresher.run_once())
     # In a ``with`` so the app's event loop outlives a request: a post runs in
     # the background after its request has been answered.
+    with TestClient(app) as client:
+        yield app, repo_id, proxy, client
+
+
+@pytest.fixture
+def draft_rig(tmp_path: Path):
+    store = StackStore(default_db_path())
+    path = tmp_path / "r"
+    path.mkdir()
+    repo_id = store.ensure_repo(
+        RepoIdentity(
+            git_common_dir=path / ".git", path=path, remote_url="git@github.com:o/r.git"
+        )
+    )
+    store.set_parent(repo_id, "a", "main")
+    store.set_parent(repo_id, "b", "a")
+    store.close()
+
+    async def fetch(branch: str, root: Path) -> PrSnapshot:
+        number = {"a": 1, "b": 2}[branch]
+        is_draft = branch == "b"
+        return PrSnapshot(
+            status(number, is_draft=is_draft),
+            facts(number, f"DI-{number}: Change {branch}", is_draft=is_draft),
+        )
+
+    proxy = FakeProxy()
+    app = create_app(
+        fetch=fetch,
+        slack_settings=CONFIG,
+        slack_proxy=proxy,  # type: ignore[arg-type]
+        publisher=FakePublisher(proxy.publish_calls),
+        tick=0.05,
+    )
+    asyncio.run(app.state.refresher.run_once())
     with TestClient(app) as client:
         yield app, repo_id, proxy, client
 
@@ -229,6 +278,57 @@ def test_posting_the_draft_sends_it_records_it_and_changes_the_cards(rig):
     for branch in (f"{repo_id}:a", f"{repo_id}:b"):
         assert (branch, True, False) in states and (branch, False, True) in states
         assert states.index((branch, True, False)) < states.index((branch, False, True))
+
+
+def test_publish_compresses_the_branch_then_posts_the_confirmed_message(rig):
+    _, repo_id, proxy, client = rig
+    draft = client.post(
+        "/api/slack/draft", json={"id": f"{repo_id}:b", "assignee_id": None}
+    ).json()
+    request = {
+        "id": f"{repo_id}:b",
+        "kind": "post",
+        "text": draft["text"],
+        "assignee_id": draft["assignee"]["id"],
+        "thread_ts": None,
+        "prs": [
+            {"repo": pr["repo"], "number": pr["number"]}
+            for pr in draft["prs"]
+            if pr["included"]
+        ],
+    }
+
+    response = client.post("/api/slack/publish", json=request)
+
+    assert response.status_code == 202
+    assert len(proxy.publish_calls) == 1
+    assert proxy.publish_calls[0][1:] == ("b", 2, False)
+    assert wait_until_posted(client, f"{repo_id}:b")["posted"] is True
+
+
+def test_publish_marks_a_draft_ready_before_posting_it(draft_rig):
+    _, repo_id, proxy, client = draft_rig
+    draft = client.post(
+        "/api/slack/draft", json={"id": f"{repo_id}:b", "assignee_id": None}
+    ).json()
+    request = {
+        "id": f"{repo_id}:b",
+        "kind": "post",
+        "text": draft["text"],
+        "assignee_id": draft["assignee"]["id"],
+        "thread_ts": None,
+        "prs": [
+            {"repo": pr["repo"], "number": pr["number"]}
+            for pr in draft["prs"]
+            if pr["included"]
+        ],
+    }
+
+    response = client.post("/api/slack/publish", json=request)
+
+    assert response.status_code == 202
+    assert proxy.publish_calls[0][1:] == ("b", 2, True)
+    assert wait_until_posted(client, f"{repo_id}:b")["posted"] is True
 
 
 def test_it_cannot_be_posted_twice(rig):

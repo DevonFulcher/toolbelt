@@ -160,7 +160,7 @@ from toolbelt.ui.merge_queue import (
     DEFAULT_TICK_SECONDS as DEFAULT_MERGE_QUEUE_TICK_SECONDS,
 )
 from toolbelt.ui.merge_queue import LandResult, MergeQueue, MergeQueueRefused
-from toolbelt.ui.next_action import MERGE, next_action
+from toolbelt.ui.next_action import MERGE, POST_SLACK, PUBLISH, next_action
 from toolbelt.ui.personal_review import (
     OpenPr,
     PersonalReview,
@@ -178,6 +178,7 @@ from toolbelt.ui.pr_gate import GithubChangeGate, PrGate
 from toolbelt.ui.proposal_feed import ProposalFeed
 from toolbelt.ui.proposal_worker import ProposalWorker, RepoRef
 from toolbelt.ui.proposals_view import build_proposals, proposal_info
+from toolbelt.ui.publish_pr import PublishRunner, publish_pr
 from toolbelt.ui.pushed_views import PushedViews, conversation_of
 from toolbelt.ui.repo_visibility import visible_repos
 from toolbelt.ui.review_routes import review_router
@@ -581,6 +582,7 @@ def create_app(
     spend_interval: float = spend_module.DEFAULT_INTERVAL_SECONDS,
     dispatcher: Dispatcher | None = None,
     merger: Callable[[Path, str], MergeOutcome] = run_toolbelt_merge,
+    publisher: PublishRunner = publish_pr,
     github: GithubRequests | None = None,
     slack_settings: SlackConfig | None = None,
     slack_proxy: SlackProxy | None = None,
@@ -1781,6 +1783,94 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(error)) from error
         except SlackUnknown as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.post("/api/slack/publish", response_model=api.SlackAccepted, status_code=202)
+    async def slack_publish(body: api.SlackSendRequest) -> api.SlackAccepted:
+        service = slack_on()
+        if body.kind != "post":
+            raise HTTPException(
+                status_code=409, detail="Publishing sends a new Slack post."
+            )
+        repo_id, name = branch_ref(body.id)
+        parents = await asyncio.to_thread(_all_parents, repo_id)
+        if name not in parents:
+            raise HTTPException(status_code=404, detail="no such branch")
+
+        try:
+            service.validate_send(body)
+        except SlackNotApplicable as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except SlackUnknown as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+        repo = next(
+            (
+                path
+                for registered_id, path, _ in _registered_repos()
+                if registered_id == repo_id
+            ),
+            None,
+        )
+        if repo is None:
+            raise HTTPException(status_code=404, detail="no such repo")
+        tracked = TrackedBranch(repo_id=repo_id, branch=name, path=repo)
+        try:
+            snapshot = await refresher.snapshot(tracked, max_age=0)
+        except RuntimeError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        action = branch_next(repo_id, name)
+        if action is None or action.kind not in (POST_SLACK, PUBLISH):
+            raise HTTPException(
+                status_code=409,
+                detail="This PR is no longer ready to publish.",
+            )
+        if snapshot.facts is None or snapshot.status.pr not in (
+            PrState.OPEN,
+            PrState.DRAFT,
+        ):
+            raise HTTPException(status_code=409, detail="This branch has no open PR.")
+        slug = slug_of_repo(repo_id)
+        if slug is None:
+            raise HTTPException(
+                status_code=404, detail="no GitHub remote for this repo"
+            )
+        target = (slug, snapshot.facts.number)
+        if not any((pr.repo, pr.number) == target for pr in body.prs):
+            raise HTTPException(
+                status_code=409,
+                detail="Keep this PR selected in the Slack post before publishing.",
+            )
+
+        try:
+            prs = service.begin_publish(body)
+        except SlackNotApplicable as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except SlackUnknown as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+        try:
+            outcome = await asyncio.to_thread(
+                publisher,
+                repo,
+                name,
+                snapshot.facts.number,
+                is_draft=snapshot.status.pr is PrState.DRAFT,
+            )
+            if not outcome.ok:
+                detail = (
+                    outcome.output or "The branch could not be prepared for review."
+                )
+                raise HTTPException(status_code=502, detail=detail)
+            await refresher.snapshot(tracked, max_age=0)
+        except HTTPException as error:
+            service.fail_publish(prs, f"Publishing PR failed: {error.detail}")
+            raise
+        except Exception as error:
+            service.fail_publish(prs, f"Publishing PR failed: {error}")
+            raise HTTPException(
+                status_code=502, detail=f"Publishing PR failed: {error}"
+            ) from error
+        return service.send_published(body, prs)
 
     @app.post("/api/agents/enabled", response_model=api.AgentsEnabled)
     async def set_agents_enabled(body: api.AgentsEnabled) -> api.AgentsEnabled:

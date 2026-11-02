@@ -389,6 +389,7 @@ export const Card = memo(
             note={note}
             claim={claim}
             session={sessionLink(claim, branch.agent)}
+            slack={slack}
             slackPosting={slack?.posting ?? false}
             queue={mergeQueue}
             siblings={siblings}
@@ -540,6 +541,7 @@ function NextSlot({
   note,
   claim,
   session,
+  slack,
   slackPosting,
   queue,
   siblings,
@@ -553,6 +555,8 @@ function NextSlot({
   claim: BranchClaim;
   /** The task's interactive session, when it has one. */
   session: Link | null;
+  /** Slack configuration and posting state for this branch. */
+  slack: SlackInfo | null;
   /** A message about the PR is being posted in Slack in the background. */
   slackPosting: boolean;
   /** Where the PR stands in the merge queue (``null``: nothing to say). */
@@ -587,7 +591,11 @@ function NextSlot({
         )
       ) : status.next.kind === "deciding" ? (
         <DecisionsButton id={id} label={status.next.label} session={session} />
-      ) : status.next.kind === "post_slack" || status.next.kind === "bump_slack" ? (
+      ) : status.next.kind === "publish" && slack !== null ? (
+        <SlackButton id={id} status={status} posting={slackPosting} publishing />
+      ) : status.next.kind === "post_slack" ? (
+        <SlackButton id={id} status={status} posting={slackPosting} publishing />
+      ) : status.next.kind === "bump_slack" ? (
         <SlackButton id={id} status={status} posting={slackPosting} />
       ) : (
         <Pill tone={WHO_TONE[status.next.who]} title={status.next.kind}>
@@ -775,9 +783,18 @@ function DecisionsButton({ id, label, session }: { id: string; label: string; se
   );
 }
 
-/** Next is Post in Slack or Bump in Slack: a button that opens the message for the
- * user to confirm. Nothing is posted until it is confirmed in the dialog. */
-function SlackButton({ id, status, posting }: { id: string; status: LoadedStatus; posting: boolean }) {
+/** Opens the confirmed Slack message flow; draft PRs are published by its endpoint. */
+function SlackButton({
+  id,
+  status,
+  posting,
+  publishing = false,
+}: {
+  id: string;
+  status: LoadedStatus;
+  posting: boolean;
+  publishing?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -786,12 +803,24 @@ function SlackButton({ id, status, posting }: { id: string; status: LoadedStatus
         className="merge-button"
         aria-haspopup="dialog"
         disabled={posting}
-        title={posting ? "Being posted in the background" : "Shows the message to post; nothing is sent until you confirm it"}
+        title={
+          posting
+            ? publishing
+              ? "Publishing the PR and posting in Slack"
+              : "Being posted in the background"
+            : "Shows the message to post; nothing is sent until you confirm it"
+        }
         onClick={() => setOpen(true)}
       >
-        {posting ? "Posting in Slack…" : status.next.label}
+        {posting
+          ? publishing
+            ? "Publishing PR…"
+            : "Posting in Slack…"
+          : publishing
+            ? "Publish PR"
+            : status.next.label}
       </button>
-      {open && <SlackDialog id={id} onClose={() => setOpen(false)} />}
+      {open && <SlackDialog id={id} onClose={() => setOpen(false)} publish={publishing} />}
     </>
   );
 }

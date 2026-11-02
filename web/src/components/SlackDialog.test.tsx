@@ -54,7 +54,11 @@ const two = (): SlackDraft =>
 const accepted = (): SlackAccepted => ({ prs: [{ repo: "o/r", number: 1 }] });
 
 /** A fetch that answers the draft and send endpoints; records what it was sent. */
-function serve(opts: { draft?: SlackDraft | { status: number; detail: string }; send?: SlackAccepted | { status: number; detail: string } }) {
+function serve(opts: {
+  draft?: SlackDraft | { status: number; detail: string };
+  send?: SlackAccepted | { status: number; detail: string };
+  publish?: SlackAccepted | { status: number; detail: string };
+}) {
   const calls: { path: string; body: unknown }[] = [];
   const answer = (value: unknown) => {
     const failure = value as { status?: number; detail?: string };
@@ -68,7 +72,9 @@ function serve(opts: { draft?: SlackDraft | { status: number; detail: string }; 
     vi.fn(async (path: string, init: RequestInit) => {
       const body = JSON.parse(String(init.body)) as unknown;
       calls.push({ path, body });
-      return path === "/api/slack/draft" ? answer(opts.draft ?? draft()) : answer(opts.send ?? accepted());
+      if (path === "/api/slack/draft") return answer(opts.draft ?? draft());
+      if (path === "/api/slack/publish") return answer(opts.publish ?? accepted());
+      return answer(opts.send ?? accepted());
     }),
   );
   return calls;
@@ -451,5 +457,70 @@ describe("the Post in Slack dialog", () => {
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Close" }));
 
     expect(onClose).toHaveBeenCalled();
+  });
+});
+
+describe("the Publish PR dialog", () => {
+  const openPublish = async (onClose: () => void = () => undefined) => {
+    render(<SlackDialog id="1:a" onClose={onClose} publish />);
+    return screen.findByRole("textbox");
+  };
+
+  test("compresses the ready PR and posts only after confirmation", async () => {
+    const calls = serve({});
+    const onClose = vi.fn();
+
+    const box = await openPublish(onClose);
+
+    expect(screen.getByRole("dialog", { name: "Publish PR and post in Slack" })).toBeInTheDocument();
+    expect(
+      screen.getByText("The PR will be compressed before this message is posted."),
+    ).toBeInTheDocument();
+    expect(calls).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Publish PR and post in Slack" }));
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+    expect(calls[1]).toEqual({
+      path: "/api/slack/publish",
+      body: {
+        id: "1:a",
+        kind: "post",
+        text: draft().text,
+        assignee_id: "UA",
+        thread_ts: null,
+        prs: [{ repo: "o/r", number: 1, assignee_id: "UA" }],
+      },
+    });
+    expect(box).toHaveValue(draft().text);
+  });
+
+  test("marks a draft ready before posting", async () => {
+    const draftPrState = draft({ prs: [draftPr(1, "Bottom", { pr: "draft" })] });
+    serve({ draft: draftPrState });
+    await openPublish();
+
+    expect(
+      screen.getByText("The draft PR will be marked ready for review before this message is posted."),
+    ).toBeInTheDocument();
+  });
+
+  test("shows publishing progress and keeps the dialog open when publish fails", async () => {
+    let release: () => void = () => undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string) => {
+        if (path === "/api/slack/draft") return { ok: true, status: 200, json: async () => draft() };
+        await new Promise<void>((resolve) => (release = resolve));
+        return { ok: false, status: 409, json: async () => ({ detail: "The PR could not be published." }) };
+      }),
+    );
+    await openPublish();
+
+    fireEvent.click(screen.getByRole("button", { name: "Publish PR and post in Slack" }));
+
+    expect(await screen.findByRole("button", { name: "Publishing PR and posting in Slack…" })).toBeDisabled();
+    release();
+    expect(await screen.findByRole("alert")).toHaveTextContent("The PR could not be published.");
+    expect(screen.getByRole("button", { name: "Publish PR and post in Slack" })).toBeEnabled();
   });
 });
