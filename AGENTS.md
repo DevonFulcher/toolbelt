@@ -20,22 +20,6 @@
 - Keep repository instructions in `AGENTS.md`. The dotfiles manifest manages
   `CLAUDE.md` as an ignored compatibility symlink; do not maintain a second copy.
 
-## Delegation
-
-- Handle simple, single-shot requests directly. For medium or high complexity
-  work, use Codex subagents when available.
-- Split work across agents when independent tracks have clear deliverables. Keep
-  tightly coupled work together and avoid overlapping file ownership.
-- Give each agent a scoped brief with the goal, relevant context and files,
-  deliverable, constraints, dependencies, and whether it may edit files. Preserve
-  and attribute user-provided decisions and wording.
-- For sustained work, get an agent's plan before implementation. Treat agent
-  findings and diffs as unverified until reviewed against the request and repo
-  guidance.
-- Use Codex's available multi-agent tools for dispatch and follow-up; do not rely
-  on Claude-specific `Agent` or `SendMessage` tools. If subagents are unavailable
-  or cannot start, proceed directly and say delegation was unavailable.
-
 ## Web UI
 
 - Every action responds at once and shows it is in progress: a disabled button
