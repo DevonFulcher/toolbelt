@@ -944,10 +944,17 @@ class TestBranchLinks:
         assert task_link("", tracker=tracker) is None
         assert agent_link(None) is None
 
-    def test_agent_link_keeps_custom_scheme(self):
-        link = agent_link(AGENT_LINK)
+    @pytest.mark.parametrize(
+        "value",
+        [
+            AGENT_LINK,
+            "codex://threads/01a1835c-88ee-7623-b608-eeb403d1441e?view=review",
+        ],
+    )
+    def test_agent_link_keeps_custom_scheme(self, value):
+        link = agent_link(value)
         assert link is not None
-        assert link.href == AGENT_LINK
+        assert link.href == value
 
     @pytest.mark.parametrize("value", ["javascript:alert(1)", "data:text/html,x"])
     def test_agent_link_never_links_executable_schemes(self, value):

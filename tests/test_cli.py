@@ -263,6 +263,7 @@ def test_change_creates_new_branch(repo: Path, capfd: pytest.CaptureFixture):
 
 
 _AGENT_LINK = "claude://claude.ai/epitaxy/local_0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
+_CODEX_AGENT_LINK = "codex://threads/01a1835c-88ee-7623-b608-eeb403d1441e"
 _LINKS = ["--task", "ABC-1", "--agent-link", _AGENT_LINK]
 
 
@@ -279,6 +280,19 @@ def test_append_creates_worktree_via_cli(repo: Path, capfd: pytest.CaptureFixtur
         None,
         _AGENT_LINK,
     )
+
+
+def test_append_preserves_codex_thread_link(repo: Path, capfd: pytest.CaptureFixture):
+    result = _invoke(
+        ["append", "feature", "--task", "ABC-1", "--agent-link", _CODEX_AGENT_LINK],
+        cwd=repo,
+        capfd=capfd,
+    )
+
+    assert result.exit_code == 0, result.output
+    links = lineage.get_links("devon/feature", root=repo)
+    assert links is not None
+    assert links.agent_link == _CODEX_AGENT_LINK
 
 
 def test_append_tags_the_task_with_the_configured_tracker(

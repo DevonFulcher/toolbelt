@@ -54,8 +54,7 @@ def task_link(ref: str | None, *, tracker: TaskTracker | None) -> Link | None:
 
 
 def agent_link(value: str | None) -> Link | None:
-    """A deeplink to a Claude Desktop session; any non-executing scheme
-    (``claude://``, ``https://``) is linked."""
+    """A deeplink to an agent session; any non-executing scheme is linked."""
     if not value:
         return None
     if not _scheme(value) or _scheme(value) in _UNSAFE_SCHEMES:
