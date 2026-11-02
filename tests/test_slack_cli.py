@@ -1,6 +1,6 @@
-"""`toolbelt slack link`: the command that links a Slack message posted by hand
-to its PRs. PRs are given with --pr, so Slack is never read; reading the message
-is covered in test_slack_link."""
+"""`toolbelt slack link` and `toolbelt slack reconcile` record hand-posted
+Slack messages against their PRs. Slack is never read; reading the message is
+covered in test_slack_link."""
 
 from pathlib import Path
 
@@ -109,3 +109,40 @@ def test_someone_who_is_not_a_reviewer_can_be_named_as_asked(_isolate_config_dir
     assert [(p.assignee_name, p.assignee_id) for p in posts()] == [
         ("matthew.ingle", None)
     ]
+
+
+def test_reconcile_replaces_old_pr_links_for_the_message(_isolate_config_dir: Path):
+    configure(_isolate_config_dir)
+    linked = runner.invoke(
+        app,
+        ["slack", "link", MESSAGE, "--pr", PR, "--pr", "https://github.com/o/r/pull/8"],
+    )
+    assert linked.exit_code == 0, linked.output
+
+    result = runner.invoke(
+        app,
+        [
+            "slack",
+            "reconcile",
+            MESSAGE,
+            "--pr",
+            "https://github.com/o/r/pull/8",
+            "--ask",
+            "will.james",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Set o/r#8 as a post (asked: will.james)" in result.output
+    assert [(p.pr_number, p.assignee_name) for p in posts()] == [(8, "will.james")]
+
+
+def test_reconcile_requires_at_least_one_pr_to_avoid_clearing_a_message(
+    _isolate_config_dir: Path,
+):
+    configure(_isolate_config_dir)
+
+    result = runner.invoke(app, ["slack", "reconcile", MESSAGE])
+
+    assert result.exit_code == 2 and "--pr" in result.output
+    assert posts() == []

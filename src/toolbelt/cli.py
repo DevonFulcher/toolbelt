@@ -27,7 +27,8 @@ app.add_typer(machine_typer, name="machine")
 
 
 slack_typer = typer.Typer(
-    help="Slack: link messages posted by hand to their PRs.", no_args_is_help=True
+    help="Slack: record messages posted by hand against their PRs.",
+    no_args_is_help=True,
 )
 app.add_typer(slack_typer, name="slack")
 
@@ -83,6 +84,61 @@ def slack_link(
     for row in rows:
         typer.echo(
             f"Linked {row.repo}#{row.pr_number} as a {row.kind} "
+            f"(asked: {row.assignee_name or 'nobody'})"
+        )
+
+
+@slack_typer.command(name="reconcile")
+def slack_reconcile(
+    message_url: Annotated[
+        str,
+        typer.Argument(
+            help="Link to the Slack message (https://<workspace>.slack.com/archives/<channel>/p<digits>)."
+        ),
+    ],
+    pr: Annotated[
+        list[str],
+        typer.Option(
+            "--pr",
+            help="A GitHub PR URL the message is about (repeat for several). Replaces all PR links for this message.",
+        ),
+    ],
+    ask: Annotated[
+        str | None,
+        typer.Option(
+            "--ask",
+            help="Who the message asked: a name from slack.reviewers (recorded with "
+            "their Slack ID) or any other name, recorded as given (default: nobody).",
+        ),
+    ] = None,
+) -> None:
+    """Replace the recorded PR links for one Slack message with its current links
+
+    Name every PR the message is about with --pr and who was asked with --ask.
+    Toolbelt reads nothing from Slack; inspect the message first. Existing links
+    for that message are replaced, so an outdated PR association is removed."""
+    from toolbelt.git.repo_pull import default_config_path
+    from toolbelt.git.stack.store import StackStore, default_db_path
+    from toolbelt.ui.slack_config import slack_config
+    from toolbelt.ui.slack_link import LinkError, reconcile_message
+
+    config = slack_config(default_config_path())
+    if config is None:
+        typer.echo("error: there is no slack: section in the config file.", err=True)
+        raise typer.Exit(1)
+    store = StackStore(default_db_path())
+    try:
+        rows = reconcile_message(
+            store, config, message_url=message_url, pr_urls=pr, ask=ask
+        )
+    except LinkError as error:
+        typer.echo(f"error: {error}", err=True)
+        raise typer.Exit(1) from error
+    finally:
+        store.close()
+    for row in rows:
+        typer.echo(
+            f"Set {row.repo}#{row.pr_number} as a {row.kind} "
             f"(asked: {row.assignee_name or 'nobody'})"
         )
 

@@ -3011,6 +3011,41 @@ class StackStore:
                 ],
             )
 
+    def replace_slack_posts(
+        self, channel: str, ts: str, rows: list[SlackPostRow]
+    ) -> None:
+        """Replaces every recorded PR association for one Slack message."""
+        if any(row.channel != channel or row.ts != ts for row in rows):
+            raise ValueError("replacement rows must belong to the given Slack message")
+        with self._write() as conn:
+            conn.execute(
+                "DELETE FROM slack_posts WHERE channel = ? AND ts = ?",
+                (channel, ts),
+            )
+            conn.executemany(
+                "INSERT INTO slack_posts (channel, ts, thread_ts, repo, pr_number, "
+                "kind, posted_at, assignee_id, assignee_name) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT (channel, ts, repo, pr_number) DO UPDATE SET "
+                "thread_ts = excluded.thread_ts, kind = excluded.kind, "
+                "posted_at = excluded.posted_at, assignee_id = excluded.assignee_id, "
+                "assignee_name = excluded.assignee_name",
+                [
+                    (
+                        row.channel,
+                        row.ts,
+                        row.thread_ts,
+                        row.repo,
+                        row.pr_number,
+                        row.kind,
+                        _iso(row.posted_at),
+                        row.assignee_id,
+                        row.assignee_name,
+                    )
+                    for row in rows
+                ],
+            )
+
     def delete_pr_lookup(self, repo_id: int, branch: str) -> None:
         with self._write() as conn:
             conn.execute(

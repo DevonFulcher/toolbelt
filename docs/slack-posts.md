@@ -135,3 +135,16 @@ or a direct message. The posts go into the stack DB, and a running `tt ui`
 notices and updates its cards without a restart. A bump never replies in a channel
 other than the configured one, so a message elsewhere only marks the PR as posted.
 
+## Reconciling a message
+
+`toolbelt slack reconcile <message link> --pr <PR link> [--pr ...] [--ask <name>]`
+replaces all recorded PR associations for that one message with the PRs and
+reviewer named. Use it after inspecting the message when an old association is
+wrong or its reviewer changed. It requires at least one `--pr` so a missing
+option cannot clear the message's records.
+
+```
+tt slack reconcile https://dbt-labs.slack.com/archives/C0A0TFP0XC6/p1792696217666559 \
+  --pr https://github.com/o/r/pull/8 --ask will.james
+```
+

@@ -1,12 +1,10 @@
-"""Links a Slack message that was posted by hand to the PRs (tasks) it is about.
+"""Records Slack messages that were posted by hand against their PRs (tasks).
 
-``toolbelt slack link <message link>`` records the message as the post (or, for
-a reply, the bump) of each PR it names, so the PR reads as posted, its post age
-counts from the message and the person it asked is its Assigned Review: exactly
-what posting from the card records. The caller names the PRs (``--pr``) and who
-was asked (``--ask``: a ``slack.reviewers`` name, else any name, recorded as
-given); toolbelt reads nothing from Slack, it validates and records. The posts are written to the stack DB; a running ``tt ui`` notices and
-updates its cards.
+``toolbelt slack link <message link>`` adds or updates the message's association
+with each named PR. ``toolbelt slack reconcile <message link>`` replaces every
+association for that message. Both record who was asked and whether the message
+was a post or a reply bump. Toolbelt reads nothing from Slack; the caller names
+the PRs and who was asked after inspecting the message.
 """
 
 import re
@@ -101,4 +99,24 @@ def link_message(
         asked = next((p for p in config.reviewers if p.name == ask), Person(ask, ""))
     rows = rows_for_prs(ref, [parse_pr(url) for url in pr_urls], asked)
     store.save_slack_posts(rows)
+    return rows
+
+
+def reconcile_message(
+    store: StackStore,
+    config: SlackConfig,
+    *,
+    message_url: str,
+    pr_urls: list[str],
+    ask: str | None,
+) -> list[SlackPostRow]:
+    """Replaces the recorded PR associations for one inspected Slack message."""
+    ref = parse_message_url(message_url)
+    if not pr_urls:
+        raise LinkError("name the PRs the message is about with --pr <GitHub PR link>")
+    asked = None
+    if ask is not None:
+        asked = next((p for p in config.reviewers if p.name == ask), Person(ask, ""))
+    rows = rows_for_prs(ref, [parse_pr(url) for url in pr_urls], asked)
+    store.replace_slack_posts(ref.channel, ref.ts, rows)
     return rows
