@@ -2,8 +2,35 @@
 
 ## Git workflow
 
-- This is a personal repo. Don't worry about branching — commit directly to the
-  current branch (e.g. `main`) and push right after committing.
+- For the dotfiles and toolbelt repositories, work and commit directly on `main`;
+  do not create task branches or pull requests unless explicitly requested. Use
+  `toolbelt git save` to commit and push verified changes, pushing immediately
+  after committing in this repo.
+- Commit and restart the live `tt ui` service
+  (`launchctl kickstart -k gui/$(id -u)/com.user.toolbelt.ui`) as work
+  progresses, without asking or waiting for a go-ahead. A restart kills a running
+  agent run, so check `/api/agents` for one first and hold the restart until it
+  ends. The pre-commit hook runs the whole test suite (several minutes) and
+  stashes unstaged files, so leave the working tree alone while it runs. After a
+  web change run `pnpm --dir web build` first: the service serves the built
+  bundle.
+
+## Shared instructions
+
+- Keep repository instructions in `AGENTS.md`. The dotfiles manifest manages
+  `CLAUDE.md` as an ignored compatibility symlink; do not maintain a second copy.
+
+## Web UI
+
+- Every action responds at once and shows it is in progress: a disabled button
+  that says what it is doing ("Starting…", "Posting in Slack…"), never a click
+  that leaves the user wondering whether anything is loading.
+- Anything that takes more than a moment (git, GitHub, Jira, Slack, starting an
+  agent, a merge) runs in the background on the server. The endpoint checks what
+  it cheaply can, answers `202` and does the work after; the outcome (done, or
+  why it failed) reaches the card through the live event stream, not through the
+  request, and a failure is shown on the thing it concerns. See
+  `docs/async-ui.md`.
 
 ## Python
 
