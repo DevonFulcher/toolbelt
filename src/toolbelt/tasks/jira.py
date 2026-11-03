@@ -26,17 +26,26 @@ A stored URL is linked as-is; a stored key becomes ``<base_url>/browse/<key>``
 import re
 import threading
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote, urlsplit
 
 lazy import httpx
 
-from toolbelt.tasks.tracker import Stage, StatusMove, TaskInfo
+from toolbelt.tasks.tracker import (
+    Stage,
+    StatusMove,
+    TaskInfo,
+    TaskStatusChange,
+    TaskStatusHistory,
+)
 
 TOKEN_ENV_VAR = "JIRA_API_TOKEN"
 EMAIL_ENV_VAR = "JIRA_EMAIL"
 _KEY_RE = re.compile(r"[A-Z][A-Z0-9_]*-\d+")
 _REQUEST_TIMEOUT_SECONDS = 10
+_STATUS_HISTORY_LIMIT = 500
+_STATUS_HISTORY_PAGE_SIZE = 100
 _AUTH_MODES = ("basic", "bearer")
 DEFAULT_STATUSES = {
     "in_progress": "In Progress",
@@ -130,6 +139,76 @@ class JiraTracker:
             )
         except httpx.HTTPError, ValueError, KeyError, TypeError:
             return None
+
+    def status_history(self, ref: str) -> TaskStatusHistory | None:
+        """Fetch the recent bounded changelog for an issue's status field."""
+        key = _key_of(ref)
+        if (
+            key is None
+            or self._base_url is None
+            or self.unavailable_reason() is not None
+        ):
+            return None
+        token = self._resolve_token()
+        assert token is not None
+        headers = {"Accept": "application/json", **self._auth_headers(token)}
+        issue_url = f"{self._base_url}/rest/api/{self._api_version}/issue/{key}"
+        try:
+            issue_response = self._http().get(
+                issue_url,
+                params={"fields": "created,status"},
+                headers=headers,
+                auth=self._basic_auth(token),
+            )
+            issue_response.raise_for_status()
+            fields = issue_response.json()["fields"]
+            created_at = _jira_datetime(fields["created"])
+            current_status = fields["status"]["name"]
+
+            first_page = self._http().get(
+                f"{issue_url}/changelog",
+                params={"startAt": 0, "maxResults": 1},
+                headers=headers,
+                auth=self._basic_auth(token),
+            )
+            first_page.raise_for_status()
+            total = int(first_page.json()["total"])
+            start_at = max(total - _STATUS_HISTORY_LIMIT, 0)
+            changes: list[TaskStatusChange] = []
+            for page_start in range(start_at, total, _STATUS_HISTORY_PAGE_SIZE):
+                page = self._http().get(
+                    f"{issue_url}/changelog",
+                    params={
+                        "startAt": page_start,
+                        "maxResults": _STATUS_HISTORY_PAGE_SIZE,
+                    },
+                    headers=headers,
+                    auth=self._basic_auth(token),
+                )
+                page.raise_for_status()
+                payload = page.json()
+                histories = payload.get("values", payload.get("histories", []))
+                for history in histories:
+                    for item in history["items"]:
+                        if item.get("field") == "status":
+                            changes.append(
+                                TaskStatusChange(
+                                    history_id=str(history["id"]),
+                                    at=_jira_datetime(history["created"]),
+                                    from_status=item.get("fromString") or "Unknown",
+                                    to_status=item.get("toString") or "Unknown",
+                                )
+                            )
+                            break
+        except httpx.HTTPError, ValueError, KeyError, TypeError:
+            return None
+        return TaskStatusHistory(
+            created_at=created_at,
+            current_status=current_status,
+            fetched_at=datetime.now(UTC),
+            changes=tuple(changes),
+            truncated_before=start_at > 0,
+        )
 
     def move(self, ref: str, stage: Stage) -> StatusMove:
         key = _key_of(ref)
@@ -269,6 +348,13 @@ def _key_of(ref: str) -> str | None:
         if _KEY_RE.fullmatch(last):
             return last
     return None
+
+
+def _jira_datetime(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def _optional_str(value: object) -> str | None:

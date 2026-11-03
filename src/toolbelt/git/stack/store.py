@@ -42,6 +42,7 @@ from toolbelt.proposals.model import (
     content_from_json,
     content_to_json,
 )
+from toolbelt.tasks.tracker import TaskStatusChange, TaskStatusHistory
 
 STATE_DIR_ENV_VAR = "TOOLBELT_HOME"
 DB_FILENAME = "stacks.db"
@@ -731,6 +732,30 @@ _MIGRATIONS: list[tuple[str, ...]] = [
             created_at TEXT NOT NULL
         )
         """,
+    ),
+    (
+        # Jira's status changelog, bounded to the most recent response the
+        # tracker returned for each task (see ``ui.lane_history``).
+        """
+        CREATE TABLE jira_status_history (
+            task_id TEXT PRIMARY KEY,
+            created_at TEXT NOT NULL,
+            current_status TEXT NOT NULL,
+            fetched_at TEXT NOT NULL,
+            truncated_before INTEGER NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE jira_status_changes (
+            task_id TEXT NOT NULL,
+            history_id TEXT NOT NULL,
+            at TEXT NOT NULL,
+            from_status TEXT NOT NULL,
+            to_status TEXT NOT NULL,
+            PRIMARY KEY (task_id, history_id)
+        )
+        """,
+        "CREATE INDEX jira_status_changes_by_time ON jira_status_changes (task_id, at)",
     ),
 ]
 
@@ -2675,6 +2700,109 @@ class StackStore:
             (r["task_id"], r["stage"], datetime.fromisoformat(r["moved_at"]))
             for r in rows
         ]
+
+    def record_task_status_history(
+        self,
+        repo_id: int,
+        branch: str,
+        history: TaskStatusHistory,
+    ) -> bool:
+        """Replace a task's bounded Jira changelog; return whether it changed."""
+        with self._write() as conn:
+            task_id = self._tracked_task_id(conn, repo_id, branch)
+            if task_id is None:
+                return False
+            previous_state = conn.execute(
+                "SELECT created_at, current_status, truncated_before "
+                "FROM jira_status_history WHERE task_id = ?",
+                (task_id,),
+            ).fetchone()
+            previous_changes = [
+                (r["history_id"], r["at"], r["from_status"], r["to_status"])
+                for r in conn.execute(
+                    "SELECT history_id, at, from_status, to_status "
+                    "FROM jira_status_changes WHERE task_id = ? ORDER BY at, history_id",
+                    (task_id,),
+                )
+            ]
+            changes = [
+                (
+                    change.history_id,
+                    _iso(change.at),
+                    change.from_status,
+                    change.to_status,
+                )
+                for change in history.changes
+            ]
+            changed = (
+                previous_state is None
+                or previous_state["created_at"] != _iso(history.created_at)
+                or previous_state["current_status"] != history.current_status
+                or bool(previous_state["truncated_before"]) != history.truncated_before
+                or previous_changes != changes
+            )
+            conn.execute(
+                "INSERT INTO jira_status_history "
+                "(task_id, created_at, current_status, fetched_at, truncated_before) "
+                "VALUES (?, ?, ?, ?, ?) ON CONFLICT(task_id) DO UPDATE SET "
+                "created_at = excluded.created_at, "
+                "current_status = excluded.current_status, "
+                "fetched_at = excluded.fetched_at, "
+                "truncated_before = excluded.truncated_before",
+                (
+                    task_id,
+                    _iso(history.created_at),
+                    history.current_status,
+                    _iso(history.fetched_at),
+                    int(history.truncated_before),
+                ),
+            )
+            if changed:
+                conn.execute(
+                    "DELETE FROM jira_status_changes WHERE task_id = ?", (task_id,)
+                )
+                conn.executemany(
+                    "INSERT INTO jira_status_changes "
+                    "(task_id, history_id, at, from_status, to_status) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    [(task_id, *change) for change in changes],
+                )
+        return changed
+
+    def task_status_histories(self) -> list[tuple[str, TaskStatusHistory]]:
+        """Every Jira issue status history recorded for a tracked or archived task."""
+        histories = self._conn.execute(
+            "SELECT task_id, created_at, current_status, fetched_at, truncated_before "
+            "FROM jira_status_history ORDER BY task_id"
+        )
+        result = []
+        for row in histories:
+            changes = self._conn.execute(
+                "SELECT history_id, at, from_status, to_status "
+                "FROM jira_status_changes WHERE task_id = ? ORDER BY at, history_id",
+                (row["task_id"],),
+            )
+            result.append(
+                (
+                    row["task_id"],
+                    TaskStatusHistory(
+                        created_at=datetime.fromisoformat(row["created_at"]),
+                        current_status=row["current_status"],
+                        fetched_at=datetime.fromisoformat(row["fetched_at"]),
+                        changes=tuple(
+                            TaskStatusChange(
+                                history_id=change["history_id"],
+                                at=datetime.fromisoformat(change["at"]),
+                                from_status=change["from_status"],
+                                to_status=change["to_status"],
+                            )
+                            for change in changes
+                        ),
+                        truncated_before=bool(row["truncated_before"]),
+                    ),
+                )
+            )
+        return result
 
     # ---- agent activity -----------------------------------------------------
 

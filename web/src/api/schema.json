@@ -892,6 +892,10 @@
             ]
           },
           "type": "array"
+        },
+        "state": {
+          "default": "",
+          "type": "string"
         }
       },
       "required": [
@@ -3566,7 +3570,8 @@
         "decision_answered",
         "review_approved",
         "review_changes_requested",
-        "task_in_review"
+        "task_in_review",
+        "jira_history_truncated"
       ],
       "type": "string"
     },
@@ -3574,6 +3579,9 @@
       "additionalProperties": false,
       "properties": {
         "decision_answered": {
+          "$ref": "#/$defs/Marker"
+        },
+        "jira_history_truncated": {
           "$ref": "#/$defs/Marker"
         },
         "review_approved": {
@@ -3602,7 +3610,8 @@
         "decision_answered",
         "review_approved",
         "review_changes_requested",
-        "task_in_review"
+        "task_in_review",
+        "jira_history_truncated"
       ],
       "title": "LaneEventMarkers",
       "type": "object"
@@ -3619,7 +3628,8 @@
         "merge_queue",
         "decision",
         "personal_review",
-        "task"
+        "task",
+        "jira"
       ],
       "type": "string"
     },
@@ -3697,9 +3707,11 @@
         "claim_human_ref",
         "claim_autonomous_worktree",
         "claim_autonomous_ref",
+        "slack_posted",
         "merge_queued",
         "decision_pending",
-        "personal_review_waiting"
+        "personal_review_waiting",
+        "jira_status"
       ],
       "type": "string"
     },
@@ -3766,6 +3778,9 @@
         "git_conflicting": {
           "$ref": "#/$defs/Span"
         },
+        "jira_status": {
+          "$ref": "#/$defs/Span"
+        },
         "merge_queued": {
           "$ref": "#/$defs/Span"
         },
@@ -3822,6 +3837,9 @@
         },
         "personal_review_waiting": {
           "$ref": "#/$defs/Span"
+        },
+        "slack_posted": {
+          "$ref": "#/$defs/Span"
         }
       },
       "required": [
@@ -3861,9 +3879,11 @@
         "claim_human_ref",
         "claim_autonomous_worktree",
         "claim_autonomous_ref",
+        "slack_posted",
         "merge_queued",
         "decision_pending",
-        "personal_review_waiting"
+        "personal_review_waiting",
+        "jira_status"
       ],
       "title": "LanePhaseSpans",
       "type": "object"

@@ -126,6 +126,31 @@ def test_a_conditional_get_sends_the_etag_and_reads_a_304_and_a_new_etag():
     assert server.requests[1].headers["if-none-match"] == '"v1"'
 
 
+def test_a_put_json_request_sends_the_body_and_agent_merge_api_version():
+    server = Server()
+    server.queue(json_body={"allowed_actions": ["fix_ci"]})
+    github = client(server)
+
+    result = run(
+        github.put_json(
+            "agents/repos/o/r/pulls/5/agent-merge",
+            {"allowed_actions": ["fix_ci", "resolve_merge_conflicts"]},
+            caller="publish",
+        )
+    )
+
+    assert result == {"allowed_actions": ["fix_ci"]}
+    (request,) = server.requests
+    assert request.method == "PUT"
+    assert str(request.url) == (
+        "https://api.github.com/agents/repos/o/r/pulls/5/agent-merge"
+    )
+    assert request.headers["x-github-api-version"] == "2026-03-10"
+    assert json.loads(request.content) == {
+        "allowed_actions": ["fix_ci", "resolve_merge_conflicts"]
+    }
+
+
 def test_an_error_status_raises():
     server = Server()
     server.queue(404, json_body={"message": "Not Found"})

@@ -54,6 +54,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
+from httpx import HTTPError
 
 from toolbelt.agent_activity.chunks import ACTIVITY_DIRNAME
 from toolbelt.agent_activity.ingest import ActivityIngest
@@ -107,7 +108,7 @@ from toolbelt.proposals.settings import load_settings as load_proposal_settings
 from toolbelt.task_claims.claim_file import CLAIMS_DIRNAME
 from toolbelt.task_claims.resolution import TrackedTask, git_worktrees, tracked_tasks
 from toolbelt.tasks.config import configured_tracker
-from toolbelt.tasks.tracker import TaskTracker
+from toolbelt.tasks.tracker import TaskStatusHistory, TaskTracker
 from toolbelt.token_spend.transcripts import projects_dir
 from toolbelt.ui import aggregate as aggregate_view
 from toolbelt.ui import api_models as api
@@ -1102,11 +1103,23 @@ def create_app(
         full_interval=full_refresh_interval,
         pushed=webhooks_live,
     )
+
+    def record_task_status_history(
+        task: LinkedTask, history: TaskStatusHistory
+    ) -> bool:
+        store = StackStore(default_db_path())
+        try:
+            return store.record_task_status_history(task.repo_id, task.branch, history)
+        finally:
+            store.close()
+
     task_feed = TaskFeed(
         tasks=lambda: _linked_tasks(tracker()),
         cache=task_cache,
         hub=hub,
         tick=tick,
+        record_history=record_task_status_history,
+        on_history_change=lambda: views.notify("extras"),
     )
 
     untracked_feed = UntrackedPrFeed(
@@ -1870,7 +1883,26 @@ def create_app(
             raise HTTPException(
                 status_code=502, detail=f"Publishing PR failed: {error}"
             ) from error
-        return service.send_published(body, prs)
+
+        copilot_notice = None
+        if parents[name] in parents:
+            copilot_notice = (
+                f"Copilot Agent Merge was not enabled for {slug}#{snapshot.facts.number}: "
+                "GitHub does not support stacked pull requests."
+            )
+        else:
+            try:
+                await requests.put_json(
+                    f"agents/repos/{slug}/pulls/{snapshot.facts.number}/agent-merge",
+                    {"allowed_actions": ["fix_ci", "resolve_merge_conflicts"]},
+                    caller="publish",
+                )
+            except (RuntimeError, HTTPError) as error:
+                copilot_notice = (
+                    f"Copilot Agent Merge was not enabled for "
+                    f"{slug}#{snapshot.facts.number}: {error}"
+                )
+        return service.send_published(body, prs, publish_notice=copilot_notice)
 
     @app.post("/api/agents/enabled", response_model=api.AgentsEnabled)
     async def set_agents_enabled(body: api.AgentsEnabled) -> api.AgentsEnabled:

@@ -6,6 +6,7 @@ through a ``TaskTracker``, so no caller needs to know which tracker it is.
 """
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal, Protocol
 
 #: What a task's status follows a branch through: work started (``append``), its
@@ -20,6 +21,23 @@ class TaskInfo:
     title: str
     status: str
     url: str | None
+
+
+@dataclass(frozen=True)
+class TaskStatusChange:
+    history_id: str
+    at: datetime
+    from_status: str
+    to_status: str
+
+
+@dataclass(frozen=True)
+class TaskStatusHistory:
+    created_at: datetime
+    current_status: str
+    fetched_at: datetime
+    changes: tuple[TaskStatusChange, ...]
+    truncated_before: bool
 
 
 @dataclass(frozen=True)
@@ -56,6 +74,12 @@ class TaskTracker(Protocol):
         """The task's title and status, or ``None`` if they cannot be
         obtained (unreachable, unauthorized, unknown ref). Never raises for
         those; this is for display only."""
+        ...
+
+    def status_history(self, ref: str) -> TaskStatusHistory | None:
+        """The issue's status changes, oldest first, or ``None`` when they
+        cannot be obtained. ``truncated_before`` says older changes were
+        omitted by the tracker's bounded history response."""
         ...
 
     def move(self, ref: str, stage: Stage) -> StatusMove:

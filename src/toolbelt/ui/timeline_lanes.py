@@ -291,7 +291,13 @@ LANE_SOURCES: tuple[LaneSource, ...] = (
                 "The PR's Slack thread asked someone else to review.",
             ),
         },
-        phases={},
+        phases={
+            "slack_posted": Span(
+                "Shared in Slack",
+                ACCENT,
+                "The original PR announcement remains posted in Slack.",
+            ),
+        },
         covers=(
             Coverage(
                 "SlackPostKind",
@@ -390,6 +396,27 @@ LANE_SOURCES: tuple[LaneSource, ...] = (
                 {"in_progress": (), "in_review": ("task_in_review",), "done": ()},
             ),
         ),
+    ),
+    LaneSource(
+        id="jira",
+        label="Jira status",
+        events={
+            "jira_history_truncated": Marker(
+                "Jira history capped",
+                "…",
+                GRAY,
+                "The Jira changelog exceeded its 500-entry limit; earlier status "
+                "changes may be missing.",
+            ),
+        },
+        phases={
+            "jira_status": Span(
+                "Jira status",
+                ACCENT,
+                "The Jira issue remained in this status during the span.",
+            ),
+        },
+        covers=(),
     ),
 )
 

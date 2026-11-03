@@ -6,7 +6,15 @@ import typing
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 
-from toolbelt.git.stack.store import RepoIdentity, StackStore, default_db_path
+from toolbelt.git.stack.store import (
+    PrCandidate,
+    PrLink,
+    RepoIdentity,
+    SlackPostRow,
+    StackStore,
+    default_db_path,
+)
+from toolbelt.tasks.tracker import TaskStatusChange, TaskStatusHistory
 from toolbelt.ui import api_models, pr_states
 from toolbelt.ui.lane_history import build_lanes
 from toolbelt.ui.timeline_lanes import (
@@ -91,7 +99,13 @@ def test_every_kind_is_used_by_a_covered_value_or_its_source_history():
         for coverage in source.covers
         for kinds in coverage.kinds.values()
         for kind in kinds
-    } | {"merge_queued", "personal_review_waiting"}
+    } | {
+        "merge_queued",
+        "personal_review_waiting",
+        "jira_status",
+        "jira_history_truncated",
+        "slack_posted",
+    }
     # Claims cross HolderKind with ClaimKind, so each holder maps to both.
     assert used == set(LANE_EVENTS) | set(LANE_PHASES)
 
@@ -154,6 +168,80 @@ def test_a_branchs_history_reaches_its_lanes():
     ]
     (claim,) = by_lane["claim"].phases
     assert (claim.kind, claim.end) == ("claim_agent_worktree", "2026-01-01T00:05:00Z")
+
+
+def test_jira_status_history_is_a_span_with_an_explicit_truncation_marker():
+    store = StackStore(default_db_path())
+    repo_id = store.ensure_repo(
+        RepoIdentity(
+            git_common_dir=default_db_path().parent / "jira" / ".git",
+            path=default_db_path().parent / "jira",
+            remote_url=None,
+        )
+    )
+    store.set_parent(repo_id, "jira-branch", "main")
+    (facts,) = store.tracked_branch_facts()
+    t0 = datetime(2026, 1, 1, tzinfo=UTC)
+    history = TaskStatusHistory(
+        created_at=t0 - timedelta(days=90),
+        current_status="In Review",
+        fetched_at=t0 + timedelta(days=5),
+        changes=(
+            TaskStatusChange("1", t0, "To Do", "In Progress"),
+            TaskStatusChange("2", t0 + timedelta(days=2), "In Progress", "In Review"),
+        ),
+        truncated_before=True,
+    )
+    assert store.record_task_status_history(repo_id, "jira-branch", history)
+    assert not store.record_task_status_history(repo_id, "jira-branch", history)
+
+    lanes = build_lanes(store, t0 + timedelta(days=5))[facts.task_id]
+    by_lane = {lane.lane: lane for lane in lanes}
+    assert by_lane["jira"].events[0].kind == "jira_history_truncated"
+    assert [(p.detail, p.start, p.end) for p in by_lane["jira"].phases] == [
+        ("In Progress", "2026-01-01T00:00:00Z", "2026-01-03T00:00:00Z"),
+        ("In Review", "2026-01-03T00:00:00Z", None),
+    ]
+
+
+def test_slack_post_is_a_live_phase_and_updates_remain_events():
+    store = StackStore(default_db_path())
+    repo_id = store.ensure_repo(
+        RepoIdentity(
+            git_common_dir=default_db_path().parent / "slack" / ".git",
+            path=default_db_path().parent / "slack",
+            remote_url="https://github.com/o/x.git",
+        )
+    )
+    store.set_parent(repo_id, "slack-branch", "main")
+    t0 = datetime(2026, 1, 1, tzinfo=UTC)
+    store.link_pr(
+        repo_id,
+        "slack-branch",
+        [PrCandidate(PrLink(17, "node-17"), t0)],
+    )
+    posted = t0 + timedelta(days=1)
+    store.save_slack_posts(
+        [
+            SlackPostRow("C1", "1.0", "1.0", "o/x", 17, "post", posted),
+            SlackPostRow(
+                "C1", "2.0", "1.0", "o/x", 17, "bump", posted + timedelta(days=1)
+            ),
+        ]
+    )
+
+    (facts,) = store.tracked_branch_facts()
+    (slack,) = [
+        lane
+        for lane in build_lanes(store, posted + timedelta(days=2), lambda _: "o/x")[
+            facts.task_id
+        ]
+        if lane.lane == "slack"
+    ]
+    assert [(phase.kind, phase.start, phase.end) for phase in slack.phases] == [
+        ("slack_posted", "2026-01-02T00:00:00Z", None)
+    ]
+    assert [event.kind for event in slack.events] == ["slack_post", "slack_bump"]
 
 
 def test_a_lookup_records_conflict_and_ci_once_per_change():

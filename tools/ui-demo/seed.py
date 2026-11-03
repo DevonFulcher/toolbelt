@@ -16,7 +16,7 @@ archived task facts of cleaned-up branches in stacks.db (`removed_branches`).
 It records what `tt ui` would have seen of the demo branches, one row set per
 lane of the card timelines (docs/timeline-lanes.md): conflict, CI and review
 thread changes, agent runs, claim spans, Slack posts, a queued merge,
-decisions and a task tracker move (`write_lanes`).
+decisions, Jira status history and a task tracker move (`write_lanes`).
 
 It writes the agent activity the plugin would have recorded: a few weeks of
 turns as chunk files in DEST/home/activity (`write_activity`), which `tt ui`
@@ -58,6 +58,7 @@ from toolbelt.git.stack.store import (
     TokenCounts,
     default_db_path,
 )
+from toolbelt.tasks.tracker import TaskStatusChange, TaskStatusHistory
 
 # Tracked demo branches whose PR the CLI has already recorded (the others have
 # a PR but no recorded link yet, as a branch that was never synced since).
@@ -424,8 +425,8 @@ def write_lanes(now: datetime, repos: Path) -> None:
     """What `tt ui` would have recorded about the demo branches, so every lane
     of the card timelines (docs/timeline-lanes.md) has something to draw: the
     conflict, CI and review-thread changes it saw, agent runs, claims, Slack
-    posts, a queued merge, decisions and a task tracker move. The fake `gh`
-    serves the matching PRs; times are relative to now."""
+    posts, a queued merge, decisions, Jira status history and a task tracker
+    move. The fake `gh` serves the matching PRs; times are relative to now."""
 
     def ago(**delta: float) -> datetime:
         return now - timedelta(**delta)
@@ -711,6 +712,24 @@ def write_lanes(now: datetime, repos: Path) -> None:
         repo_id, branch, _ = app("devon/auth-api")
         store.record_task_status_move(
             repo_id, branch, "in_review", 102, ago(days=3, hours=20)
+        )
+        store.record_task_status_history(
+            repo_id,
+            branch,
+            TaskStatusHistory(
+                created_at=ago(days=365),
+                current_status="In Review",
+                fetched_at=now,
+                changes=(
+                    TaskStatusChange(
+                        "demo-jira-1", ago(days=300), "To Do", "In Progress"
+                    ),
+                    TaskStatusChange(
+                        "demo-jira-2", ago(days=180), "In Progress", "In Review"
+                    ),
+                ),
+                truncated_before=True,
+            ),
         )
     finally:
         store.close()

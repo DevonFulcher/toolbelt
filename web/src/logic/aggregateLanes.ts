@@ -49,7 +49,13 @@ export function laneLayers(data: Aggregate, catalog: Catalog): LaneLayer[] {
     if (!status && used.length === 0 && events.length === 0) continue;
     const styles: LaneLayerStyle[] = used.map((p) => {
       const info = catalog.lane_phases[p.kind as LanePhaseKind];
-      return { key: p.kind, label: info.label, tone: info.tone, legend: info.legend };
+      const label = p.state || info.label;
+      return {
+        key: p.state ? `${p.kind}:${p.state}` : p.kind,
+        label,
+        tone: info.tone,
+        legend: p.state ? `The Jira issue was in ${p.state}.` : info.legend,
+      };
     });
     if (status) {
       // Every kind, in the catalog's stacking order, so the legend is complete.

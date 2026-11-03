@@ -469,10 +469,14 @@ class SlackService:
         self._changed(branches)
 
     def send_published(
-        self, request: api.SlackSendRequest, prs: list[_Pr]
+        self,
+        request: api.SlackSendRequest,
+        prs: list[_Pr],
+        *,
+        publish_notice: str | None = None,
     ) -> api.SlackAccepted:
         """Start Slack posting after the publish reservation did its preparation."""
-        return self._accept(request, prs)
+        return self._accept(request, prs, notice=publish_notice)
 
     def _begin_posting(self, prs: list[_Pr]) -> None:
         keys = [(pr.repo, pr.number) for pr in prs]
@@ -481,9 +485,13 @@ class SlackService:
         self._changed(branches)
 
     def _accept(
-        self, request: api.SlackSendRequest, prs: list[_Pr]
+        self,
+        request: api.SlackSendRequest,
+        prs: list[_Pr],
+        *,
+        notice: str | None = None,
     ) -> api.SlackAccepted:
-        task = asyncio.create_task(self._post(request, prs))
+        task = asyncio.create_task(self._post(request, prs, notice=notice))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return api.SlackAccepted(prs=request.prs)
@@ -521,15 +529,21 @@ class SlackService:
         while self._tasks:
             await asyncio.gather(*self._tasks)
 
-    async def _post(self, request: api.SlackSendRequest, prs: list[_Pr]) -> None:
+    async def _post(
+        self,
+        request: api.SlackSendRequest,
+        prs: list[_Pr],
+        *,
+        notice: str | None = None,
+    ) -> None:
         keys = [(pr.repo, pr.number) for pr in prs]
         branches = {(pr.repo_id, pr.branch) for pr in prs}
-        notice = None
         try:
-            notice = await self._post_and_record(request, prs)
+            slack_notice = await self._post_and_record(request, prs)
+            notice = _join_notices(notice, slack_notice)
         except Exception as error:  # a failed post says why, and records nothing
             LOGGER.exception("posting in Slack failed")
-            notice = f"Posting in Slack failed: {error}"
+            notice = _join_notices(notice, f"Posting in Slack failed: {error}")
         finally:
             self._tracker.end_posting(keys, notice)
             self._changed(branches)
@@ -604,3 +618,11 @@ def _verify(text: str, sent: SentMessage) -> str | None:
     if missing:
         return f"Posted, but Slack's copy is missing: {', '.join(missing)}"
     return None
+
+
+def _join_notices(first: str | None, second: str | None) -> str | None:
+    if first is not None and second is not None:
+        return f"{first} {second}"
+    if first is not None:
+        return first
+    return second

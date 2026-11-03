@@ -171,11 +171,16 @@ export function SlackDialog({
       {draft && (
         <div className="slack-dialog">
           {publish && (
-            <p className="muted">
-              {draft.prs.some((pr) => pr.pr === "draft")
-                ? "The draft PR will be marked ready for review before this message is posted."
-                : "The PR will be compressed before this message is posted."}
-            </p>
+            <>
+              <p className="muted">
+                {draft.prs.some((pr) => pr.pr === "draft")
+                  ? "The draft PR will be marked ready for review before this message is posted."
+                  : "The PR will be compressed before this message is posted."}
+              </p>
+              <p className="muted">
+                For a supported PR, GitHub Copilot will also watch for failed Actions and merge conflicts.
+              </p>
+            </>
           )}
           <p className="muted">
             {draft.kind === "post" ? "Posts to" : "Replies in a thread of"} <code>{draft.channel}</code> about{" "}

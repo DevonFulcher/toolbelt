@@ -59,6 +59,33 @@ describe("laneRows", () => {
     expect(rows[2]!.events.map((e) => e.kind)).toEqual(["slack_post"]);
   });
 
+  test("labels Jira history clipped before the track starts", () => {
+    const [jira] = laneRows(
+      [
+        {
+          lane: "jira",
+          events: [
+            { t: iso(start - DAY), kind: "jira_history_truncated", detail: "older history" },
+          ],
+          phases: [
+            { start: iso(start - DAY), end: null, kind: "jira_status", detail: "In Review" },
+          ],
+        },
+      ],
+      catalog,
+      start,
+      NOW,
+      NOW,
+    );
+
+    expect(jira?.label).toBe("Jira status · older history clipped");
+    expect(jira?.events).toEqual([]);
+    expect(jira?.phases[0]?.tip).toMatchObject({
+      type: "phase",
+      label: "Jira status: In Review",
+    });
+  });
+
   test("takes glyph, tone and wording from the catalog", () => {
     const post = rows[2]!.events[0]!;
     expect(post.glyph).toBe(catalog.lane_events.slack_post.glyph);

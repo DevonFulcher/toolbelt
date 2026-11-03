@@ -476,6 +476,11 @@ describe("the Publish PR dialog", () => {
     expect(
       screen.getByText("The PR will be compressed before this message is posted."),
     ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "For a supported PR, GitHub Copilot will also watch for failed Actions and merge conflicts.",
+      ),
+    ).toBeInTheDocument();
     expect(calls).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Publish PR and post in Slack" }));
 

@@ -36,7 +36,8 @@ export type LaneEventKind =
   | "decision_answered"
   | "review_approved"
   | "review_changes_requested"
-  | "task_in_review";
+  | "task_in_review"
+  | "jira_history_truncated";
 export type LaneId =
   | "next"
   | "git"
@@ -48,7 +49,8 @@ export type LaneId =
   | "merge_queue"
   | "decision"
   | "personal_review"
-  | "task";
+  | "task"
+  | "jira";
 export type LanePhaseKind =
   | "next_open_pr"
   | "next_personal_review"
@@ -86,9 +88,11 @@ export type LanePhaseKind =
   | "claim_human_ref"
   | "claim_autonomous_worktree"
   | "claim_autonomous_ref"
+  | "slack_posted"
   | "merge_queued"
   | "decision_pending"
-  | "personal_review_waiting";
+  | "personal_review_waiting"
+  | "jira_status";
 export type WaitingOnKey = "you" | "agent" | "auto" | "ci" | "others";
 export type DecisionStatus = "pending" | "answered";
 export type ServerEvent =
@@ -524,6 +528,7 @@ export interface AggregateLanePhase {
   count: number[];
   kind: LanePhaseKind;
   share: (number | null)[];
+  state?: string;
 }
 export interface AggregateNote {
   label: string;
@@ -1626,6 +1631,7 @@ export interface Marker {
 }
 export interface LaneEventMarkers {
   decision_answered: Marker;
+  jira_history_truncated: Marker;
   review_approved: Marker;
   review_changes_requested: Marker;
   slack_bump: Marker;
@@ -1654,6 +1660,7 @@ export interface LanePhaseSpans {
   comments_open: Span;
   decision_pending: Span;
   git_conflicting: Span;
+  jira_status: Span;
   merge_queued: Span;
   next_address_review: Span;
   next_autonomous: Span;
@@ -1673,6 +1680,7 @@ export interface LanePhaseSpans {
   next_wait_ci: Span;
   next_wait_review: Span;
   personal_review_waiting: Span;
+  slack_posted: Span;
 }
 export interface Span {
   label: string;

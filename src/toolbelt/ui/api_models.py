@@ -827,6 +827,8 @@ class AggregateLanePhase(Model):
     a span of this kind of lane ``lane`` then, and how many."""
 
     kind: LanePhaseKind
+    #: An observed sub-status, used for project-defined Jira status names.
+    state: str = ""
     share: list[float | None]
     count: list[int]
 

@@ -60,11 +60,13 @@ export function laneRows(
     const lane = byId.get(spec.id);
     if (!lane) continue;
     const phases: LanePhaseDraw[] = [];
+    let truncatedStart = false;
     for (const phase of lane.phases) {
       const t0 = Date.parse(phase.start);
       const ongoing = phase.end === null;
       const t1 = phase.end === null ? Math.min(now, end) : Date.parse(phase.end);
       if (t1 < start || t0 > end) continue;
+      truncatedStart ||= t0 < start;
       const info = catalog.lane_phases[phase.kind];
       phases.push({
         kind: phase.kind,
@@ -86,7 +88,11 @@ export function laneRows(
     const events: LaneEventDraw[] = [];
     for (const event of lane.events) {
       const ms = Date.parse(event.t);
-      if (ms < start || ms > end) continue;
+      if (ms < start) {
+        truncatedStart ||= event.kind === "jira_history_truncated";
+        continue;
+      }
+      if (ms > end) continue;
       const info = catalog.lane_events[event.kind];
       events.push({
         kind: event.kind,
@@ -106,8 +112,13 @@ export function laneRows(
         },
       });
     }
-    if (phases.length || events.length) {
-      rows.push({ lane: spec.id, label: spec.label, phases, events });
+    if (phases.length || events.length || truncatedStart) {
+      rows.push({
+        lane: spec.id,
+        label: truncatedStart ? `${spec.label} · older history clipped` : spec.label,
+        phases,
+        events,
+      });
     }
   }
   return rows;

@@ -1124,13 +1124,31 @@ def lane_layers(
     for source in LANE_SOURCES:
         if source.aggregate_skip is not None:
             continue
-        counts = {kind: [0] * count for kind in source.phases}
+        phase_groups = [
+            (kind, state)
+            for kind in source.phases
+            for state in (
+                sorted(
+                    {
+                        phase.state
+                        for lanes in task_lanes
+                        for lane in lanes
+                        if lane.lane == source.id
+                        for phase in lane.phases
+                        if phase.kind == kind
+                    }
+                )
+                if source.id == "jira"
+                else [""]
+            )
+        ]
+        counts = {group: [0] * count for group in phase_groups}
         times: dict[str, list[datetime]] = {kind: [] for kind in source.events}
         for flight, lanes in zip(flights, task_lanes, strict=True):
             for lane in lanes:
                 if lane.lane != source.id:
                     continue
-                for kind in source.phases:
+                for kind, state in phase_groups:
                     spans = [
                         (
                             datetime.fromisoformat(phase.start),
@@ -1138,13 +1156,14 @@ def lane_layers(
                         )
                         for phase in lane.phases
                         if phase.kind == kind
+                        and (source.id != "jira" or phase.state == state)
                     ]
                     for index, instant in enumerate(instants):
                         if flight[index] is not None and any(
                             lo <= instant and (hi is None or instant < hi)
                             for lo, hi in spans
                         ):
-                            counts[kind][index] += 1
+                            counts[(kind, state)][index] += 1
                 for event in lane.events:
                     at = datetime.fromisoformat(event.t)
                     if start <= at <= now:
@@ -1155,13 +1174,16 @@ def lane_layers(
                 phases=[
                     api.AggregateLanePhase(
                         kind=kind,  # type: ignore[arg-type]
+                        state=state,
                         share=[
                             c / n if n else None
-                            for c, n in zip(counts[kind], inflight, strict=True)
+                            for c, n in zip(
+                                counts[(kind, state)], inflight, strict=True
+                            )
                         ],
-                        count=counts[kind],
+                        count=counts[(kind, state)],
                     )
-                    for kind in source.phases
+                    for kind, state in phase_groups
                 ],
                 events=[
                     api.AggregateLaneEvents(

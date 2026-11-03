@@ -171,6 +171,18 @@ class GithubRequests:
         response = await self._send("GET", f"{API_URL}/{path}", CORE, caller)
         return response.json()
 
+    async def put_json(self, path: str, body: Mapping[str, Any], *, caller: str) -> Any:
+        """PUT JSON to a REST endpoint and return its JSON response."""
+        response = await self._send(
+            "PUT",
+            f"{API_URL}/{path}",
+            CORE,
+            caller,
+            headers={"X-GitHub-Api-Version": "2026-03-10"},
+            json=body,
+        )
+        return response.json()
+
     async def delete(self, path: str, *, caller: str) -> None:
         await self._send("DELETE", f"{API_URL}/{path}", CORE, caller)
 

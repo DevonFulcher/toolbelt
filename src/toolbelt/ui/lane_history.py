@@ -159,7 +159,19 @@ def build_lanes(
         slug = repo_slug(facts.repo_id)
         if facts.pr is None or slug is None:
             continue
-        for post in posts.get((slug, facts.pr.number), []):
+        pr_posts = posts.get((slug, facts.pr.number), [])
+        original_posts = [post for post in pr_posts if post.kind == "post"]
+        if original_posts:
+            first_post = min(original_posts, key=lambda post: post.posted_at)
+            found.phase(
+                facts.task_id,
+                "slack",
+                first_post.posted_at,
+                end_of(facts.task_id, None),
+                "slack_posted",
+                "The original PR announcement remains posted in Slack.",
+            )
+        for post in pr_posts:
             for kind in post_kinds[post.kind]:
                 found.event(
                     facts.task_id,
@@ -236,6 +248,63 @@ def build_lanes(
             continue
         for kind in stage_kinds[stage]:
             found.event(task_id, "task", moved_at, kind, "")
+
+    for task_id, history in store.task_status_histories():
+        changes = history.changes
+        if history.truncated_before:
+            marker_at = changes[0].at if changes else history.fetched_at
+            found.event(
+                task_id,
+                "jira",
+                marker_at,
+                "jira_history_truncated",
+                "Earlier Jira status changes may be missing because the Jira changelog exceeded its 500-entry limit.",
+            )
+        if not changes:
+            if not history.truncated_before:
+                found.phase(
+                    task_id,
+                    "jira",
+                    history.created_at,
+                    end_of(task_id, None),
+                    "jira_status",
+                    history.current_status,
+                    history.current_status,
+                )
+            else:
+                found.phase(
+                    task_id,
+                    "jira",
+                    history.fetched_at,
+                    end_of(task_id, None),
+                    "jira_status",
+                    history.current_status,
+                    history.current_status,
+                )
+            continue
+
+        first = changes[0]
+        if not history.truncated_before and first.from_status != "Unknown":
+            found.phase(
+                task_id,
+                "jira",
+                history.created_at,
+                first.at,
+                "jira_status",
+                first.from_status,
+                first.from_status,
+            )
+        for index, jira_change in enumerate(changes):
+            next_change = changes[index + 1] if index + 1 < len(changes) else None
+            found.phase(
+                task_id,
+                "jira",
+                jira_change.at,
+                next_change.at if next_change is not None else end_of(task_id, None),
+                "jira_status",
+                jira_change.to_status,
+                jira_change.to_status,
+            )
 
     lanes: dict[TaskId, list[api.TimelineLane]] = {}
     for facts in tasks:

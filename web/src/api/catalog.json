@@ -216,7 +216,9 @@
         "slack_bump",
         "slack_reassign"
       ],
-      "phases": []
+      "phases": [
+        "slack_posted"
+      ]
     },
     {
       "id": "merge_queue",
@@ -254,6 +256,16 @@
         "task_in_review"
       ],
       "phases": []
+    },
+    {
+      "id": "jira",
+      "label": "Jira status",
+      "events": [
+        "jira_history_truncated"
+      ],
+      "phases": [
+        "jira_status"
+      ]
     }
   ],
   "lane_events": {
@@ -298,6 +310,12 @@
       "glyph": "◈",
       "tone": "green",
       "legend": "`tt ui` moved the task to In Review."
+    },
+    "jira_history_truncated": {
+      "label": "Jira history capped",
+      "glyph": "…",
+      "tone": "gray",
+      "legend": "The Jira changelog exceeded its 500-entry limit; earlier status changes may be missing."
     }
   },
   "lane_phases": {
@@ -481,6 +499,11 @@
       "tone": "amber",
       "legend": "An autonomous agent claimed the task by branch or ticket."
     },
+    "slack_posted": {
+      "label": "Shared in Slack",
+      "tone": "accent",
+      "legend": "The original PR announcement remains posted in Slack."
+    },
     "merge_queued": {
       "label": "Queued to merge",
       "tone": "purple",
@@ -495,6 +518,11 @@
       "label": "Validated",
       "tone": "accent",
       "legend": "A validate run reviewed the branch; it waited for your review of its files."
+    },
+    "jira_status": {
+      "label": "Jira status",
+      "tone": "accent",
+      "legend": "The Jira issue remained in this status during the span."
     }
   },
   "chips": {

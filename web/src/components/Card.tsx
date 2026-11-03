@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { memo, useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type {
   BranchClaim,
   Catalog,
@@ -33,6 +33,7 @@ import { Timeline } from "./Timeline";
 import { Age, CI_TONE, ExternalLink, PR_TONE, Pill, REVIEW_TONE, WHO_TEXT, WHO_TONE } from "./presentation";
 import { useNow, useSecondNow } from "./useNow";
 import { formatElapsed } from "../logic/format";
+import "./card-conflicts.css";
 
 /** Every labelled slot of a card; the catalog says which dimension each shows. */
 export type SlotKey = keyof SlotDimensions;
@@ -606,67 +607,115 @@ function NextSlot({
         {wouldBe ? `would be: ${wouldBe.label}` : WHO_TEXT[status.next.who]}
       </span>
       {queue && <MergeQueueControls id={id} queue={queue} />}
-      {siblings && <SiblingConflictChips siblings={siblings} />}
+      {siblings && <SiblingConflictSummary siblings={siblings} />}
       <ClaimChips claim={claim} />
     </Slot>
   );
-}
-
-const MAX_SIBLING_FILES = 3;
-/** More tasks than this collapse into one chip. */
-const MAX_SIBLING_CHIPS = 3;
-
-function siblingText(c: SiblingConflict): string {
-  if (c.state === "unknown") return `${c.name}: unknown, head not fetched`;
-  const shown = c.files.slice(0, MAX_SIBLING_FILES).join(", ");
-  const rest = c.files.length - MAX_SIBLING_FILES + c.more;
-  const files = `${shown}${rest > 0 ? ` (+${rest})` : ""}`;
-  return c.state === "inherited"
-    ? `conflicts with ${c.name} through their parents: ${files}`
-    : `conflicts with ${c.name}: ${files}`;
 }
 
 /** Other open tasks whose branch does not merge cleanly with this one. Loud
  *  (red) for a PR in review or ready to merge, quiet (gray) for the rest;
  *  conflicts inherited from the parents and heads that could not be tried are
  *  amber/gray as never clean. */
-function SiblingConflictChips({ siblings }: { siblings: SiblingConflictsInfo }) {
-  if (!siblings.head_known) {
-    return (
-      <>
-        {" "}
-        <Pill tone="gray" title="This task's head commit is not in the local repo, so its merges with the other open tasks could not be tried.">
-          conflicts unknown, head not fetched
-        </Pill>
-      </>
-    );
-  }
-  const tone = (c: SiblingConflict): "red" | "amber" | "gray" =>
-    !siblings.prominent || c.state === "unknown" ? "gray" : c.state === "inherited" ? "amber" : "red";
-  if (siblings.conflicts.length > MAX_SIBLING_CHIPS) {
-    return (
-      <>
-        {" "}
-        <Pill
-          tone={siblings.prominent ? "red" : "gray"}
-          title={siblings.conflicts.map(siblingText).join("\n")}
-        >
-          {`conflicts with ${siblings.conflicts.length} tasks`}
-        </Pill>
-      </>
-    );
-  }
+function SiblingConflictSummary({ siblings }: { siblings: SiblingConflictsInfo }) {
+  const [open, setOpen] = useState(false);
+  const popupId = useId();
+  const trigger = useRef<HTMLButtonElement>(null);
+  const close = useRef<HTMLButtonElement>(null);
+  const closePopup = (): void => {
+    setOpen(false);
+    trigger.current?.focus();
+  };
+  useEffect(() => {
+    if (!open) return;
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") {
+        setOpen(false);
+        trigger.current?.focus();
+      }
+    };
+    close.current?.focus();
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [open]);
+  const risks = siblings.conflicts;
+  const direct = risks.some((conflict) => conflict.state === "conflict");
+  const inherited = risks.some((conflict) => conflict.state === "inherited");
+  const tone: "red" | "amber" | "gray" =
+    !siblings.prominent || !siblings.head_known || !direct && !inherited
+      ? "gray"
+      : direct
+        ? "red"
+        : "amber";
+  const label = !siblings.head_known
+    ? "Conflict check unavailable"
+    : `${risks.length} merge ${risks.length === 1 ? "risk" : "risks"}`;
+
   return (
-    <>
-      {siblings.conflicts.map((c) => (
-        <span key={c.branch_id}>
-          {" "}
-          <Pill tone={tone(c)} title={c.files.join("\n") || undefined}>
-            {siblingText(c)}
-          </Pill>
-        </span>
-      ))}
-    </>
+    <span className="sibling-conflicts">
+      <button
+        ref={trigger}
+        type="button"
+        className="sibling-conflicts-trigger"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-controls={open ? popupId : undefined}
+        aria-label={`Show conflict details: ${label}`}
+        onClick={() => setOpen((before) => !before)}
+      >
+        <Pill tone={tone}>{label}</Pill>
+      </button>
+      {open && (
+        <div id={popupId} className="sibling-conflicts-popup" role="dialog" aria-label="Conflict details">
+          <div className="sibling-conflicts-popup-head">
+            <h3>Conflict details</h3>
+            <button ref={close} type="button" className="sibling-conflicts-close" onClick={closePopup}>
+              Close
+            </button>
+          </div>
+          {!siblings.head_known && (
+            <p className="sibling-conflicts-note">
+              This branch’s head commit is not in the local repo, so its merges with other open tasks could not be checked.
+            </p>
+          )}
+          {risks.length === 0 && siblings.head_known ? (
+            <p className="sibling-conflicts-note">No conflicting tasks were found.</p>
+          ) : (
+            <ul>
+              {risks.map((conflict) => (
+                <ConflictDetail key={conflict.branch_id} conflict={conflict} />
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </span>
+  );
+}
+
+function ConflictDetail({ conflict }: { conflict: SiblingConflict }) {
+  const description =
+    conflict.state === "unknown"
+      ? "Could not check this task because its head commit is not available."
+      : conflict.state === "inherited"
+        ? "Conflict inherited through its parent branches."
+        : "Conflicts directly with this branch.";
+  return (
+    <li className="sibling-conflict-detail">
+      <strong>{conflict.name}</strong>
+      <p>{description}</p>
+      {conflict.files.length > 0 && (
+        <>
+          <span className="sibling-conflicts-files-label">Conflicting files</span>
+          <ul>
+            {conflict.files.map((file) => (
+              <li key={file}><code>{file}</code></li>
+            ))}
+            {conflict.more > 0 && <li>{`and ${conflict.more} more ${conflict.more === 1 ? "file" : "files"}`}</li>}
+          </ul>
+        </>
+      )}
+    </li>
   );
 }
 

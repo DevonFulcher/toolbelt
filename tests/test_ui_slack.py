@@ -140,7 +140,7 @@ def draft_rig(tmp_path: Path):
 
     async def fetch(branch: str, root: Path) -> PrSnapshot:
         number = {"a": 1, "b": 2}[branch]
-        is_draft = branch == "b"
+        is_draft = True
         return PrSnapshot(
             status(number, is_draft=is_draft),
             facts(number, f"DI-{number}: Change {branch}", is_draft=is_draft),
@@ -304,6 +304,74 @@ def test_publish_compresses_the_branch_then_posts_the_confirmed_message(rig):
     assert len(proxy.publish_calls) == 1
     assert proxy.publish_calls[0][1:] == ("b", 2, False)
     assert wait_until_posted(client, f"{repo_id}:b")["posted"] is True
+    assert (
+        "GitHub does not support stacked pull requests"
+        in branches(client)["b"]["slack"]["notice"]
+    )
+
+
+def test_publish_enables_agent_merge_for_a_draft_standalone_pr_after_ready(
+    draft_rig, monkeypatch
+):
+    app, repo_id, proxy, client = draft_rig
+    calls = []
+
+    async def put_json(path, body, *, caller):
+        calls.append((path, body, caller))
+        return {}
+
+    monkeypatch.setattr(app.state.github, "put_json", put_json)
+    draft = client.post(
+        "/api/slack/draft", json={"id": f"{repo_id}:a", "assignee_id": None}
+    ).json()
+    request = {
+        "id": f"{repo_id}:a",
+        "kind": "post",
+        "text": draft["text"],
+        "assignee_id": draft["assignee"]["id"],
+        "thread_ts": None,
+        "prs": [{"repo": "o/r", "number": 1}],
+    }
+
+    response = client.post("/api/slack/publish", json=request)
+
+    assert response.status_code == 202
+    assert proxy.publish_calls[0][1:] == ("a", 1, True)
+    assert calls == [
+        (
+            "agents/repos/o/r/pulls/1/agent-merge",
+            {"allowed_actions": ["fix_ci", "resolve_merge_conflicts"]},
+            "publish",
+        )
+    ]
+    assert wait_until_posted(client, f"{repo_id}:a")["posted"] is True
+
+
+def test_agent_merge_failure_is_reported_without_blocking_slack(rig, monkeypatch):
+    app, repo_id, _proxy, client = rig
+
+    async def put_json(path, body, *, caller):
+        raise RuntimeError("Automations are disabled")
+
+    monkeypatch.setattr(app.state.github, "put_json", put_json)
+    draft = client.post(
+        "/api/slack/draft", json={"id": f"{repo_id}:a", "assignee_id": None}
+    ).json()
+    request = {
+        "id": f"{repo_id}:a",
+        "kind": "post",
+        "text": draft["text"],
+        "assignee_id": draft["assignee"]["id"],
+        "thread_ts": None,
+        "prs": [{"repo": "o/r", "number": 1}],
+    }
+
+    response = client.post("/api/slack/publish", json=request)
+
+    assert response.status_code == 202
+    slack = wait_until_posted(client, f"{repo_id}:a")
+    assert slack["posted"] is True
+    assert "Automations are disabled" in slack["notice"]
 
 
 def test_publish_marks_a_draft_ready_before_posting_it(draft_rig):

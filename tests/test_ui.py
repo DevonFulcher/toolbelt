@@ -29,7 +29,7 @@ from toolbelt.git.stack.status import (
     ReviewState,
 )
 from toolbelt.git.stack.store import RepoIdentity, StackStore, default_db_path
-from toolbelt.tasks.tracker import TaskInfo
+from toolbelt.tasks.tracker import TaskInfo, TaskStatusHistory
 from toolbelt.ui import api_models, pr_states, snapshot
 from toolbelt.ui.app import create_app
 from toolbelt.ui.branch_links import agent_link, owning_tracker, task_link
@@ -79,6 +79,9 @@ class FakeTracker:
     def fetch(self, ref: str) -> TaskInfo | None:
         self.fetches.append(ref)
         return self.tasks.get(ref)
+
+    def status_history(self, ref: str) -> TaskStatusHistory | None:
+        return None
 
 
 def seed_repo(

@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from toolbelt.git.stack.status import BranchStatus, CiState, PrState, ReviewState
-from toolbelt.tasks.tracker import StatusMove
+from toolbelt.tasks.tracker import StatusMove, TaskStatusHistory
 from toolbelt.ui.live_status import Fetched, TrackedBranch
 from toolbelt.ui.pr_activity import PrFacts
 from toolbelt.ui.task_status_sync import TaskStatusSync
@@ -42,6 +42,9 @@ class Tracker:
     def __init__(self, outcome="moved") -> None:
         self.outcome = outcome
         self.moves: list[tuple[str, str]] = []
+
+    def status_history(self, ref: str) -> TaskStatusHistory | None:
+        return None
 
     def move(self, ref, stage):
         self.moves.append((ref, stage))

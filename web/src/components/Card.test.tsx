@@ -1574,35 +1574,53 @@ describe("a card whose branch conflicts with other open tasks", () => {
   const show = (siblings: SiblingConflictsInfo) =>
     showCards([branch(1, "devon/a", { status: pr({ pr_number: 8 }), sibling_conflicts: siblings })]);
 
-  test("names the task and the files it conflicts in, with the rest counted", () => {
+  test("keeps the card summary compact and opens conflict details on click", () => {
     show(info([sibling("devon/b", { files: ["a", "b", "c", "d"], more: 2 })]));
 
-    expect(screen.getByText("conflicts with devon/b: a, b, c (+3)")).toBeInTheDocument();
+    const summary = screen.getByRole("button", { name: "Show conflict details: 1 merge risk" });
+    expect(summary).toHaveTextContent("1 merge risk");
+    expect(screen.queryByRole("dialog", { name: "Conflict details" })).toBeNull();
+
+    fireEvent.click(summary);
+
+    const details = screen.getByRole("dialog", { name: "Conflict details" });
+    expect(within(details).getByRole("button", { name: "Close" })).toHaveFocus();
+    expect(within(details).getByText("devon/b")).toBeInTheDocument();
+    expect(within(details).getByText("Conflicts directly with this branch.")).toBeInTheDocument();
+    expect(within(details).getByText("d")).toBeInTheDocument();
+    expect(within(details).getByText("and 2 more files")).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Conflict details" })).toBeNull();
+    expect(summary).toHaveFocus();
   });
 
   test("more than three tasks collapse into a count", () => {
     show(info(["b", "c", "d", "e"].map((name) => sibling(`devon/${name}`))));
 
-    expect(screen.getByText("conflicts with 4 tasks")).toBeInTheDocument();
-    expect(screen.queryByText(/conflicts with devon\/b/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Show conflict details: 4 merge risks" })).toBeInTheDocument();
   });
 
   test("a head that is not fetched is unknown, never clean", () => {
     show(info([], { head_known: false }));
 
-    expect(screen.getByText("conflicts unknown, head not fetched")).toBeInTheDocument();
+    const summary = screen.getByRole("button", { name: "Show conflict details: Conflict check unavailable" });
+    fireEvent.click(summary);
+    expect(screen.getByText(/could not be checked/)).toBeInTheDocument();
   });
 
   test("another task whose head is not fetched is unknown too", () => {
     show(info([sibling("devon/b", { state: "unknown", files: [] })]));
 
-    expect(screen.getByText("devon/b: unknown, head not fetched")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show conflict details: 1 merge risk" }));
+    expect(screen.getByText("Could not check this task because its head commit is not available.")).toBeInTheDocument();
   });
 
   test("an inherited conflict says it comes through the parents", () => {
     show(info([sibling("devon/b", { state: "inherited" })]));
 
-    expect(screen.getByText("conflicts with devon/b through their parents: src/a.py, src/b.py")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show conflict details: 1 merge risk" }));
+    expect(screen.getByText("Conflict inherited through its parent branches.")).toBeInTheDocument();
   });
 
   test("a task that merges cleanly shows nothing", () => {
