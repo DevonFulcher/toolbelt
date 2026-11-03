@@ -1,0 +1,17 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "toolbelt-agent-integration",
+  "version": "0.1.0",
+  "description": "Share Codex session claims, activity, and model usage with Toolbelt.",
+  "extensions": {
+    "com.openai": {
+      "hooks": "./hooks/hooks.json",
+      "interface": {
+        "displayName": "Toolbelt",
+        "shortDescription": "Show Codex work in Toolbelt",
+        "longDescription": "Record local session claims, tool activity, and model usage for Toolbelt's UI and reports.",
+        "developerName": "Toolbelt"
+      }
+    }
+  }
+}

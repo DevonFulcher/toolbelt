@@ -248,11 +248,13 @@ def test_a_model_without_a_price_is_reported_and_priced_when_the_table_learns_it
     assert by_model["claude-new-1"].cost_usd == 0
     assert by_model["claude-sonnet-5-5"].unpriced_calls == 0
 
-    real = ingest_module.price_usage
+    real = ingest_module.ClaudeAgentProvider.price
     monkeypatch.setattr(
-        ingest_module,
-        "price_usage",
-        lambda model, u: 0.5 if model == "claude-new-1" else real(model, u),
+        ingest_module.ClaudeAgentProvider,
+        "price",
+        lambda provider, call: (
+            0.5 if call.model == "claude-new-1" else real(provider, call)
+        ),
     )
     second = ingest_transcripts(store, projects)
 

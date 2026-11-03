@@ -1,7 +1,7 @@
 """The claim file (``docs/task-claims.md``): one JSON file per holder in
-``$TOOLBELT_HOME/claims/``. Contract v1 is what the Claude Code plugin
-writes; v2 is the same file with the ``autonomous`` holder kind, which only
-toolbelt's own agents write. Readers accept both."""
+``$TOOLBELT_HOME/claims/``. Claude Code and Codex integrations write contract
+v1; v2 is the same file with the ``autonomous`` holder kind, which only
+Toolbelt's own agents write. Readers accept both."""
 
 import json
 import re

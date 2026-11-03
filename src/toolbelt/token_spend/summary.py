@@ -1,7 +1,7 @@
 """What the spend views show: windows of spend, then a breakdown by model and
 by task over one window. Built from the calls ``ingest`` stored, so it is as
-complete as the transcripts on this machine (other machines and claude.ai are
-not in it), priced at the price table's list prices.
+complete as the local agent providers' sources, priced at the price table's
+list prices.
 """
 
 from dataclasses import dataclass

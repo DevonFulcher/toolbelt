@@ -109,7 +109,8 @@ def build_server(
             "Ask the user to decide. Records the decision points, shows them to the user "
             "and waits for their answers (an option, their own words, or both, for each "
             "point), which are the result. `task` is a branch, ticket or task id; leave it "
-            "out for the task checked out here."
+            "out for the task checked out here. Codex callers should pass their current "
+            "session id when the Toolbelt session context provides it."
         ),
     )
     async def propose_decisions(
@@ -117,19 +118,23 @@ def build_server(
         points: list[PointInput],
         ctx: Context,
         task: str | None = None,
+        session_id: str | None = None,
     ) -> str:
         try:
             parsed = points_from_data([p.model_dump() for p in points])
         except InvalidDecision as error:
             raise ToolError(str(error)) from error
         target = await task_of(task)
+        source_session = session_id
+        if source_session is None:
+            source_session = os.environ.get("CLAUDE_CODE_SESSION_ID")
         decision = await asyncio.to_thread(
             lambda: book.propose(
                 target,
                 proposer="interactive",
                 title=title,
                 points=parsed,
-                session_id=os.environ.get("CLAUDE_CODE_SESSION_ID"),
+                session_id=source_session,
             )
         )
         return await wait_for_answer(decision.id, ctx)

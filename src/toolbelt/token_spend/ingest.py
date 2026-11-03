@@ -1,14 +1,15 @@
-"""Brings the transcripts' model calls into the stack store, deterministically
-(no model involved): read what was appended since last time, price it, store it.
+"""Brings interactive agents' model calls into the stack store deterministically:
+read what each provider appended since last time, price it, and store it.
 """
 
 import dataclasses
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from toolbelt.agent_providers.base import AgentProvider
+from toolbelt.agent_providers.claude import ClaudeAgentProvider
 from toolbelt.git.stack.store import StackStore
-from toolbelt.token_spend.pricing import price_usage
-from toolbelt.token_spend.transcripts import parse_calls, transcript_files
 
 
 @dataclass(frozen=True)
@@ -41,23 +42,32 @@ def _read_new(path: Path, offset: int) -> tuple[str, int]:
 
 
 def ingest_transcripts(store: StackStore, projects: Path) -> IngestResult:
+    """Compatibility entry point for ingesting Claude Code transcripts."""
+    return ingest_providers(store, [ClaudeAgentProvider(projects)])
+
+
+def ingest_providers(
+    store: StackStore, providers: Sequence[AgentProvider]
+) -> IngestResult:
+    """Read and price each configured provider's append-only usage sources."""
     files_read = new_calls = unreadable = 0
-    for path in transcript_files(projects):
-        offset = store.transcript_offset(str(path))
-        text, new_offset = _read_new(path, offset)
-        if new_offset == offset:
-            continue
-        calls, bad = parse_calls(text.splitlines())
-        priced = [
-            dataclasses.replace(call, cost_usd=price_usage(call.model, call.usage))
-            for call in calls
-        ]
-        new_calls += store.add_usage_calls(
-            priced, transcript=str(path), offset=new_offset
-        )
-        unreadable += bad
-        files_read += 1
-    newly_priced = _reprice(store)
+    for provider in providers:
+        for path in provider.usage_files():
+            offset = store.transcript_offset(str(path))
+            text, new_offset = _read_new(path, offset)
+            if new_offset == offset:
+                continue
+            calls, bad = provider.parse_usage(text.splitlines())
+            priced = [
+                dataclasses.replace(call, cost_usd=provider.price(call))
+                for call in calls
+            ]
+            new_calls += store.add_usage_calls(
+                priced, transcript=str(path), offset=new_offset
+            )
+            unreadable += bad
+            files_read += 1
+    newly_priced = _reprice(store, providers)
     return IngestResult(
         files_read=files_read,
         new_calls=new_calls,
@@ -67,17 +77,19 @@ def ingest_transcripts(store: StackStore, projects: Path) -> IngestResult:
     )
 
 
-def _reprice(store: StackStore) -> int:
+def _reprice(store: StackStore, providers: Sequence[AgentProvider]) -> int:
     """Price the stored calls whose model the price table now knows."""
     newly_priced = 0
+    provider_by_name = {provider.name: provider for provider in providers}
     for model in store.unpriced_models():
-        if price_usage(model, {}) is None:
-            continue
-        costs = {
-            message_id: cost
-            for message_id, usage in store.unpriced_usage(model)
-            if (cost := price_usage(model, usage)) is not None
-        }
+        costs = {}
+        for call in store.unpriced_usage(model):
+            provider = provider_by_name.get(call.provider)
+            if provider is None:
+                continue
+            cost = provider.price(call)
+            if cost is not None:
+                costs[call.message_id] = cost
         store.set_usage_costs(costs)
         newly_priced += len(costs)
     return newly_priced

@@ -139,7 +139,10 @@ def seed_db(laptop: Laptop, origin: Path) -> Path:
         (str(wt),),
     )
     conn.execute(
-        "INSERT INTO usage_calls VALUES ('m', 's', NULL, 'model', 'now', ?, 1, 1, 1, 1, 1, '{}', 0.5)",
+        "INSERT INTO usage_calls (message_id, session_id, agent_id, model, at, cwd, "
+        "input_tokens, output_tokens, cache_read_tokens, cache_write_5m_tokens, "
+        "cache_write_1h_tokens, usage_json, cost_usd, provider) "
+        "VALUES ('m', 's', NULL, 'model', 'now', ?, 1, 1, 1, 1, 1, '{}', 0.5, 'claude')",
         (str(wt),),
     )
     conn.commit()

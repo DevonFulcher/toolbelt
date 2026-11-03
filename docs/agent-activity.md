@@ -1,13 +1,13 @@
 # Agent activity
 
 What an agent does in a turn, not only that it is running (a claim says that).
-The Claude Code plugin (`claude-plugin/`) records every tool call; `tt ui`
-reads it into the stack store and the aggregate view shows it.
+The Claude Code plugin and Codex integration record tool calls using the same
+chunk format; `tt ui` reads those chunks into the stack store and aggregate
+view.
 
 ## What is recorded
 
-The plugin wraps each `tool.call` (it times the call and passes it on
-unchanged) and keeps, per turn:
+Each integration records tool calls and keeps, per turn:
 
 | Field | |
 | --- | --- |
@@ -29,6 +29,12 @@ that add up to it:
 - **model**: the rest: thinking, streaming, API latency.
 
 A call still running when the turn ends is closed with it and marked `unended`.
+
+Codex uses `PreToolUse` and `PostToolUse` hooks to time calls, then writes a
+final chunk at `Stop` or `Interrupt`. Its hook records only a safe command
+summary or path, not prompt text, command arguments, or tool output. The
+Codex hook's 30-minute claim TTL is refreshed by hook events because Codex has
+no periodic heartbeat event.
 
 ## What else the plugin can see
 
@@ -91,11 +97,12 @@ An "Agent activity" section (`Aggregate.activity`, hourly sums in UTC that the
 page makes local days or weeks): agent time by kind (model, tools, subagents,
 blocked on you), call time by category, and the tools by call time. It is
 activity, not status, so it is not a lane (see `timeline-lanes.md`) and not on
-the card timeline. Recording begins when the plugin is updated; earlier turns
+the card timeline. Recording begins when an integration is enabled; earlier turns
 are unknown, not zero. A turn is tied to a repo by the worktree most of its
 calls were about; turns with none are only in the all-repos view.
 
 ## Updating
 
-`claude-plugin/install.sh`, then start a new session: the mod is loaded per
-session. The plugin version is 0.2.2.
+For Claude, run `claude-plugin/install.sh` and start a new session. For Codex,
+follow [the local plugin setup](../codex-plugin/README.md), review and trust
+its hooks, then start a new session.

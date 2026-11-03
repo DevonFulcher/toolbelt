@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "python3 ${PLUGIN_ROOT}/hooks/toolbelt_hook.py" }] }],
+    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "python3 ${PLUGIN_ROOT}/hooks/toolbelt_hook.py" }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "python3 ${PLUGIN_ROOT}/hooks/toolbelt_hook.py" }] }],
+    "PreToolUse": [{ "hooks": [{ "type": "command", "command": "python3 ${PLUGIN_ROOT}/hooks/toolbelt_hook.py" }] }],
+    "PermissionRequest": [{ "hooks": [{ "type": "command", "command": "python3 ${PLUGIN_ROOT}/hooks/toolbelt_hook.py" }] }],
+    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "python3 ${PLUGIN_ROOT}/hooks/toolbelt_hook.py" }] }],
+    "PreModelRequest": [{ "hooks": [{ "type": "command", "command": "python3 ${PLUGIN_ROOT}/hooks/toolbelt_hook.py" }] }],
+    "PostModelRequest": [{ "hooks": [{ "type": "command", "command": "python3 ${PLUGIN_ROOT}/hooks/toolbelt_hook.py" }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "python3 ${PLUGIN_ROOT}/hooks/toolbelt_hook.py" }] }],
+    "Interrupt": [{ "hooks": [{ "type": "command", "command": "python3 ${PLUGIN_ROOT}/hooks/toolbelt_hook.py" }] }],
+    "SubagentStart": [{ "hooks": [{ "type": "command", "command": "python3 ${PLUGIN_ROOT}/hooks/toolbelt_hook.py" }] }],
+    "SubagentStop": [{ "hooks": [{ "type": "command", "command": "python3 ${PLUGIN_ROOT}/hooks/toolbelt_hook.py" }] }]
+  }
+}

@@ -1,11 +1,11 @@
 """Keeps the spend ledger current while ``tt ui`` runs, and answers the spend
 view from it.
 
-Like the claims feed it does not wait for a browser: reading transcripts is
-local, and the ledger is only as complete as the reads. Each pass reads what
-was appended to the session transcripts since the last one (see
-``token_spend.ingest``); the first pass over a long history takes a few
-seconds, so it runs off the event loop.
+Like the claims feed it does not wait for a browser: reading provider usage
+sources is local, and the ledger is only as complete as the reads. Each pass
+reads what was appended since the last one (see ``token_spend.ingest``); the
+first pass over a long history takes a few seconds, so it runs off the event
+loop.
 """
 
 import asyncio
@@ -13,8 +13,9 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 from pathlib import Path
 
+from toolbelt.agent_providers import providers_for
 from toolbelt.git.stack.store import StackStore, TokenCounts
-from toolbelt.token_spend.ingest import ingest_transcripts
+from toolbelt.token_spend.ingest import ingest_providers
 from toolbelt.token_spend.summary import SpendSummary, summarize
 from toolbelt.ui import api_models as api
 
@@ -165,10 +166,17 @@ class SpendFeed:
         self.on_ingest: Callable[[], None] | None = None
 
     def ingest(self) -> None:
-        """One pass over the transcripts (blocking)."""
-        store = StackStore(self._db_path())
+        """One pass over the configured agent usage sources (blocking)."""
+        db_path = self._db_path()
+        store = StackStore(db_path)
         try:
-            ingest_transcripts(store, self._projects())
+            ingest_providers(
+                store,
+                providers_for(
+                    claude_projects=self._projects(),
+                    state_directory=db_path.parent,
+                ),
+            )
         finally:
             store.close()
         self.ingested_at = self._wall_clock()

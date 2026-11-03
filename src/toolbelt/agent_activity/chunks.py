@@ -1,4 +1,4 @@
-"""The activity chunk files the Claude Code plugin writes
+"""The activity chunk files agent integrations write
 (``$TOOLBELT_HOME/activity/<holder>.<turn>.<seq>.json``, contract in
 ``docs/agent-activity.md``): the tool calls a turn made, as the plugin timed
 them. One file per chunk; the last chunk of a turn (``final``) carries the

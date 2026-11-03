@@ -2,8 +2,9 @@
 
 import typer
 
+from toolbelt.agent_providers import providers_for
 from toolbelt.git.stack.store import StackStore, default_db_path
-from toolbelt.token_spend.ingest import ingest_transcripts
+from toolbelt.token_spend.ingest import ingest_providers
 from toolbelt.token_spend.summary import NamedTaskUsage, SpendSummary, summarize
 from toolbelt.token_spend.transcripts import projects_dir
 
@@ -28,7 +29,7 @@ def _task_label(task: NamedTaskUsage) -> str:
 def format_summary(summary: SpendSummary) -> str:
     lines = [
         (
-            "Spend in Claude Code on this machine, at list prices "
+            "Spend in Claude Code and Codex on this machine, at list prices "
             f"(as of {summary.as_of:%Y-%m-%d %H:%M} UTC)"
         ),
         "",
@@ -75,7 +76,13 @@ def format_summary(summary: SpendSummary) -> str:
 def run_spend_report(*, days: int) -> None:
     store = StackStore(default_db_path())
     try:
-        result = ingest_transcripts(store, projects_dir())
+        result = ingest_providers(
+            store,
+            providers_for(
+                claude_projects=projects_dir(),
+                state_directory=default_db_path().parent,
+            ),
+        )
         if result.new_calls:
             typer.echo(
                 f"Read {result.new_calls} new model calls from "

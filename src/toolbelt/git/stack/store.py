@@ -27,6 +27,7 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Literal
 
 from toolbelt.decisions.model import (
     Decision,
@@ -49,6 +50,7 @@ DB_FILENAME = "stacks.db"
 _BUSY_TIMEOUT_MS = 30_000
 
 Parents = dict[str, str]
+type AgentProviderName = Literal["claude", "codex"]
 
 _MIGRATIONS: list[tuple[str, ...]] = [
     (
@@ -757,6 +759,12 @@ _MIGRATIONS: list[tuple[str, ...]] = [
         """,
         "CREATE INDEX jira_status_changes_by_time ON jira_status_changes (task_id, at)",
     ),
+    (
+        # Interactive calls can come from Claude Code transcripts or Codex
+        # model-request hooks. The provider keeps their model identifiers and
+        # usage sources distinct when reports are combined.
+        "ALTER TABLE usage_calls ADD COLUMN provider TEXT NOT NULL DEFAULT 'claude'",
+    ),
 ]
 
 
@@ -1003,7 +1011,7 @@ class TokenCounts:
 
 @dataclass(frozen=True)
 class UsageCall:
-    """One API response read from a session transcript."""
+    """One model response reported by an interactive agent provider."""
 
     message_id: str
     session_id: str
@@ -1017,6 +1025,7 @@ class UsageCall:
     usage: dict
     #: None when no price was known for ``model`` yet.
     cost_usd: float | None
+    provider: AgentProviderName = "claude"
 
 
 @dataclass(frozen=True)
@@ -1706,8 +1715,8 @@ class StackStore:
                     "INSERT INTO usage_calls (message_id, session_id, agent_id, "
                     "model, at, cwd, input_tokens, output_tokens, "
                     "cache_read_tokens, cache_write_5m_tokens, "
-                    "cache_write_1h_tokens, usage_json, cost_usd) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "cache_write_1h_tokens, usage_json, cost_usd, provider) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                     "ON CONFLICT (message_id) DO UPDATE SET "
                     "input_tokens = excluded.input_tokens, "
                     "output_tokens = excluded.output_tokens, "
@@ -1736,6 +1745,7 @@ class StackStore:
                         call.tokens.cache_write_1h,
                         json.dumps(call.usage, sort_keys=True),
                         call.cost_usd,
+                        call.provider,
                     ),
                 )
             conn.execute(
@@ -1755,14 +1765,33 @@ class StackStore:
         )
         return {r["model"]: r["calls"] for r in rows}
 
-    def unpriced_usage(self, model: str) -> list[tuple[str, dict]]:
-        """``(message_id, usage)`` of ``model``'s calls that have no cost."""
+    def unpriced_usage(self, model: str) -> list[UsageCall]:
+        """Calls of ``model`` that have no cost, with provider and token counts."""
         rows = self._conn.execute(
-            "SELECT message_id, usage_json FROM usage_calls "
-            "WHERE model = ? AND cost_usd IS NULL",
+            "SELECT * FROM usage_calls WHERE model = ? AND cost_usd IS NULL",
             (model,),
         )
-        return [(r["message_id"], json.loads(r["usage_json"])) for r in rows]
+        return [
+            UsageCall(
+                message_id=row["message_id"],
+                session_id=row["session_id"],
+                agent_id=row["agent_id"],
+                model=row["model"],
+                at=datetime.fromisoformat(row["at"]),
+                cwd=row["cwd"],
+                tokens=TokenCounts(
+                    input=row["input_tokens"],
+                    output=row["output_tokens"],
+                    cache_read=row["cache_read_tokens"],
+                    cache_write_5m=row["cache_write_5m_tokens"],
+                    cache_write_1h=row["cache_write_1h_tokens"],
+                ),
+                usage=json.loads(row["usage_json"]),
+                cost_usd=None,
+                provider=row["provider"],
+            )
+            for row in rows
+        ]
 
     def set_usage_costs(self, costs: dict[str, float]) -> None:
         """Set the cost of the calls with these message ids."""

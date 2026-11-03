@@ -4,16 +4,15 @@ A *claim* says "this agent session is working on this task right now". `tt ui`
 shows a claimed task as **With an agent** instead of **Needs me**, so what the
 agents are on is not mistaken for work waiting on you.
 
-Claims are **files**. A Claude Code plugin (`claude-plugin/`, a TypeScript
-mod) *writes* them; `tt` only *reads* them (the UI, `tt task status`) and
-offers manual commands. **The plugin never runs `tt`: the file contract below
-is the whole interface.**
+Claims are **files**. The Claude Code integration and Codex hooks write them;
+`tt` reads them (the UI, `tt task status`) and offers manual commands. The
+integrations write the file contract below directly without starting `tt`.
 
 ## Who does what
 
-| | plugin (writer) | `tt` (reader) |
+| | integrations (writer) | `tt` (reader) |
 | --- | --- | --- |
-| Claim files `<holder>.json` | writes, heartbeats, rewrites each turn | reads; writes only `human.*` ones (`tt task claim`) |
+| Claim files `<holder>.json` | writes and heartbeats | reads; writes only `human.*` ones (`tt task claim`) |
 | Revocations `revoked/<holder>.json` | reads its own before each write, drops what was revoked | writes (`tt task release`), deletes orphans (`tt task gc`) |
 | Expired files | stops refreshing | ignores; `tt task gc` deletes |
 | Which task a claim is about | names a worktree path or a ref | resolves it against the stack store and `git worktree list` |
@@ -23,8 +22,8 @@ is the whole interface.**
 Directory: `$TOOLBELT_HOME/claims/` (`TOOLBELT_HOME` is the override the stack
 store already uses, default `~/.toolbelt`; this is DATA, not config).
 
-One JSON file per holder: `<holder>.json`. The holder is the Claude session
-id, plus `.<agent_id>` for a subagent; human/CLI holders are `human.<name>`.
+One JSON file per holder: `<holder>.json`. The holder is the agent session id,
+plus `.<agent_id>` for a subagent; human/CLI holders are `human.<name>`.
 Holder characters are `[A-Za-z0-9._-]` only. The `holder` field must equal the
 file name without `.json` (a file that disagrees is ignored).
 
@@ -33,9 +32,9 @@ file name without `.json` (a file that disagrees is ignored).
   "version": 1,
   "holder": "<holder>",
   "kind": "agent",                // "agent" | "human" | "autonomous" (v2 only)
-  "session_id": "<claude session id or null>",
+  "session_id": "<agent session id or null>",
   "agent_id": null,               // subagent id or null
-  "link": "claude://claude.ai/epitaxy/<host session id>",   // or null
+  "link": "<provider session link>",                       // or null
   "state": "working",             // "working" | "idle" | "blocked"
   "started_at": "2026-10-12T20:00:00Z",
   "updated_at": "2026-10-12T20:00:30Z",
@@ -51,15 +50,16 @@ file name without `.json` (a file that disagrees is ignored).
 
 - **Live** iff `now < updated_at + ttl_seconds` and, when the file has `pid`
   and `process_started_at`, that process still exists with that start time
-  (see "Writer process" below). The writer picks the ttl: working 180
-  (heartbeat every 30s), idle 1800, blocked 1800. Expired files, and files
+  (see "Writer process" below). Claude uses working 180 (heartbeat every
+  30 seconds), idle 1800, and blocked 1800. Codex uses working 1800 and idle
+  1800, renewing on hook events. Expired files, and files
   whose writer process is gone, are ignored by readers and deleted by
   `tt task gc`.
 - **Writer process** (optional fields `pid`, an integer >= 1, and
   `process_started_at`, an ISO timestamp, written together or not at all).
-  They record the process that writes the file (the Claude process, for the
-  plugin) so a reader can tell that the writer died without waiting for the
-  ttl. The start time is what defeats pid reuse: a pid that exists but
+  They record the process that writes the file (when the integration can
+  identify its agent process) so a reader can tell that the writer died
+  without waiting for the ttl. The start time is what defeats pid reuse: a pid that exists but
   started at another time (more than 2 s apart) is a different process, so
   the holder is dead. A reader checks this on the local machine only: claim
   files are local, and a pid means nothing on another host. macOS and Linux
@@ -72,7 +72,7 @@ file name without `.json` (a file that disagrees is ignored).
   --verbose` ("its process is gone"), and deleted by `tt task gc` and by
   `tt ui` (at once rather than after the 10 s grace: a dead writer cannot
   heartbeat). The check is not a substitute for a subagent's end: a subagent
-  orphaned inside a live Claude process keeps its holder alive until
+  orphaned inside a live agent process keeps its holder alive until
   SubagentStop, its own `turn.complete`, or the session ends.
 - **Semantics.** `working` live claims make the task "With an agent". `idle` =
   the agent's turn ended and it waits for the user; `blocked` = it waits on a

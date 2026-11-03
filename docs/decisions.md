@@ -29,6 +29,12 @@ good). Answers can be given after the asking session has closed.
 claude mcp add --scope user toolbelt-decisions -- toolbelt decisions mcp
 ```
 
+For Codex, register the same stdio server with:
+
+```sh
+codex mcp add toolbelt-decisions -- toolbelt decisions mcp
+```
+
 * `propose_decisions` records the question, shows it as an MCP App in Claude
   (answer there) and waits for the answer, which is its result. The question is
   also in `tt ui`, so it can be answered there instead.
@@ -37,6 +43,10 @@ claude mcp add --scope user toolbelt-decisions -- toolbelt decisions mcp
   later session finds an answer given after the first closed. Reading an
   answer marks it delivered.
 * `pending_decision` and `answer_decision` are for the App only.
+
+Codex hooks add the current session id to prompt context. Pass that id as
+`session_id` when proposing a decision so the saved question keeps its source
+session. Claude Code continues to obtain the id from its session environment.
 
 A call that waits is not limited by toolbelt. Claude Code applies its own tool
 limits (`MCP_TOOL_TIMEOUT`, a per-server `timeout`, and an idle limit that

@@ -114,6 +114,29 @@ def test_a_proposal_waits_until_the_app_answers_it_and_returns_the_answers():
     run(scenario())
 
 
+def test_codex_can_attach_its_session_id_to_a_decision():
+    async def scenario():
+        book, mcp = server()
+        async with Client(mcp) as client:
+            call = asyncio.ensure_future(
+                client.call_tool(
+                    "propose_decisions",
+                    {
+                        "title": "Storage",
+                        "points": POINTS,
+                        "task": "devon/a",
+                        "session_id": "codex-session-1",
+                    },
+                )
+            )
+            decision_id = await pending_id(book)
+            assert book.get(decision_id).session_id == "codex-session-1"
+            book.answer(decision_id, ANSWER)
+            await call
+
+    run(scenario())
+
+
 def test_an_answer_given_in_toolbelts_own_ui_ends_the_wait_too():
     async def scenario():
         book, mcp = server()
