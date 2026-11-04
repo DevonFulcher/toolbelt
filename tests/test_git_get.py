@@ -32,7 +32,6 @@ def test_setup_failure_preserves_clone_and_traceback_and_can_be_retried(
     workdir.mkdir()
     monkeypatch.setenv("GIT_PROJECTS_WORKDIR", str(workdir))
     clone_path = workdir / "origin"
-    opened: list[Path] = []
     setup_paths: list[tuple[Path, Path | None, str | None]] = []
 
     def setup(
@@ -52,12 +51,10 @@ def test_setup_failure_preserves_clone_and_traceback_and_can_be_retried(
         raise error
 
     monkeypatch.setattr("toolbelt.git.cli.git_setup", setup)
-    monkeypatch.setattr("toolbelt.git.cli.open_in_editor", opened.append)
     runner = CliRunner()
     args = ["get", str(git_remote), "--service-name", "my-service"]
     if already_exists:
         assert runner.invoke(git_typer, args).exit_code == 0
-        opened.clear()
         setup_paths.clear()
 
     monkeypatch.setattr("toolbelt.git.cli.git_setup", fail_setup)
@@ -75,7 +72,6 @@ def test_setup_failure_preserves_clone_and_traceback_and_can_be_retried(
     assert "Fix the setup error below" in result.stderr
     assert "rerun the same `tt git get` command" in result.stderr
     assert "without cloning again" in result.stderr
-    assert opened == []
     assert (clone_path / ".git").is_dir()
     assert (clone_path / "setup-progress").read_text() == "preserve me\n"
     assert setup_paths == [(clone_path, workdir, "my-service")]
@@ -86,19 +82,18 @@ def test_setup_failure_preserves_clone_and_traceback_and_can_be_retried(
 
     assert retry.exit_code == 0
     assert retry.stderr == ""
-    assert opened == [clone_path]
     assert (clone_path / "setup-progress").read_text() == "preserve me\n"
     assert setup_paths == [(clone_path, workdir, "my-service")] * 2
 
 
-def test_successful_clone_and_setup_opens_editor(
+def test_successful_clone_and_setup_does_not_open_editor(
     git_remote: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("GIT_PROJECTS_WORKDIR", str(tmp_path))
+    monkeypatch.setenv("EDITOR", "toolbelt-test-editor-that-does-not-exist")
     clone_path = tmp_path / "origin"
-    opened: list[Path] = []
 
     def setup(
         target_path: Path,
@@ -110,7 +105,6 @@ def test_successful_clone_and_setup_opens_editor(
         (target_path / "setup-complete").touch()
 
     monkeypatch.setattr("toolbelt.git.cli.git_setup", setup)
-    monkeypatch.setattr("toolbelt.git.cli.open_in_editor", opened.append)
 
     result = CliRunner().invoke(git_typer, ["get", str(git_remote)])
 
@@ -118,4 +112,3 @@ def test_successful_clone_and_setup_opens_editor(
     assert result.stderr == ""
     assert (clone_path / ".git").is_dir()
     assert (clone_path / "setup-complete").exists()
-    assert opened == [clone_path]

@@ -7,7 +7,6 @@ import typer
 
 from toolbelt import logged_process
 from toolbelt.bootstrap.repo_setup import git_setup
-from toolbelt.editor import open_in_editor
 from toolbelt.env_var import get_git_projects_workdir
 from toolbelt.git.branches import get_branch_name
 from toolbelt.git.commands import is_git_repo
@@ -141,7 +140,7 @@ def branch_clean():
 
 @git_typer.command(
     help="Clone a repo to the standard location, set it up with common "
-    + "config, and open it in an editor"
+    + "config"
 )
 def get(
     repo_url: Annotated[str, typer.Argument(help="URL of the repository to get")],
@@ -183,7 +182,6 @@ def get(
             err=True,
         )
         raise
-    open_in_editor(clone_path)
 
 
 @git_typer.command()
