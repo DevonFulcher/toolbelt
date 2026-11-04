@@ -604,11 +604,10 @@ def _start_stacked_branch(
 
     Commits the current changes with ``message`` onto ``new_branch`` (in the main
     worktree, where the changes live), records lineage, restores ``parent`` in the
-    main worktree, then creates the branch's own worktree and opens it. Returns
-    the new worktree path so the caller can sync the stack from there.
+    main worktree, then creates the branch's own worktree. Returns the new
+    worktree path so the caller can sync the stack from there.
     """
     # Lazy import: worktrees -> bootstrap.repo_setup -> workflow cycle at load.
-    from toolbelt.editor import open_in_editor
     from toolbelt.git.stack.lineage import set_parent
     from toolbelt.git.worktrees import _worktree_path_for_name, copy_dotfiles
 
@@ -632,7 +631,6 @@ def _start_stacked_branch(
     copy_dotfiles(root=root, wt_path=wt_path)
     update_repo(wt_path)
     logger.info(f"Created worktree at {wt_path}")
-    open_in_editor(wt_path)
     return wt_path
 
 

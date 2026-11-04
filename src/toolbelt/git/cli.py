@@ -227,8 +227,8 @@ def save(
     On the default branch of a repo in $CURRENT_ORG, it instead offers (-y
     accepts) to start a new stacked branch devon/<message> (spaces become _):
     it commits there, puts the main worktree back on the default branch,
-    creates a worktree for the new branch, installs deps, opens an editor, and
-    syncs from that worktree. In other repos it commits directly to the default branch.
+    creates a worktree for the new branch, installs deps, and syncs from that
+    worktree. In other repos it commits directly to the default branch.
 
     The commit message is also recorded in ~/.toolbelt/storage.db for
     `toolbelt standup`.
