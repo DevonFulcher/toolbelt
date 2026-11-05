@@ -4,6 +4,20 @@ Integration tests run real git against throwaway repos in ``tmp_path`` so they
 exercise actual git behavior (merge bases, rebase --onto, squash artifacts).
 """
 
+import os
+
+# One thread per math library, set before numpy and scikit-learn load. The
+# forecast tests fit models: with each library defaulting to a thread per core,
+# every pytest-xdist worker oversubscribes the machine (two heavy test files
+# take 47s and 200s of CPU that way, 11s and 11s of CPU with one thread).
+for _threads in (
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+):
+    os.environ.setdefault(_threads, "1")
+
 import subprocess
 from collections.abc import Iterable
 from pathlib import Path

@@ -5,7 +5,8 @@ queued from its card. Once its next action is Merge (CI passed, approved, no
 comments or conflicts, its parent merged) the queue merges it exactly as the
 Merge button does (``toolbelt git merge``), pinned to the head that was queued.
 
-A stacked PR merges after its parents, and only into the trunk. Once its
+Every queued PR is merged only into the trunk (a PR queued on the trunk whose
+base is another branch is dropped), and a stacked PR merges after its parents. Once its
 parent has merged, the sync that ``toolbelt git merge`` runs pushes a merge
 commit onto it; that one head change is accepted (the queue then pins the new
 head), and the PR is merged only when its base is the trunk and its head
@@ -105,6 +106,7 @@ class MergeQueue:
         stacked_on: Callable[[int, str], StackedOn | None],
         parent_state: Callable[[MergeQueueRow], PrState | None],
         ready_to_land: Callable[[MergeQueueRow], bool],
+        base_problem: Callable[[MergeQueueRow], str | None],
         is_sync_merge: Callable[[MergeQueueRow, str], bool],
         land: Callable[[int, str, str | None], Awaitable[LandResult]],
         wall_clock: Callable[[], datetime],
@@ -118,8 +120,9 @@ class MergeQueue:
         for one on the trunk); ``parent_state`` the PR state of the parent a
         queued PR was stacked on (``None`` for one queued on the trunk);
         ``ready_to_land(row)`` whether a queued PR whose next action is Merge is
-        based on the trunk and contains what its parent landed (true when it
-        had no parent); ``is_sync_merge(row, new_head)`` whether ``new_head`` is
+        based on the trunk and, when it had a parent, contains what its parent
+        landed; ``base_problem(row)`` why a PR queued on the trunk is not based
+        on it (``None`` when it is); ``is_sync_merge(row, new_head)`` whether ``new_head`` is
         what a sync adds to the queued head;
         ``land(repo_id, branch, head)`` merges, only if the PR's head is
         ``head`` when given (the Merge button's work); ``changed`` is told
@@ -134,6 +137,7 @@ class MergeQueue:
         self._stacked_on = stacked_on
         self._parent_state = parent_state
         self._ready_to_land = ready_to_land
+        self._base_problem = base_problem
         self._is_sync_merge = is_sync_merge
         self._land = land
         self._wall_clock = wall_clock
@@ -288,7 +292,10 @@ class MergeQueue:
                     "without merging.",
                 )
             elif kind == "merge":
-                if self._ready_to_land(row):
+                problem = self._base_problem(row)
+                if problem is not None:
+                    self._drop(key, f"Taken off the merge queue: {problem}")
+                elif self._ready_to_land(row):
                     self._start_merge(key, queued=True)
             elif kind in _STILL_WAITING:
                 continue  # a claimed branch is left to its agent

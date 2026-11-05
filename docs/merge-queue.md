@@ -31,7 +31,9 @@ A queued PR is taken off the queue, with a note on its card saying why, when:
 - its CI failed, a comment or conflict appeared, changes were requested, or it
   became a draft again;
 - it was closed without merging, or the PR it is stacked on was closed without
-  merging.
+  merging;
+- it was queued on the trunk but its PR is based on another branch: the queue
+  only merges into the trunk.
 
 A PR merged some other way, or no longer tracked, leaves the queue quietly. A PR
 an agent holds stays queued until the agent is done. Waiting for CI, review or a
@@ -39,7 +41,8 @@ parent keeps it queued.
 
 ## Stacked PRs
 
-A queued PR remembers the PR it was stacked on, because `sync` forgets a merged
+Every queued PR is merged only into the trunk, never into another branch of a
+stack. A queued PR remembers the PR it was stacked on, because `sync` forgets a merged
 parent and reparents the branch onto the trunk. Once its next action is Merge it
 is still held back until all of these hold:
 

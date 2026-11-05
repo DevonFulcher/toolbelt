@@ -1323,20 +1323,41 @@ def create_app(
             name = parents[name]
         return parents.get(name)
 
+    def on_trunk(row: MergeQueueRow) -> bool:
+        fetched = refresher.get(row.repo_id, row.branch)
+        return (
+            fetched is not None
+            and fetched.facts is not None
+            and fetched.facts.base_ref == trunk_of(row.repo_id, row.branch)
+        )
+
+    def base_problem(row: MergeQueueRow) -> str | None:
+        """Why a PR queued on the trunk is not based on it: the queue only ever
+        merges into the trunk."""
+        if row.parent_branch is not None or on_trunk(row):
+            return None
+        fetched = refresher.get(row.repo_id, row.branch)
+        base = fetched.facts.base_ref if fetched and fetched.facts else "unknown"
+        return (
+            f"its PR is based on {base}, not the trunk "
+            f"({trunk_of(row.repo_id, row.branch)}), and the queue only merges "
+            "into the trunk."
+        )
+
     def ready_to_land(row: MergeQueueRow) -> bool:
-        """A stacked PR is merged only into the trunk and only with what its
-        parent landed: its parent has merged, GitHub has retargeted it onto the
-        trunk, and its head contains the parent's squash commit."""
+        """The PR is based on the trunk and, when it was stacked, only with what
+        its parent landed: its parent has merged, GitHub has retargeted it onto
+        the trunk, and its head contains the parent's squash commit."""
         if row.parent_branch is None:
-            return True
+            return on_trunk(row)
         fetched = refresher.get(row.repo_id, row.branch)
         found = parent_pr(row)
         path = repo_path_of(row.repo_id)
         return (
             parent_state(row) is PrState.MERGED
+            and on_trunk(row)
             and fetched is not None
             and fetched.facts is not None
-            and fetched.facts.base_ref == trunk_of(row.repo_id, row.branch)
             and found is not None
             and found[1] is not None
             and path is not None
@@ -1401,6 +1422,7 @@ def create_app(
         stacked_on=stacked_on,
         parent_state=parent_state,
         ready_to_land=ready_to_land,
+        base_problem=base_problem,
         is_sync_merge=follows_sync,
         land=land_queued,
         wall_clock=wall_clock,

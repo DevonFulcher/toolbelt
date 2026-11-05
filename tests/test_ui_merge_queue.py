@@ -18,12 +18,12 @@ from toolbelt.ui.pr_activity import PrFacts
 from toolbelt.ui.pr_fetch import PrSnapshot
 
 
-def facts(head: str) -> PrFacts:
+def facts(head: str, base: str = "main") -> PrFacts:
     return PrFacts(
         number=1,
         title="Change a",
         author="devon",
-        base_ref="main",
+        base_ref=base,
         head_oid=head,
         state="OPEN",
         is_draft=False,
@@ -43,6 +43,7 @@ class Github:
         self.ci = CiState.RUNNING
         self.review = ReviewState.APPROVED
         self.head = "h1"
+        self.base = "main"
 
     async def fetch(self, branch: str, root: Path) -> PrSnapshot:
         status = BranchStatus(
@@ -51,7 +52,7 @@ class Github:
             review=self.review,
             url="https://github.com/o/r/pull/1",
         )
-        return PrSnapshot(status, facts(self.head))
+        return PrSnapshot(status, facts(self.head, self.base))
 
 
 @pytest.fixture
@@ -164,6 +165,22 @@ def test_a_pr_with_new_commits_is_dropped_with_a_note_and_not_merged(rig):
         "the note on the card",
     )
     assert "New commits" in branch(client)["merge_queue"]["notice"]
+    assert merges == []
+
+
+def test_a_pr_based_on_another_branch_than_the_trunk_is_never_merged(rig):
+    app, repo_id, github, merges, client = rig
+    client.post("/api/merge/queue", json={"id": f"{repo_id}:a"})
+
+    github.base = "release"
+    github.ci = CiState.SUCCESS
+    refresh(app, client)
+
+    wait_for(
+        lambda: (branch(client)["merge_queue"] or {}).get("notice"),
+        "the note on the card",
+    )
+    assert "not the trunk" in branch(client)["merge_queue"]["notice"]
     assert merges == []
 
 

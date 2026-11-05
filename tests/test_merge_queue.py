@@ -59,6 +59,7 @@ class Rig:
         self.stacked: dict[str, StackedOn | None] = {}
         self.parent_states: dict[str, PrState | None] = {}
         self.ready = True
+        self.base_problems: dict[str, str] = {}
         self.sync_merge = False
         self.landed: list[str] = []
         self.pinned: list[str | None] = []
@@ -87,6 +88,7 @@ class Rig:
             stacked_on=lambda repo_id, name: self.stacked.get(name),
             parent_state=lambda row: self.parent_states.get(row.branch),
             ready_to_land=lambda row: self.ready,
+            base_problem=lambda row: self.base_problems.get(row.branch),
             is_sync_merge=lambda row, head: self.sync_merge,
             land=self.land,
             wall_clock=lambda: NOW,
@@ -426,6 +428,18 @@ def test_a_queued_merge_is_pinned_to_the_head_that_was_queued():
     rig.run()
 
     assert rig.pinned == ["queued-head"]
+
+
+def test_a_pr_queued_on_the_trunk_that_is_based_on_another_branch_is_dropped():
+    rig = Rig()
+    rig.queue.queue(1, "a")
+    rig.base_problems["a"] = "its PR is based on release, not the trunk (main)"
+    rig.merge_now("a")
+
+    rig.run()
+
+    assert rig.landed == [] and rig.rows == []
+    assert "not the trunk" in (rig.info().notice or "")
 
 
 def test_the_merge_button_is_not_pinned_to_a_head():
