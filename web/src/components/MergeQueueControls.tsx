@@ -6,6 +6,15 @@ import { useState } from "react";
 import { queueMerge, unqueueMerge } from "../api/client";
 import type { MergeQueueInfo } from "../api/generated";
 
+/** "8:00 AM", with the weekday when it is not today. */
+function resumeTime(iso: string): string {
+  const at = new Date(iso);
+  const time = at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return at.toDateString() === new Date().toDateString()
+    ? time
+    : `${at.toLocaleDateString([], { weekday: "short" })} ${time}`;
+}
+
 export function MergeQueueControls({ id, queue }: { id: string; queue: MergeQueueInfo }) {
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -25,6 +34,13 @@ export function MergeQueueControls({ id, queue }: { id: string; queue: MergeQueu
           <span className="pill queue-pill" title="Merges on its own once it is ready: CI passed, approved, and any PR it is stacked on merged">
             Queued: merges when ready
           </span>{" "}
+          {queue.paused_until && (
+            <>
+              <span className="pill" title="The queue starts no merges in the evening; the Merge button still works">
+                Paused until {resumeTime(queue.paused_until)}
+              </span>{" "}
+            </>
+          )}
           <button type="button" className="agents-toggle" disabled={busy} onClick={() => act(() => unqueueMerge(id))}>
             Cancel
           </button>

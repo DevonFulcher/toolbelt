@@ -767,6 +767,7 @@ export interface MergeQueueInfo {
   can_queue: boolean;
   merging: boolean;
   notice: string | null;
+  paused_until: string | null;
   queued: boolean;
   queued_at: string | null;
 }

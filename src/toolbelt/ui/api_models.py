@@ -672,6 +672,9 @@ class MergeQueueInfo(Model):
     merging: bool
     #: ISO time it was queued.
     queued_at: str | None
+    #: ISO time the queue resumes, while it is paused and this PR is queued
+    #: (it merges once that has passed and it is ready).
+    paused_until: str | None
     #: Why it left the queue without merging (until it is queued again).
     notice: str | None
 

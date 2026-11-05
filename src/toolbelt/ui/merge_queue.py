@@ -37,6 +37,7 @@ from toolbelt.git.stack.status import PrState
 from toolbelt.git.stack.store import MergeQueueRow
 from toolbelt.ui import api_models as api
 from toolbelt.ui.live_status import Fetched, TrackedBranch
+from toolbelt.ui.merge_queue_pause import paused_until
 
 LOGGER = logging.getLogger(__name__)
 
@@ -114,6 +115,7 @@ class MergeQueue:
         is_sync_merge: Callable[[MergeQueueRow, str], bool],
         land: Callable[[int, str, str | None], Awaitable[LandResult]],
         wall_clock: Callable[[], datetime],
+        local_clock: Callable[[], datetime],
         changed: Callable[[set[BranchKey]], None],
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         tick: float = DEFAULT_TICK_SECONDS,
@@ -128,7 +130,8 @@ class MergeQueue:
         landed; ``base_problem(row)`` why a PR queued on the trunk is not based
         on it (``None`` when it is); ``is_sync_merge(row, new_head)`` whether ``new_head`` is
         what a sync adds to the queued head;
-        ``land(repo_id, branch, head)`` merges, only if the PR's head is
+        ``local_clock`` is the time in the zone the pause hours mean (see
+        ``merge_queue_pause``); ``land(repo_id, branch, head)`` merges, only if the PR's head is
         ``head`` when given (the Merge button's work); ``changed`` is told
         which branches' queue standing changed."""
         self._entries = entries
@@ -145,6 +148,8 @@ class MergeQueue:
         self._is_sync_merge = is_sync_merge
         self._land = land
         self._wall_clock = wall_clock
+        self._local_clock = local_clock
+        self._was_paused = False
         self._changed = changed
         self._sleep = sleep
         self._tick = tick
@@ -176,8 +181,13 @@ class MergeQueue:
             queued=row is not None,
             merging=merging,
             queued_at=row.queued_at.isoformat() if row else None,
+            paused_until=self._paused_until_iso() if row else None,
             notice=notice,
         )
+
+    def _paused_until_iso(self) -> str | None:
+        resume = paused_until(self._local_clock())
+        return resume.isoformat() if resume else None
 
     # ---- queueing --------------------------------------------------------------
 
@@ -268,6 +278,11 @@ class MergeQueue:
         ones that must not be merged, and starts merging the ones whose CI has
         passed. Starting a merge needs a running event loop."""
         tracked = {(b.repo_id, b.branch) for b in self._branches()}
+        paused = paused_until(self._local_clock()) is not None
+        if paused != self._was_paused:
+            # The cards say when the queue resumes: tell them it started or ended.
+            self._was_paused = paused
+            self._changed(set(self._queued))
         for key, row in list(self._queued.items()):
             if key in self._merging:
                 continue
@@ -308,7 +323,7 @@ class MergeQueue:
                 problem = self._base_problem(row)
                 if problem is not None:
                     self._drop(key, f"Taken off the merge queue: {problem}")
-                elif self._ready_to_land(row):
+                elif not paused and self._ready_to_land(row):
                     self._start_merge(key, queued=True)
             elif kind in _STILL_WAITING:
                 continue  # a claimed branch is left to its agent
@@ -325,6 +340,7 @@ class MergeQueue:
             and looked_up.facts is not None
             and looked_up.facts.head_oid == row.head_oid
             and self._next_kind(*key) == "merge"
+            and paused_until(self._local_clock()) is None
             and self._ready_to_land(row)
         )
 

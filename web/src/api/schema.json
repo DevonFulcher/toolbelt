@@ -4184,6 +4184,16 @@
             }
           ]
         },
+        "paused_until": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "queued": {
           "type": "boolean"
         },
@@ -4203,6 +4213,7 @@
         "queued",
         "merging",
         "queued_at",
+        "paused_until",
         "notice"
       ],
       "title": "MergeQueueInfo",

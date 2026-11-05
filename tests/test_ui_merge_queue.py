@@ -80,6 +80,7 @@ def rig(tmp_path: Path):
         fetch=github.fetch,
         merger=merger,
         merge_queue_tick=0.02,
+        local_clock=lambda: datetime(2026, 11, 5, 10, 0, tzinfo=UTC),  # not paused
         refresh_interval=0.01,  # what GitHub says is looked up again at once
     )
     asyncio.run(app.state.refresher.run_once())

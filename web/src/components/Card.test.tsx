@@ -583,6 +583,7 @@ describe("a card waiting on CI that can be queued to merge", () => {
     queued: false,
     merging: false,
     queued_at: null,
+    paused_until: null,
     notice: null,
     ...over,
   });
@@ -612,6 +613,23 @@ describe("a card waiting on CI that can be queued to merge", () => {
     showCards([branch(1, "devon/a", { status: waiting, merge_queue: null })]);
 
     expect(screen.queryByRole("button", { name: "Merge when ready" })).toBeNull();
+  });
+
+  test("a queued PR says when the queue resumes while it is paused", () => {
+    const resume = new Date();
+    resume.setDate(resume.getDate() + 1);
+    resume.setHours(8, 0, 0, 0);
+    showCards([
+      branch(1, "devon/a", { status: waiting, merge_queue: queueInfo({ queued: true, paused_until: resume.toISOString() }) }),
+    ]);
+
+    expect(screen.getByText(/^Paused until .*8:00/)).toBeInTheDocument();
+  });
+
+  test("a queued PR says nothing about a pause when the queue is running", () => {
+    showCards([branch(1, "devon/a", { status: waiting, merge_queue: queueInfo({ queued: true }) })]);
+
+    expect(screen.queryByText(/Paused until/)).toBeNull();
   });
 
   test("a queued PR says so and can be taken off the queue", async () => {
@@ -1401,7 +1419,8 @@ describe("a card whose next action is Merge", () => {
 
   test("a merge that fails in the background leaves toolbelt's output on the card", () => {
     merge({ merging: true });
-    const failed = { can_queue: false, queued: false, merging: false, queued_at: null, notice: "The merge failed: GraphQL: not mergeable" };
+    const failed = { can_queue: false, queued: false, merging: false, queued_at: null,
+    paused_until: null, notice: "The merge failed: GraphQL: not mergeable" };
     showCards([branch(1, "devon/f", { status: ready, merge_queue: failed })]);
 
     expect(screen.getAllByRole("alert").some((el) => el.textContent?.includes("The merge failed: GraphQL: not mergeable"))).toBe(true);
@@ -1409,7 +1428,8 @@ describe("a card whose next action is Merge", () => {
 
   test("a merge in progress reads Merging, with no button to press twice", () => {
     merge({ merging: true });
-    const merging = { can_queue: false, queued: false, merging: true, queued_at: null, notice: null };
+    const merging = { can_queue: false, queued: false, merging: true, queued_at: null,
+    paused_until: null, notice: null };
     showCards([branch(1, "devon/b", { status: ready, merge_queue: merging })]);
 
     expect(screen.getAllByText("Merging…").length).toBeGreaterThan(0);

@@ -589,6 +589,7 @@ def create_app(
     task_ttl_seconds: float = 60.0,
     clock: Callable[[], float] = time.monotonic,
     wall_clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    local_clock: Callable[[], datetime] = lambda: datetime.now().astimezone(),
     refresh_interval: float = DEFAULT_INTERVAL_SECONDS,
     settled_refresh_interval: float = DEFAULT_SETTLED_INTERVAL_SECONDS,
     concurrency: int = DEFAULT_CONCURRENCY,
@@ -634,7 +635,8 @@ def create_app(
     branch's PR status; ``tracker`` returns the configured task tracker;
     ``db_version`` reports when the stack DB changes (default: ``PRAGMA
     data_version`` on a connection held while serving). ``clock`` times the
-    polling and caches; ``wall_clock`` (UTC) dates the ages shown. Fetched
+    polling and caches; ``wall_clock`` (UTC) dates the ages shown; ``local_clock`` is the
+    time the merge queue's daily pause hours are read in. Fetched
     task info is cached for ``task_ttl_seconds``. Polling carries on for
     ``grace_seconds`` after the last browser disconnects. The background
     pollers start with the app's lifespan, so an app that is not served (a
@@ -1426,6 +1428,7 @@ def create_app(
         is_sync_merge=follows_sync,
         land=land_queued,
         wall_clock=wall_clock,
+        local_clock=local_clock,
         changed=publish_slack,
         tick=merge_queue_tick,
     )

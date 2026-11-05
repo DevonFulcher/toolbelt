@@ -19,6 +19,8 @@ from toolbelt.ui.merge_queue import (
 from toolbelt.ui.pr_activity import PrFacts
 
 NOW = datetime(2026, 10, 22, 12, 0, tzinfo=UTC)
+#: A Thursday, in working hours.
+WORKING_HOURS = datetime(2026, 10, 22, 10, 0, tzinfo=UTC)
 
 
 def looked_up(*, head="h1", pr=PrState.OPEN, number=7) -> Fetched:
@@ -69,6 +71,7 @@ class Rig:
         self.running = 0
         self.most_running = 0
         self.slept = 0
+        self.local_now = WORKING_HOURS
         self.queue = self.make_queue()
 
     def make_queue(self) -> MergeQueue:
@@ -92,6 +95,7 @@ class Rig:
             is_sync_merge=lambda row, head: self.sync_merge,
             land=self.land,
             wall_clock=lambda: NOW,
+            local_clock=lambda: self.local_now,
             changed=self.changed.append,
             sleep=self.sleep,
             tick=10,
@@ -704,3 +708,62 @@ def test_a_just_published_pr_that_needs_work_is_not_queued():
 
     with pytest.raises(MergeQueueRefused):
         rig.queue.queue(1, "a", just_published=True)
+
+
+# ---- the daily pause -----------------------------------------------------------
+
+
+def test_a_ready_pr_is_not_merged_while_the_queue_is_paused():
+    rig = Rig()
+    rig.queue.queue(1, "a")
+    rig.merge_now("a")
+    rig.local_now = datetime(2026, 10, 22, 16, 0, tzinfo=UTC)
+
+    rig.run()
+
+    assert rig.landed == []
+    assert rig.info("a").queued is True
+    assert rig.info("a").paused_until == "2026-10-23T08:00:00+00:00"
+
+
+def test_a_ready_pr_is_merged_once_the_pause_is_over():
+    rig = Rig()
+    rig.queue.queue(1, "a")
+    rig.merge_now("a")
+    rig.local_now = datetime(2026, 10, 22, 16, 0, tzinfo=UTC)
+    rig.run()
+    rig.local_now = datetime(2026, 10, 23, 8, 0, tzinfo=UTC)
+
+    rig.run()
+
+    assert rig.landed == ["a"]
+
+
+def test_the_cards_are_told_when_the_pause_starts_and_ends():
+    rig = Rig()
+    rig.queue.queue(1, "a")
+    rig.changed.clear()
+
+    rig.local_now = datetime(2026, 10, 22, 16, 0, tzinfo=UTC)
+    rig.run()
+    started = len(rig.changed)
+    rig.run()  # nothing changed since
+    assert started >= 1 and len(rig.changed) == started
+
+    rig.local_now = datetime(2026, 10, 23, 8, 0, tzinfo=UTC)
+    rig.run()
+    assert len(rig.changed) > started
+
+
+def test_the_merge_button_is_not_held_by_the_pause():
+    rig = Rig()
+    rig.merge_now("a")
+    rig.local_now = datetime(2026, 10, 22, 17, 0, tzinfo=UTC)
+
+    async def go() -> None:
+        rig.queue.merge_now(1, "a")
+        await rig.queue.idle()
+
+    asyncio.run(go())
+
+    assert rig.landed == ["a"]
