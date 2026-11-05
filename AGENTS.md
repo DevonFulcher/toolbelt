@@ -32,6 +32,24 @@
   request, and a failure is shown on the thing it concerns. See
   `docs/async-ui.md`.
 
+## Tests
+
+- Run pytest in parallel (`.venv/bin/python -m pytest -n 6 ...`, as the pre-commit
+  hook does); a serial full run is several times slower. Most of the suite's time
+  is tests that build real git repos.
+- While iterating, run only the tests for the files you touched (pass paths or
+  `-k`), plus `ruff check` and `ruff format` on them. Run the whole suite once,
+  when the work is finished and before committing, not after every edit. The
+  pre-commit hook runs it again on commit, so do not run it by hand right before
+  `toolbelt git save`.
+- The web suite is fast (`pnpm --dir web vitest run`, a few seconds): run all of
+  it, not only the file you edited, because some tests list every card slot or
+  API field (`timeline.test.ts`) and fail when one is added elsewhere. Also run
+  `pnpm --dir web typecheck` and `pnpm --dir web check:types`.
+- Run anything that may take minutes in the background with its full output sent
+  to a file, and read the file when it ends. A foreground command is killed at ten
+  minutes, and piping through `tail` loses the line that says what failed.
+
 ## Python
 
 - The project targets Python 3.15 (`.python-version`, `requires-python`).
