@@ -76,10 +76,11 @@ The Merge button uses the same background path: `POST /api/merge` answers `202`
 at once, the card reads "Merging…", and if `toolbelt git merge` fails the card
 shows its output ("The merge failed: …") until the next attempt.
 
-## Paused in the evening
+## Paused in the evening and on weekends
 
-The queue starts no merges from 16:00 (15:00 on Fridays) until 08:00, in this
-machine's local time. A queued PR stays queued through it, its card says when
-the queue resumes, and it merges once the pause is over and it is ready. The
-Merge button is not affected by the pause. The hours are in
+The queue starts no merges from 16:00 (15:00 on Fridays) until 08:00 the next
+morning, and none on Saturday and Sunday (until Monday 08:00), in this machine's
+local time. A queued PR stays queued through it, its card says when the queue
+resumes, and it merges once the pause is over and it is ready. The Merge button
+is not affected by the pause. The hours are in
 `src/toolbelt/ui/merge_queue_pause.py`.
