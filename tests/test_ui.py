@@ -1050,7 +1050,7 @@ def test_a_branch_whose_next_action_is_merge_is_landed_with_toolbelt_in_its_repo
     fetcher.statuses["devon/a"] = open_status(review=ReviewState.APPROVED)
     calls: list[tuple[Path, str]] = []
 
-    def merger(path: Path, pr_url: str):
+    def merger(path: Path, pr_url: str, match_head: str | None = None):
         calls.append((path, pr_url))
         return MergeOutcome(ok=True, output="merged")
 
@@ -1075,7 +1075,7 @@ def test_a_merge_in_progress_reads_merging_on_the_branch(
     fetcher.statuses["devon/a"] = open_status(review=ReviewState.APPROVED)
     release = threading.Event()
 
-    def merger(path: Path, pr_url: str):
+    def merger(path: Path, pr_url: str, match_head: str | None = None):
         release.wait(timeout=10)
         return MergeOutcome(ok=True, output="merged")
 
@@ -1096,7 +1096,9 @@ def test_a_failed_merge_leaves_the_error_on_the_branch_for_the_page_to_show(
     repo_id = seed_repo(tmp_path, "api", {"devon/a": "main"})
     fetcher.statuses["devon/a"] = open_status(review=ReviewState.APPROVED)
     with make_client(
-        merger=lambda path, url: MergeOutcome(ok=False, output="GraphQL: not mergeable")
+        merger=lambda path, url, match_head=None: MergeOutcome(
+            ok=False, output="GraphQL: not mergeable"
+        )
     ) as client:
         client.portal.call(client.app.state.refresher.run_once)
 
@@ -1116,7 +1118,9 @@ def test_a_branch_that_is_not_ready_to_merge_is_refused_and_nothing_runs(
     fetcher.statuses["devon/a"] = open_status(review=ReviewState.NONE)
     calls: list[str] = []
     client = make_client(
-        merger=lambda path, url: calls.append(url) or MergeOutcome(ok=True, output="")
+        merger=lambda path, url, match_head=None: (
+            calls.append(url) or MergeOutcome(ok=True, output="")
+        )
     )
     refresh(client)
 

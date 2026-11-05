@@ -12,6 +12,7 @@ from toolbelt.finish_estimate.model import Prior
 from toolbelt.finish_estimate.working_hours import WorkingHours
 from toolbelt.git.stack.store import (
     AgentRun,
+    Parents,
     StackStore,
     TrackedBranchFacts,
 )
@@ -148,6 +149,23 @@ def _validation(
     )
 
 
+def _set_parent_info(
+    parents: Parents, name: str, state: tuple[str | None, str | None]
+) -> api.SetParentInfo | None:
+    """The branch's parent, the trunk its stack hangs off, and ``state`` (the
+    parent being set, why the last change failed)."""
+    parent = parents.get(name)
+    if parent is None:
+        return None
+    trunk = parent
+    for _ in range(len(parents)):
+        if trunk not in parents:
+            break
+        trunk = parents[trunk]
+    setting, notice = state
+    return api.SetParentInfo(parent=parent, trunk=trunk, setting=setting, notice=notice)
+
+
 def build_card_extras(
     dispatcher: Dispatcher,
     store: StackStore,
@@ -163,9 +181,14 @@ def build_card_extras(
     hub: ModelHub | None = None,
     priors: dict[str, Prior] | None = None,
     breakdowns: dict[str, api.EstimateBreakdown] | None = None,
+    set_parent: Callable[[int, str], tuple[str | None, str | None]] = lambda *_: (
+        None,
+        None,
+    ),
 ) -> api.CardExtras:
     """``opening_pr(repo_id, branch)``: whether the PR of an approved branch is
-    being opened, and why it could not be."""
+    being opened, and why it could not be. ``set_parent(repo_id, branch)``: the
+    parent being set on the branch now, and why the last change failed."""
     repo_names = {repo.id: repo.name for repo in store.repos()}
     runs_by_branch: dict[tuple[int, str], list[AgentRun]] = {}
     for run in store.agent_runs():
@@ -189,8 +212,11 @@ def build_card_extras(
             {live_row: details[t] for t, live_row in row_of.items() if t in details}
         )
     branches = []
+    all_parents: dict[int, Parents] = {}
     for facts in store.tracked_branch_facts():
         key = (facts.repo_id, facts.name)
+        if facts.repo_id not in all_parents:
+            all_parents[facts.repo_id] = store.all_parents(facts.repo_id)
         runs = runs_by_branch.get(key, [])
         decision = dispatcher.decisions.get(key)
         usage = interactive.get(facts.task_id)
@@ -221,6 +247,9 @@ def build_card_extras(
                     ),
                 ),
                 estimate=estimates.get(facts.task_id),
+                set_parent=_set_parent_info(
+                    all_parents[facts.repo_id], facts.name, set_parent(*key)
+                ),
                 spend=api.CardSpend(
                     interactive_usd=usage.cost_usd if usage else 0.0,
                     interactive_unpriced_calls=usage.unpriced_calls if usage else 0.0,

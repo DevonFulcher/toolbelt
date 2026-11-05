@@ -10,7 +10,12 @@ import pytest
 from toolbelt.git.stack.status import BranchStatus, CiState, PrState, ReviewState
 from toolbelt.git.stack.store import MergeQueueRow
 from toolbelt.ui.live_status import Fetched, TrackedBranch
-from toolbelt.ui.merge_queue import LandResult, MergeQueue, MergeQueueRefused
+from toolbelt.ui.merge_queue import (
+    LandResult,
+    MergeQueue,
+    MergeQueueRefused,
+    StackedOn,
+)
 from toolbelt.ui.pr_activity import PrFacts
 
 NOW = datetime(2026, 10, 22, 12, 0, tzinfo=UTC)
@@ -51,7 +56,12 @@ class Rig:
         }
         self.kinds: dict[str, str | None] = {"a": "wait_ci", "b": "wait_ci"}
         self.would = {"a": True, "b": True}
+        self.stacked: dict[str, StackedOn | None] = {}
+        self.parent_states: dict[str, PrState | None] = {}
+        self.ready = True
+        self.sync_merge = False
         self.landed: list[str] = []
+        self.pinned: list[str | None] = []
         self.changed: list[set] = []
         self.result = LandResult(ok=True, output="merged")
         self.gate: asyncio.Event | None = None
@@ -73,7 +83,11 @@ class Rig:
             ],
             fetched=lambda repo_id, name: self.fetched.get(name),
             next_kind=lambda repo_id, name: self.kinds.get(name),
-            would_merge=lambda repo_id, name: self.would.get(name, False),
+            queueable=lambda repo_id, name: self.would.get(name, False),
+            stacked_on=lambda repo_id, name: self.stacked.get(name),
+            parent_state=lambda row: self.parent_states.get(row.branch),
+            ready_to_land=lambda row: self.ready,
+            is_sync_merge=lambda row, head: self.sync_merge,
             land=self.land,
             wall_clock=lambda: NOW,
             changed=self.changed.append,
@@ -81,7 +95,8 @@ class Rig:
             tick=10,
         )
 
-    async def land(self, repo_id: int, name: str) -> LandResult:
+    async def land(self, repo_id: int, name: str, match_head: str | None) -> LandResult:
+        self.pinned.append(match_head)
         self.running += 1
         self.most_running = max(self.most_running, self.running)
         if self.gate is not None:
@@ -293,6 +308,139 @@ def test_queued_prs_merge_one_at_a_time():
     assert sorted(rig.landed) == ["a", "b"] and rig.most_running == 1
 
 
+# ---- stacked PRs --------------------------------------------------------------
+
+
+def stacked_rig() -> Rig:
+    """Branch b is stacked on a (PR 1), which is still open; b is queued."""
+    rig = Rig()
+    rig.stacked["b"] = StackedOn("a", 1)
+    rig.parent_states["b"] = PrState.OPEN
+    rig.kinds["b"] = "blocked"
+    rig.queue.queue(1, "b")
+    return rig
+
+
+def test_queueing_a_stacked_pr_records_the_pr_it_is_stacked_on():
+    rig = stacked_rig()
+
+    assert [(r.parent_branch, r.parent_pr) for r in rig.rows] == [("a", 1)]
+
+
+def test_a_stacked_pr_whose_parent_pr_is_not_looked_up_yet_is_refused():
+    rig = Rig()
+    rig.stacked["b"] = StackedOn("a", None)
+
+    with pytest.raises(MergeQueueRefused, match="stacked on"):
+        rig.queue.queue(1, "b")
+
+    assert rig.rows == []
+
+
+def test_a_stacked_pr_waits_while_its_parent_is_open():
+    rig = stacked_rig()
+
+    rig.run()
+
+    assert rig.landed == [] and len(rig.rows) == 1
+    assert rig.info("b").notice is None
+
+
+def test_a_stacked_pr_merges_once_its_parent_merged_and_it_is_ready():
+    rig = stacked_rig()
+    rig.parent_states["b"] = PrState.MERGED
+    rig.merge_now("b")
+
+    rig.run()
+
+    assert rig.landed == ["b"] and rig.rows == []
+
+
+def test_a_stacked_pr_that_is_not_on_the_trunk_with_its_parents_changes_waits():
+    rig = stacked_rig()
+    rig.parent_states["b"] = PrState.MERGED
+    rig.merge_now("b")
+    rig.ready = False
+
+    rig.run()
+
+    assert rig.landed == [] and len(rig.rows) == 1
+    assert rig.info("b").notice is None
+
+
+def test_a_stacked_pr_that_stopped_being_ready_while_waiting_for_the_lock_stays_queued():
+    rig = stacked_rig()
+    rig.parent_states["b"] = PrState.MERGED
+    rig.merge_now("b")
+
+    async def go() -> None:
+        rig.queue.check()  # starts the merge, which has not run yet
+        rig.ready = False
+        await rig.queue.idle()
+
+    asyncio.run(go())
+
+    assert rig.landed == [] and len(rig.rows) == 1
+
+
+def test_a_stacked_pr_is_taken_off_when_its_parent_closes_without_merging():
+    rig = stacked_rig()
+    rig.parent_states["b"] = PrState.CLOSED
+
+    rig.run()
+
+    assert rig.landed == [] and rig.rows == []
+    assert "closed without merging" in (rig.info("b").notice or "")
+
+
+def test_the_sync_after_a_parent_merged_re_pins_the_head_it_merges():
+    rig = stacked_rig()
+    rig.parent_states["b"] = PrState.MERGED
+    rig.sync_merge = True
+    rig.fetched["b"] = looked_up(head="synced", number=2)
+    rig.merge_now("b")
+
+    rig.run()
+
+    assert rig.landed == ["b"] and rig.pinned == ["synced"]
+
+
+def test_any_other_head_change_of_a_stacked_pr_drops_it():
+    rig = stacked_rig()
+    rig.parent_states["b"] = PrState.MERGED
+    rig.fetched["b"] = looked_up(head="pushed-later", number=2)
+    rig.merge_now("b")
+
+    rig.run()
+
+    assert rig.landed == [] and rig.rows == []
+    assert "New commits" in (rig.info("b").notice or "")
+
+
+def test_a_queued_merge_is_pinned_to_the_head_that_was_queued():
+    rig = Rig()
+    rig.fetched["a"] = looked_up(head="queued-head", number=1)
+    rig.queue.queue(1, "a")
+    rig.merge_now("a")
+
+    rig.run()
+
+    assert rig.pinned == ["queued-head"]
+
+
+def test_the_merge_button_is_not_pinned_to_a_head():
+    rig = Rig()
+    rig.merge_now("a")
+
+    async def go() -> None:
+        rig.queue.merge_now(1, "a")
+        await rig.queue.idle()
+
+    asyncio.run(go())
+
+    assert rig.pinned == [None]
+
+
 # ---- what must not be merged ------------------------------------------------------
 
 
@@ -316,8 +464,6 @@ def test_new_commits_after_queueing_mean_it_is_not_merged():
         ("resolve_comments", "unresolved comments"),
         ("resolve_conflicts", "conflicts"),
         ("address_review", "changes were requested"),
-        ("blocked", "blocked on a PR"),
-        ("wait_review", "approval was removed"),
         ("publish", "draft"),
         ("something_new", "something_new"),
     ],
@@ -336,8 +482,19 @@ def test_a_pr_that_stops_being_one_ci_wait_from_merging_is_taken_off_with_the_re
     assert info is not None and why in (info.notice or "")
 
 
-@pytest.mark.parametrize("held", ["claimed", "autonomous"])
-def test_a_pr_an_agent_holds_stays_queued_until_it_is_free(held: str):
+@pytest.mark.parametrize(
+    "held",
+    [
+        "claimed",
+        "autonomous",
+        "wait_review",
+        "request_review",
+        "post_slack",
+        "bump_slack",
+        "blocked",
+    ],
+)
+def test_a_pr_that_only_needs_time_or_someone_else_stays_queued(held: str):
     rig = Rig()
     rig.queue.queue(1, "a")
     rig.kinds["a"] = held

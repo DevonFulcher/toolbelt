@@ -269,6 +269,14 @@ export async function mergeBranch(id: string, fetchImpl: typeof fetch = fetch): 
   await postJson<unknown>("/api/merge", { id }, fetchImpl);
 }
 
+/** Repoint the branch's stack parent (`toolbelt git set-parent`). It runs in the
+ * background: this resolves once the server has accepted it (the card's parent
+ * then reads `setting`, and a failure is its `notice`), and rejects with the
+ * server's reason when it cannot start. */
+export async function setParent(id: string, parent: string, fetchImpl: typeof fetch = fetch): Promise<void> {
+  await postJson<unknown>("/api/set-parent", { id, parent }, fetchImpl);
+}
+
 export const REVIEW_URL = "/api/review";
 
 /** The revisions a review compares: `base...head` in one tracked repo. */

@@ -28,6 +28,7 @@ import { MergeDialog } from "./MergeDialog";
 import { MergeQueueControls } from "./MergeQueueControls";
 import { DecisionsDialog } from "./DecisionsDialog";
 import { RefreshButton } from "./RefreshButton";
+import { SetParentControls } from "./SetParentControls";
 import { SlackDialog } from "./SlackDialog";
 import { Timeline } from "./Timeline";
 import { Age, CI_TONE, ExternalLink, PR_TONE, Pill, REVIEW_TONE, WHO_TEXT, WHO_TONE } from "./presentation";
@@ -360,6 +361,13 @@ export const Card = memo(
               >
                 focus on this subtree →
               </a>
+            )}
+          </Slot>
+          <Slot id="parent" label="Parent">
+            {extras?.set_parent ? (
+              <SetParentControls id={id} name={branch.name} info={extras.set_parent} />
+            ) : (
+              (branch.parent ?? "…")
             )}
           </Slot>
           <Slot id="ancestors" label="Ancestors">{String(branch.depth)}</Slot>

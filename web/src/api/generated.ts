@@ -1064,6 +1064,7 @@ export interface BranchExtras {
   estimate?: CardEstimate | null;
   id: string;
   lanes: TimelineLane[];
+  set_parent?: SetParentInfo | null;
   spend: CardSpend;
 }
 /**
@@ -1129,6 +1130,15 @@ export interface LanePhase {
   kind: LanePhaseKind;
   start: string;
   state?: string;
+}
+/**
+ * Where a branch hangs in its stack, and a change of that in flight.
+ */
+export interface SetParentInfo {
+  notice: string | null;
+  parent: string;
+  setting: string | null;
+  trunk: string;
 }
 /**
  * What a task has cost, over all the spend on record.
@@ -1726,6 +1736,7 @@ export interface SlotDimensions {
   lines: CatalogDimension | null;
   merge: CatalogDimension | null;
   next: CatalogDimension | null;
+  parent: CatalogDimension | null;
   pr: CatalogDimension | null;
   pr_age: CatalogDimension | null;
   repo: CatalogDimension | null;

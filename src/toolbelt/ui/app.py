@@ -43,7 +43,6 @@ The status lookup (``fetch``), the task tracker and the clocks are
 
 import asyncio
 import contextlib
-import dataclasses
 import functools
 import json
 import time
@@ -52,7 +51,7 @@ from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from httpx import HTTPError
 
@@ -87,7 +86,7 @@ from toolbelt.diff_review.revisions import FileDiff, RevisionPair
 from toolbelt.finish_estimate.config import configured_priors, configured_working_hours
 from toolbelt.finish_estimate.working_hours import WorkingHours
 from toolbelt.git.repo_pull import default_config_path
-from toolbelt.git.stack.status import CiState, PrState
+from toolbelt.git.stack.status import PrState
 from toolbelt.git.stack.store import (
     AgentRun,
     MergeQueueRow,
@@ -160,8 +159,23 @@ from toolbelt.ui.merge_pr import MergeOutcome, run_toolbelt_merge
 from toolbelt.ui.merge_queue import (
     DEFAULT_TICK_SECONDS as DEFAULT_MERGE_QUEUE_TICK_SECONDS,
 )
-from toolbelt.ui.merge_queue import LandResult, MergeQueue, MergeQueueRefused
-from toolbelt.ui.next_action import MERGE, POST_SLACK, PUBLISH, next_action
+from toolbelt.ui.merge_queue import (
+    LandResult,
+    MergeQueue,
+    MergeQueueRefused,
+    StackedOn,
+)
+from toolbelt.ui.merge_queue_git import (
+    contains_commit,
+    is_sync_merge,
+    pr_merge_state,
+)
+from toolbelt.ui.next_action import (
+    BLOCKED,
+    POST_SLACK,
+    PUBLISH,
+    WAIT_CI,
+)
 from toolbelt.ui.personal_review import (
     OpenPr,
     PersonalReview,
@@ -183,6 +197,12 @@ from toolbelt.ui.publish_pr import PublishRunner, publish_pr
 from toolbelt.ui.pushed_views import PushedViews, conversation_of
 from toolbelt.ui.repo_visibility import visible_repos
 from toolbelt.ui.review_routes import review_router
+from toolbelt.ui.set_parent import (
+    SetParentOutcome,
+    SetParentTracker,
+    checked_out_worktree,
+    run_toolbelt_set_parent,
+)
 from toolbelt.ui.sibling_conflicts import SiblingConflictTracker
 from toolbelt.ui.slack_config import SlackConfig
 from toolbelt.ui.slack_proxy import SlackProxy
@@ -253,6 +273,14 @@ def _all_parents(repo_id: int) -> Parents:
     store = StackStore(default_db_path())
     try:
         return store.all_parents(repo_id)
+    finally:
+        store.close()
+
+
+def _repo_path(repo_id: int) -> Path | None:
+    store = StackStore(default_db_path())
+    try:
+        return next((r.path for r in store.repos() if r.id == repo_id), None)
     finally:
         store.close()
 
@@ -582,8 +610,10 @@ def create_app(
     transcripts_dir: Callable[[], Path] = projects_dir,
     spend_interval: float = spend_module.DEFAULT_INTERVAL_SECONDS,
     dispatcher: Dispatcher | None = None,
-    merger: Callable[[Path, str], MergeOutcome] = run_toolbelt_merge,
+    merger: Callable[[Path, str, str | None], MergeOutcome] = run_toolbelt_merge,
     publisher: PublishRunner = publish_pr,
+    set_parenter: Callable[[Path, str], SetParentOutcome] = run_toolbelt_set_parent,
+    worktree_of: Callable[[Path, str], Path | None] = checked_out_worktree,
     github: GithubRequests | None = None,
     slack_settings: SlackConfig | None = None,
     slack_proxy: SlackProxy | None = None,
@@ -918,6 +948,14 @@ def create_app(
 
     estimate_hub = ModelHub()
 
+    def set_parent_changed() -> None:
+        """A parent change started or ended: tell the card, and publish the
+        stack's new shape when the command has written it."""
+        views.notify("extras")
+        watcher.check()
+
+    set_parents = SetParentTracker(runner=set_parenter, changed=set_parent_changed)
+
     views = PushedViews(
         hub=hub,
         dispatcher=dispatcher,
@@ -934,6 +972,7 @@ def create_app(
             (repo_id, name) in personal_review.opening,
             personal_review.notices.get((repo_id, name)),
         ),
+        set_parent=set_parents.state,
         working_hours=working_hours,
         estimate_hub=estimate_hub,
         priors=lambda: configured_priors(default_config_path()),
@@ -1218,30 +1257,105 @@ def create_app(
         action = branch_next(repo_id, name)
         return action.kind if action else None
 
-    def would_merge(repo_id: int, name: str) -> bool:
-        """Its CI is running and, once that passed, Merge would be its next
-        action: approved, no conflicts or comments, not a draft, and any parent
-        PR merged (and no agent holds it)."""
-        looked_up = refresher.get(repo_id, name)
-        if (
-            looked_up is None
-            or looked_up.status is None
-            or looked_up.status.ci is not CiState.RUNNING
-            or claims.working(repo_id, name)
-            or claims.autonomous(repo_id, name)
-            or claims.deciding(repo_id, name)
-        ):
+    def queueable(repo_id: int, name: str) -> bool:
+        """Its next action is Waiting on CI, or it is approved and blocked on a
+        parent PR that is still open (a claimed or deciding branch reads
+        differently, so it is not queueable)."""
+        if next_kind(repo_id, name) not in (WAIT_CI, BLOCKED):
             return False
-        now = wall_clock()
-        parent = parent_context(
-            repo_id, _all_parents(repo_id), name, refresher, now, claims, slack
+        on = stacked_on(repo_id, name)
+        if on is None:
+            return True
+        fetched = refresher.get(repo_id, on.branch)
+        return (
+            fetched is not None
+            and fetched.status is not None
+            and fetched.status.pr in (PrState.OPEN, PrState.DRAFT)
         )
-        passed = dataclasses.replace(looked_up.status, ci=CiState.SUCCESS)
-        return next_action(passed, parent).kind == MERGE
 
-    async def land(repo_id: int, name: str) -> LandResult:
+    def stacked_on(repo_id: int, name: str) -> StackedOn | None:
+        parent = _all_parents(repo_id).get(name)
+        if parent is None or parent not in _all_parents(repo_id):
+            return None
+        fetched = refresher.get(repo_id, parent)
+        number = fetched.facts.number if fetched and fetched.facts else None
+        return StackedOn(parent, number)
+
+    def repo_path_of(repo_id: int) -> Path | None:
+        store = StackStore(default_db_path())
+        try:
+            return next((r.path for r in store.repos() if r.id == repo_id), None)
+        finally:
+            store.close()
+
+    # GitHub's word on a PR that has merged or closed (it never changes), by
+    # repo and PR number.
+    parent_prs: dict[tuple[int, int], tuple[str, str | None]] = {}
+
+    def parent_pr(row: MergeQueueRow) -> tuple[str, str | None] | None:
+        """``(state, squash commit)`` of the PR ``row`` was stacked on."""
+        assert row.parent_pr is not None
+        key = (row.repo_id, row.parent_pr)
+        if key not in parent_prs:
+            path = repo_path_of(row.repo_id)
+            found = pr_merge_state(path, row.parent_pr) if path else None
+            if found is None or found[0] == "OPEN":
+                return found
+            parent_prs[key] = found
+        return parent_prs[key]
+
+    def parent_state(row: MergeQueueRow) -> PrState | None:
+        if row.parent_branch is None:
+            return None
+        if row.parent_branch in _all_parents(row.repo_id):
+            fetched = refresher.get(row.repo_id, row.parent_branch)
+            return fetched.status.pr if fetched and fetched.status else PrState.NONE
+        found = parent_pr(row)  # merged: ``sync`` forgot the branch
+        return {
+            "MERGED": PrState.MERGED,
+            "CLOSED": PrState.CLOSED,
+            "OPEN": PrState.OPEN,
+        }.get(found[0] if found else "", PrState.NONE)
+
+    def trunk_of(repo_id: int, name: str) -> str | None:
+        parents = _all_parents(repo_id)
+        while parents.get(name) in parents:
+            name = parents[name]
+        return parents.get(name)
+
+    def ready_to_land(row: MergeQueueRow) -> bool:
+        """A stacked PR is merged only into the trunk and only with what its
+        parent landed: its parent has merged, GitHub has retargeted it onto the
+        trunk, and its head contains the parent's squash commit."""
+        if row.parent_branch is None:
+            return True
+        fetched = refresher.get(row.repo_id, row.branch)
+        found = parent_pr(row)
+        path = repo_path_of(row.repo_id)
+        return (
+            parent_state(row) is PrState.MERGED
+            and fetched is not None
+            and fetched.facts is not None
+            and fetched.facts.base_ref == trunk_of(row.repo_id, row.branch)
+            and found is not None
+            and found[1] is not None
+            and path is not None
+            and contains_commit(path, found[1], fetched.facts.head_oid)
+        )
+
+    def follows_sync(row: MergeQueueRow, head: str) -> bool:
+        trunk = trunk_of(row.repo_id, row.branch)
+        path = repo_path_of(row.repo_id)
+        if row.parent_branch is None or trunk is None or path is None:
+            return False
+        return is_sync_merge(path, row.head_oid, head, refs=(row.parent_branch, trunk))
+
+    async def land(
+        repo_id: int, name: str, match_head: str | None = None
+    ) -> LandResult:
         """Merges the branch's PR when its next action is Merge: what the Merge
-        button and the merge queue do. Raises ``LandRefused`` when it cannot."""
+        button and the merge queue do (the queue only if the PR's head is still
+        ``match_head``). Raises ``LandRefused`` when it cannot."""
         parents = await asyncio.to_thread(_all_parents, repo_id)
         if name not in parents:
             raise LandRefused(404, "no such branch")
@@ -1265,12 +1379,14 @@ def create_app(
         path = await asyncio.to_thread(repo_path)
         if path is None:
             raise LandRefused(404, "no such repo")
-        outcome = await asyncio.to_thread(merger, path, status.pr_url)
+        outcome = await asyncio.to_thread(merger, path, status.pr_url, match_head)
         return LandResult(ok=outcome.ok, output=outcome.output)
 
-    async def land_queued(repo_id: int, name: str) -> LandResult:
+    async def land_queued(
+        repo_id: int, name: str, match_head: str | None
+    ) -> LandResult:
         try:
-            return await land(repo_id, name)
+            return await land(repo_id, name, match_head)
         except LandRefused as refused:
             return LandResult(ok=False, output=refused.detail)
 
@@ -1281,7 +1397,11 @@ def create_app(
         branches=_tracked_branches,
         fetched=refresher.get,
         next_kind=next_kind,
-        would_merge=would_merge,
+        queueable=queueable,
+        stacked_on=stacked_on,
+        parent_state=parent_state,
+        ready_to_land=ready_to_land,
+        is_sync_merge=follows_sync,
         land=land_queued,
         wall_clock=wall_clock,
         changed=publish_slack,
@@ -1611,6 +1731,40 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(refused)) from refused
         return {"merging": True}
 
+    @app.post("/api/set-parent", status_code=202)
+    async def set_branch_parent(body: api.SetParentRequest) -> dict[str, bool]:
+        """Repoint the branch's stack parent with `toolbelt git set-parent`, run
+        in the branch's worktree in the background: the card reads
+        ``setting`` until done, and the command's reason for refusing (an
+        unknown branch, a cycle, the branch itself) is its ``notice``."""
+        repo_id, name = branch_ref(body.id)
+        parents = await asyncio.to_thread(_all_parents, repo_id)
+        if name not in parents:
+            raise HTTPException(status_code=404, detail="no such branch")
+        if body.parent == parents[name]:
+            raise HTTPException(
+                status_code=409, detail=f"'{body.parent}' is already its parent."
+            )
+        repo_path = await asyncio.to_thread(_repo_path, repo_id)
+        if repo_path is None:
+            raise HTTPException(status_code=404, detail="no such repo")
+        worktree = await asyncio.to_thread(worktree_of, repo_path, name)
+        if worktree is None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"'{name}' is not checked out in any worktree: "
+                    "`toolbelt git set-parent` runs in the branch's worktree."
+                ),
+            )
+        if not set_parents.start(
+            repo_id, name, worktree=worktree, new_parent=body.parent
+        ):
+            raise HTTPException(
+                status_code=409, detail="Its parent is already being set."
+            )
+        return {"setting": True}
+
     @app.post("/api/merge/queue", response_model=api.MergeQueueInfo)
     async def queue_merge(body: api.MergeQueueRequest) -> api.MergeQueueInfo:
         """Merge the branch's PR as soon as its CI has passed."""
@@ -1798,7 +1952,9 @@ def create_app(
             raise HTTPException(status_code=404, detail=str(error)) from error
 
     @app.post("/api/slack/publish", response_model=api.SlackAccepted, status_code=202)
-    async def slack_publish(body: api.SlackSendRequest) -> api.SlackAccepted:
+    async def slack_publish(
+        body: api.SlackSendRequest, background_tasks: BackgroundTasks
+    ) -> api.SlackAccepted:
         service = slack_on()
         if body.kind != "post":
             raise HTTPException(
@@ -1827,19 +1983,18 @@ def create_app(
         if repo is None:
             raise HTTPException(status_code=404, detail="no such repo")
         tracked = TrackedBranch(repo_id=repo_id, branch=name, path=repo)
-        try:
-            snapshot = await refresher.snapshot(tracked, max_age=0)
-        except RuntimeError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
         action = branch_next(repo_id, name)
         if action is None or action.kind not in (POST_SLACK, PUBLISH):
             raise HTTPException(
                 status_code=409,
                 detail="This PR is no longer ready to publish.",
             )
-        if snapshot.facts is None or snapshot.status.pr not in (
-            PrState.OPEN,
-            PrState.DRAFT,
+        current = refresher.get(repo_id, name)
+        if (
+            current is None
+            or current.facts is None
+            or current.status is None
+            or current.status.pr not in (PrState.OPEN, PrState.DRAFT)
         ):
             raise HTTPException(status_code=409, detail="This branch has no open PR.")
         slug = slug_of_repo(repo_id)
@@ -1847,7 +2002,7 @@ def create_app(
             raise HTTPException(
                 status_code=404, detail="no GitHub remote for this repo"
             )
-        target = (slug, snapshot.facts.number)
+        target = (slug, current.facts.number)
         if not any((pr.repo, pr.number) == target for pr in body.prs):
             raise HTTPException(
                 status_code=409,
@@ -1861,48 +2016,57 @@ def create_app(
         except SlackUnknown as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 
-        try:
-            outcome = await asyncio.to_thread(
-                publisher,
-                repo,
-                name,
-                snapshot.facts.number,
-                is_draft=snapshot.status.pr is PrState.DRAFT,
-            )
-            if not outcome.ok:
-                detail = (
-                    outcome.output or "The branch could not be prepared for review."
-                )
-                raise HTTPException(status_code=502, detail=detail)
-            await refresher.snapshot(tracked, max_age=0)
-        except HTTPException as error:
-            service.fail_publish(prs, f"Publishing PR failed: {error.detail}")
-            raise
-        except Exception as error:
-            service.fail_publish(prs, f"Publishing PR failed: {error}")
-            raise HTTPException(
-                status_code=502, detail=f"Publishing PR failed: {error}"
-            ) from error
+        pr_number = current.facts.number
 
-        copilot_notice = None
-        if parents[name] in parents:
-            copilot_notice = (
-                f"Copilot Agent Merge was not enabled for {slug}#{snapshot.facts.number}: "
-                "GitHub does not support stacked pull requests."
-            )
-        else:
+        async def publish_and_post() -> None:
             try:
-                await requests.put_json(
-                    f"agents/repos/{slug}/pulls/{snapshot.facts.number}/agent-merge",
-                    {"allowed_actions": ["fix_ci", "resolve_merge_conflicts"]},
-                    caller="publish",
+                snapshot = await refresher.snapshot(tracked, max_age=0)
+                if snapshot.facts is None or snapshot.status.pr not in (
+                    PrState.OPEN,
+                    PrState.DRAFT,
+                ):
+                    raise RuntimeError("This branch has no open PR.")
+                if snapshot.facts.number != pr_number:
+                    raise RuntimeError("The branch's PR changed before publishing.")
+                outcome = await asyncio.to_thread(
+                    publisher,
+                    repo,
+                    name,
+                    snapshot.facts.number,
+                    is_draft=snapshot.status.pr is PrState.DRAFT,
                 )
-            except (RuntimeError, HTTPError) as error:
+                if not outcome.ok:
+                    raise RuntimeError(
+                        outcome.output or "The branch could not be prepared for review."
+                    )
+                await refresher.snapshot(tracked, max_age=0)
+            except Exception as error:  # noqa: BLE001 - reported on the PR's Slack info
+                service.fail_publish(prs, f"Publishing PR failed: {error}")
+                return
+
+            copilot_notice = None
+            if parents[name] in parents:
                 copilot_notice = (
                     f"Copilot Agent Merge was not enabled for "
-                    f"{slug}#{snapshot.facts.number}: {error}"
+                    f"{slug}#{snapshot.facts.number}: "
+                    "GitHub does not support stacked pull requests."
                 )
-        return service.send_published(body, prs, publish_notice=copilot_notice)
+            else:
+                try:
+                    await requests.put_json(
+                        f"agents/repos/{slug}/pulls/{snapshot.facts.number}/agent-merge",
+                        {"allowed_actions": ["fix_ci", "resolve_merge_conflicts"]},
+                        caller="publish",
+                    )
+                except (RuntimeError, HTTPError) as error:
+                    copilot_notice = (
+                        f"Copilot Agent Merge was not enabled for "
+                        f"{slug}#{snapshot.facts.number}: {error}"
+                    )
+            service.send_published(body, prs, publish_notice=copilot_notice)
+
+        background_tasks.add_task(publish_and_post)
+        return api.SlackAccepted(prs=body.prs)
 
     @app.post("/api/agents/enabled", response_model=api.AgentsEnabled)
     async def set_agents_enabled(body: api.AgentsEnabled) -> api.AgentsEnabled:

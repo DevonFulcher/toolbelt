@@ -33,6 +33,7 @@ class Gh:
         self.api_responses = api_responses
         self.merge_attempts = []
         self.merges = 0
+        self.merge_commands: list[list[str]] = []
         self.api_calls: list[list[str]] = []
         self.synced: list[tuple[Path, str]] = []
 
@@ -44,6 +45,7 @@ class Gh:
     def run(self, cmd, **kwargs):
         assert cmd[:3] == ["gh", "pr", "merge"]
         self.merges += 1
+        self.merge_commands.append(list(cmd))
         stderr = (
             self.merge_attempts.pop(0) if self.merge_attempts else self.merge_stderr
         )
@@ -129,6 +131,30 @@ def test_regular_merge_does_not_use_the_async_api(
 
     assert gh.api_calls == []
     assert gh.synced == [(worktree.parent, "feature")]
+
+
+def test_a_merge_can_be_pinned_to_the_head_it_was_approved_at(
+    monkeypatch: pytest.MonkeyPatch, worktree: Path
+):
+    gh = Gh(merge_stderr="", api_responses=[])
+    _install(monkeypatch, gh, worktree)
+
+    workflow.git_merge("7", match_head="abc123")
+
+    assert gh.merge_commands == [
+        ["gh", "pr", "merge", "--squash", "--match-head-commit", "abc123", "7"]
+    ]
+
+
+def test_a_merge_is_not_pinned_unless_asked(
+    monkeypatch: pytest.MonkeyPatch, worktree: Path
+):
+    gh = Gh(merge_stderr="", api_responses=[])
+    _install(monkeypatch, gh, worktree)
+
+    workflow.git_merge("7")
+
+    assert gh.merge_commands == [["gh", "pr", "merge", "--squash", "7"]]
 
 
 def test_a_merge_moves_the_branchs_task_to_done_once_github_has_merged_it(

@@ -81,6 +81,10 @@ class PushedViews:
             False,
             None,
         ),
+        set_parent: Callable[[int, str], tuple[str | None, str | None]] = lambda *_: (
+            None,
+            None,
+        ),
         working_hours: Callable[[], WorkingHours] = WorkingHours,
         estimate_hub: ModelHub | None = None,
         priors: Callable[[], dict[str, Prior]] = dict,
@@ -93,6 +97,7 @@ class PushedViews:
         #: estimate popup reads (worked out with the card extras).
         self.breakdowns: dict[str, api.EstimateBreakdown] = {}
         self._opening_pr = opening_pr
+        self._set_parent = set_parent
         self._working_hours = working_hours
         self._repo_slug = repo_slug
         self._pr_facts = pr_facts
@@ -133,6 +138,7 @@ class PushedViews:
                 self._estimate_hub,
                 self._priors(),
                 self.breakdowns,
+                self._set_parent,
             )
         finally:
             store.close()

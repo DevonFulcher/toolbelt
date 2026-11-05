@@ -69,7 +69,9 @@ def rig(tmp_path: Path):
     github = Github()
     merges: list[tuple[Path, str]] = []
 
-    def merger(repo_path: Path, pr_url: str) -> MergeOutcome:
+    def merger(
+        repo_path: Path, pr_url: str, match_head: str | None = None
+    ) -> MergeOutcome:
         merges.append((repo_path, pr_url))
         return MergeOutcome(ok=True, output="merged")
 
@@ -182,13 +184,35 @@ def test_a_pr_whose_ci_failed_is_taken_off(rig):
 
 def test_a_pr_that_is_not_waiting_on_ci_cannot_be_queued(rig):
     app, repo_id, github, _, client = rig
-    github.review = ReviewState.REQUESTED  # not approved
+    github.ci = CiState.SUCCESS
+    github.review = ReviewState.REQUESTED  # waiting for review, not for CI
     refresh(app, client)
 
     response = client.post("/api/merge/queue", json={"id": f"{repo_id}:a"})
 
-    assert response.status_code == 409 and "approved" in response.json()["detail"]
+    assert response.status_code == 409 and "waiting on CI" in response.json()["detail"]
     assert branch(client)["merge_queue"] is None
+
+
+def test_a_pr_waiting_on_ci_can_be_queued_before_it_is_approved(rig):
+    app, repo_id, github, merges, client = rig
+    github.review = ReviewState.REQUESTED
+    refresh(app, client)
+    assert branch(client)["status"]["next"]["kind"] == "wait_ci"
+
+    queued = client.post("/api/merge/queue", json={"id": f"{repo_id}:a"})
+    github.ci = CiState.SUCCESS
+    refresh(app, client)
+    time.sleep(0.15)
+
+    assert queued.status_code == 200
+    assert merges == []  # CI passed but nobody approved it: it waits
+    assert branch(client)["merge_queue"]["queued"] is True
+
+    github.review = ReviewState.APPROVED
+    refresh(app, client)
+
+    wait_for(lambda: merges, "the merge after the approval")
 
 
 def test_an_unknown_branch_is_404(rig):

@@ -663,9 +663,10 @@ class MergeQueueInfo(Model):
     """Where a branch's PR stands in the merge queue (``None`` on a branch when
     there is nothing to say: not queued, nothing that can be queued, no note)."""
 
-    #: It is approved and waiting on nothing but CI: it can be queued.
+    #: Its next action is Waiting on CI, or it is approved and blocked on a PR
+    #: it is stacked on: it can be queued.
     can_queue: bool
-    #: Queued: it merges when its CI has passed.
+    #: Queued: it merges once it is ready.
     queued: bool
     #: Its queued merge is running.
     merging: bool
@@ -1542,6 +1543,22 @@ class EstimateBreakdown(Model):
     similar: list[SimilarTask]
 
 
+class SetParentInfo(Model):
+    """Where a branch hangs in its stack, and a change of that in flight."""
+
+    #: Its recorded parent: a tracked branch or the trunk.
+    parent: str
+    #: The trunk its stack hangs off (not a tracked branch): a branch can be
+    #: moved onto it.
+    trunk: str
+    #: The parent being set now (``None``: no change is running). The change
+    #: runs in the background; the card reads it as in progress until done.
+    setting: str | None
+    #: Why the last change failed, as the command said it (``None``: it did
+    #: not, or none was tried since the page started).
+    notice: str | None
+
+
 class BranchExtras(Model):
     """The parts of a task card that do not come with its PR status."""
 
@@ -1553,6 +1570,9 @@ class BranchExtras(Model):
     spend: CardSpend
     #: When the task is estimated to finish (``None``: no PR to estimate).
     estimate: CardEstimate | None = None
+    #: Its stack parent and a change of it in flight (``None``: the stack DB
+    #: has no parent recorded for it).
+    set_parent: SetParentInfo | None = None
 
 
 class CardExtras(Model):
@@ -1575,6 +1595,17 @@ class MergeQueueRequest(Model):
 
     #: The branch's row id (see ``Branch.id``).
     id: str
+
+
+class SetParentRequest(Model):
+    """The body of ``POST /api/set-parent``: repoint the branch's stack parent
+    (`toolbelt git set-parent`)."""
+
+    #: The branch's row id (see ``Branch.id``).
+    id: str
+    #: The branch to set as its parent, by full name: another tracked branch of
+    #: its repo or the trunk.
+    parent: str
 
 
 class RefreshRequest(Model):

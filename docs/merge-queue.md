@@ -1,28 +1,56 @@
-# Merge when CI passes
+# Merge when ready
 
-A PR that is approved and waiting on nothing but CI shows a **Merge when CI
-passes** button next to its "Waiting on CI". Pressing it queues the PR; once its
-CI has passed (so its next action is Merge) `tt ui` merges it exactly as the
-Merge button does (`toolbelt git merge`: squash-merge, then sync the stack).
+A PR whose next action is **Waiting on CI**, or **Blocked on** the PR it is
+stacked on, shows a **Merge when ready** button next to it. Pressing it queues
+the PR; once its next action is Merge (CI passed, approved, no comments or
+conflicts, and any parent merged) `tt ui` merges it exactly as the Merge button
+does (`toolbelt git merge`: squash-merge, then sync the stack), pinned to the
+head commit that was queued (`--match-head-commit`), so nothing pushed after it
+is merged.
 
 ## What can be queued
 
-The PR's CI is running and, once it passed, Merge would be its next action: it
-is approved, open and not a draft, has no conflicts or unresolved comments, and
-any PR it is stacked on has merged. No agent may hold it.
+- A PR waiting on CI, whether or not it is approved yet: it stays queued through
+  review and merges once it is approved and its CI has passed.
+- A PR that is approved and blocked on a PR it is stacked on that is still open.
+  It can be queued on any level of a stack. Each PR merges after its parents,
+  one at a time.
+
+A branch an agent holds or has a question open for reads differently, so it
+cannot be queued until it is free.
 
 ## What is never merged
 
 A queued PR is taken off the queue, with a note on its card saying why, when:
 
 - new commits were pushed after it was queued (what was approved is not what
-  would be merged), so queue it again when it is ready;
-- its CI failed, a comment or conflict appeared, changes were requested, its
-  approval was removed, or it became a draft again;
-- it was closed without merging.
+  would be merged), so queue it again when it is ready. The one head change
+  that is accepted is the sync after a parent merged: a merge commit whose first
+  parent is the queued head and whose second parent is already on the trunk or
+  the parent's branch. The queue then pins that new head;
+- its CI failed, a comment or conflict appeared, changes were requested, or it
+  became a draft again;
+- it was closed without merging, or the PR it is stacked on was closed without
+  merging.
 
 A PR merged some other way, or no longer tracked, leaves the queue quietly. A PR
-an agent holds stays queued until the agent is done.
+an agent holds stays queued until the agent is done. Waiting for CI, review or a
+parent keeps it queued.
+
+## Stacked PRs
+
+A queued PR remembers the PR it was stacked on, because `sync` forgets a merged
+parent and reparents the branch onto the trunk. Once its next action is Merge it
+is still held back until all of these hold:
+
+- the parent PR is merged (GitHub says so);
+- GitHub has retargeted it onto the trunk, so it never merges into the parent's
+  old branch;
+- its head contains the parent's squash commit, so it carries what the parent
+  landed and is not merged ahead of the sync.
+
+These are checked again right before the merge starts, after any merge ahead of
+it in the queue has finished restacking.
 
 If the merge itself fails (GitHub refuses, for instance), the PR leaves the queue
 and the card shows the end of `toolbelt git merge`'s output. Queued merges run
@@ -31,10 +59,11 @@ one at a time, because each one restacks the stack it belonged to.
 ## How it works
 
 The queue is the `merge_queue` table of the stack DB (the PR, its head commit
-when it was queued, and when), so a restart keeps it. It is checked every ten
-seconds against the PR lookups the page already keeps current; a merge starts
-within that time of the CI passing. `POST /api/merge/queue` and
-`/api/merge/unqueue` (body `{"id": "<repo id>:<branch>"}`) queue and cancel.
+when it was queued, the PR it was stacked on, and when), so a restart keeps it.
+It is checked every ten seconds against the PR lookups the page already keeps
+current; a merge starts within that time of the PR being ready.
+`POST /api/merge/queue` and `/api/merge/unqueue` (body
+`{"id": "<repo id>:<branch>"}`) queue and cancel.
 
 The Merge button uses the same background path: `POST /api/merge` answers `202`
 at once, the card reads "Merging…", and if `toolbelt git merge` fails the card

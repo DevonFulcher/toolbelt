@@ -11,6 +11,7 @@ from toolbelt.git.stack.store import (
     TokenCounts,
     default_db_path,
 )
+from toolbelt.ui import api_models as api
 from toolbelt.ui.card_extras import build_card_extras
 
 
@@ -292,3 +293,23 @@ def test_a_card_without_a_pr_has_no_estimate():
     (extras,) = build_card_extras(r.dispatcher, store, NOW).branches
 
     assert extras.estimate is None
+
+
+def test_a_branch_says_what_it_hangs_off_the_trunk_of_its_stack_and_a_parent_change_in_flight():
+    r = rig(a=PrSnapshot(status(), None))
+    store, repo_id, _ = tracked_store()
+    store.set_parent(repo_id, "b", "a")
+
+    first, second = build_card_extras(
+        r.dispatcher,
+        store,
+        NOW,
+        set_parent=lambda _, name: ("main", None) if name == "b" else (None, "no"),
+    ).branches
+
+    assert first.set_parent == api.SetParentInfo(
+        parent="main", trunk="main", setting=None, notice="no"
+    )
+    assert second.set_parent == api.SetParentInfo(
+        parent="a", trunk="main", setting="main", notice=None
+    )

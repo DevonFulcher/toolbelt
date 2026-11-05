@@ -507,7 +507,7 @@
     "merge_queued": {
       "label": "Queued to merge",
       "tone": "purple",
-      "legend": "Queued: it merges when its CI has passed."
+      "legend": "Queued: it merges once it is ready."
     },
     "decision_pending": {
       "label": "Waiting for your decision",
@@ -561,6 +561,7 @@
     "assigned_review": null,
     "repo": null,
     "branch": null,
+    "parent": null,
     "task": null,
     "task_title": null,
     "estimate": null,

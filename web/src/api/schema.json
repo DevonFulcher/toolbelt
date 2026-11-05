@@ -1336,6 +1336,17 @@
           },
           "type": "array"
         },
+        "set_parent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SetParentInfo"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "spend": {
           "$ref": "#/$defs/CardSpend"
         }
@@ -5844,6 +5855,46 @@
         }
       ]
     },
+    "SetParentInfo": {
+      "additionalProperties": false,
+      "description": "Where a branch hangs in its stack, and a change of that in flight.",
+      "properties": {
+        "notice": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "parent": {
+          "type": "string"
+        },
+        "setting": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "trunk": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "parent",
+        "trunk",
+        "setting",
+        "notice"
+      ],
+      "title": "SetParentInfo",
+      "type": "object"
+    },
     "SiblingConflict": {
       "additionalProperties": false,
       "description": "Another open task whose branch does not merge cleanly with this one's.",
@@ -6631,6 +6682,16 @@
             }
           ]
         },
+        "parent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CatalogDimension"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "pr": {
           "anyOf": [
             {
@@ -6800,6 +6861,7 @@
         "assigned_review",
         "repo",
         "branch",
+        "parent",
         "task",
         "task_title",
         "estimate",

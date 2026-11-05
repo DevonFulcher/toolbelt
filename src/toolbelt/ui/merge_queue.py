@@ -1,14 +1,23 @@
-"""PRs queued to be merged as soon as their CI passes.
+"""PRs queued to be merged as soon as they are ready.
 
-A PR that is approved and has nothing left but CI running can be queued from
-its card. Once its CI has passed, so that its next action is Merge, the queue
-merges it exactly as the Merge button does (``toolbelt git merge``).
+A PR whose next action is Waiting on CI, or Blocked on its parent PR, can be
+queued from its card. Once its next action is Merge (CI passed, approved, no
+comments or conflicts, its parent merged) the queue merges it exactly as the
+Merge button does (``toolbelt git merge``), pinned to the head that was queued.
 
-Nothing is merged that is not what was queued: a queued PR is dropped, with a
-note on its card saying why, when its head changed (new commits), when it was
-closed, or when it stops being only a CI wait away from merging (CI failed, a
-comment or a conflict appeared, the approval went away, its parent has not
-merged). Queued PRs are kept in the stack DB, so a restart does not lose them.
+A stacked PR merges after its parents, and only into the trunk. Once its
+parent has merged, the sync that ``toolbelt git merge`` runs pushes a merge
+commit onto it; that one head change is accepted (the queue then pins the new
+head), and the PR is merged only when its base is the trunk and its head
+contains the parent's squash commit, so it is never merged into the parent's
+old branch or without what the parent landed.
+
+Nothing else is merged that is not what was queued: a queued PR is dropped, with
+a note on its card saying why, when its head changed in any other way (new
+commits), when it was closed, when its parent was closed without merging, or
+when it needs something done (CI failed, a comment or a conflict appeared,
+changes were requested). Waiting for CI, review or a parent keeps it queued.
+Queued PRs are kept in the stack DB, so a restart does not lose them.
 
 Whether a PR is ready is read from the PR lookups the page already keeps
 current; the watcher compares them every ``tick`` seconds and when a PR is
@@ -16,6 +25,7 @@ queued.
 """
 
 import asyncio
+import dataclasses
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -41,15 +51,35 @@ _DROPPED_BECAUSE = {
     "resolve_conflicts": "it has conflicts",
     "address_review": "changes were requested",
     "resolve_comments": "it has unresolved comments",
-    "blocked": "it is blocked on a PR it is stacked on",
-    "wait_review": "its approval was removed",
-    "request_review": "its approval was removed",
     "publish": "it is a draft again",
 }
+
+#: Next actions of a queued PR that only need time (or someone else): it stays
+#: queued, and merges once its next action is Merge.
+_STILL_WAITING = (
+    "wait_ci",
+    "wait_review",
+    "request_review",
+    "post_slack",
+    "bump_slack",
+    "blocked",
+    "claimed",
+    "autonomous",
+    "deciding",
+)
 
 
 class MergeQueueRefused(Exception):
     """The PR cannot be queued."""
+
+
+@dataclass(frozen=True)
+class StackedOn:
+    """The branch a PR is stacked on, and that branch's PR number (``None``
+    while it has not been looked up)."""
+
+    branch: str
+    pr_number: int | None
 
 
 @dataclass(frozen=True)
@@ -71,24 +101,40 @@ class MergeQueue:
         branches: Callable[[], list[TrackedBranch]],
         fetched: Callable[[int, str], Fetched | None],
         next_kind: Callable[[int, str], str | None],
-        would_merge: Callable[[int, str], bool],
-        land: Callable[[int, str], Awaitable[LandResult]],
+        queueable: Callable[[int, str], bool],
+        stacked_on: Callable[[int, str], StackedOn | None],
+        parent_state: Callable[[MergeQueueRow], PrState | None],
+        ready_to_land: Callable[[MergeQueueRow], bool],
+        is_sync_merge: Callable[[MergeQueueRow, str], bool],
+        land: Callable[[int, str, str | None], Awaitable[LandResult]],
         wall_clock: Callable[[], datetime],
         changed: Callable[[set[BranchKey]], None],
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         tick: float = DEFAULT_TICK_SECONDS,
     ) -> None:
-        """``next_kind`` is what the card's Next says; ``would_merge`` whether a
-        PR whose CI is running would have Merge as its next action once the CI
-        passed; ``land(repo_id, branch)`` merges (the Merge button's work);
-        ``changed`` is told which branches' queue standing changed."""
+        """``next_kind`` is what the card's Next says; ``queueable`` whether the
+        PR's next action is one that can be queued (Waiting on CI, or Blocked on
+        its parent); ``stacked_on`` what a branch is stacked on now (``None``
+        for one on the trunk); ``parent_state`` the PR state of the parent a
+        queued PR was stacked on (``None`` for one queued on the trunk);
+        ``ready_to_land(row)`` whether a queued PR whose next action is Merge is
+        based on the trunk and contains what its parent landed (true when it
+        had no parent); ``is_sync_merge(row, new_head)`` whether ``new_head`` is
+        what a sync adds to the queued head;
+        ``land(repo_id, branch, head)`` merges, only if the PR's head is
+        ``head`` when given (the Merge button's work); ``changed`` is told
+        which branches' queue standing changed."""
         self._entries = entries
         self._add = add
         self._remove = remove
         self._branches = branches
         self._fetched = fetched
         self._next_kind = next_kind
-        self._would_merge = would_merge
+        self._queueable = queueable
+        self._stacked_on = stacked_on
+        self._parent_state = parent_state
+        self._ready_to_land = ready_to_land
+        self._is_sync_merge = is_sync_merge
         self._land = land
         self._wall_clock = wall_clock
         self._changed = changed
@@ -113,7 +159,7 @@ class MergeQueue:
         key = (repo_id, branch)
         row = self._queued.get(key)
         notice = self._notice.get(key)
-        can_queue = row is None and self._would_merge(repo_id, branch)
+        can_queue = row is None and self._queueable(repo_id, branch)
         merging = key in self._merging
         if row is None and not can_queue and notice is None and not merging:
             return None
@@ -128,17 +174,22 @@ class MergeQueue:
     # ---- queueing --------------------------------------------------------------
 
     def queue(self, repo_id: int, branch: str) -> api.MergeQueueInfo:
-        """Queues the branch's PR. Raises ``MergeQueueRefused`` when it is not
-        approved and waiting only on CI."""
+        """Queues the branch's PR. Raises ``MergeQueueRefused`` unless its next
+        action is Waiting on CI or Blocked on its parent PR."""
         key = (repo_id, branch)
         looked_up = self._fetched(repo_id, branch)
         if looked_up is None or looked_up.facts is None:
             raise MergeQueueRefused("The PR has not been looked up yet.")
         if key not in self._queued:
-            if not self._would_merge(repo_id, branch):
+            if not self._queueable(repo_id, branch):
                 raise MergeQueueRefused(
-                    "Only a PR that is approved and waiting on nothing but CI can "
-                    "be queued."
+                    "Only a PR that is waiting on CI, or approved and blocked on "
+                    "its parent PR, can be queued."
+                )
+            parent = self._stacked_on(repo_id, branch)
+            if parent is not None and parent.pr_number is None:
+                raise MergeQueueRefused(
+                    "The PR it is stacked on has not been looked up yet."
                 )
             row = MergeQueueRow(
                 repo_id=repo_id,
@@ -146,6 +197,8 @@ class MergeQueue:
                 pr_number=looked_up.facts.number,
                 head_oid=looked_up.facts.head_oid,
                 queued_at=self._wall_clock(),
+                parent_branch=parent.branch if parent else None,
+                parent_pr=parent.pr_number if parent else None,
             )
             self._add(row)
             self._queued[key] = row
@@ -214,32 +267,62 @@ class MergeQueue:
                 )
                 continue
             if looked_up.facts.head_oid != row.head_oid:
+                if not self._is_sync_merge(row, looked_up.facts.head_oid):
+                    self._drop(
+                        key,
+                        "New commits were pushed after it was queued, so it was not "
+                        "merged: queue it again when it is ready.",
+                    )
+                    continue
+                # The sync of a merged parent (or of a parent that took one):
+                # the same PR, now carrying what that brought. It is merged only
+                # as this head.
+                row = dataclasses.replace(row, head_oid=looked_up.facts.head_oid)
+                self._add(row)
+                self._queued[key] = row
+            kind = self._next_kind(*key)
+            if self._parent_state(row) is PrState.CLOSED:
                 self._drop(
                     key,
-                    "New commits were pushed after it was queued, so it was not "
-                    "merged: queue it again when it is ready.",
+                    "Taken off the merge queue: the PR it is stacked on was closed "
+                    "without merging.",
                 )
-                continue
-            kind = self._next_kind(*key)
-            if kind == "merge":
-                self._start_merge(key, queued=True)
-            elif kind in ("wait_ci", "claimed", "autonomous", "deciding"):
-                continue  # still waiting (a claimed branch is left to its agent)
+            elif kind == "merge":
+                if self._ready_to_land(row):
+                    self._start_merge(key, queued=True)
+            elif kind in _STILL_WAITING:
+                continue  # a claimed branch is left to its agent
             else:
                 why = _DROPPED_BECAUSE.get(kind or "", f"its next action became {kind}")
                 self._drop(key, f"Taken off the merge queue: {why}.")
 
+    def _ready_after_wait(self, key: BranchKey) -> bool:
+        row = self._queued.get(key)
+        looked_up = self._fetched(*key)
+        return (
+            row is not None
+            and looked_up is not None
+            and looked_up.facts is not None
+            and looked_up.facts.head_oid == row.head_oid
+            and self._next_kind(*key) == "merge"
+            and self._ready_to_land(row)
+        )
+
     async def _merge(self, key: BranchKey, *, queued: bool) -> None:
         # One merge at a time: each one restacks the stack it belonged to.
         async with self._lock:
-            if queued and key not in self._queued:  # cancelled while waiting
+            # Cancelled while waiting for the lock, or no longer ready (the merge
+            # ahead of it restacked it): it stays queued for the next check.
+            if queued and not self._ready_after_wait(key):
                 self._merging.discard(key)
                 self._changed({key})
                 return
             notice = None
             what = "queued merge" if queued else "merge"
             try:
-                result = await self._land(*key)
+                result = await self._land(
+                    *key, self._queued[key].head_oid if queued else None
+                )
                 if not result.ok:
                     notice = f"The {what} failed: {result.output[-NOTICE_LIMIT:]}"
             except Exception as error:  # a failed merge says why, and leaves the queue

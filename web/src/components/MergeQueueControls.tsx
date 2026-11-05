@@ -1,6 +1,7 @@
-// A PR waiting on CI can be queued to merge as soon as the CI passes; this is its
-// card's control for that: the button to queue it, what a queued one says (with a
-// way to cancel), and why one was taken off the queue without merging.
+// A PR waiting on CI, or blocked on its parent PR, can be queued to merge as soon
+// as it is ready (CI passed, approved, and any parent merged); this is its card's
+// control for that: the button to queue it, what a queued one says (with a way to
+// cancel), and why one was taken off the queue without merging.
 import { useState } from "react";
 import { queueMerge, unqueueMerge } from "../api/client";
 import type { MergeQueueInfo } from "../api/generated";
@@ -21,8 +22,8 @@ export function MergeQueueControls({ id, queue }: { id: string; queue: MergeQueu
     <>
       {queue.queued && (
         <>
-          <span className="pill queue-pill" title="Merges on its own once its CI has passed">
-            Queued: merges when CI passes
+          <span className="pill queue-pill" title="Merges on its own once it is ready: CI passed, approved, and any PR it is stacked on merged">
+            Queued: merges when ready
           </span>{" "}
           <button type="button" className="agents-toggle" disabled={busy} onClick={() => act(() => unqueueMerge(id))}>
             Cancel
@@ -34,10 +35,10 @@ export function MergeQueueControls({ id, queue }: { id: string; queue: MergeQueu
           type="button"
           className="merge-button"
           disabled={busy}
-          title="Merges this PR on its own once its CI has passed"
+          title="Merges this PR on its own once it is ready: CI passed, approved, and any PR it is stacked on merged"
           onClick={() => act(() => queueMerge(id))}
         >
-          Merge when CI passes
+          Merge when ready
         </button>
       )}
       {(queue.notice ?? problem) && (

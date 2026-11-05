@@ -765,6 +765,13 @@ _MIGRATIONS: list[tuple[str, ...]] = [
         # usage sources distinct when reports are combined.
         "ALTER TABLE usage_calls ADD COLUMN provider TEXT NOT NULL DEFAULT 'claude'",
     ),
+    (
+        # The PR a queued PR was stacked on when it was queued (see
+        # ``ui.merge_queue``). Once that parent merges, ``sync`` reparents the
+        # branch onto the trunk and forgets the parent, so the queue keeps it.
+        "ALTER TABLE merge_queue ADD COLUMN parent_branch TEXT",
+        "ALTER TABLE merge_queue ADD COLUMN parent_pr INTEGER",
+    ),
 ]
 
 
@@ -880,6 +887,10 @@ class MergeQueueRow:
     #: The task it belongs to (set when it is read back; the store fills it in
     #: from the tracked branch when it is queued).
     task_id: str | None = None
+    #: The branch and PR number it was stacked on when it was queued, or ``None``
+    #: for a PR on the trunk.
+    parent_branch: str | None = None
+    parent_pr: int | None = None
 
 
 @dataclass(frozen=True)
@@ -2375,6 +2386,8 @@ class StackStore:
                 head_oid=r["head_oid"],
                 queued_at=datetime.fromisoformat(r["queued_at"]),
                 task_id=r["task_id"],
+                parent_branch=r["parent_branch"],
+                parent_pr=r["parent_pr"],
             )
             for r in rows
         ]
@@ -2384,8 +2397,8 @@ class StackStore:
         with self._write() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO merge_queue "
-                "(repo_id, branch, pr_number, head_oid, queued_at, task_id) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "(repo_id, branch, pr_number, head_oid, queued_at, task_id, "
+                "parent_branch, parent_pr) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     row.repo_id,
                     row.branch,
@@ -2393,6 +2406,8 @@ class StackStore:
                     row.head_oid,
                     _iso(row.queued_at),
                     self._tracked_task_id(conn, row.repo_id, row.branch),
+                    row.parent_branch,
+                    row.parent_pr,
                 ),
             )
 

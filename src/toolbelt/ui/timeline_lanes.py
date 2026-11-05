@@ -317,7 +317,7 @@ LANE_SOURCES: tuple[LaneSource, ...] = (
             "merge_queued": Span(
                 "Queued to merge",
                 PURPLE,
-                "Queued: it merges when its CI has passed.",
+                "Queued: it merges once it is ready.",
             ),
         },
         covers=(),

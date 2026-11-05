@@ -1,6 +1,6 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
-import type { Branch, BranchClaim, BranchExtras, CardValidation, LoadedStatus, MergeQueueInfo, SiblingConflict, SiblingConflictsInfo, SlackInfo } from "../api/generated";
+import type { Branch, BranchClaim, BranchExtras, CardValidation, LoadedStatus, MergeQueueInfo, SetParentInfo, SiblingConflict, SiblingConflictsInfo, SlackInfo } from "../api/generated";
 import { branch, catalog, detail, event, noPr, pr, repo, snapshot, DAY, NOW } from "../testing/fixtures";
 import { renderWith } from "../testing/render";
 import { App } from "./App";
@@ -22,6 +22,7 @@ vi.mock("./presentation", async (original) => {
 const SLOT_LABELS: Record<string, string> = {
   repo: "Repo",
   branch: "Branch",
+  parent: "Parent",
   next: "Next",
   pr: "PR",
   ci: "CI",
@@ -299,7 +300,7 @@ describe("a card's labelled slots", () => {
       expect(groups.map((g) => g.querySelector(".group-title > span")?.textContent)).toEqual(["Git", "PR", "Task", "Agent", "Spend"]);
       const keys = groups.map((g) => [...g.querySelectorAll<HTMLElement>(".slot")].map((s) => s.dataset.slot));
       expect(keys).toEqual([
-        ["repo", "branch", "ancestors", "descendants"],
+        ["repo", "branch", "parent", "ancestors", "descendants"],
         ["title", "pr", "ci", "review", "comments", "bot_comments", "merge", "conflict_commit", "lines", "pr_age", "in_draft", "review_requested", "ci_failures"],
         ["next", "task_age", "estimate", "task", "task_title", "task_status", "slack_status", "slack_age", "assigned_review"],
         ["session", "agent_status", "agent_runs", "agent_run", "agent_run_summary"],
@@ -320,7 +321,7 @@ describe("a card's labelled slots", () => {
 
     expect(labels(found)).toEqual(SLOT_LABELS);
     for (const key of Object.keys(SLOT_LABELS)) {
-      if (["repo", "branch", "ancestors", "descendants", "task", "task_title", "task_status", "slack_status", "slack_age", "assigned_review", "session", "task_age", "estimate", "agent_status", "agent_runs", "agent_run", "agent_run_summary", "cost", "agent_cost"].includes(key)) continue;
+      if (["repo", "branch", "parent", "ancestors", "descendants", "task", "task_title", "task_status", "slack_status", "slack_age", "assigned_review", "session", "task_age", "estimate", "agent_status", "agent_runs", "agent_run", "agent_run_summary", "cost", "agent_cost"].includes(key)) continue;
       expect(found[key].slice(1), key).toEqual(["na", "loading…"]);
     }
   });
@@ -600,7 +601,7 @@ describe("a card waiting on CI that can be queued to merge", () => {
     showCards([branch(1, "devon/a", { status: waiting, merge_queue: queueInfo({ can_queue: true }) })]);
 
     await act(async () => {
-      screen.getByRole("button", { name: "Merge when CI passes" }).click();
+      screen.getByRole("button", { name: "Merge when ready" }).click();
     });
 
     const [url, init] = fetchMock.mock.calls[0];
@@ -611,15 +612,15 @@ describe("a card waiting on CI that can be queued to merge", () => {
   test("a PR that cannot be queued offers nothing", () => {
     showCards([branch(1, "devon/a", { status: waiting, merge_queue: null })]);
 
-    expect(screen.queryByRole("button", { name: "Merge when CI passes" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Merge when ready" })).toBeNull();
   });
 
   test("a queued PR says so and can be taken off the queue", async () => {
     const fetchMock = answer({ ok: true, status: 204 });
     showCards([branch(1, "devon/a", { status: waiting, merge_queue: queueInfo({ queued: true }) })]);
 
-    expect(screen.getByText("Queued: merges when CI passes")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Merge when CI passes" })).toBeNull();
+    expect(screen.getByText("Queued: merges when ready")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Merge when ready" })).toBeNull();
     await act(async () => {
       screen.getByRole("button", { name: "Cancel" }).click();
     });
@@ -632,7 +633,7 @@ describe("a card waiting on CI that can be queued to merge", () => {
     showCards([branch(1, "devon/a", { status: waiting, merge_queue: queueInfo({ can_queue: true }) })]);
 
     await act(async () => {
-      screen.getByRole("button", { name: "Merge when CI passes" }).click();
+      screen.getByRole("button", { name: "Merge when ready" }).click();
     });
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Only a PR that is approved can be queued.");
@@ -659,10 +660,10 @@ describe("a card waiting on CI that can be queued to merge", () => {
     const { store } = showCards([branch(1, "devon/a", { status: waiting, merge_queue: null })]);
 
     act(() => store.getState().statusChanged("1:devon/a", waiting, 1, undefined, queueInfo({ can_queue: true })));
-    expect(screen.getByRole("button", { name: "Merge when CI passes" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Merge when ready" })).toBeInTheDocument();
 
     act(() => store.getState().statusChanged("1:devon/a", waiting, 2, undefined, null));
-    expect(screen.queryByRole("button", { name: "Merge when CI passes" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Merge when ready" })).toBeNull();
   });
 });
 
@@ -1629,5 +1630,126 @@ describe("a card whose branch conflicts with other open tasks", () => {
     showCards([branch(1, "devon/a", { status: pr({ pr_number: 8 }), sibling_conflicts: null })]);
 
     expect(screen.queryByText(/conflicts with/)).toBeNull();
+  });
+});
+
+describe("a card's Parent slot", () => {
+  const info = (over: Partial<SetParentInfo> = {}): SetParentInfo => ({
+    parent: "devon/a",
+    trunk: "main",
+    setting: null,
+    notice: null,
+    ...over,
+  });
+  const extrasOf = (set_parent: SetParentInfo): BranchExtras => ({
+    id: "1:devon/b",
+    lanes: [],
+    agent: {
+      has_action: false,
+      trigger: null,
+      reason: null,
+      can_override: false,
+      starting: false,
+      start_error: null,
+      latest_run: null,
+      runs: 0,
+      recent_runs: [],
+      validation: { can_validate: false, validated: false, result: null, opening_pr: false, notice: null },
+    },
+    spend: { interactive_usd: 0, interactive_unpriced_calls: 0, autonomous_usd: 0, autonomous_runs: 0 },
+    set_parent,
+  });
+  const publish = (store: ReturnType<typeof showCards>["store"], set_parent: SetParentInfo) =>
+    act(() => store.getState().extrasChanged({ branches: [extrasOf(set_parent)], agents_decided_at: null, spend_read_at: null }));
+  // main <- a <- b <- c, and d, also on main.
+  const stack = () => [
+    branch(1, "devon/a", { parent: "main" }),
+    branch(1, "devon/b", { parent: "devon/a", children: [{ id: "1:devon/c", name: "devon/c" }] }),
+    branch(1, "devon/c", { parent: "devon/b" }),
+    branch(1, "devon/d", { parent: "main" }),
+  ];
+  const parentSlot = () => within(document.querySelector<HTMLElement>('article[data-id="1:devon/b"] [data-slot="parent"]') as HTMLElement);
+  const body = () => JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body));
+
+  test("it shows the parent, and offers the trunk and the other branches that can be one", () => {
+    const { store } = showCards(stack());
+    publish(store, info());
+
+    expect(slotsOf("devon/b").parent).toEqual(["Parent", "ok", "devon/a Change parent"]);
+    fireEvent.click(parentSlot().getByRole("button", { name: "Change parent" }));
+
+    // Not the branch itself, what is stacked on it, or the parent it has.
+    const options = within(parentSlot().getByRole("combobox")).getAllByRole("option");
+    expect(options.map((option) => option.textContent)).toEqual(["main (trunk)", "devon/d"]);
+    expect(parentSlot().getByText(/points devon\/b's open PR at it/)).toBeVisible();
+  });
+
+  test("setting it answers at once with a disabled button saying what it does, and posts the choice", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 202, json: async () => ({ setting: true }) })));
+    const { store } = showCards(stack());
+    publish(store, info());
+    fireEvent.click(parentSlot().getByRole("button", { name: "Change parent" }));
+    fireEvent.change(parentSlot().getByRole("combobox"), { target: { value: "devon/d" } });
+
+    fireEvent.click(parentSlot().getByRole("button", { name: "Set parent" }));
+
+    expect(parentSlot().getByRole("button", { name: "Setting parent…" })).toBeDisabled();
+    await waitFor(() => expect(fetch).toHaveBeenCalled());
+    expect(vi.mocked(fetch).mock.calls[0][0]).toBe("/api/set-parent");
+    expect(body()).toEqual({ id: "1:devon/b", parent: "devon/d" });
+    // Still in progress while the server works, whatever the request said.
+    expect(parentSlot().getByRole("button", { name: "Setting parent…" })).toBeDisabled();
+    publish(store, info({ setting: "devon/d" }));
+    expect(parentSlot().getByRole("button", { name: "Setting parent…" })).toBeDisabled();
+    // Done: the new parent, and the control is back.
+    publish(store, info({ parent: "devon/d" }));
+    expect(slotsOf("devon/b").parent[2]).toBe("devon/d Change parent");
+    vi.unstubAllGlobals();
+  });
+
+  test("a card opened in the middle of a change reads it in progress", () => {
+    const { store } = showCards(stack());
+
+    publish(store, info({ setting: "main" }));
+
+    expect(parentSlot().getByRole("button", { name: "Setting parent…" })).toBeDisabled();
+    expect(parentSlot().queryByRole("button", { name: "Change parent" })).toBeNull();
+  });
+
+  test("why a change failed is shown on the card, and it can be tried again", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 202, json: async () => ({ setting: true }) })));
+    const { store } = showCards(stack());
+    publish(store, info());
+    fireEvent.click(parentSlot().getByRole("button", { name: "Change parent" }));
+    fireEvent.click(parentSlot().getByRole("button", { name: "Set parent" }));
+    await waitFor(() => expect(fetch).toHaveBeenCalled());
+
+    publish(store, info({ notice: "Branch 'main' does not exist." }));
+
+    expect(parentSlot().getByRole("alert")).toHaveTextContent("Branch 'main' does not exist.");
+    expect(parentSlot().getByRole("button", { name: "Set parent" })).toBeEnabled();
+    vi.unstubAllGlobals();
+  });
+
+  test("a request the server refuses shows its reason and frees the button", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: false, status: 409, json: async () => ({ detail: "'devon/b' is not checked out in any worktree" }) })),
+    );
+    const { store } = showCards(stack());
+    publish(store, info());
+    fireEvent.click(parentSlot().getByRole("button", { name: "Change parent" }));
+
+    fireEvent.click(parentSlot().getByRole("button", { name: "Set parent" }));
+
+    expect(await parentSlot().findByRole("alert")).toHaveTextContent("not checked out in any worktree");
+    expect(parentSlot().getByRole("button", { name: "Set parent" })).toBeEnabled();
+    vi.unstubAllGlobals();
+  });
+
+  test("without the extras it only names the parent", () => {
+    showCards(stack());
+
+    expect(slotsOf("devon/b").parent).toEqual(["Parent", "ok", "devon/a"]);
   });
 });

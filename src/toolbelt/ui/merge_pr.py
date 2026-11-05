@@ -19,12 +19,21 @@ class MergeOutcome:
     output: str
 
 
-def run_toolbelt_merge(repo_path: Path, pr_url: str) -> MergeOutcome:
-    """Run `toolbelt git merge <pr_url>` in the repo at ``repo_path``."""
+def run_toolbelt_merge(
+    repo_path: Path, pr_url: str, match_head: str | None = None
+) -> MergeOutcome:
+    """Run `toolbelt git merge <pr_url>` in the repo at ``repo_path``; with
+    ``match_head`` only if the PR's head is that commit."""
     executable = shutil.which("toolbelt") or sys.argv[0]
     try:
         result = logged_process.run(
-            [executable, "git", "merge", pr_url],
+            [
+                executable,
+                "git",
+                "merge",
+                pr_url,
+                *(["--match-head-commit", match_head] if match_head else []),
+            ],
             cwd=repo_path,
             capture_output=True,
             text=True,

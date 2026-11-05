@@ -96,10 +96,18 @@ def merge(
         str,
         typer.Argument(help="PR number, URL, or branch to merge."),
     ],
+    match_head_commit: Annotated[
+        str | None,
+        typer.Option(
+            "--match-head-commit",
+            help="Merge only if the PR's head is this commit (gh's flag).",
+        ),
+    ] = None,
 ):
     """Squash-merge a PR on GitHub, then sync the stack it belongs to.
 
-    Runs `gh pr merge --squash PR`. A PR that is part of a GitHub stack is
+    Runs `gh pr merge --squash PR` (with `--match-head-commit` when given, so
+    nothing pushed after that commit is merged). A PR that is part of a GitHub stack is
     refused (GitHub only merges those asynchronously); unlink the stack in
     GitHub first with `gh stack unstack <stack-number>`.
 
@@ -120,7 +128,7 @@ def merge(
     only `branch-clean` runs.
     """
     root = repo_root()
-    git_merge(pr, sync_lock=lambda: repo_lock(root))
+    git_merge(pr, match_head=match_head_commit, sync_lock=lambda: repo_lock(root))
 
 
 @git_typer.command(name="branch-clean")
@@ -139,8 +147,7 @@ def branch_clean():
 
 
 @git_typer.command(
-    help="Clone a repo to the standard location, set it up with common "
-    + "config"
+    help="Clone a repo to the standard location, set it up with common " + "config"
 )
 def get(
     repo_url: Annotated[str, typer.Argument(help="URL of the repository to get")],

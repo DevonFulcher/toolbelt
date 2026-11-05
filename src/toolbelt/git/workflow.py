@@ -95,14 +95,18 @@ _MERGE_ATTEMPTS = 3
 _MERGE_RETRY_SECONDS = 3.0
 
 
-def _merge_on_github(pr: str) -> subprocess.CompletedProcess[str]:
+def _merge_on_github(
+    pr: str, match_head: str | None = None
+) -> subprocess.CompletedProcess[str]:
     """``gh pr merge --squash``, again after a failure of GitHub's own backend.
     GitHub may have merged before it failed, so the PR is looked at first: one
-    already merged counts as merged."""
+    already merged counts as merged. With ``match_head`` GitHub refuses unless
+    the PR's head is that commit."""
+    command = ["gh", "pr", "merge", "--squash"]
+    if match_head is not None:
+        command += ["--match-head-commit", match_head]
     for attempt in range(1, _MERGE_ATTEMPTS + 1):
-        merged = logged_process.run(
-            ["gh", "pr", "merge", "--squash", pr], stderr=subprocess.PIPE, text=True
-        )
+        merged = logged_process.run([*command, pr], stderr=subprocess.PIPE, text=True)
         if (
             not merged.returncode
             or _TRANSIENT_GITHUB_ERROR not in merged.stderr
@@ -132,7 +136,10 @@ def _github_stack(number: int) -> dict | None:
 
 
 def git_merge(
-    pr: str, *, sync_lock: Callable[[], AbstractContextManager[None]] = nullcontext
+    pr: str,
+    *,
+    match_head: str | None = None,
+    sync_lock: Callable[[], AbstractContextManager[None]] = nullcontext,
 ) -> None:
     """Squash-merge a PR, then sync the stack the merged branch belongs to.
 
@@ -147,6 +154,7 @@ def git_merge(
 
     The merge on GitHub touches no local repo state, so it runs without
     ``sync_lock``; the lineage writes and the sync after it run inside it.
+    ``match_head`` merges only if the PR's head is that commit.
     """
     # Lazy import: worktrees -> bootstrap.repo_setup -> workflow would be a
     # circular import at module load time.
@@ -168,7 +176,7 @@ def git_merge(
     root = get_current_repo_root_path()
     main_wt = main_worktree(root)
     ensure_not_inside_worktree(branch, root=main_wt, caller_dirs=[Path.cwd()])
-    merged = _merge_on_github(pr)
+    merged = _merge_on_github(pr, match_head)
     if merged.returncode and _STACKED_MERGE_ERROR in merged.stderr:
         stack = _github_stack(viewed["number"])
         which = f"stack {stack['number']} ({stack['size']} PRs)" if stack else "a stack"
