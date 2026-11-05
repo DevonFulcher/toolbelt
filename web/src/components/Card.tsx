@@ -988,8 +988,18 @@ function LoadedPrSlots({ status }: { status: LoadedStatus }) {
   const { detail } = status;
   const hasPr = status.pr !== "none";
   const reviewSubmissions = detail?.review_submissions ?? [];
-  const humanComments =
-    status.open_comments - status.open_comments_bot + reviewSubmissions.length;
+  const humanComments = status.open_comments - status.open_comments_bot;
+  const reviewText = reviewSubmissions.length > 0 && (
+    <details className="review-submissions">
+      <summary>{`Read review text (${reviewSubmissions.length})`}</summary>
+      {reviewSubmissions.map((submission) => (
+        <div className="review-submission" key={`${submission.submitted_at}-${submission.author}`}>
+          <span className="review-submission-author">{submission.author}</span>
+          <p className="review-submission-body">{submission.body}</p>
+        </div>
+      ))}
+    </details>
+  );
   return (
     <>
       <Slot id="title" label="PR title" state={detail && hasPr ? "ok" : "na"}>
@@ -1019,36 +1029,19 @@ function LoadedPrSlots({ status }: { status: LoadedStatus }) {
           {status.review !== "none" ? (
             <Slot id="review" label="Review">
               <Pill tone={REVIEW_TONE[status.review]}>{status.review}</Pill>
+              {reviewText}
             </Slot>
           ) : (
             <Slot id="review" label="Review" state="gap">
               <Pill tone="gray">no review requested</Pill>
+              {reviewText}
             </Slot>
           )}
           <Slot id="comments" label="Human comments">
             {humanComments > 0 ? (
-              <>
-                <Pill
-                  tone="amber"
-                  title="unresolved human threads and submitted review text; review text is not an open thread"
-                >
-                  {`${humanComments} comment${humanComments === 1 ? "" : "s"}`}
-                </Pill>
-                {reviewSubmissions.length > 0 && (
-                  <details className="review-submissions">
-                    <summary>{`Read review text (${reviewSubmissions.length})`}</summary>
-                    {reviewSubmissions.map((submission) => (
-                      <div
-                        className="review-submission"
-                        key={`${submission.submitted_at}-${submission.author}`}
-                      >
-                        <span className="review-submission-author">{submission.author}</span>
-                        <p className="review-submission-body">{submission.body}</p>
-                      </div>
-                    ))}
-                  </details>
-                )}
-              </>
+              <Pill tone="amber" title="unresolved human review threads">
+                {`${humanComments} comment${humanComments === 1 ? "" : "s"}`}
+              </Pill>
             ) : (
               <Pill tone="green">0 comments</Pill>
             )}

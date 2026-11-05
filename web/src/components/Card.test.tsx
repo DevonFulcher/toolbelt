@@ -143,11 +143,13 @@ describe("a card's labelled slots", () => {
     expect(b.next[2]).toBe("Resolve conflicts needs you");
     expect(b.pr).toEqual(["PR", "ok", "#8 open"]);
     expect(b.ci[2]).toBe("success");
-    expect(b.review[2]).toBe("requested");
+    expect(b.review[2]).toContain("requested");
     expect(b.comments.slice(0, 2)).toEqual(["Human comments", "ok"]);
-    expect(b.comments[2]).toContain("3 comments");
+    expect(b.comments[2]).toContain("2 comments");
     expect(b.bot_comments).toEqual(["Bot comments", "ok", "1 comment"]);
-    expect(screen.getByText("3 comments")).toBeVisible();
+    expect(screen.getByText("2 comments")).toBeVisible();
+    expect(b.review[2]).toContain("Read review text (1)");
+    expect(b.comments[2]).not.toContain("Read review text");
     fireEvent.click(screen.getByText("Read review text (1)"));
     expect(screen.getByText("Looks good to me.")).toBeVisible();
     expect(b.merge[2]).toBe("conflicts");
