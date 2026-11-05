@@ -10,7 +10,7 @@ default_config_path``)::
         - {name: will.james, id: U08129C20GZ}
         - {name: patrick.yost, id: U06GXCV7REV}
       assign:                     # who to ask for a PR: the first rule that matches
-        - {repo: dbt-labs/ai-workflows, to: patrick.yost}
+        - {repo: acme/tooling, to: patrick.yost}
         - {min_lines: 500, to: will.james}            # +added and -deleted lines
         - {max_lines: 150, rotate: [patrick.yost, will.james]}   # asked longest ago
       default: will.james         # when no rule matches

@@ -10,6 +10,7 @@ Each repo declares which of its files land where in the home directory::
     dest = "~/.zshrc"            # ``~/...`` or absolute
     kind = "file"                # "file" (default) | "dir" | "merge_dir"
     mode = "symlink"             # "symlink" (default) | "copy"
+    optional = true              # skip the link when ``src`` does not exist (default false)
 
 ``merge_dir`` makes ``dest`` a real directory holding one entry per child of
 ``src``. Several repos can declare the same ``dest`` and each contributes its
@@ -38,6 +39,9 @@ class LinkSpec(BaseModel):
     kind: LinkKind = "file"
     mode: LinkMode = "symlink"
     exclude: list[str] = []
+    #: Skip the link, instead of failing, when ``src`` is not on this machine
+    #: (a repo only some laptops have).
+    optional: bool = False
 
 
 class ManifestFile(BaseModel):

@@ -14,7 +14,7 @@ CONFIG = SlackConfig(
     channel="C1",
     reviewers=PEOPLE,
     rules=(
-        AssignRule(to="patrick", repo="dbt-labs/ai-workflows"),
+        AssignRule(to="patrick", repo="acme/tooling"),
         AssignRule(to="will", min_lines=500),
         AssignRule(rotate=("patrick", "alan"), max_lines=150),
     ),
@@ -44,18 +44,18 @@ def choose(repo="dbt-labs/ai-codegen-api", lines=300, history=(), **kwargs):
 
 def test_the_first_matching_rule_wins():
     assert (
-        choose(repo="dbt-labs/ai-workflows", lines=900) == "patrick"
+        choose(repo="acme/tooling", lines=900) == "patrick"
     )  # repo before size
     assert choose(lines=900) == "will"
 
 
 def test_a_repo_rule_may_name_just_the_repo():
     config = SlackConfig(
-        "C1", reviewers=PEOPLE, rules=(AssignRule(to="alan", repo="ai-workflows"),)
+        "C1", reviewers=PEOPLE, rules=(AssignRule(to="alan", repo="tooling"),)
     )
 
     assert (
-        choose_assignee(config, repo="dbt-labs/ai-workflows", lines=1, history=[]).name
+        choose_assignee(config, repo="acme/tooling", lines=1, history=[]).name
         == "alan"
     )  # type: ignore[union-attr]
 

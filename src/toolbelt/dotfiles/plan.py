@@ -47,6 +47,8 @@ def build_plan(manifests: list[RepoManifest], *, home: Path) -> Plan:
     sources.sort(key=lambda item: item[1].src.startswith("~/"))
     for src, spec in sources:
         dest = expand_dest(spec.dest, home=home)
+        if spec.optional and not src.exists() and src not in targets:
+            continue
         if src == dest:
             raise ValueError(f"Source and destination must differ: {src}")
         if spec.kind == "merge_dir":

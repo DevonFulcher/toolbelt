@@ -418,6 +418,25 @@ def test_missing_source_aborts_link(machine: Machine) -> None:
         link_actions(plan_for(machine))
 
 
+def test_optional_link_with_missing_source_is_skipped(machine: Machine) -> None:
+    manifest = machine.private / "dotfiles.toml"
+    manifest.write_text(
+        manifest.read_text()
+        + '''
+[[link]]
+src = "~/git/work-only/skill"
+dest = "~/.agents/skills/work-only"
+kind = "dir"
+optional = true
+'''
+    )
+    plan = plan_for(machine)
+    assert machine.home / ".agents/skills/work-only" not in {
+        target.dest for target in plan.targets
+    }
+    link_actions(plan)
+
+
 # --- backup dir ---------------------------------------------------------
 
 

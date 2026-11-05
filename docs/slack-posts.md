@@ -14,7 +14,7 @@ slack:
     - {name: will.james, id: U08129C20GZ}
     - {name: patrick.yost, id: U06GXCV7REV}
   assign:                     # who to ask: the first rule that matches
-    - {repo: dbt-labs/ai-workflows, to: patrick.yost}
+    - {repo: acme/tooling, to: patrick.yost}
     - {min_lines: 500, to: will.james}
     - {max_lines: 150, rotate: [patrick.yost, will.james]}
   default: will.james
