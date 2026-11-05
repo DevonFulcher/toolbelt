@@ -15,6 +15,14 @@
   web change run `pnpm --dir web build` first: the service serves the built
   bundle.
 
+## Verifying UI changes
+
+- Before saying a web change is done, build it, restart the service, reload the
+  page in the browser pane (an open tab keeps the old bundle) and look at the
+  real result in a screenshot: every state the change adds (open, in progress,
+  failed) and the awkward data (long branch names, narrow cards, the live
+  branches), not only a DOM check on one short example. Say what you looked at.
+
 ## Shared instructions
 
 - Keep repository instructions in `AGENTS.md`. The dotfiles manifest manages
