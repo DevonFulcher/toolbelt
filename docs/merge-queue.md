@@ -15,6 +15,10 @@ is merged.
 - A PR that is approved and blocked on a PR it is stacked on that is still open.
   It can be queued on any level of a stack. Each PR merges after its parents,
   one at a time.
+- A PR that has just been published (**Publish PR** with the Slack post) is
+  queued automatically, whether CI is running, still to start or already
+  passed, and whether its Slack post or a review is next. One that is already
+  ready to merge is left for the Merge button.
 
 A branch an agent holds or has a question open for reads differently, so it
 cannot be queued until it is free.

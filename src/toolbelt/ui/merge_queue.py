@@ -55,6 +55,10 @@ _DROPPED_BECAUSE = {
     "publish": "it is a draft again",
 }
 
+#: Next actions a PR can have right after it was published, besides the ones
+#: ``queueable`` accepts: its Slack post (still going out) or a review is next.
+_WAITS_AFTER_PUBLISH = ("post_slack", "bump_slack", "wait_review", "request_review")
+
 #: Next actions of a queued PR that only need time (or someone else): it stays
 #: queued, and merges once its next action is Merge.
 _STILL_WAITING = (
@@ -177,15 +181,24 @@ class MergeQueue:
 
     # ---- queueing --------------------------------------------------------------
 
-    def queue(self, repo_id: int, branch: str) -> api.MergeQueueInfo:
+    def queue(
+        self, repo_id: int, branch: str, *, just_published: bool = False
+    ) -> api.MergeQueueInfo:
         """Queues the branch's PR. Raises ``MergeQueueRefused`` unless its next
-        action is Waiting on CI or Blocked on its parent PR."""
+        action is Waiting on CI or Blocked on its parent PR. A PR that has just
+        been published is also accepted while its Slack post or a review is next
+        (CI may not have started yet, or may already have passed): the watcher
+        keeps it queued through those waits."""
         key = (repo_id, branch)
         looked_up = self._fetched(repo_id, branch)
         if looked_up is None or looked_up.facts is None:
             raise MergeQueueRefused("The PR has not been looked up yet.")
         if key not in self._queued:
-            if not self._queueable(repo_id, branch):
+            waiting_after_publish = (
+                just_published
+                and self._next_kind(repo_id, branch) in _WAITS_AFTER_PUBLISH
+            )
+            if not (self._queueable(repo_id, branch) or waiting_after_publish):
                 raise MergeQueueRefused(
                     "Only a PR that is waiting on CI, or approved and blocked on "
                     "its parent PR, can be queued."

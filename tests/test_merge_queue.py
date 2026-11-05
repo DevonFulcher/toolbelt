@@ -683,3 +683,24 @@ def test_a_new_merge_clears_the_note_of_the_last_one():
     merge_now(rig)
 
     assert rig.info() is None
+
+
+def test_a_just_published_pr_is_queued_while_it_waits_for_review():
+    rig = Rig()
+    rig.kinds["a"] = "request_review"
+    rig.would["a"] = False
+
+    with pytest.raises(MergeQueueRefused):
+        rig.queue.queue(1, "a")
+    rig.queue.queue(1, "a", just_published=True)
+
+    assert rig.info("a").queued is True
+
+
+def test_a_just_published_pr_that_needs_work_is_not_queued():
+    rig = Rig()
+    rig.kinds["a"] = "fix_ci"
+    rig.would["a"] = False
+
+    with pytest.raises(MergeQueueRefused):
+        rig.queue.queue(1, "a", just_published=True)

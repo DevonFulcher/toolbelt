@@ -2087,6 +2087,12 @@ def create_app(
                     )
             service.send_published(body, prs, publish_notice=copilot_notice)
 
+            # Publishing queues the PR to merge once it is ready. A PR that is
+            # already ready to merge (or in a state the queue does not take)
+            # is left for the Merge button.
+            with contextlib.suppress(MergeQueueRefused):
+                merge_queue.queue(repo_id, name, just_published=True)
+
         background_tasks.add_task(publish_and_post)
         return api.SlackAccepted(prs=body.prs)
 

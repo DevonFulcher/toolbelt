@@ -587,3 +587,22 @@ def test_a_post_another_process_records_shows_up_on_the_card_without_a_restart(r
         and data["slack"]["posted"]
         for name, data in events
     )
+
+
+def test_publish_puts_the_pr_on_the_merge_queue(rig):
+    _, repo_id, _, client = rig
+    request = {
+        "id": f"{repo_id}:a",
+        "kind": "post",
+        "text": "please review",
+        "assignee_id": "UA",
+        "thread_ts": None,
+        "prs": [{"repo": "o/r", "number": 1}],
+    }
+
+    response = client.post("/api/slack/publish", json=request)
+
+    assert response.status_code == 202
+    wait_until_posted(client, f"{repo_id}:a")
+    queued = branches(client)["a"]["merge_queue"]
+    assert queued["queued"] is True
