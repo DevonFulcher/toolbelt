@@ -1685,7 +1685,11 @@ describe("a card's Parent slot", () => {
 
     // Not the branch itself, what is stacked on it, or the parent it has.
     const options = within(dialog.getByRole("combobox")).getAllByRole("option");
-    expect(options.map((option) => option.textContent)).toEqual(["main (trunk)", "devon/d"]);
+    expect(options.map((option) => option.textContent)).toEqual(["Choose a branch…", "main (trunk)", "devon/d"]);
+    // Nothing is chosen for the person.
+    expect(dialog.getByRole("button", { name: "Set parent" })).toBeDisabled();
+    fireEvent.change(dialog.getByRole("combobox"), { target: { value: "devon/d" } });
+    expect(dialog.getByRole("button", { name: "Set parent" })).toBeEnabled();
     expect(dialog.getByText(/points devon\/b's open PR at it/)).toBeVisible();
   });
 
@@ -1713,6 +1717,18 @@ describe("a card's Parent slot", () => {
     vi.unstubAllGlobals();
   });
 
+  test("finished branches are not offered as a parent", () => {
+    const { store } = showCards(stack());
+    publish(store, info());
+    act(() =>
+      store.getState().statusChanged("1:devon/d", pr({ pr: "merged", next: { label: "Done", who: "none", kind: "done" } }), 1),
+    );
+
+    const options = within(openDialog().getByRole("combobox")).getAllByRole("option");
+
+    expect(options.map((option) => option.textContent)).toEqual(["Choose a branch…", "main (trunk)"]);
+  });
+
   test("a card opened in the middle of a change reads it in progress", () => {
     const { store } = showCards(stack());
 
@@ -1726,7 +1742,9 @@ describe("a card's Parent slot", () => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 202, json: async () => ({ setting: true }) })));
     const { store } = showCards(stack());
     publish(store, info());
-    fireEvent.click(openDialog().getByRole("button", { name: "Set parent" }));
+    const dialog = openDialog();
+    fireEvent.change(dialog.getByRole("combobox"), { target: { value: "main" } });
+    fireEvent.click(dialog.getByRole("button", { name: "Set parent" }));
     await waitFor(() => expect(fetch).toHaveBeenCalled());
 
     publish(store, info({ notice: "Branch 'main' does not exist." }));
@@ -1744,6 +1762,7 @@ describe("a card's Parent slot", () => {
     const { store } = showCards(stack());
     publish(store, info());
     const dialog = openDialog();
+    fireEvent.change(dialog.getByRole("combobox"), { target: { value: "main" } });
 
     fireEvent.click(dialog.getByRole("button", { name: "Set parent" }));
 

@@ -4,8 +4,9 @@
 // request is accepted and the card's button reads "Setting parent…" until it is
 // done. Why it failed is shown on the card, and the button is there to try
 // again. The command's own rules decide what is refused; the options only leave
-// out what can never be a parent (the branch itself, what is stacked on it, and
-// the parent it already has).
+// out what can never be a parent (the branch itself, what is stacked on it, the
+// parent it already has, and finished branches); nothing is chosen until the
+// person picks one.
 import { useEffect, useState } from "react";
 import { setParent } from "../api/client";
 import type { SetParentInfo } from "../api/generated";
@@ -13,14 +14,18 @@ import { subtreeIds } from "../store/selectors";
 import { useApp } from "../store/StoreContext";
 import { Dialog } from "./Dialog";
 
-/** The trunk, then the repo's other branches, as one string so the selector's result is stable. */
+/** The trunk, then the repo's other branches that are not finished, as one string so the selector's result is stable. */
 function useOptions(id: string, info: SetParentInfo): string[] {
   const joined = useApp((s) => {
     const branch = s.branchesById[id];
     if (!branch) return "";
     const excluded = new Set(subtreeIds(s, id));
     const names = s.branches
-      .filter((other) => other.repo_id === branch.repo_id && !excluded.has(other.id))
+      .filter((other) => {
+        const status = s.statuses[other.id];
+        const finished = status?.load === "loaded" && status.next.kind === "done";
+        return other.repo_id === branch.repo_id && !excluded.has(other.id) && !finished;
+      })
       .map((other) => other.name);
     return JSON.stringify([info.trunk, ...names].filter((name, at, all) => name !== info.parent && all.indexOf(name) === at));
   });
@@ -90,7 +95,7 @@ function SetParentDialog({
   const [choice, setChoice] = useState("");
   const [sending, setSending] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
-  const target = choice !== "" && options.includes(choice) ? choice : (options[0] ?? "");
+  const target = options.includes(choice) ? choice : "";
 
   const apply = (): void => {
     setSending(true);
@@ -112,6 +117,7 @@ function SetParentDialog({
         <label>
           New parent{" "}
           <select value={target} disabled={sending} onChange={(event) => setChoice(event.target.value)}>
+            <option value="">Choose a branch…</option>
             {options.map((option) => (
               <option key={option} value={option}>
                 {option === info.trunk ? `${option} (trunk)` : option}
@@ -121,9 +127,10 @@ function SetParentDialog({
         </label>
       </p>
       <p className="muted">
-        Makes {target || "the new parent"} the parent of {name} (it must exist and form no cycle), merges it in and
-        pushes {name}, and points {name}&apos;s open PR at it. Commits inherited from {info.parent} stay on {name}. It runs
-        in the background: the card shows when it is done.
+        {target === ""
+          ? "Choose the branch it should be stacked on. "
+          : `Makes ${target} the parent of ${name} (it must exist and form no cycle), merges it in and pushes ${name}, and points ${name}'s open PR at it. Commits inherited from ${info.parent} stay on ${name}. `}
+        It runs in the background: the card shows when it is done.
       </p>
       {problem && (
         <p className="error" role="alert">
