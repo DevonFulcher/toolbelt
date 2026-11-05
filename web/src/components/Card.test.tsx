@@ -1671,33 +1671,39 @@ describe("a card's Parent slot", () => {
   const parentSlot = () => within(document.querySelector<HTMLElement>('article[data-id="1:devon/b"] [data-slot="parent"]') as HTMLElement);
   const body = () => JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body));
 
-  test("it shows the parent, and offers the trunk and the other branches that can be one", () => {
+  const openDialog = () => {
+    fireEvent.click(parentSlot().getByRole("button", { name: "Change parent" }));
+    return within(screen.getByRole("dialog"));
+  };
+
+  test("it shows the parent, and a dialog offers the trunk and the other branches that can be one", () => {
     const { store } = showCards(stack());
     publish(store, info());
 
     expect(slotsOf("devon/b").parent).toEqual(["Parent", "ok", "devon/a Change parent"]);
-    fireEvent.click(parentSlot().getByRole("button", { name: "Change parent" }));
+    const dialog = openDialog();
 
     // Not the branch itself, what is stacked on it, or the parent it has.
-    const options = within(parentSlot().getByRole("combobox")).getAllByRole("option");
+    const options = within(dialog.getByRole("combobox")).getAllByRole("option");
     expect(options.map((option) => option.textContent)).toEqual(["main (trunk)", "devon/d"]);
-    expect(parentSlot().getByText(/points devon\/b's open PR at it/)).toBeVisible();
+    expect(dialog.getByText(/points devon\/b's open PR at it/)).toBeVisible();
   });
 
-  test("setting it answers at once with a disabled button saying what it does, and posts the choice", async () => {
+  test("setting it answers at once, closes the dialog, and the card says what it does until it is done", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 202, json: async () => ({ setting: true }) })));
     const { store } = showCards(stack());
     publish(store, info());
-    fireEvent.click(parentSlot().getByRole("button", { name: "Change parent" }));
-    fireEvent.change(parentSlot().getByRole("combobox"), { target: { value: "devon/d" } });
+    const dialog = openDialog();
+    fireEvent.change(dialog.getByRole("combobox"), { target: { value: "devon/d" } });
 
-    fireEvent.click(parentSlot().getByRole("button", { name: "Set parent" }));
+    fireEvent.click(dialog.getByRole("button", { name: "Set parent" }));
 
-    expect(parentSlot().getByRole("button", { name: "Setting parent…" })).toBeDisabled();
+    expect(dialog.getByRole("button", { name: "Sending…" })).toBeDisabled();
     await waitFor(() => expect(fetch).toHaveBeenCalled());
     expect(vi.mocked(fetch).mock.calls[0][0]).toBe("/api/set-parent");
     expect(body()).toEqual({ id: "1:devon/b", parent: "devon/d" });
-    // Still in progress while the server works, whatever the request said.
+    // Accepted: the dialog is gone and the card reads in progress, whatever the request said.
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(parentSlot().getByRole("button", { name: "Setting parent…" })).toBeDisabled();
     publish(store, info({ setting: "devon/d" }));
     expect(parentSlot().getByRole("button", { name: "Setting parent…" })).toBeDisabled();
@@ -1720,30 +1726,30 @@ describe("a card's Parent slot", () => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 202, json: async () => ({ setting: true }) })));
     const { store } = showCards(stack());
     publish(store, info());
-    fireEvent.click(parentSlot().getByRole("button", { name: "Change parent" }));
-    fireEvent.click(parentSlot().getByRole("button", { name: "Set parent" }));
+    fireEvent.click(openDialog().getByRole("button", { name: "Set parent" }));
     await waitFor(() => expect(fetch).toHaveBeenCalled());
 
     publish(store, info({ notice: "Branch 'main' does not exist." }));
 
     expect(parentSlot().getByRole("alert")).toHaveTextContent("Branch 'main' does not exist.");
-    expect(parentSlot().getByRole("button", { name: "Set parent" })).toBeEnabled();
+    expect(parentSlot().getByRole("button", { name: "Change parent" })).toBeEnabled();
     vi.unstubAllGlobals();
   });
 
-  test("a request the server refuses shows its reason and frees the button", async () => {
+  test("a request the server refuses shows its reason in the dialog and frees the button", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => ({ ok: false, status: 409, json: async () => ({ detail: "'devon/b' is not checked out in any worktree" }) })),
     );
     const { store } = showCards(stack());
     publish(store, info());
-    fireEvent.click(parentSlot().getByRole("button", { name: "Change parent" }));
+    const dialog = openDialog();
 
-    fireEvent.click(parentSlot().getByRole("button", { name: "Set parent" }));
+    fireEvent.click(dialog.getByRole("button", { name: "Set parent" }));
 
-    expect(await parentSlot().findByRole("alert")).toHaveTextContent("not checked out in any worktree");
-    expect(parentSlot().getByRole("button", { name: "Set parent" })).toBeEnabled();
+    expect(await dialog.findByRole("alert")).toHaveTextContent("not checked out in any worktree");
+    expect(dialog.getByRole("button", { name: "Set parent" })).toBeEnabled();
+    expect(parentSlot().getByRole("button", { name: "Change parent" })).toBeEnabled();
     vi.unstubAllGlobals();
   });
 

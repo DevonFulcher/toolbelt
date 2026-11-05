@@ -148,8 +148,6 @@ a.pill:hover { text-decoration: none; background: color-mix(in srgb, currentColo
 .card-stub .branch { font-size: 12px; }
 .s-branch .slot-value, .s-parent .slot-value, .s-next .slot-value, .s-estimate .slot-value { white-space: normal; overflow: visible; }
 .s-parent .branch { word-break: break-all; }
-.set-parent { display: grid; gap: 4px; margin-top: 4px; }
-.set-parent select { max-width: 100%; }
 @keyframes highlight { 0%, 60% { box-shadow: 0 0 0 3px var(--accent); } }
 .highlight { animation: highlight 1.8s ease-out; }
 /* A card is a wrapping row of boxes: Git, PR and Task side by side when there
