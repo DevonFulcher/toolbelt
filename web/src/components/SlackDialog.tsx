@@ -6,6 +6,7 @@ import { fetchSlackDraft, publishSlack, sendSlack } from "../api/client";
 import type { SlackDraft, SlackSendRequest } from "../api/generated";
 import { prInfo, renameMention } from "../logic/slackText";
 import { Dialog } from "./Dialog";
+import { StableSelect, type SelectOption } from "./StableSelect";
 
 type Phase =
   | { name: "loading" }
@@ -19,6 +20,8 @@ const TITLES: Record<SlackDraft["kind"], string> = {
   bump: "Bump in Slack",
   reassign: "Reassign in Slack",
 };
+const candidateOptions = (draft: SlackDraft): SelectOption[] =>
+  draft.candidates.map((person) => ({ value: person.id, label: person.name }));
 const SEND_LABELS: Record<SlackDraft["kind"], string> = { post: "Post", bump: "Send bump", reassign: "Send reassignment" };
 
 export function SlackDialog({
@@ -202,22 +205,23 @@ export function SlackDialog({
           </p>
           <label className="slack-field">
             <span className="slack-label">{several ? "Ask everyone" : "Ask"}</span>
-            <select
+            <StableSelect
               value={askedAbout.every((id) => id === askedAbout[0]) ? (askedAbout[0] ?? "") : ""}
               disabled={phase.name !== "ready"}
-              onChange={(event) => askAll(event.target.value)}
-            >
-              {(askedAbout[0] == null || !askedAbout.every((id) => id === askedAbout[0])) && (
-                <option value="" disabled>
-                  {several && askedAbout.some((id) => id !== null) ? "different people" : "nobody chosen"}
-                </option>
-              )}
-              {draft.candidates.map((person) => (
-                <option key={person.id} value={person.id}>
-                  {person.name}
-                </option>
-              ))}
-            </select>
+              onChange={askAll}
+              options={[
+                ...(askedAbout[0] == null || !askedAbout.every((id) => id === askedAbout[0])
+                  ? [
+                      {
+                        value: "",
+                        label: several && askedAbout.some((id) => id !== null) ? "different people" : "nobody chosen",
+                        disabled: true,
+                      },
+                    ]
+                  : []),
+                ...candidateOptions(draft),
+              ]}
+            />
           </label>
           {several ? (
             <>
@@ -236,19 +240,16 @@ export function SlackDialog({
                         <span className="slack-pr-name">{`${pr.repo}#${pr.number}`}</span>{" "}
                         <span className="muted">{pr.title}</span>
                       </label>
-                      <select
-                        aria-label={`Ask about ${pr.repo}#${pr.number}`}
+                      <StableSelect
+                        ariaLabel={`Ask about ${pr.repo}#${pr.number}`}
                         value={assignees[index] ?? ""}
                         disabled={phase.name !== "ready" || !checked[index]}
-                        onChange={(event) => askAbout(index, event.target.value)}
-                      >
-                        {assignees[index] === null && <option value="">nobody chosen</option>}
-                        {draft.candidates.map((person) => (
-                          <option key={person.id} value={person.id}>
-                            {person.name}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={(value) => askAbout(index, value)}
+                        options={[
+                          ...(assignees[index] === null ? [{ value: "", label: "nobody chosen" }] : []),
+                          ...candidateOptions(draft),
+                        ]}
+                      />
                     </div>
                     <p className="muted slack-pr-info">{`+${pr.additions}/-${pr.deletions} · ${prInfo(pr).join(" · ")}`}</p>
                   </li>

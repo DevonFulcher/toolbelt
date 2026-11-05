@@ -13,6 +13,7 @@ import type { SetParentInfo } from "../api/generated";
 import { subtreeIds } from "../store/selectors";
 import { useApp } from "../store/StoreContext";
 import { Dialog } from "./Dialog";
+import { StableSelect } from "./StableSelect";
 
 /** The trunk, then the repo's other branches that are not finished, as one string so the selector's result is stable. */
 function useOptions(id: string, info: SetParentInfo): string[] {
@@ -115,14 +116,15 @@ function SetParentDialog({
       <p>
         <label>
           New parent{" "}
-          <select value={target} disabled={sending} onChange={(event) => setChoice(event.target.value)}>
-            <option value="">Choose a branch…</option>
-            {options.map((option) => (
-              <option key={option} value={option}>
-                {option === info.trunk ? `${option} (trunk)` : option}
-              </option>
-            ))}
-          </select>
+          <StableSelect
+            value={target}
+            disabled={sending}
+            options={[
+              { value: "", label: "Choose a branch…" },
+              ...options.map((option) => ({ value: option, label: option === info.trunk ? `${option} (trunk)` : option })),
+            ]}
+            onChange={setChoice}
+          />
         </label>
       </p>
       <p className="muted">

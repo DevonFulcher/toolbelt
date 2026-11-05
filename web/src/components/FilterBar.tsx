@@ -11,6 +11,7 @@ import {
 } from "../logic/viewState";
 import type { Counts } from "../store/selectors";
 import { useApp, useAppStore } from "../store/StoreContext";
+import { StableSelect } from "./StableSelect";
 
 // The default view first.
 const ORDER: View[] = ["priorities", "grouped", "stacked", "table", "aggregate", "spend", "agents", "proposals", "review"];
@@ -126,14 +127,12 @@ export function FilterBar({ counts, aggregate }: { counts: Counts; aggregate?: R
         {!isSpend && !isAgents && !isProposals && (
           <label>
             Repo
-            <select name="repo" value={view.repo} onChange={(event) => set({ repo: event.target.value })}>
-              <option value="">All</option>
-              {repos.map((repo) => (
-                <option key={repo.id} value={String(repo.id)}>
-                  {repo.name}
-                </option>
-              ))}
-            </select>
+            <StableSelect
+              name="repo"
+              value={view.repo}
+              options={[{ value: "", label: "All" }, ...repos.map((repo) => ({ value: String(repo.id), label: repo.name }))]}
+              onChange={(repo) => set({ repo })}
+            />
           </label>
         )}
         {isAgents || isProposals ? null : isReview ? (
@@ -190,18 +189,12 @@ export function FilterBar({ counts, aggregate }: { counts: Counts; aggregate?: R
             {filters.map((filter) => (
               <label key={filter.key}>
                 {filter.label}
-                <select
+                <StableSelect
                   name={filter.key}
                   value={view[filter.key as FilterKey]}
-                  onChange={(event) => set({ [filter.key]: event.target.value })}
-                >
-                  <option value="">Any</option>
-                  {filter.options.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
+                  options={[{ value: "", label: "Any" }, ...filter.options.map(({ value, label }) => ({ value, label }))]}
+                  onChange={(value) => set({ [filter.key]: value })}
+                />
               </label>
             ))}
             {view.view === "table" && (
@@ -222,18 +215,12 @@ export function FilterBar({ counts, aggregate }: { counts: Counts; aggregate?: R
             {view.view !== "table" && (
               <label>
                 Sort
-                <select
+                <StableSelect
                   name="sort"
                   value={view.sort}
-                  onChange={(event) => set({ sort: event.target.value as Column | "", dir: "asc" })}
-                >
-                  <option value="">Stack order</option>
-                  {COLUMNS.map((column) => (
-                    <option key={column} value={column}>
-                      {COLUMN_LABELS[column]}
-                    </option>
-                  ))}
-                </select>
+                  options={[{ value: "", label: "Stack order" }, ...COLUMNS.map((column) => ({ value: column, label: COLUMN_LABELS[column] }))]}
+                  onChange={(sort) => set({ sort: sort as Column | "", dir: "asc" })}
+                />
               </label>
             )}
             <button
