@@ -560,7 +560,6 @@ SLOT_STATES: dict[str, str | None] = {
     "assigned_review": None,
     "repo": None,
     "branch": None,
-    "parent": None,
     "task": None,
     "task_title": None,
     "estimate": None,

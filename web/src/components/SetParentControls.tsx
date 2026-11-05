@@ -1,5 +1,5 @@
-// A branch's stack parent, on its card: what it is, and a way to repoint it
-// (`toolbelt git set-parent`). Choosing happens in a dialog, like merging; the
+// A way to repoint a branch's stack parent from its card (`toolbelt git
+// set-parent`); the stack the card sits in already shows what the parent is. Choosing happens in a dialog, like merging; the
 // change runs on the server in the background, so the dialog closes once the
 // request is accepted and the card's button reads "Setting parent…" until it is
 // done. Why it failed is shown on the card, and the button is there to try
@@ -47,7 +47,6 @@ export function SetParentControls({ id, name, info }: { id: string; name: string
   const working = accepted !== null || info.setting !== null;
   return (
     <>
-      <span className="branch">{info.parent}</span>{" "}
       <button
         type="button"
         className="agents-toggle"

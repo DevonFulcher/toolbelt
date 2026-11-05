@@ -22,7 +22,6 @@ vi.mock("./presentation", async (original) => {
 const SLOT_LABELS: Record<string, string> = {
   repo: "Repo",
   branch: "Branch",
-  parent: "Parent",
   next: "Next",
   pr: "PR",
   ci: "CI",
@@ -300,7 +299,7 @@ describe("a card's labelled slots", () => {
       expect(groups.map((g) => g.querySelector(".group-title > span")?.textContent)).toEqual(["Git", "PR", "Task", "Agent", "Spend"]);
       const keys = groups.map((g) => [...g.querySelectorAll<HTMLElement>(".slot")].map((s) => s.dataset.slot));
       expect(keys).toEqual([
-        ["repo", "branch", "parent", "ancestors", "descendants"],
+        ["repo", "branch", "ancestors", "descendants"],
         ["title", "pr", "ci", "review", "comments", "bot_comments", "merge", "conflict_commit", "lines", "pr_age", "in_draft", "review_requested", "ci_failures"],
         ["next", "task_age", "estimate", "task", "task_title", "task_status", "slack_status", "slack_age", "assigned_review"],
         ["session", "agent_status", "agent_runs", "agent_run", "agent_run_summary"],
@@ -321,7 +320,7 @@ describe("a card's labelled slots", () => {
 
     expect(labels(found)).toEqual(SLOT_LABELS);
     for (const key of Object.keys(SLOT_LABELS)) {
-      if (["repo", "branch", "parent", "ancestors", "descendants", "task", "task_title", "task_status", "slack_status", "slack_age", "assigned_review", "session", "task_age", "estimate", "agent_status", "agent_runs", "agent_run", "agent_run_summary", "cost", "agent_cost"].includes(key)) continue;
+      if (["repo", "branch", "ancestors", "descendants", "task", "task_title", "task_status", "slack_status", "slack_age", "assigned_review", "session", "task_age", "estimate", "agent_status", "agent_runs", "agent_run", "agent_run_summary", "cost", "agent_cost"].includes(key)) continue;
       expect(found[key].slice(1), key).toEqual(["na", "loading…"]);
     }
   });
@@ -1633,7 +1632,7 @@ describe("a card whose branch conflicts with other open tasks", () => {
   });
 });
 
-describe("a card's Parent slot", () => {
+describe("a card's change-parent control", () => {
   const info = (over: Partial<SetParentInfo> = {}): SetParentInfo => ({
     parent: "devon/a",
     trunk: "main",
@@ -1668,7 +1667,7 @@ describe("a card's Parent slot", () => {
     branch(1, "devon/c", { parent: "devon/b" }),
     branch(1, "devon/d", { parent: "main" }),
   ];
-  const parentSlot = () => within(document.querySelector<HTMLElement>('article[data-id="1:devon/b"] [data-slot="parent"]') as HTMLElement);
+  const parentSlot = () => within(document.querySelector<HTMLElement>('article[data-id="1:devon/b"] [data-slot="branch"]') as HTMLElement);
   const body = () => JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body));
 
   const openDialog = () => {
@@ -1676,11 +1675,11 @@ describe("a card's Parent slot", () => {
     return within(screen.getByRole("dialog"));
   };
 
-  test("it shows the parent, and a dialog offers the trunk and the other branches that can be one", () => {
+  test("a dialog offers the trunk and the other branches that can be the parent", () => {
     const { store } = showCards(stack());
     publish(store, info());
 
-    expect(slotsOf("devon/b").parent).toEqual(["Parent", "ok", "devon/a Change parent"]);
+    expect(slotsOf("devon/b").branch[2]).toContain("Change parent");
     const dialog = openDialog();
 
     // Not the branch itself, what is stacked on it, or the parent it has.
@@ -1713,7 +1712,7 @@ describe("a card's Parent slot", () => {
     expect(parentSlot().getByRole("button", { name: "Setting parent…" })).toBeDisabled();
     // Done: the new parent, and the control is back.
     publish(store, info({ parent: "devon/d" }));
-    expect(slotsOf("devon/b").parent[2]).toBe("devon/d Change parent");
+    expect(parentSlot().getByRole("button", { name: "Change parent" })).toBeEnabled();
     vi.unstubAllGlobals();
   });
 
@@ -1772,9 +1771,9 @@ describe("a card's Parent slot", () => {
     vi.unstubAllGlobals();
   });
 
-  test("without the extras it only names the parent", () => {
+  test("without the extras there is no control", () => {
     showCards(stack());
 
-    expect(slotsOf("devon/b").parent).toEqual(["Parent", "ok", "devon/a"]);
+    expect(slotsOf("devon/b").branch[2]).not.toContain("Change parent");
   });
 });

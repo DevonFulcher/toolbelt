@@ -6682,16 +6682,6 @@
             }
           ]
         },
-        "parent": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/CatalogDimension"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "pr": {
           "anyOf": [
             {
@@ -6861,7 +6851,6 @@
         "assigned_review",
         "repo",
         "branch",
-        "parent",
         "task",
         "task_title",
         "estimate",

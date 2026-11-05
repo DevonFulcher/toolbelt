@@ -361,14 +361,8 @@ export const Card = memo(
               >
                 focus on this subtree →
               </a>
-            )}
-          </Slot>
-          <Slot id="parent" label="Parent">
-            {extras?.set_parent ? (
-              <SetParentControls id={id} name={branch.name} info={extras.set_parent} />
-            ) : (
-              (branch.parent ?? "…")
-            )}
+            )}{" "}
+            {extras?.set_parent && <SetParentControls id={id} name={branch.name} info={extras.set_parent} />}
           </Slot>
           <Slot id="ancestors" label="Ancestors">{String(branch.depth)}</Slot>
           <Slot id="descendants" label="Descendants">{String(descendants)}</Slot>

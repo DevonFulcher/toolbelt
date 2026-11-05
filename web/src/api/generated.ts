@@ -1736,7 +1736,6 @@ export interface SlotDimensions {
   lines: CatalogDimension | null;
   merge: CatalogDimension | null;
   next: CatalogDimension | null;
-  parent: CatalogDimension | null;
   pr: CatalogDimension | null;
   pr_age: CatalogDimension | null;
   repo: CatalogDimension | null;
