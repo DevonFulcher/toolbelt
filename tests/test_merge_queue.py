@@ -2,6 +2,7 @@
 and when it must not. Lookups and the merge itself are faked."""
 
 import asyncio
+import dataclasses
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -63,6 +64,8 @@ class Rig:
         self.ready = True
         self.base_problems: dict[str, str] = {}
         self.sync_merge = False
+        self.agents_on = False
+        self.agent_pushes = False
         self.landed: list[str] = []
         self.pinned: list[str | None] = []
         self.changed: list[set] = []
@@ -93,6 +96,8 @@ class Rig:
             ready_to_land=lambda row: self.ready,
             base_problem=lambda row: self.base_problems.get(row.branch),
             is_sync_merge=lambda row, head: self.sync_merge,
+            agents_enabled=lambda: self.agents_on,
+            agent_pushed=lambda row, head: self.agent_pushes,
             land=self.land,
             wall_clock=lambda: NOW,
             local_clock=lambda: self.local_now,
@@ -767,3 +772,58 @@ def test_the_merge_button_is_not_held_by_the_pause():
     asyncio.run(go())
 
     assert rig.landed == ["a"]
+
+
+# ---- bot comments an autonomous agent resolves --------------------------------
+
+
+def with_open_threads(rig: Rig, *, bots: int, total: int) -> None:
+    fetched = rig.fetched["a"]
+    assert fetched is not None and fetched.status is not None
+    rig.fetched["a"] = dataclasses.replace(
+        fetched,
+        status=dataclasses.replace(
+            fetched.status, open_comments=total, bot_comments=bots
+        ),
+    )
+    rig.kinds["a"] = "resolve_comments"
+
+
+def test_a_queued_pr_with_only_bot_comments_stays_queued_when_agents_are_on() -> None:
+    rig = Rig()
+    rig.agents_on = True
+    rig.queue.queue(1, "a")
+    with_open_threads(rig, bots=2, total=2)
+    rig.run()
+    assert rig.info() is not None and rig.info().queued
+    assert rig.landed == []
+
+
+def test_bot_comments_drop_the_pr_when_agents_are_off() -> None:
+    rig = Rig()
+    rig.queue.queue(1, "a")
+    with_open_threads(rig, bots=2, total=2)
+    rig.run()
+    assert not rig.info().queued
+    assert "unresolved comments" in rig.info().notice
+
+
+def test_a_human_comment_still_drops_the_pr_when_agents_are_on() -> None:
+    rig = Rig()
+    rig.agents_on = True
+    rig.queue.queue(1, "a")
+    with_open_threads(rig, bots=2, total=3)
+    rig.run()
+    assert not rig.info().queued
+
+
+def test_an_agents_fix_of_the_comments_is_merged_as_the_new_head() -> None:
+    rig = Rig()
+    rig.agents_on = True
+    rig.queue.queue(1, "a")
+    rig.fetched["a"] = looked_up(head="h2", number=1)
+    rig.agent_pushes = True
+    rig.merge_now("a")
+    rig.run()
+    assert rig.landed == ["a"]
+    assert rig.pinned == ["h2"]

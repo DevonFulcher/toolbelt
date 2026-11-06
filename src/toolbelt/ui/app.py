@@ -71,6 +71,7 @@ from toolbelt.autonomous_agents.dispatcher import (
 from toolbelt.autonomous_agents.limits import (
     AGENTS_ENABLED_SETTING,
     AGENTS_LAUNCH_SETTING,
+    TRIGGERS,
     VALIDATE,
     load_limits,
 )
@@ -1389,6 +1390,22 @@ def create_app(
             return False
         return is_sync_merge(path, row.head_oid, head, refs=(row.parent_branch, trunk))
 
+    def agent_pushed(row: MergeQueueRow, head: str) -> bool:
+        """An autonomous agent run started on the queued head: the new head is
+        what it pushed."""
+        store = StackStore(default_db_path())
+        try:
+            runs = store.agent_runs(since=row.queued_at)
+        finally:
+            store.close()
+        return any(
+            r.repo_id == row.repo_id
+            and r.branch == row.branch
+            and r.trigger in TRIGGERS
+            and r.head_sha == row.head_oid
+            for r in runs
+        )
+
     async def land(
         repo_id: int, name: str, match_head: str | None = None
     ) -> LandResult:
@@ -1442,6 +1459,8 @@ def create_app(
         ready_to_land=ready_to_land,
         base_problem=base_problem,
         is_sync_merge=follows_sync,
+        agents_enabled=_agents_enabled,
+        agent_pushed=agent_pushed,
         land=land_queued,
         wall_clock=wall_clock,
         local_clock=local_clock,

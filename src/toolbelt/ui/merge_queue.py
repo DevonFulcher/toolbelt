@@ -113,6 +113,8 @@ class MergeQueue:
         ready_to_land: Callable[[MergeQueueRow], bool],
         base_problem: Callable[[MergeQueueRow], str | None],
         is_sync_merge: Callable[[MergeQueueRow, str], bool],
+        agents_enabled: Callable[[], bool] = lambda: False,
+        agent_pushed: Callable[[MergeQueueRow, str], bool] = lambda row, head: False,
         land: Callable[[int, str, str | None], Awaitable[LandResult]],
         wall_clock: Callable[[], datetime],
         local_clock: Callable[[], datetime],
@@ -129,7 +131,11 @@ class MergeQueue:
         based on the trunk and, when it had a parent, contains what its parent
         landed; ``base_problem(row)`` why a PR queued on the trunk is not based
         on it (``None`` when it is); ``is_sync_merge(row, new_head)`` whether ``new_head`` is
-        what a sync adds to the queued head;
+        what a sync adds to the queued head; ``agents_enabled()`` whether the
+        autonomous agents are on (they resolve bot comments, so a queued PR
+        whose only unresolved threads are bots' waits for them);
+        ``agent_pushed(row, new_head)`` whether ``new_head`` is what an agent
+        run started on the queued head pushed;
         ``local_clock`` is the time in the zone the pause hours mean (see
         ``merge_queue_pause``); ``land(repo_id, branch, head)`` merges, only if the PR's head is
         ``head`` when given (the Merge button's work); ``changed`` is told
@@ -146,6 +152,8 @@ class MergeQueue:
         self._ready_to_land = ready_to_land
         self._base_problem = base_problem
         self._is_sync_merge = is_sync_merge
+        self._agents_enabled = agents_enabled
+        self._agent_pushed = agent_pushed
         self._land = land
         self._wall_clock = wall_clock
         self._local_clock = local_clock
@@ -299,16 +307,19 @@ class MergeQueue:
                 )
                 continue
             if looked_up.facts.head_oid != row.head_oid:
-                if not self._is_sync_merge(row, looked_up.facts.head_oid):
+                if not (
+                    self._is_sync_merge(row, looked_up.facts.head_oid)
+                    or self._agent_pushed(row, looked_up.facts.head_oid)
+                ):
                     self._drop(
                         key,
                         "New commits were pushed after it was queued, so it was not "
                         "merged: queue it again when it is ready.",
                     )
                     continue
-                # The sync of a merged parent (or of a parent that took one):
-                # the same PR, now carrying what that brought. It is merged only
-                # as this head.
+                # The sync of a merged parent (or of a parent that took one), or
+                # an agent's fix of its comments: the same PR, now carrying what
+                # that brought. It is merged only as this head.
                 row = dataclasses.replace(row, head_oid=looked_up.facts.head_oid)
                 self._add(row)
                 self._queued[key] = row
@@ -327,9 +338,19 @@ class MergeQueue:
                     self._start_merge(key, queued=True)
             elif kind in _STILL_WAITING:
                 continue  # a claimed branch is left to its agent
+            elif kind == "resolve_comments" and self._only_bot_comments(looked_up):
+                continue  # an autonomous agent resolves bot comments
             else:
                 why = _DROPPED_BECAUSE.get(kind or "", f"its next action became {kind}")
                 self._drop(key, f"Taken off the merge queue: {why}.")
+
+    def _only_bot_comments(self, looked_up: Fetched) -> bool:
+        status = looked_up.status
+        return (
+            self._agents_enabled()
+            and status is not None
+            and 0 < status.open_comments == status.bot_comments
+        )
 
     def _ready_after_wait(self, key: BranchKey) -> bool:
         row = self._queued.get(key)
