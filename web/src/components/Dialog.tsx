@@ -6,6 +6,11 @@ import { createPortal } from "react-dom";
 
 export function Dialog({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
   const dialog = useRef<HTMLDivElement>(null);
+  // Callers pass a new `onClose` on every render, and the page renders on every
+  // update from the server: the effect below must not re-run for it, or it
+  // would take focus back from an open select every few seconds.
+  const close = useRef(onClose);
+  close.current = onClose;
 
   useEffect(() => {
     const before = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -13,7 +18,7 @@ export function Dialog({ title, onClose, children }: { title: string; onClose: (
     document.body.style.overflow = "hidden";
     dialog.current?.focus();
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") close.current();
     };
     document.addEventListener("keydown", onKey);
     return () => {
@@ -21,7 +26,7 @@ export function Dialog({ title, onClose, children }: { title: string; onClose: (
       document.body.style.overflow = overflow;
       before?.focus();
     };
-  }, [onClose]);
+  }, []);
 
   return createPortal(
     <div
