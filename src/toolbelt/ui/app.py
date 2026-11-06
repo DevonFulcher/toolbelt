@@ -1826,6 +1826,7 @@ def create_app(
         started = removals.start(
             repo_id,
             RemoveRequest(
+                repo_id=repo_id,
                 repo_path=repo_path,
                 branch=name,
                 force=body.force,

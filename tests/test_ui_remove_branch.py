@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 from test_ui import NOW, FakeStatuses, seed_repo
 
+from toolbelt.git.stack.store import StackStore, default_db_path
 from toolbelt.ui.app import create_app
 from toolbelt.ui.remove_branch import RemoveOutcome, RemoveRequest
 
@@ -65,6 +66,7 @@ def test_a_removal_is_accepted_at_once_and_run_in_the_repos_main_checkout(
         wait_until(lambda: calls, "the command")
         assert calls == [
             RemoveRequest(
+                repo_id=repo_id,
                 repo_path=tmp_path / "api",
                 branch="devon/a",
                 force=False,
@@ -188,3 +190,29 @@ def test_a_removal_already_running_is_not_started_twice(tmp_path, make_client):
         assert again.status_code == 409
         release.set()
         wait_until(lambda: len(calls) == 1, "the one command")
+
+
+def test_a_repo_whose_checkout_is_gone_still_loses_the_branch_and_its_children_move_up(
+    tmp_path, make_client
+):
+    repo_id = seed_repo(
+        tmp_path, "api", {"devon/a": "main", "devon/b": "devon/a", "devon/c": "devon/b"}
+    )
+    (tmp_path / "api").rename(tmp_path / "moved")
+
+    with make_client() as client:
+        response = client.post("/api/remove-branch", json={"id": f"{repo_id}:devon/b"})
+
+        assert response.status_code == 202
+        wait_until(
+            lambda: settled(client, repo_id, "devon/a", children=["devon/c"]),
+            "the child to move up",
+        )
+        store = StackStore(default_db_path())
+        try:
+            assert store.all_parents(repo_id) == {
+                "devon/a": "main",
+                "devon/c": "devon/a",
+            }
+        finally:
+            store.close()

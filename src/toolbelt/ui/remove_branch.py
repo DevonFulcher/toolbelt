@@ -3,7 +3,9 @@ typing it in the repo's main checkout would: the command removes the branch's
 worktree, force-deletes the branch, reparents its children onto its parent,
 closes its open PR (with the reason as a comment) and drops it from the stack.
 Its rules are the command's (a worktree with uncommitted files is refused
-unless forced): the page only runs it and reports what it said.
+unless forced): the page only runs it and reports what it said. When the repo's
+checkout no longer exists the command cannot run at all, so the page removes
+what is left: the branch's stack entry, with its children moved onto its parent.
 
 ``RemoveTracker`` keeps what the card shows while it runs and why it failed,
 until the next attempt.
@@ -17,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from toolbelt import logged_process
+from toolbelt.git.stack.store import StackStore, default_db_path
 from toolbelt.ui.set_parent import OUTPUT_LIMIT, failure_reason
 
 type BranchKey = tuple[int, str]
@@ -27,6 +30,7 @@ class RemoveRequest:
     """What to run: the repo's main checkout, the branch, and the command's
     ``--force`` and ``--reason``."""
 
+    repo_id: int
     repo_path: Path
     branch: str
     force: bool
@@ -41,7 +45,10 @@ class RemoveOutcome:
 
 def run_toolbelt_remove(request: RemoveRequest) -> RemoveOutcome:
     """Run `toolbelt git remove <branch>` in the repo's main checkout: not in
-    the branch's own worktree, which the command deletes."""
+    the branch's own worktree, which the command deletes. A repo whose checkout
+    is gone only has its stack entry to remove."""
+    if not request.repo_path.is_dir():
+        return _forget_in_stack(request)
     executable = shutil.which("toolbelt") or sys.argv[0]
     command = [executable, "git", "remove", request.branch]
     if request.force:
@@ -60,6 +67,31 @@ def run_toolbelt_remove(request: RemoveRequest) -> RemoveOutcome:
         return RemoveOutcome(ok=False, output=f"{type(error).__name__}: {error}")
     output = (result.stdout + result.stderr).strip()
     return RemoveOutcome(ok=result.returncode == 0, output=output[-OUTPUT_LIMIT:])
+
+
+def _forget_in_stack(request: RemoveRequest) -> RemoveOutcome:
+    """Drop the branch from the stack DB and move its children onto its parent:
+    all that is left to remove when there is no checkout to run git in."""
+    store = StackStore(default_db_path())
+    try:
+        parents = store.all_parents(request.repo_id)
+        parent = parents.get(request.branch)
+        children = [name for name, of in parents.items() if of == request.branch]
+        if children and parent is None:
+            return RemoveOutcome(
+                ok=False,
+                output=(
+                    f"Cannot remove '{request.branch}': it has child branches "
+                    "but no tracked parent to reparent them to."
+                ),
+            )
+        for child in children:
+            assert parent is not None
+            store.set_parent(request.repo_id, child, parent)
+        store.remove_branch(request.repo_id, request.branch)
+    finally:
+        store.close()
+    return RemoveOutcome(ok=True, output="")
 
 
 class RemoveTracker:
