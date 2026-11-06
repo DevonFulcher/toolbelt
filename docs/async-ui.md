@@ -26,6 +26,7 @@ request to know whether something is happening.
 | Approve a branch (opens its PR) | `opening_pr` on the task's validation info | `notice` on the same |
 | Merge, and merge when ready | `merging` on the PR's merge-queue info | `notice` on the same |
 | Change a branch's stack parent | `setting` on the branch's parent info (in its card extras) | `notice` on the same |
+| Remove a branch | `removing` on the branch's remove info (in its card extras) | `notice` on the same |
 
 Quick actions (queueing a merge, taking it off the queue, the Agents switches)
 answer in a few milliseconds and need no background work, but still disable their

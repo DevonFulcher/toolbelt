@@ -1065,6 +1065,7 @@ export interface BranchExtras {
   estimate?: CardEstimate | null;
   id: string;
   lanes: TimelineLane[];
+  remove?: RemoveInfo | null;
   set_parent?: SetParentInfo | null;
   spend: CardSpend;
 }
@@ -1131,6 +1132,15 @@ export interface LanePhase {
   kind: LanePhaseKind;
   start: string;
   state?: string;
+}
+/**
+ * What removing a branch does to its stack, and a removal in flight.
+ */
+export interface RemoveInfo {
+  children: string[];
+  notice: string | null;
+  parent: string | null;
+  removing: boolean;
 }
 /**
  * Where a branch hangs in its stack, and a change of that in flight.

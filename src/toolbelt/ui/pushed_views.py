@@ -85,6 +85,10 @@ class PushedViews:
             None,
             None,
         ),
+        remove: Callable[[int, str], tuple[bool, str | None]] = lambda *_: (
+            False,
+            None,
+        ),
         working_hours: Callable[[], WorkingHours] = WorkingHours,
         estimate_hub: ModelHub | None = None,
         priors: Callable[[], dict[str, Prior]] = dict,
@@ -98,6 +102,7 @@ class PushedViews:
         self.breakdowns: dict[str, api.EstimateBreakdown] = {}
         self._opening_pr = opening_pr
         self._set_parent = set_parent
+        self._remove = remove
         self._working_hours = working_hours
         self._repo_slug = repo_slug
         self._pr_facts = pr_facts
@@ -139,6 +144,7 @@ class PushedViews:
                 self._priors(),
                 self.breakdowns,
                 self._set_parent,
+                self._remove,
             )
         finally:
             store.close()

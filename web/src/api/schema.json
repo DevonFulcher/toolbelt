@@ -1336,6 +1336,17 @@
           },
           "type": "array"
         },
+        "remove": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RemoveInfo"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "set_parent": {
           "anyOf": [
             {
@@ -5438,6 +5449,49 @@
         "fetched"
       ],
       "title": "RefreshedEvent",
+      "type": "object"
+    },
+    "RemoveInfo": {
+      "additionalProperties": false,
+      "description": "What removing a branch does to its stack, and a removal in flight.",
+      "properties": {
+        "children": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "notice": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "removing": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "parent",
+        "children",
+        "removing",
+        "notice"
+      ],
+      "title": "RemoveInfo",
       "type": "object"
     },
     "Rep": {

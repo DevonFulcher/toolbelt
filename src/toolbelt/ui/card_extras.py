@@ -166,6 +166,22 @@ def _set_parent_info(
     return api.SetParentInfo(parent=parent, trunk=trunk, setting=setting, notice=notice)
 
 
+def _remove_info(
+    parents: Parents, name: str, state: tuple[bool, str | None]
+) -> api.RemoveInfo | None:
+    """The branch's parent and children, and ``state`` (a removal running, why
+    the last one failed)."""
+    if name not in parents:
+        return None
+    removing, notice = state
+    return api.RemoveInfo(
+        parent=parents[name],
+        children=sorted(child for child, parent in parents.items() if parent == name),
+        removing=removing,
+        notice=notice,
+    )
+
+
 def build_card_extras(
     dispatcher: Dispatcher,
     store: StackStore,
@@ -185,10 +201,13 @@ def build_card_extras(
         None,
         None,
     ),
+    remove: Callable[[int, str], tuple[bool, str | None]] = lambda *_: (False, None),
 ) -> api.CardExtras:
     """``opening_pr(repo_id, branch)``: whether the PR of an approved branch is
     being opened, and why it could not be. ``set_parent(repo_id, branch)``: the
-    parent being set on the branch now, and why the last change failed."""
+    parent being set on the branch now, and why the last change failed.
+    ``remove(repo_id, branch)``: whether the branch is being removed, and why
+    the last removal failed."""
     repo_names = {repo.id: repo.name for repo in store.repos()}
     runs_by_branch: dict[tuple[int, str], list[AgentRun]] = {}
     for run in store.agent_runs():
@@ -249,6 +268,9 @@ def build_card_extras(
                 estimate=estimates.get(facts.task_id),
                 set_parent=_set_parent_info(
                     all_parents[facts.repo_id], facts.name, set_parent(*key)
+                ),
+                remove=_remove_info(
+                    all_parents[facts.repo_id], facts.name, remove(*key)
                 ),
                 spend=api.CardSpend(
                     interactive_usd=usage.cost_usd if usage else 0.0,

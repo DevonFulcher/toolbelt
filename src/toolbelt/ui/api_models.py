@@ -1562,6 +1562,22 @@ class SetParentInfo(Model):
     notice: str | None
 
 
+class RemoveInfo(Model):
+    """What removing a branch does to its stack, and a removal in flight."""
+
+    #: Its recorded parent, which its children are moved onto (``None``: none
+    #: is recorded, and the command refuses a branch that has children).
+    parent: str | None
+    #: The branches stacked directly on it, by full name.
+    children: list[str]
+    #: A removal is running now. It runs in the background; the card reads it as
+    #: in progress until done (after which the branch is gone).
+    removing: bool
+    #: Why the last removal failed, as the command said it (``None``: it did
+    #: not, or none was tried since the page started).
+    notice: str | None
+
+
 class BranchExtras(Model):
     """The parts of a task card that do not come with its PR status."""
 
@@ -1576,6 +1592,9 @@ class BranchExtras(Model):
     #: Its stack parent and a change of it in flight (``None``: the stack DB
     #: has no parent recorded for it).
     set_parent: SetParentInfo | None = None
+    #: What removing it does and a removal in flight (``None``: the stack DB
+    #: has no parent recorded for it).
+    remove: RemoveInfo | None = None
 
 
 class CardExtras(Model):
@@ -1609,6 +1628,19 @@ class SetParentRequest(Model):
     #: The branch to set as its parent, by full name: another tracked branch of
     #: its repo or the trunk.
     parent: str
+
+
+class RemoveBranchRequest(Model):
+    """The body of ``POST /api/remove-branch``: remove the branch, its worktree
+    and its stack entry (`toolbelt git remove`)."""
+
+    #: The branch's row id (see ``Branch.id``).
+    id: str
+    #: Discard uncommitted changes in its worktree (`--force`); without it the
+    #: command refuses a worktree that has any.
+    force: bool = False
+    #: The comment left when its open PR is closed (`--reason`).
+    reason: str | None = None
 
 
 class RefreshRequest(Model):

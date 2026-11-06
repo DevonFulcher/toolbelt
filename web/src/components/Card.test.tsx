@@ -1,6 +1,6 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
-import type { Branch, BranchClaim, BranchExtras, CardValidation, LoadedStatus, MergeQueueInfo, SetParentInfo, SiblingConflict, SiblingConflictsInfo, SlackInfo } from "../api/generated";
+import type { Branch, BranchClaim, BranchExtras, CardValidation, LoadedStatus, MergeQueueInfo, RemoveInfo, SetParentInfo, SiblingConflict, SiblingConflictsInfo, SlackInfo } from "../api/generated";
 import { branch, catalog, detail, event, noPr, pr, repo, snapshot, DAY, NOW } from "../testing/fixtures";
 import { renderWith } from "../testing/render";
 import { App } from "./App";
@@ -1795,5 +1795,127 @@ describe("a card's change-parent control", () => {
     showCards(stack());
 
     expect(slotsOf("devon/b").branch[2]).not.toContain("Change parent");
+  });
+});
+
+describe("a card's remove-branch control", () => {
+  const info = (over: Partial<RemoveInfo> = {}): RemoveInfo => ({
+    parent: "main",
+    children: ["devon/c"],
+    removing: false,
+    notice: null,
+    ...over,
+  });
+  const extrasOf = (remove: RemoveInfo): BranchExtras => ({
+    id: "1:devon/b",
+    lanes: [],
+    agent: {
+      has_action: false,
+      trigger: null,
+      reason: null,
+      can_override: false,
+      starting: false,
+      start_error: null,
+      latest_run: null,
+      runs: 0,
+      recent_runs: [],
+      validation: { can_validate: false, validated: false, result: null, opening_pr: false, notice: null },
+    },
+    spend: { interactive_usd: 0, interactive_unpriced_calls: 0, autonomous_usd: 0, autonomous_runs: 0 },
+    remove,
+  });
+  const publish = (store: ReturnType<typeof showCards>["store"], remove: RemoveInfo) =>
+    act(() => store.getState().extrasChanged({ branches: [extrasOf(remove)], agents_decided_at: null, spend_read_at: null }));
+  const stack = () => [
+    branch(1, "devon/b", { parent: "main", children: [{ id: "1:devon/c", name: "devon/c" }] }),
+    branch(1, "devon/c", { parent: "devon/b" }),
+  ];
+  const slot = () => within(document.querySelector<HTMLElement>('article[data-id="1:devon/b"] [data-slot="branch"]') as HTMLElement);
+  const body = () => JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body));
+  const openDialog = () => {
+    fireEvent.click(slot().getByRole("button", { name: "Remove branch" }));
+    return within(screen.getByRole("dialog"));
+  };
+  const accepted = () => vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 202, json: async () => ({ removing: true }) })));
+
+  test("the dialog says what happens to the branch, its children and its PR before anything runs", () => {
+    const { store } = showCards(stack());
+    publish(store, info());
+
+    const dialog = openDialog();
+
+    expect(dialog.getByText(/Deletes the branch devon\/b and its worktree/)).toBeVisible();
+    expect(dialog.getByText(/Moves devon\/c onto/)).toHaveTextContent("Moves devon/c onto main and syncs them.");
+    expect(dialog.getByText(/Closes its open PR/)).toBeVisible();
+    expect(dialog.getByRole("checkbox")).not.toBeChecked();
+  });
+
+  test("children with no parent to move to are said to be refused", () => {
+    const { store } = showCards(stack());
+    publish(store, info({ parent: null }));
+
+    expect(openDialog().getByText(/no recorded parent to move them to/)).toBeVisible();
+  });
+
+  test("removing answers at once, sends the reason and force, and the card reads in progress until it is gone", async () => {
+    accepted();
+    const { store } = showCards(stack());
+    publish(store, info());
+    const dialog = openDialog();
+    fireEvent.change(dialog.getByRole("textbox"), { target: { value: "superseded" } });
+    fireEvent.click(dialog.getByRole("checkbox"));
+
+    fireEvent.click(dialog.getByRole("button", { name: "Remove branch" }));
+
+    expect(dialog.getByRole("button", { name: "Sending…" })).toBeDisabled();
+    await waitFor(() => expect(fetch).toHaveBeenCalled());
+    expect(vi.mocked(fetch).mock.calls[0][0]).toBe("/api/remove-branch");
+    expect(body()).toEqual({ id: "1:devon/b", force: true, reason: "superseded" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(slot().getByRole("button", { name: "Removing…" })).toBeDisabled();
+    publish(store, info({ removing: true }));
+    expect(slot().getByRole("button", { name: "Removing…" })).toBeDisabled();
+    vi.unstubAllGlobals();
+  });
+
+  test("a card opened in the middle of a removal reads it in progress", () => {
+    const { store } = showCards(stack());
+
+    publish(store, info({ removing: true }));
+
+    expect(slot().getByRole("button", { name: "Removing…" })).toBeDisabled();
+  });
+
+  test("why a removal failed is shown on the card, and it can be tried again", async () => {
+    accepted();
+    const { store } = showCards(stack());
+    publish(store, info());
+    fireEvent.click(openDialog().getByRole("button", { name: "Remove branch" }));
+    await waitFor(() => expect(fetch).toHaveBeenCalled());
+
+    publish(store, info({ notice: "Worktree has uncommitted changes." }));
+
+    expect(slot().getByRole("alert")).toHaveTextContent("Worktree has uncommitted changes.");
+    expect(slot().getByRole("button", { name: "Remove branch" })).toBeEnabled();
+    vi.unstubAllGlobals();
+  });
+
+  test("a request the server refuses shows its reason in the dialog and frees the button", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 409, json: async () => ({ detail: "Its PR is being merged." }) })));
+    const { store } = showCards(stack());
+    publish(store, info());
+    const dialog = openDialog();
+
+    fireEvent.click(dialog.getByRole("button", { name: "Remove branch" }));
+
+    expect(await dialog.findByRole("alert")).toHaveTextContent("Its PR is being merged.");
+    expect(dialog.getByRole("button", { name: "Remove branch" })).toBeEnabled();
+    vi.unstubAllGlobals();
+  });
+
+  test("without the extras there is no control", () => {
+    showCards(stack());
+
+    expect(slot().queryByRole("button", { name: "Remove branch" })).toBeNull();
   });
 });

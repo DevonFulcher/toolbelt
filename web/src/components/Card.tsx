@@ -28,6 +28,7 @@ import { MergeDialog } from "./MergeDialog";
 import { MergeQueueControls } from "./MergeQueueControls";
 import { DecisionsDialog } from "./DecisionsDialog";
 import { RefreshButton } from "./RefreshButton";
+import { RemoveBranchControls } from "./RemoveBranchControls";
 import { SetParentControls } from "./SetParentControls";
 import { SlackDialog } from "./SlackDialog";
 import { Timeline } from "./Timeline";
@@ -362,7 +363,8 @@ export const Card = memo(
                 focus on this subtree →
               </a>
             )}{" "}
-            {extras?.set_parent && <SetParentControls id={id} name={branch.name} info={extras.set_parent} />}
+            {extras?.set_parent && <SetParentControls id={id} name={branch.name} info={extras.set_parent} />}{" "}
+            {extras?.remove && <RemoveBranchControls id={id} name={branch.name} info={extras.remove} />}
           </Slot>
           <Slot id="ancestors" label="Ancestors">{String(branch.depth)}</Slot>
           <Slot id="descendants" label="Descendants">{String(descendants)}</Slot>

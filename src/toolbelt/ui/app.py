@@ -195,6 +195,12 @@ from toolbelt.ui.proposal_worker import ProposalWorker, RepoRef
 from toolbelt.ui.proposals_view import build_proposals, proposal_info
 from toolbelt.ui.publish_pr import PublishRunner, publish_pr
 from toolbelt.ui.pushed_views import PushedViews, conversation_of
+from toolbelt.ui.remove_branch import (
+    RemoveOutcome,
+    RemoveRequest,
+    RemoveTracker,
+    run_toolbelt_remove,
+)
 from toolbelt.ui.repo_visibility import visible_repos
 from toolbelt.ui.review_routes import review_router
 from toolbelt.ui.set_parent import (
@@ -614,6 +620,7 @@ def create_app(
     merger: Callable[[Path, str, str | None], MergeOutcome] = run_toolbelt_merge,
     publisher: PublishRunner = publish_pr,
     set_parenter: Callable[[Path, str], SetParentOutcome] = run_toolbelt_set_parent,
+    remover: Callable[[RemoveRequest], RemoveOutcome] = run_toolbelt_remove,
     worktree_of: Callable[[Path, str], Path | None] = checked_out_worktree,
     github: GithubRequests | None = None,
     slack_settings: SlackConfig | None = None,
@@ -958,6 +965,14 @@ def create_app(
 
     set_parents = SetParentTracker(runner=set_parenter, changed=set_parent_changed)
 
+    def remove_changed() -> None:
+        """A removal started or ended: tell the card, and publish the stack
+        without the branch when the command has dropped it."""
+        views.notify("extras")
+        watcher.check()
+
+    removals = RemoveTracker(runner=remover, changed=remove_changed)
+
     views = PushedViews(
         hub=hub,
         dispatcher=dispatcher,
@@ -975,6 +990,7 @@ def create_app(
             personal_review.notices.get((repo_id, name)),
         ),
         set_parent=set_parents.state,
+        remove=removals.state,
         working_hours=working_hours,
         estimate_hub=estimate_hub,
         priors=lambda: configured_priors(default_config_path()),
@@ -1789,6 +1805,36 @@ def create_app(
                 status_code=409, detail="Its parent is already being set."
             )
         return {"setting": True}
+
+    @app.post("/api/remove-branch", status_code=202)
+    async def remove_branch(body: api.RemoveBranchRequest) -> dict[str, bool]:
+        """Remove the branch with `toolbelt git remove`, run in the repo's main
+        checkout in the background: the card reads ``removing`` until done and
+        the branch then leaves the page; the command's reason for refusing (a
+        worktree with uncommitted files, a branch with children but no parent)
+        is its ``notice``."""
+        repo_id, name = branch_ref(body.id)
+        parents = await asyncio.to_thread(_all_parents, repo_id)
+        if name not in parents:
+            raise HTTPException(status_code=404, detail="no such branch")
+        repo_path = await asyncio.to_thread(_repo_path, repo_id)
+        if repo_path is None:
+            raise HTTPException(status_code=404, detail="no such repo")
+        merging = merge_queue.info(repo_id, name)
+        if merging is not None and merging.merging:
+            raise HTTPException(status_code=409, detail="Its PR is being merged.")
+        started = removals.start(
+            repo_id,
+            RemoveRequest(
+                repo_path=repo_path,
+                branch=name,
+                force=body.force,
+                reason=(body.reason or "").strip() or None,
+            ),
+        )
+        if not started:
+            raise HTTPException(status_code=409, detail="It is already being removed.")
+        return {"removing": True}
 
     @app.post("/api/merge/queue", response_model=api.MergeQueueInfo)
     async def queue_merge(body: api.MergeQueueRequest) -> api.MergeQueueInfo:
