@@ -468,7 +468,12 @@ def git_list():
 
 
 @git_typer.command()
-def sync():
+def sync(
+    merge_base_branch: Annotated[
+        bool,
+        typer.Option(help="Also merge origin/<base> into the top branch of the stack"),
+    ] = False,
+):
     """Merge each parent into its child across the stack, push, clean up.
 
     Syncs every branch under the current branch's top-of-stack ancestor
@@ -476,8 +481,7 @@ def sync():
     worktree. The current branch must be a tracked stack branch (not the base
     branch), and every branch in the stack needs its own worktree.
 
-    For each branch: merges its parent (origin/<base> for the top branch),
-    then origin/<branch>, then pushes (`git push -u`): always for a branch
+    For each branch: merges its parent, then origin/<branch>, then pushes (`git push -u`): always for a branch
     with children or one origin does not have yet (a new branch is published
     with upstream tracking); for other leaves only when they have an open PR
     and something new (own commits, a conflicting PR, or a tree that differs
@@ -488,7 +492,13 @@ def sync():
     IS_PERSONAL=true) it is also fast-forward pushed, `main` included, and a
     branch that diverged from origin is not pushed (stops with an error).
     A work repo's default branch, and its other untracked branches origin
-    already has, are never pushed. If a branch's PR has
+    already has, are never pushed.
+
+    The top branch takes origin/<base> (its untracked parent) only when that
+    merge would conflict with a branch in the stack, so clean base changes stay
+    out. --merge-base-branch always merges origin/<base> into the top branch
+    first (a conflict stops as below), then its changes flow down with the
+    parent merges. If a branch's PR has
     merged on GitHub, the base it landed on (the nearest unmerged ancestor, or
     origin/<base>) is merged into each child and the child is reparented onto
     it. The merge is computed over snapshots (the child's tree, the base's
@@ -516,4 +526,4 @@ def sync():
     runs `git rebase --continue` for you.
     """
     with repo_lock(repo_root()):
-        sync_repo()
+        sync_repo(merge_base_branch=merge_base_branch)

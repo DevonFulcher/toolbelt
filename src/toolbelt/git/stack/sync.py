@@ -576,6 +576,7 @@ def sync_stack(
     root: Path,
     forge: Forge,
     branch: str | None = None,
+    merge_base_branch: bool = False,
 ) -> None:
     """Merge-sync the whole stack the current branch belongs to.
 
@@ -585,7 +586,8 @@ def sync_stack(
 
     Processes branches root -> leaf so each parent is up to date before being
     merged into its children. The stack root merges ``origin/<base>`` only when
-    it would conflict with any branch in the stack. When ``forge`` reports a
+    it would conflict with any branch in the stack, or always when
+    ``merge_base_branch`` is set. When ``forge`` reports a
     parent's PR merged, its children are rebased onto the nearest surviving
     ancestor and every landed branch is removed.
     """
@@ -769,11 +771,12 @@ def sync_stack(
 
             # Tracked parents always propagate to their children. A stack root
             # only takes its untracked base when it conflicts with any branch
-            # in this stack; clean base changes stay out.
+            # in this stack (clean base changes stay out), or when asked to
+            # (``merge_base_branch``).
             merge_refs = []
             if direct_parent in tracked:
                 merge_refs.append(direct_parent)
-            elif base_conflicts_with_stack:
+            elif merge_base_branch or base_conflicts_with_stack:
                 merge_refs.append(base_ref)
 
             # Reconcile the branch with its own remote so a diverged push won't

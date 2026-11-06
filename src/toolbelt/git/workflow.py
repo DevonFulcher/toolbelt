@@ -47,7 +47,12 @@ def update_repo(target_path: Path):
         logged_process.run(["uv", "sync", "--all-groups"], check=True, cwd=target_path)
 
 
-def sync_repo(root: Path | None = None, *, branch: str | None = None) -> None:
+def sync_repo(
+    root: Path | None = None,
+    *,
+    branch: str | None = None,
+    merge_base_branch: bool = False,
+) -> None:
     """Merge-sync the whole stack the current branch belongs to and refresh deps.
 
     Replaces the old git-town flow with the homegrown stack sync: each branch is
@@ -56,6 +61,7 @@ def sync_repo(root: Path | None = None, *, branch: str | None = None) -> None:
     the current worktree; pass a specific worktree to sync a stack the caller
     just moved into (e.g. a freshly created branch). ``branch`` syncs the stack
     of that branch instead of the one ``root`` has checked out.
+    ``merge_base_branch`` also merges ``origin/<base>`` into the top of the stack.
 
     ``root`` itself can end up deleted by either step below: ``sync_stack``
     removes a landed branch's worktree (which can be ``root``, e.g. syncing
@@ -80,7 +86,12 @@ def sync_repo(root: Path | None = None, *, branch: str | None = None) -> None:
     root = root or repo_root()
     main_wt = main_worktree(root)
     forge = GhForge(root)
-    sync_stack(root=root, forge=forge, branch=branch)
+    sync_stack(
+        root=root,
+        forge=forge,
+        branch=branch,
+        merge_base_branch=merge_base_branch,
+    )
     git_branch_clean(root, forge=forge)
     update_repo(root if root.exists() else main_wt)
     start_background_pull(state_dir=state_dir, config_path=default_config_path())

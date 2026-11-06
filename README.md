@@ -15,6 +15,12 @@ A collection of tools that I use.
 - `IS_PERSONAL=true` waives it everywhere.
 - `tt ui` lists a personal repo only when `IS_PERSONAL=true`; elsewhere it shows work repos alone (a repo with no github.com `origin` counts as work).
 
+## What `toolbelt git sync` merges
+
+Each branch merges its tracked parent, then its own `origin/<branch>`. The top branch of a stack has no tracked
+parent: it merges `origin/<base>` only when that merge would conflict with a branch in the stack, so clean base
+changes stay out. `toolbelt git sync --merge-base-branch` always merges `origin/<base>` into the top branch first.
+
 ## When `toolbelt git save` and `sync` push
 
 Both run the same sync, which pushes with upstream tracking (`git push -u`), never forced:
