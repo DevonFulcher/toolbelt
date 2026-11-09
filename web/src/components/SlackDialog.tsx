@@ -46,6 +46,11 @@ export function SlackDialog({
   // the stack that could be in it; one an agent holds starts unchecked.
   const [checked, setChecked] = useState<boolean[]>([]);
   const [problem, setProblem] = useState<string | null>(null);
+  // Publishing only: whether to post in Slack too (not for a PR meant for people outside
+  // the channel). Unchecked, the draft message is not needed and the dialog does not show it.
+  const [postInSlack, setPostInSlack] = useState(true);
+  const [publishingOnly, setPublishingOnly] = useState(false);
+  const withoutPost = publish && !postInSlack;
 
   useEffect(() => {
     let current = true;
@@ -66,7 +71,7 @@ export function SlackDialog({
   }, [id, reassign]);
 
   const draft = phase.name === "loading" || phase.name === "failed" ? null : phase.draft;
-  const title = publish ? "Publish PR and post in Slack" : draft ? TITLES[draft.kind] : "Slack";
+  const title = publish ? (postInSlack ? "Publish PR and post in Slack" : "Publish PR") : draft ? TITLES[draft.kind] : "Slack";
 
   const nameOf = (personId: string | null): string | undefined =>
     draft?.candidates.find((person) => person.id === personId)?.name;
@@ -136,6 +141,17 @@ export function SlackDialog({
     setAssignees((current) => current.map(() => nextId));
   };
 
+  const publishWithoutPost = (): void => {
+    setProblem(null);
+    setPublishingOnly(true);
+    publishSlack({ id, post_in_slack: false })
+      .then(onClose) // it publishes in the background: the card shows how it went
+      .catch((error: unknown) => {
+        setProblem(error instanceof Error ? error.message : String(error));
+        setPublishingOnly(false);
+      });
+  };
+
   const send = (): void => {
     if (phase.name !== "ready") return;
     const { draft: ready } = phase;
@@ -155,7 +171,7 @@ export function SlackDialog({
         checked[index] ? [{ repo: pr.repo, number: pr.number, assignee_id: assignees[index] ?? null }] : [],
       ),
     };
-    (publish ? publishSlack({ ...request, kind: "post" }) : sendSlack(request))
+    (publish ? publishSlack({ ...request, kind: "post", post_in_slack: true }) : sendSlack(request))
       .then(onClose) // it posts in the background: the card shows how it went
       .catch((error: unknown) => {
         setProblem(error instanceof Error ? error.message : String(error));
@@ -165,13 +181,52 @@ export function SlackDialog({
 
   return (
     <Dialog title={title} onClose={onClose}>
-      {phase.name === "loading" && <p className="muted">Writing the message…</p>}
-      {phase.name === "failed" && (
+      {publish && (
+        <label className="slack-field slack-post-toggle">
+          <input
+            type="checkbox"
+            checked={postInSlack}
+            disabled={publishingOnly || phase.name === "sending"}
+            onChange={(event) => {
+              setPostInSlack(event.target.checked);
+              setProblem(null);
+            }}
+          />{" "}
+          <span>Post in Slack</span>
+        </label>
+      )}
+      {withoutPost && (
+        <div className="slack-dialog">
+          <p className="muted">
+            {draft?.prs.some((pr) => pr.pr === "draft")
+              ? "The draft PR will be marked ready for review. Nothing is posted in Slack."
+              : "The PR will be compressed. Nothing is posted in Slack."}
+          </p>
+          <p className="muted">
+            For a supported PR, GitHub Copilot will also watch for failed Actions and merge conflicts.
+          </p>
+          {problem && (
+            <p className="error" role="alert">
+              {problem}
+            </p>
+          )}
+          <p>
+            <button type="button" className="merge-button" disabled={publishingOnly} onClick={publishWithoutPost}>
+              {publishingOnly ? "Publishing…" : "Publish PR"}
+            </button>{" "}
+            <span className="muted">
+              Publishes the PR in the background. Its card will not ask for a Slack post.
+            </span>
+          </p>
+        </div>
+      )}
+      {!withoutPost && phase.name === "loading" && <p className="muted">Writing the message…</p>}
+      {!withoutPost && phase.name === "failed" && (
         <p className="error" role="alert">
           {phase.text}
         </p>
       )}
-      {draft && (
+      {!withoutPost && draft && (
         <div className="slack-dialog">
           {publish && (
             <>

@@ -1087,6 +1087,8 @@ class TestSlackInTheApp:
             "last_at": None,
             "bump_due": False,
             "posting": False,
+            "publishing": False,
+            "skipped": False,
             "notice": None,
             "thread_link": None,
             "assignee": None,

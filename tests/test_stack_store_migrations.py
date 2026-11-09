@@ -340,7 +340,11 @@ def test_the_finish_estimate_tables_arrive_with_existing_rows_kept(tmp_path: Pat
 
 def test_removed_branches_are_merged_into_branches_keeping_every_row(tmp_path: Path):
     db = tmp_path / "stacks.db"
-    before = len(store._MIGRATIONS) - 1
+    before = next(
+        index
+        for index, migration in enumerate(store._MIGRATIONS)
+        if any("CREATE TABLE branches_rebuilt" in sql for sql in migration)
+    )
     conn = _build_at(db, before)
     _seed(conn)
     _insert(

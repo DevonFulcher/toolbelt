@@ -79,6 +79,8 @@ class SlackService:
         next_action: Callable[[int, str], api.NextActionInfo | None],
         posts: Callable[[], list[SlackPostRow]],
         save: Callable[[list[SlackPostRow]], None],
+        skip: Callable[[str, int], None],
+        unskip: Callable[[str, int], None],
         record_session: Callable[[SlackSessionRow], None],
         wall_clock: Callable[[], datetime],
         changed: Callable[[set[tuple[int, str]]], None],
@@ -98,6 +100,8 @@ class SlackService:
         self._next_action = next_action
         self._posts = posts
         self._save = save
+        self._skip = skip
+        self._unskip = unskip
         self._record_session = record_session
         self._tasks: set[asyncio.Task[None]] = set()
         self._wall_clock = wall_clock
@@ -460,6 +464,39 @@ class SlackService:
         prs = self.validate_send(request)
         self._begin_posting(prs)
         return prs
+
+    def begin_publish_without_post(self, repo_id: int, branch: str) -> _Pr:
+        """Reserve the PR for a publish that posts nothing, and remember that
+        Slack does not apply to it (so its card has no Post or Bump step, not
+        even for the moment between the publish and its next lookup). Raises
+        when it is being posted or published already."""
+        pr = self._pr(repo_id, branch)
+        if pr is None:
+            raise SlackUnknown(f"{branch} has no tracked PR")
+        if self._tracker.is_posting(pr.repo, pr.number):
+            raise SlackNotApplicable(
+                f"{pr.repo}#{pr.number} is already being posted in Slack."
+            )
+        if self._tracker.is_publishing(pr.repo, pr.number):
+            raise SlackNotApplicable(
+                f"{pr.repo}#{pr.number} is already being published."
+            )
+        self._skip(pr.repo, pr.number)
+        self._tracker.reload()
+        self._tracker.begin_publishing([(pr.repo, pr.number)])
+        self._changed({(pr.repo_id, pr.branch)})
+        return pr
+
+    def end_publish_without_post(
+        self, pr: _Pr, *, failed: bool, notice: str | None
+    ) -> None:
+        """The publish is over; ``notice`` shows on the card. A failed one gives
+        the PR its Slack step back (it was not published)."""
+        if failed:
+            self._unskip(pr.repo, pr.number)
+            self._tracker.reload()
+        self._tracker.end_publishing([(pr.repo, pr.number)], notice)
+        self._changed({(pr.repo_id, pr.branch)})
 
     def fail_publish(self, prs: list[_Pr], notice: str) -> None:
         """Release a publish reservation and show its failure on the cards."""

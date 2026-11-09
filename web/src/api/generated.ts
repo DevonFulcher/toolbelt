@@ -225,6 +225,7 @@ export interface Wire {
   slack_accepted: SlackAccepted;
   slack_draft: SlackDraft;
   slack_draft_request: SlackDraftRequest;
+  slack_publish_request: SlackPublishRequest;
   slack_send_request: SlackSendRequest;
   snapshot: Snapshot;
   spend: Spend;
@@ -803,6 +804,8 @@ export interface SlackInfo {
   notice: string | null;
   posted: boolean;
   posting: boolean;
+  publishing: boolean;
+  skipped: boolean;
   thread_link: string | null;
 }
 /**
@@ -1560,6 +1563,20 @@ export interface SlackDraftRequest {
   id: string;
   prs?: SlackPrRef[] | null;
   reassign?: boolean;
+}
+/**
+ * The body of ``POST /api/slack/publish``: publish the PR, and when
+ * ``post_in_slack`` post the confirmed message (the other fields) as well.
+ * Without a post only ``id`` matters.
+ */
+export interface SlackPublishRequest {
+  assignee_id?: string | null;
+  id: string;
+  kind?: "post" | "bump" | "reassign";
+  post_in_slack?: boolean;
+  prs?: SlackPrRef[];
+  text?: string;
+  thread_ts?: string | null;
 }
 /**
  * The body of ``POST /api/slack/send``: post the confirmed (possibly

@@ -510,7 +510,7 @@ describe("a card whose next action is about Slack", () => {
     last_kind: null,
     notice: null,
     posted: false,
-    posting: false,
+    posting: false, publishing: false, skipped: false,
     thread_link: null,
   };
   const next = (kind: "publish" | "post_slack" | "bump_slack", label: string) =>
@@ -691,7 +691,7 @@ describe("a card while a message is posted in the background", () => {
     last_kind: null,
     last_at: null,
     bump_due: false,
-    posting: false,
+    posting: false, publishing: false, skipped: false,
     notice: null,
     thread_link: null,
     assignee: null,
@@ -869,7 +869,7 @@ describe("a card's Assigned Review", () => {
     last_kind: assignee ? "post" : null,
     last_at: assignee ? new Date(NOW - 3600_000).toISOString() : null,
     bump_due: false,
-    posting: false,
+    posting: false, publishing: false, skipped: false,
     notice: null,
     thread_link: null,
     assignee,
@@ -966,7 +966,7 @@ describe("a card's Slack fields", () => {
 
   test("a ready PR not posted is flagged as something to do", () => {
     showCards([
-      branch(1, "devon/a", { status: open, slack: { posted: false, last_kind: null, last_at: null, bump_due: false, posting: false, notice: null, thread_link: null, assignee: null } }),
+      branch(1, "devon/a", { status: open, slack: { posted: false, last_kind: null, last_at: null, bump_due: false, posting: false, publishing: false, skipped: false, notice: null, thread_link: null, assignee: null } }),
     ]);
 
     const found = slotsOf("devon/a");
@@ -978,7 +978,7 @@ describe("a card's Slack fields", () => {
   test("a draft not posted is not flagged: it is not ready", () => {
     const draft = pr({ pr_number: 8, pr: "draft" });
     showCards([
-      branch(1, "devon/a", { status: draft, slack: { posted: false, last_kind: null, last_at: null, bump_due: false, posting: false, notice: null, thread_link: null, assignee: null } }),
+      branch(1, "devon/a", { status: draft, slack: { posted: false, last_kind: null, last_at: null, bump_due: false, posting: false, publishing: false, skipped: false, notice: null, thread_link: null, assignee: null } }),
     ]);
 
     expect(slotsOf("devon/a").slack_status).toEqual(["Slack status", "na", "Not posted in Slack"]);
@@ -988,11 +988,11 @@ describe("a card's Slack fields", () => {
     showCards([
       branch(1, "devon/a", {
         status: open,
-        slack: { posted: true, last_kind: "post", last_at: new Date(NOW - 5 * 3600_000).toISOString(), bump_due: false, posting: false, notice: null, thread_link: null, assignee: null },
+        slack: { posted: true, last_kind: "post", last_at: new Date(NOW - 5 * 3600_000).toISOString(), bump_due: false, posting: false, publishing: false, skipped: false, notice: null, thread_link: null, assignee: null },
       }),
       branch(1, "devon/b", {
         status: open,
-        slack: { posted: true, last_kind: "bump", last_at: new Date(NOW - 2 * DAY).toISOString(), bump_due: true, posting: false, notice: null, thread_link: null, assignee: null },
+        slack: { posted: true, last_kind: "bump", last_at: new Date(NOW - 2 * DAY).toISOString(), bump_due: true, posting: false, publishing: false, skipped: false, notice: null, thread_link: null, assignee: null },
       }),
     ]);
 
@@ -1011,7 +1011,7 @@ describe("a card's Slack fields", () => {
         last_kind: "post",
         last_at: new Date(NOW - 3600_000).toISOString(),
         bump_due: false,
-        posting: false,
+        posting: false, publishing: false, skipped: false,
         notice: null,
         thread_link: null,
         assignee: null,
@@ -1029,13 +1029,50 @@ describe("a card's Slack fields", () => {
     const { store } = showCards([
       branch(1, "devon/a", {
         status: open,
-        slack: { posted: true, last_kind: "post", last_at: new Date(NOW - 3600_000).toISOString(), bump_due: false, posting: false, notice: null, thread_link: null, assignee: null },
+        slack: { posted: true, last_kind: "post", last_at: new Date(NOW - 3600_000).toISOString(), bump_due: false, posting: false, publishing: false, skipped: false, notice: null, thread_link: null, assignee: null },
       }),
     ]);
 
     act(() => store.getState().statusChanged("1:devon/a", open, 1));
 
     expect(slotsOf("devon/a").slack_status[2]).toBe("Posted in Slack");
+  });
+});
+
+describe("a PR published without a Slack post", () => {
+  const open = pr({ pr: "open", next: { label: "Request review", who: "you", kind: "request_review", would_be: null } });
+  const info = (over: Partial<SlackInfo>): SlackInfo => ({
+    posted: false,
+    last_kind: null,
+    last_at: null,
+    bump_due: false,
+    posting: false,
+    publishing: false,
+    skipped: true,
+    notice: null,
+    thread_link: null,
+    assignee: null,
+    ...over,
+  });
+
+  test("says it is not posting in Slack, as not applicable", () => {
+    showCards([branch(1, "devon/a", { status: open, slack: info({}) })]);
+
+    expect(screen.getByText("Not posting in Slack")).toBeInTheDocument();
+  });
+
+  test("says Publishing PR… while the publish runs in the background", () => {
+    showCards([branch(1, "devon/a", { status: open, slack: info({ publishing: true }) })]);
+
+    expect(screen.getByText("Publishing PR…")).toBeInTheDocument();
+  });
+
+  test("a publish that failed shows why", () => {
+    showCards([
+      branch(1, "devon/a", { status: open, slack: info({ skipped: false, notice: "Publishing PR failed: compress failed" }) }),
+    ]);
+
+    expect(screen.getByRole("alert")).toHaveTextContent("compress failed");
   });
 });
 

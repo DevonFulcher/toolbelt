@@ -6375,6 +6375,12 @@
         "posting": {
           "type": "boolean"
         },
+        "publishing": {
+          "type": "boolean"
+        },
+        "skipped": {
+          "type": "boolean"
+        },
         "thread_link": {
           "anyOf": [
             {
@@ -6392,6 +6398,8 @@
         "last_at",
         "bump_due",
         "posting",
+        "publishing",
+        "skipped",
         "notice",
         "thread_link",
         "assignee"
@@ -6452,6 +6460,66 @@
         "number"
       ],
       "title": "SlackPrRef",
+      "type": "object"
+    },
+    "SlackPublishRequest": {
+      "additionalProperties": false,
+      "description": "The body of ``POST /api/slack/publish``: publish the PR, and when\n``post_in_slack`` post the confirmed message (the other fields) as well.\nWithout a post only ``id`` matters.",
+      "properties": {
+        "assignee_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "default": "post",
+          "enum": [
+            "post",
+            "bump",
+            "reassign"
+          ],
+          "type": "string"
+        },
+        "post_in_slack": {
+          "default": true,
+          "type": "boolean"
+        },
+        "prs": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/SlackPrRef"
+          },
+          "type": "array"
+        },
+        "text": {
+          "default": "",
+          "type": "string"
+        },
+        "thread_ts": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "SlackPublishRequest",
       "type": "object"
     },
     "SlackPurpose": {
@@ -8057,6 +8125,9 @@
     "slack_draft_request": {
       "$ref": "#/$defs/SlackDraftRequest"
     },
+    "slack_publish_request": {
+      "$ref": "#/$defs/SlackPublishRequest"
+    },
     "slack_send_request": {
       "$ref": "#/$defs/SlackSendRequest"
     },
@@ -8089,6 +8160,7 @@
     "slack_draft_request",
     "slack_draft",
     "slack_send_request",
+    "slack_publish_request",
     "slack_accepted",
     "decision_list",
     "decision_info",

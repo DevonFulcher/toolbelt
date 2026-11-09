@@ -85,8 +85,10 @@ class Rig:
         self.sessions: list[SlackSessionRow] = []
         self.changed: list[set] = []
         self.read_back: str | None = "OK"
+        self.skipped: set[tuple[str, int]] = set()
         self.tracker = SlackTracker(
             posts=lambda: list(self.rows),
+            skipped=lambda: set(self.skipped),
             slug_of=lambda repo_id: "o/r",
             bump_after=timedelta(hours=24),
         )
@@ -103,6 +105,8 @@ class Rig:
             next_action=self.next_action,
             posts=lambda: list(self.rows),
             save=self.rows.extend,
+            skip=lambda repo, number: self.skipped.add((repo, number)),
+            unskip=lambda repo, number: self.skipped.discard((repo, number)),
             record_session=self.sessions.append,
             wall_clock=lambda: NOW,
             changed=self.changed.append,

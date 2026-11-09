@@ -606,3 +606,152 @@ def test_publish_puts_the_pr_on_the_merge_queue(rig):
     wait_until_posted(client, f"{repo_id}:a")
     queued = branches(client)["a"]["merge_queue"]
     assert queued["queued"] is True
+
+
+# ---- publishing without a Slack post ----------------------------------------
+
+
+def wait_until_published(client, branch_id: str) -> dict:
+    """The branch's Slack info once its background publish has finished."""
+    for _ in range(200):
+        branch = next(
+            b
+            for b in client.get("/api/snapshot").json()["branches"]
+            if b["id"] == branch_id
+        )
+        if not branch["slack"]["publishing"]:
+            return branch["slack"]
+        time.sleep(0.01)
+    raise AssertionError("the publish did not finish")
+
+
+def skip_request(repo_id: int, name: str) -> dict:
+    return {"id": f"{repo_id}:{name}", "post_in_slack": False}
+
+
+def test_publishing_without_a_post_publishes_posts_nothing_and_moves_the_card_on(rig):
+    _, repo_id, proxy, client = rig
+    events = client.app.state.hub.subscribe()  # type: ignore[attr-defined]
+
+    response = client.post("/api/slack/publish", json=skip_request(repo_id, "a"))
+
+    assert response.status_code == 202
+    slack = wait_until_published(client, f"{repo_id}:a")
+    assert proxy.publish_calls[0][1:] == ("a", 1, False)
+    assert proxy.sent == []
+    assert (slack["posted"], slack["skipped"], slack["publishing"]) == (
+        False,
+        True,
+        False,
+    )
+    # No Post or Bump in Slack for it any more: its card moves on.
+    assert branches(client)["a"]["status"]["next"]["kind"] == "request_review"
+    published = []
+    while not events.empty():
+        published.append(events.get_nowait())
+    states = [
+        (data["slack"]["publishing"], data["slack"]["skipped"])
+        for name, data in published
+        if name == "status" and data["branch_id"] == f"{repo_id}:a"
+    ]
+    assert (True, True) in states and states[-1] == (False, True)
+    # The other PR of the stack is still for Slack.
+    assert branches(client)["b"]["status"]["next"]["kind"] == "post_slack"
+
+
+def test_a_draft_published_without_a_post_is_still_offered_publish_until_it_is_ready(
+    draft_rig,
+):
+    _, repo_id, proxy, client = draft_rig
+
+    response = client.post("/api/slack/publish", json=skip_request(repo_id, "a"))
+
+    assert response.status_code == 202
+    wait_until_published(client, f"{repo_id}:a")
+    assert proxy.publish_calls[0][1:] == ("a", 1, True)
+    assert proxy.sent == []
+    # The fake GitHub keeps saying draft: the publish step is still offered.
+    assert branches(client)["a"]["status"]["next"]["kind"] == "publish"
+
+
+def test_the_choice_not_to_post_survives_a_restart_and_the_branchs_removal(
+    rig, tmp_path
+):
+    _, repo_id, _, client = rig
+    client.post("/api/slack/publish", json=skip_request(repo_id, "a"))
+    wait_until_published(client, f"{repo_id}:a")
+
+    store = StackStore(default_db_path())
+    try:
+        assert store.slack_skipped_prs() == {("o/r", 1)}
+        store.remove_branch(repo_id, "a")
+        assert store.slack_skipped_prs() == {("o/r", 1)}
+    finally:
+        store.close()
+
+
+def test_after_a_restart_a_skipped_pr_still_has_no_slack_step(rig):
+    _, repo_id, _, client = rig
+    client.post("/api/slack/publish", json=skip_request(repo_id, "a"))
+    wait_until_published(client, f"{repo_id}:a")
+
+    async def fetch(branch: str, root: Path) -> PrSnapshot:
+        number = {"a": 1, "b": 2}[branch]
+        return PrSnapshot(status(number), facts(number, f"Change {branch}"))
+
+    restarted = create_app(fetch=fetch, slack_settings=CONFIG, tick=0.05)
+    asyncio.run(restarted.state.refresher.run_once())
+    with TestClient(restarted) as again:
+        got = branches(again)
+
+    assert got["a"]["status"]["next"]["kind"] == "request_review"
+    assert got["a"]["slack"]["skipped"] is True
+    assert got["b"]["status"]["next"]["kind"] == "post_slack"
+    assert got["b"]["slack"]["skipped"] is False
+
+
+def test_publishing_without_a_post_needs_no_slack_text_or_pr_selection_but_keeps_the_other_checks(
+    rig,
+):
+    _, repo_id, _, client = rig
+
+    unknown = client.post("/api/slack/publish", json=skip_request(repo_id, "nope"))
+    first = client.post("/api/slack/publish", json=skip_request(repo_id, "a"))
+    wait_until_published(client, f"{repo_id}:a")
+    again = client.post("/api/slack/publish", json=skip_request(repo_id, "a"))
+
+    assert unknown.status_code == 404
+    assert first.status_code == 202  # no text, no PR selected
+    assert again.status_code == 409 and "no longer ready" in again.json()["detail"]
+
+
+def test_a_failed_publish_without_a_post_says_why_and_gives_the_slack_step_back(
+    tmp_path,
+):
+    store = StackStore(default_db_path())
+    path = tmp_path / "r"
+    path.mkdir()
+    repo_id = store.ensure_repo(
+        RepoIdentity(
+            git_common_dir=path / ".git", path=path, remote_url="git@github.com:o/r.git"
+        )
+    )
+    store.set_parent(repo_id, "a", "main")
+    store.close()
+
+    async def fetch(branch: str, root: Path) -> PrSnapshot:
+        return PrSnapshot(status(1), facts(1, "Change a"))
+
+    def failing(repo_root, branch, pr_number, *, is_draft):
+        return PublishOutcome(False, "compress failed")
+
+    app = create_app(fetch=fetch, slack_settings=CONFIG, publisher=failing, tick=0.05)
+    asyncio.run(app.state.refresher.run_once())
+    with TestClient(app) as client:
+        client.post("/api/slack/publish", json=skip_request(repo_id, "a"))
+        slack = wait_until_published(client, f"{repo_id}:a")
+        got = branches(client)["a"]
+
+    assert "compress failed" in slack["notice"]
+    assert slack["skipped"] is False
+    assert got["status"]["next"]["kind"] == "post_slack"

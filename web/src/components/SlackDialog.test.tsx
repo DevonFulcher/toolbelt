@@ -494,6 +494,7 @@ describe("the Publish PR dialog", () => {
         assignee_id: "UA",
         thread_ts: null,
         prs: [{ repo: "o/r", number: 1, assignee_id: "UA" }],
+        post_in_slack: true,
       },
     });
     expect(box).toHaveValue(draft().text);
@@ -527,5 +528,60 @@ describe("the Publish PR dialog", () => {
     release();
     expect(await screen.findByRole("alert")).toHaveTextContent("The PR could not be published.");
     expect(screen.getByRole("button", { name: "Publish PR and post in Slack" })).toBeEnabled();
+  });
+
+  describe("without a Slack post", () => {
+    test("has Post in Slack checked, and unchecking it hides the Slack fields and offers Publish PR", async () => {
+      serve({});
+      await openPublish();
+      const toggle = screen.getByRole("checkbox", { name: "Post in Slack" });
+      expect(toggle).toBeChecked();
+      expect(screen.getByRole("dialog", { name: "Publish PR and post in Slack" })).toBeInTheDocument();
+
+      fireEvent.click(toggle);
+
+      expect(screen.getByRole("dialog", { name: "Publish PR" })).toBeInTheDocument();
+      expect(screen.queryByRole("textbox")).toBeNull();
+      expect(screen.queryByRole("combobox")).toBeNull();
+      expect(screen.queryByText("DTEST")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Publish PR and post in Slack" })).toBeNull();
+      expect(screen.getByRole("button", { name: "Publish PR" })).toBeEnabled();
+      // Checking it again brings the message back, as it was.
+      fireEvent.click(toggle);
+      expect(screen.getByRole("textbox")).toHaveValue(draft().text);
+    });
+
+    test("publishes with only the id and the choice, says Publishing… while it is out, and closes", async () => {
+      const calls = serve({});
+      const onClose = vi.fn();
+      await openPublish(onClose);
+      fireEvent.click(screen.getByRole("checkbox", { name: "Post in Slack" }));
+
+      fireEvent.click(screen.getByRole("button", { name: "Publish PR" }));
+
+      expect(screen.getByRole("button", { name: "Publishing…" })).toBeDisabled();
+      await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+      expect(calls.at(-1)).toEqual({ path: "/api/slack/publish", body: { id: "1:a", post_in_slack: false } });
+    });
+
+    test("does not wait for the draft message: it can be published while the message is still being written", async () => {
+      vi.stubGlobal("fetch", vi.fn(() => new Promise(() => undefined)));
+      render(<SlackDialog id="1:a" onClose={() => undefined} publish />);
+
+      fireEvent.click(screen.getByRole("checkbox", { name: "Post in Slack" }));
+
+      expect(screen.getByRole("button", { name: "Publish PR" })).toBeEnabled();
+    });
+
+    test("a refusal is shown and the button comes back", async () => {
+      serve({ publish: { status: 409, detail: "This PR is no longer ready to publish." } });
+      await openPublish();
+      fireEvent.click(screen.getByRole("checkbox", { name: "Post in Slack" }));
+
+      fireEvent.click(screen.getByRole("button", { name: "Publish PR" }));
+
+      expect(await screen.findByRole("alert")).toHaveTextContent("no longer ready");
+      expect(screen.getByRole("button", { name: "Publish PR" })).toBeEnabled();
+    });
   });
 });

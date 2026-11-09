@@ -348,6 +348,30 @@ def _save_slack_posts(rows: list[SlackPostRow]) -> None:
         store.close()
 
 
+def _slack_skipped_prs() -> set[tuple[str, int]]:
+    store = StackStore(default_db_path())
+    try:
+        return store.slack_skipped_prs()
+    finally:
+        store.close()
+
+
+def _skip_slack(repo: str, pr_number: int) -> None:
+    store = StackStore(default_db_path())
+    try:
+        store.skip_slack(repo, pr_number)
+    finally:
+        store.close()
+
+
+def _unskip_slack(repo: str, pr_number: int) -> None:
+    store = StackStore(default_db_path())
+    try:
+        store.unskip_slack(repo, pr_number)
+    finally:
+        store.close()
+
+
 def _record_slack_session(row: SlackSessionRow) -> None:
     store = StackStore(default_db_path())
     try:
@@ -1149,6 +1173,7 @@ def create_app(
     if slack_settings is not None:
         slack = SlackTracker(
             posts=_slack_posts,
+            skipped=_slack_skipped_prs,
             slug_of=slug_of_repo,
             bump_after=slack_settings.bump_after,
             permalink=slack_settings.permalink,
@@ -1550,6 +1575,8 @@ def create_app(
             next_action=branch_next,
             posts=_slack_posts,
             save=_save_slack_posts,
+            skip=_skip_slack,
+            unskip=_unskip_slack,
             record_session=_record_slack_session,
             wall_clock=wall_clock,
             changed=publish_slack,
@@ -2132,10 +2159,13 @@ def create_app(
 
     @app.post("/api/slack/publish", response_model=api.SlackAccepted, status_code=202)
     async def slack_publish(
-        body: api.SlackSendRequest, background_tasks: BackgroundTasks
+        body: api.SlackPublishRequest, background_tasks: BackgroundTasks
     ) -> api.SlackAccepted:
+        """Publish the PR (compress it, mark a draft ready) in the background
+        and, when ``post_in_slack``, post the confirmed message after. Without
+        a post the PR is remembered as not for Slack (see ``SlackTracker``)."""
         service = slack_on()
-        if body.kind != "post":
+        if body.post_in_slack and body.kind != "post":
             raise HTTPException(
                 status_code=409, detail="Publishing sends a new Slack post."
             )
@@ -2144,12 +2174,13 @@ def create_app(
         if name not in parents:
             raise HTTPException(status_code=404, detail="no such branch")
 
-        try:
-            service.validate_send(body)
-        except SlackNotApplicable as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        except SlackUnknown as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
+        if body.post_in_slack:
+            try:
+                service.validate_send(body)
+            except SlackNotApplicable as error:
+                raise HTTPException(status_code=409, detail=str(error)) from error
+            except SlackUnknown as error:
+                raise HTTPException(status_code=404, detail=str(error)) from error
 
         repo = next(
             (
@@ -2181,15 +2212,19 @@ def create_app(
             raise HTTPException(
                 status_code=404, detail="no GitHub remote for this repo"
             )
-        target = (slug, current.facts.number)
-        if not any((pr.repo, pr.number) == target for pr in body.prs):
-            raise HTTPException(
-                status_code=409,
-                detail="Keep this PR selected in the Slack post before publishing.",
-            )
+        if body.post_in_slack:
+            target = (slug, current.facts.number)
+            if not any((pr.repo, pr.number) == target for pr in body.prs):
+                raise HTTPException(
+                    status_code=409,
+                    detail="Keep this PR selected in the Slack post before publishing.",
+                )
 
         try:
-            prs = service.begin_publish(body)
+            if body.post_in_slack:
+                prs = service.begin_publish(body)
+            else:
+                prs = [service.begin_publish_without_post(repo_id, name)]
         except SlackNotApplicable as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         except SlackUnknown as error:
@@ -2220,7 +2255,13 @@ def create_app(
                     )
                 await refresher.snapshot(tracked, max_age=0)
             except Exception as error:  # noqa: BLE001 - reported on the PR's Slack info
-                service.fail_publish(prs, f"Publishing PR failed: {error}")
+                failure = f"Publishing PR failed: {error}"
+                if body.post_in_slack:
+                    service.fail_publish(prs, failure)
+                else:
+                    service.end_publish_without_post(
+                        prs[0], failed=True, notice=failure
+                    )
                 return
 
             copilot_notice = None
@@ -2242,7 +2283,12 @@ def create_app(
                         f"Copilot Agent Merge was not enabled for "
                         f"{slug}#{snapshot.facts.number}: {error}"
                     )
-            service.send_published(body, prs, publish_notice=copilot_notice)
+            if body.post_in_slack:
+                service.send_published(body, prs, publish_notice=copilot_notice)
+            else:
+                service.end_publish_without_post(
+                    prs[0], failed=False, notice=copilot_notice
+                )
 
             # Publishing queues the PR to merge once it is ready. A PR that is
             # already ready to merge (or in a state the queue does not take)

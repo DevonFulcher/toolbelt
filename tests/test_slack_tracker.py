@@ -57,9 +57,15 @@ class Posts:
         return list(self.rows)
 
 
-def tracker(posts: Posts, slug: str | None = "o/r", **kwargs) -> SlackTracker:
+def tracker(
+    posts: Posts,
+    slug: str | None = "o/r",
+    skipped: set[tuple[str, int]] | None = None,
+    **kwargs,
+) -> SlackTracker:
     return SlackTracker(
         posts=posts,
+        skipped=lambda: skipped if skipped is not None else set(),
         slug_of=lambda repo_id: slug,
         bump_after=timedelta(hours=24),
         **kwargs,
@@ -251,3 +257,22 @@ def test_reload_says_which_prs_posts_changed():
     assert changed == {("o/r", 9)}
     assert unchanged == set()
     assert removed == {("o/r", 5), ("o/r", 9)}
+
+
+def test_a_pr_published_without_a_post_has_no_slack_context_but_says_so():
+    t = tracker(Posts(), skipped={("o/r", 5)})
+
+    assert t.context(1, "a", FETCHED, NOW) is None
+    info = t.info(1, "a", FETCHED, NOW)
+    assert info is not None
+    assert (info.posted, info.skipped, info.publishing) == (False, True, False)
+
+
+def test_reload_reports_the_prs_whose_choice_not_to_post_changed():
+    skipped: set[tuple[str, int]] = set()
+    t = tracker(Posts(), skipped=skipped)
+
+    skipped.add(("o/r", 5))
+
+    assert t.reload() == {("o/r", 5)}
+    assert t.reload() == set()

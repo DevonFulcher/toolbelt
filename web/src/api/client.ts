@@ -15,6 +15,7 @@ import type {
   FileApprovalRequest,
   Snapshot,
   SlackDraft,
+  SlackPublishRequest,
   SlackPrRef,
   SlackSendRequest,
   SlackAccepted,
@@ -207,11 +208,9 @@ export function sendSlack(request: SlackSendRequest, fetchImpl: typeof fetch = f
   return postJson<SlackAccepted>("/api/slack/send", request, fetchImpl);
 }
 
-/** Compress a ready PR or mark a draft PR ready, then post the confirmed Slack message. */
-export function publishSlack(
-  request: Omit<SlackSendRequest, "kind"> & { kind: "post" },
-  fetchImpl: typeof fetch = fetch,
-): Promise<SlackAccepted> {
+/** Compress a ready PR or mark a draft PR ready, then (unless ``post_in_slack`` is
+ * false, which needs only the ``id``) post the confirmed Slack message. */
+export function publishSlack(request: SlackPublishRequest, fetchImpl: typeof fetch = fetch): Promise<SlackAccepted> {
   return postJson<SlackAccepted>("/api/slack/publish", request, fetchImpl);
 }
 

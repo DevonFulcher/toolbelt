@@ -847,6 +847,20 @@ _MIGRATIONS: list[tuple[str, ...]] = [
         ),
         "DROP TABLE removed_branches",
     ),
+    (
+        # PRs published without a Slack post (for reviewers outside the Slack
+        # channel): ``next_action`` has no Slack step for them. Keyed by the
+        # PR (``repo`` is ``owner/name``, lower case), not the branch, so it
+        # outlives the branch's removal.
+        """
+        CREATE TABLE slack_skipped_prs (
+            repo TEXT NOT NULL,
+            pr_number INTEGER NOT NULL,
+            skipped_at TEXT NOT NULL,
+            PRIMARY KEY (repo, pr_number)
+        )
+        """,
+    ),
 ]
 
 
@@ -2500,6 +2514,28 @@ class StackStore:
             conn.execute(
                 "DELETE FROM merge_queue WHERE repo_id = ? AND branch = ?",
                 (repo_id, branch),
+            )
+
+    # ---- PRs published without a Slack post --------------------------------
+
+    def slack_skipped_prs(self) -> set[tuple[str, int]]:
+        """``(owner/name, number)`` of the PRs that are not to be posted."""
+        rows = self._conn.execute("SELECT repo, pr_number FROM slack_skipped_prs")
+        return {(r["repo"], r["pr_number"]) for r in rows}
+
+    def skip_slack(self, repo: str, pr_number: int) -> None:
+        with self._write() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO slack_skipped_prs "
+                "(repo, pr_number, skipped_at) VALUES (?, ?, ?)",
+                (repo, pr_number, _now()),
+            )
+
+    def unskip_slack(self, repo: str, pr_number: int) -> None:
+        with self._write() as conn:
+            conn.execute(
+                "DELETE FROM slack_skipped_prs WHERE repo = ? AND pr_number = ?",
+                (repo, pr_number),
             )
 
     # ---- acknowledged merged PRs -------------------------------------------

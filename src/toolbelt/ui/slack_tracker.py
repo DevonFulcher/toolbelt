@@ -51,6 +51,7 @@ class SlackTracker:
         self,
         *,
         posts: Callable[[], list[SlackPostRow]],
+        skipped: Callable[[], set[tuple[str, int]]],
         slug_of: Callable[[int], str | None],
         bump_after: timedelta,
         permalink: Callable[[str, str], str | None] = lambda channel, ts: None,
@@ -58,6 +59,7 @@ class SlackTracker:
         """``slug_of`` gives a repo's ``owner/name`` (lower case);
         ``permalink(channel, ts)`` the link to a message (``None``: unknown)."""
         self._posts = posts
+        self._skipped_prs = skipped
         self._slug_of = slug_of
         self._bump_after = bump_after
         self._permalink = permalink
@@ -66,6 +68,10 @@ class SlackTracker:
         # being posted for, and what the last one that finished had to say
         # (why it failed, or what Slack's copy lacked).
         self._posting: set[tuple[str, int]] = set()
+        #: PRs being published without a post (compression and GitHub run).
+        self._publishing: set[tuple[str, int]] = set()
+        #: PRs published without a Slack post: Slack is not applicable to them.
+        self._skipped: set[tuple[str, int]] = set()
         self._notice: dict[tuple[str, int], str] = {}
         self.reload()
 
@@ -77,12 +83,32 @@ class SlackTracker:
             by_pr.setdefault((row.repo, row.pr_number), []).append(row)
         before = self._by_pr
         self._by_pr = by_pr
-        return {
+        skipped = set(self._skipped_prs())
+        skip_changed = self._skipped ^ skipped
+        self._skipped = skipped
+        return skip_changed | {
             pr for pr in before.keys() | by_pr.keys() if before.get(pr) != by_pr.get(pr)
         }
 
     def is_posting(self, slug: str, number: int) -> bool:
         return (slug, number) in self._posting
+
+    def is_skipped(self, slug: str, number: int) -> bool:
+        return (slug, number) in self._skipped
+
+    def is_publishing(self, slug: str, number: int) -> bool:
+        return (slug, number) in self._publishing
+
+    def begin_publishing(self, prs: list[tuple[str, int]]) -> None:
+        self._publishing.update(prs)
+        for pr in prs:
+            self._notice.pop(pr, None)
+
+    def end_publishing(self, prs: list[tuple[str, int]], notice: str | None) -> None:
+        self._publishing.difference_update(prs)
+        if notice:
+            for pr in prs:
+                self._notice[pr] = notice
 
     def begin_posting(self, prs: list[tuple[str, int]]) -> None:
         self._posting.update(prs)
@@ -118,6 +144,9 @@ class SlackTracker:
         state = self.state(repo_id, branch, fetched, now)
         if state is None:
             return None
+        pr = (self._slug_of(repo_id) or "", fetched.facts.number)  # type: ignore[union-attr]
+        if pr in self._skipped:
+            return None  # published without a post: no Slack step to take
         return SlackContext(posted=state.posted, bump_due=state.bump_due)
 
     def info(
@@ -135,6 +164,8 @@ class SlackTracker:
             last_at=state.last_at.isoformat() if state.last_at else None,
             bump_due=state.bump_due,
             posting=pr in self._posting,
+            publishing=pr in self._publishing,
+            skipped=pr in self._skipped,
             notice=self._notice.get(pr),
             thread_link=self._permalink(last.channel, last.thread_ts) if last else None,
             assignee=last.assignee_name if last else None,

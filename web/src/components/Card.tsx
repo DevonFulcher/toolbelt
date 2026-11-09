@@ -403,7 +403,7 @@ export const Card = memo(
             claim={claim}
             session={sessionLink(claim, branch.agent)}
             slack={slack}
-            slackPosting={slack?.posting ?? false}
+            slackPosting={slack ? slack.posting || slack.publishing : false}
             queue={mergeQueue}
             siblings={siblings}
             opening={extras?.agent.validation.opening_pr ?? false}
@@ -463,7 +463,13 @@ export const Card = memo(
           <Slot
             id="slack_status"
             label="Slack status"
-            state={slack?.posted ? "ok" : slack && status.load === "loaded" && status.pr === "open" ? "gap" : "na"}
+            state={
+              slack?.posted
+                ? "ok"
+                : slack && !slack.skipped && status.load === "loaded" && status.pr === "open"
+                  ? "gap"
+                  : "na"
+            }
           >
             {slack ? <SlackStatus slack={slack} /> : "–"}
           </Slot>
@@ -769,10 +775,16 @@ const LAST_KIND_LABEL = { post: "Posted in Slack", bump: "Bumped in Slack", reas
  * while a post is in the background, and why the last one failed or what Slack's
  * copy lacked. */
 function SlackStatus({ slack }: { slack: SlackInfo }) {
-  const label = slack.posted ? LAST_KIND_LABEL[slack.last_kind ?? "post"] : "Not posted in Slack";
+  const label = slack.posted
+    ? LAST_KIND_LABEL[slack.last_kind ?? "post"]
+    : slack.skipped
+      ? "Not posting in Slack"
+      : "Not posted in Slack";
   return (
     <>
-      {slack.posting ? (
+      {slack.publishing ? (
+        "Publishing PR…"
+      ) : slack.posting ? (
         "Posting in Slack…"
       ) : slack.posted && slack.thread_link ? (
         <a href={slack.thread_link} target="_blank" rel="noreferrer">
@@ -781,7 +793,7 @@ function SlackStatus({ slack }: { slack: SlackInfo }) {
       ) : (
         label
       )}
-      {slack.notice && !slack.posting && (
+      {slack.notice && !slack.posting && !slack.publishing && (
         <span className="error" role="alert">
           {` ${slack.notice}`}
         </span>

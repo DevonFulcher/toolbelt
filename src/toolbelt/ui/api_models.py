@@ -665,6 +665,11 @@ class SlackInfo(Model):
     bump_due: bool
     #: A message about this PR is being posted in the background.
     posting: bool
+    #: The PR is being published (compressed, marked ready) in the background,
+    #: without a Slack post.
+    publishing: bool
+    #: The PR was published without a Slack post: Slack does not apply to it.
+    skipped: bool
     #: What the last post that finished had to say: why it failed (nothing was
     #: recorded), or what Slack's copy was missing. ``None`` when all went well.
     notice: str | None
@@ -1941,6 +1946,19 @@ class SlackSendRequest(Model):
     prs: list[SlackPrRef]
 
 
+class SlackPublishRequest(SlackSendRequest):
+    """The body of ``POST /api/slack/publish``: publish the PR, and when
+    ``post_in_slack`` post the confirmed message (the other fields) as well.
+    Without a post only ``id`` matters."""
+
+    kind: Literal["post", "bump", "reassign"] = "post"
+    text: str = ""
+    assignee_id: str | None = None
+    thread_ts: str | None = None
+    prs: list[SlackPrRef] = []
+    post_in_slack: bool = True
+
+
 class SlackAccepted(Model):
     """The answer to ``POST /api/slack/send``: the message is being posted in
     the background. Its PRs read ``posting`` until it is done; then they read
@@ -2305,6 +2323,7 @@ class Wire(Model):
     slack_draft_request: SlackDraftRequest
     slack_draft: SlackDraft
     slack_send_request: SlackSendRequest
+    slack_publish_request: SlackPublishRequest
     slack_accepted: SlackAccepted
     decision_list: DecisionList
     decision_info: DecisionInfo
