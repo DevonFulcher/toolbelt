@@ -58,10 +58,14 @@ DEFAULT_INTERVAL_SECONDS = 20.0
 DEFAULT_SETTLED_INTERVAL_SECONDS = 300.0
 DEFAULT_NO_PR_INTERVAL_SECONDS = 60.0
 DEFAULT_FULL_INTERVAL_SECONDS = 600.0
+#: A merged or closed PR gets the full lookup this often. The ETag gate still
+#: shows a new comment within one poll; only a thread being resolved or the
+#: base branch moving waits for this lookup, and those rarely matter once a PR
+#: is settled.
+DEFAULT_SETTLED_FULL_INTERVAL_SECONDS = 3600.0
 #: An open PR with unresolved review threads gets the full lookup this often:
 #: the ETag gate cannot see a thread being resolved, and the count on the card
-#: should follow it. A merged or closed PR's threads rarely move, so it keeps
-#: the ordinary full interval.
+#: should follow it. A merged or closed PR uses the settled full interval.
 DEFAULT_COMMENTS_FULL_INTERVAL_SECONDS = 120.0
 DEFAULT_PUSHED_INTERVAL_SECONDS = 300.0
 #: A webhook hint starts a lookup of a branch only this long after its last one
@@ -259,6 +263,7 @@ class StatusRefresher:
         gate: ChangeGate | None = None,
         full_interval: float = DEFAULT_FULL_INTERVAL_SECONDS,
         comments_full_interval: float = DEFAULT_COMMENTS_FULL_INTERVAL_SECONDS,
+        settled_full_interval: float = DEFAULT_SETTLED_FULL_INTERVAL_SECONDS,
         pushed: Callable[[int], bool] = lambda repo_id: False,
         pushed_interval: float = DEFAULT_PUSHED_INTERVAL_SECONDS,
         hint_gap: float = DEFAULT_HINT_GAP_SECONDS,
@@ -274,6 +279,7 @@ class StatusRefresher:
         self._gate = gate
         self._full_interval = full_interval
         self._comments_full_interval = comments_full_interval
+        self._settled_full_interval = settled_full_interval
         self._pushed = pushed
         self._pushed_interval = pushed_interval
         self._hint_gap = hint_gap
@@ -381,8 +387,9 @@ class StatusRefresher:
         for key, lookup in saved.items():
             age = max((wall - lookup.fetched_at).total_seconds(), 0.0)
             full_age = max((wall - lookup.full_at).total_seconds(), 0.0)
-            if full_age >= self._full_interval:
-                full_age = self._jitter() * self._full_interval
+            interval = self._full_interval_for(lookup.status)
+            if full_age >= interval:
+                full_age = self._jitter() * interval
             self._cache[key] = Fetched(
                 status=lookup.status,
                 at=now - age,
@@ -573,7 +580,7 @@ class StatusRefresher:
             # The gate has seen newer ETags than a lookup that failed: only a
             # full lookup can bring the data up to them.
             return LookupReason.AFTER_FAILURE
-        if self._clock() - previous.full_at >= self._full_interval_of(previous):
+        if self._clock() - previous.full_at >= self._full_interval_for(previous.status):
             return LookupReason.MAX_AGE
         try:
             if await self._gate.unchanged(branch, previous):
@@ -583,13 +590,10 @@ class StatusRefresher:
             return LookupReason.GATE_FAILED
         return LookupReason.GATE_CHANGED
 
-    def _full_interval_of(self, previous: Fetched) -> float:
-        status = previous.status
-        if (
-            status is not None
-            and status.open_comments > 0
-            and status.pr not in _SETTLED_PR_STATES
-        ):
+    def _full_interval_for(self, status: BranchStatus | None) -> float:
+        if status is not None and status.pr in _SETTLED_PR_STATES:
+            return self._settled_full_interval
+        if status is not None and status.open_comments > 0:
             return min(self._comments_full_interval, self._full_interval)
         return self._full_interval
 

@@ -208,15 +208,29 @@ class TestRefresherWithGate:
 
         assert s.lookups == 2
 
-    def test_a_settled_pr_with_unresolved_threads_keeps_the_longer_interval(self):
-        s = Setup(full_interval=600, comments_full_interval=60)
-        s.status = replace(OPEN, pr=PrState.MERGED, open_comments=1)
+    def test_a_settled_pr_gets_the_full_lookup_on_the_settled_interval(self):
+        s = Setup(full_interval=600, settled_full_interval=3600)
+        s.status = replace(OPEN, pr=PrState.MERGED)
         s.pass_after(0)
-        s.pass_after(300)  # polled every 300 s; the gate says nothing changed
+        s.pass_after(600)  # the ordinary full interval; the gate says nothing changed
 
         assert s.lookups == 1
 
-        s.pass_after(300)  # 600 s after the last full lookup
+        s.pass_after(3000)  # 3600 s after the last full lookup
+
+        assert s.lookups == 2
+
+    def test_a_settled_pr_with_unresolved_threads_uses_the_settled_interval(self):
+        s = Setup(
+            full_interval=600, comments_full_interval=60, settled_full_interval=3600
+        )
+        s.status = replace(OPEN, pr=PrState.MERGED, open_comments=1)
+        s.pass_after(0)
+        s.pass_after(3000)
+
+        assert s.lookups == 1
+
+        s.pass_after(600)  # 3600 s after the last full lookup
 
         assert s.lookups == 2
 
@@ -566,6 +580,21 @@ class TestSavedLookups:
         assert cached is not None
         # jitter 0.5: half the 120 s interval ago, so due in 60 s, not now.
         assert fresh.clock.now - cached.full_at == 60
+
+    def test_overdue_settled_lookups_after_a_restart_use_the_settled_interval(self):
+        old = Flaky(settled_full_interval=3600)
+        old.status = replace(OPEN, pr=PrState.MERGED)
+        old.pass_after(0)
+        fresh = Flaky(settled_full_interval=3600)
+        fresh.persistence.rows = dict(old.persistence.rows)
+        fresh.clock.now = 1000 + 100_000  # down for a day
+
+        run(fresh.refresher.restore())
+
+        cached = fresh.refresher.get(1, "devon/a")
+        assert cached is not None
+        # jitter 0.5: half the 3600 s settled interval ago, so due in 1800 s.
+        assert fresh.clock.now - cached.full_at == 1800
 
     def test_a_branch_no_longer_tracked_is_dropped_from_the_saved_lookups(self):
         s = Flaky()

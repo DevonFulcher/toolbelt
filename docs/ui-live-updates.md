@@ -112,9 +112,11 @@ poll does not look the PR up again for the change that lookup already read.
 
 The gate does not see a review thread being resolved or the base branch moving
 under a PR, so the full GraphQL lookup still runs every 10 minutes per PR
-(`full_interval`), and every 2 minutes for an open PR with unresolved review
-threads (`comments_full_interval`; a merged or closed PR keeps the 10
-minutes), so the count on its card follows a thread being resolved. A change the gate does see shows up within one poll (20 s).
+(`full_interval`), every 2 minutes for an open PR with unresolved review
+threads (`comments_full_interval`), so the count on its card follows a thread
+being resolved, and every hour for a merged or closed PR
+(`settled_full_interval`), whose threads and base rarely matter. A new comment
+on a settled PR still shows within one poll, because it moves the pull ETag. A change the gate does see shows up within one poll (20 s).
 
 The **Refresh** button in a card's PR box (`POST /api/refresh` with the branch's
 id) looks that PR up again at once, gate skipped, like a webhook hint for that
