@@ -15,10 +15,10 @@ from toolbelt.ui.app import create_app
 from toolbelt.ui.pr_activity import PrFacts, ReviewComment
 from toolbelt.ui.pr_fetch import PrSnapshot
 
-COPILOT_REVIEW = ReviewComment(
+HUMAN_REVIEW = ReviewComment(
     kind="review",
-    author="copilot-pull-request-reviewer",
-    body="Needs a closer look: the retry never gives up.",
+    author="sam",
+    body="The retry should back off.",
     url="https://github.com/o/r/pull/1945#pullrequestreview-1",
 )
 
@@ -81,7 +81,7 @@ def rig(tmp_path: Path):
     store.set_parent(repo_id, "b", "main")
     store.close()
     github = Github()
-    github.comments["a"] = (COPILOT_REVIEW,)
+    github.comments["a"] = (HUMAN_REVIEW,)
     return repo_id, github
 
 
@@ -90,7 +90,7 @@ def status(client: TestClient, name: str) -> dict:
     return next(b for b in branches if b["name"] == name)["status"]
 
 
-def test_a_merged_pr_with_a_review_body_only_stays_as_acknowledge_with_its_comments(
+def test_a_merged_pr_with_a_humans_review_body_stays_as_acknowledge_with_its_comments(
     rig,
 ):
     _, github = rig
@@ -102,8 +102,8 @@ def test_a_merged_pr_with_a_review_body_only_stays_as_acknowledge_with_its_comme
         assert reviewed["unacknowledged_comments"] == [
             {
                 "kind": "review",
-                "author": "copilot-pull-request-reviewer",
-                "body": "Needs a closer look: the retry never gives up.",
+                "author": "sam",
+                "body": "The retry should back off.",
                 "url": "https://github.com/o/r/pull/1945#pullrequestreview-1",
             }
         ]
@@ -174,7 +174,7 @@ def test_only_a_merged_pr_can_be_acknowledged(rig):
                 review=ReviewState.NONE,
                 url="https://github.com/o/r/pull/1945",
             ),
-            merged_facts(1945, (COPILOT_REVIEW,)),
+            merged_facts(1945, (HUMAN_REVIEW,)),
         )
 
     app = create_app(fetch=open_pr)

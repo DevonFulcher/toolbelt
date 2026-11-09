@@ -90,17 +90,19 @@ class ReviewSubmission:
     submitted_at: datetime
     author: str
     body: str
+    #: The review's link on GitHub.
+    url: str = ""
 
 
-type CommentKind = Literal["review", "thread", "conversation"]
+type CommentKind = Literal["review", "thread"]
 
 
 @dataclass(frozen=True)
 class ReviewComment:
-    """Something someone other than the PR's author wrote on it that a person
-    should read before the PR is forgotten: a review body, an unresolved inline
-    review thread (its first comment) or a conversation comment. ``kind`` is
-    ``review``, ``thread`` or ``conversation``."""
+    """A comment the UI treats as one, for the user to read before a merged PR
+    is forgotten (see ``pr_fetch.review_comments``): a person's review body or
+    the first comment of an unresolved review thread a person started. ``kind``
+    is ``review`` or ``thread``."""
 
     kind: CommentKind
     author: str

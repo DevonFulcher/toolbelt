@@ -5765,8 +5765,7 @@
         "kind": {
           "enum": [
             "review",
-            "thread",
-            "conversation"
+            "thread"
           ],
           "type": "string"
         },

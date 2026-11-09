@@ -427,7 +427,7 @@ class ConflictInfo(Model):
 class ReviewCommentInfo(Model):
     """One comment a merged PR received, shown on its Acknowledge card."""
 
-    kind: Literal["review", "thread", "conversation"]
+    kind: Literal["review", "thread"]
     author: str
     #: The start of the comment (cut at ``snapshot.COMMENT_PREVIEW_CHARS``).
     body: str

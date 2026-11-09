@@ -39,7 +39,6 @@ def pr_node(**overrides) -> dict:
         "reviewRequests": {"nodes": []},
         "reviewThreads": {"nodes": []},
         "reviews": {"nodes": []},
-        "comments": {"nodes": []},
         "head": {
             "nodes": [
                 {
@@ -372,21 +371,18 @@ def test_review_submission_bodies_are_displayed_without_counting_as_open_threads
         reviews={
             "nodes": [
                 {
-                    "state": "COMMENTED",
                     "url": "https://github.com/o/r/pull/42#r",
                     "submittedAt": "2026-10-02T08:00:00Z",
                     "body": "Looks good to me.",
                     "author": {"__typename": "User", "login": "sam"},
                 },
                 {
-                    "state": "COMMENTED",
                     "url": "https://github.com/o/r/pull/42#r",
                     "submittedAt": "2026-10-02T09:00:00Z",
                     "body": "Automated review.",
                     "author": {"__typename": "Bot", "login": "reviewer[bot]"},
                 },
                 {
-                    "state": "COMMENTED",
                     "url": "https://github.com/o/r/pull/42#r",
                     "submittedAt": "2026-10-02T10:00:00Z",
                     "body": "   ",
@@ -414,7 +410,7 @@ def test_the_query_fetches_review_submission_body_and_author_type():
     from toolbelt.ui.pr_fetch import PR_QUERY
 
     assert (
-        "reviews(last: 100) { nodes { submittedAt state body url author { __typename login } } }"
+        "reviews(last: 100) { nodes { submittedAt body url author { __typename login } } }"
         in PR_QUERY
     )
 
@@ -736,21 +732,12 @@ def test_a_pr_closed_and_later_merged_keeps_its_real_close():
     assert [item.kind for item in facts.items] == [pa.CLOSED, pa.REOPENED, pa.MERGED]
 
 
-def _review(state: str, login: str, body: str, *, typename: str = "User") -> dict:
+def _review(login: str, body: str, *, typename: str = "User") -> dict:
     return {
         "submittedAt": "2026-10-02T08:00:00Z",
-        "state": state,
         "body": body,
         "url": f"https://github.com/o/r/pull/42#review-{login}",
         "author": {"__typename": typename, "login": login},
-    }
-
-
-def _conversation(login: str, body: str, *, typename: str = "User") -> dict:
-    return {
-        "author": {"__typename": typename, "login": login},
-        "body": body,
-        "url": f"https://github.com/o/r/pull/42#issuecomment-{login}",
     }
 
 
@@ -760,39 +747,19 @@ def _comments_of(**overrides) -> list[tuple[str, str, str]]:
     return [(c.kind, c.author, c.body) for c in facts.review_comments]
 
 
-def test_a_body_only_copilot_review_is_a_review_comment_of_a_merged_pr():
-    # The shape of a Copilot review that was missed: state COMMENTED, a body,
-    # no inline threads.
-    found = _comments_of(
-        reviews={
-            "nodes": [
-                _review(
-                    "COMMENTED",
-                    "copilot-pull-request-reviewer",
-                    "Needs a closer look: the retry never gives up.",
-                    typename="Bot",
-                ),
-                _review("APPROVED", "sam", ""),
-            ]
-        }
-    )
-
-    assert found == [
-        (
-            "review",
-            "copilot-pull-request-reviewer",
-            "Needs a closer look: the retry never gives up.",
-        )
-    ]
-
-
-def test_an_approval_never_counts_whatever_its_text_and_an_empty_review_does_not_either():
+def test_a_body_only_copilot_review_is_not_a_comment_to_acknowledge():
+    # The shape of the Copilot review on #1945: a body, no inline threads. The
+    # UI does not treat a bot's review body as a comment.
     assert (
         _comments_of(
             reviews={
                 "nodes": [
-                    _review("APPROVED", "sam", "LGTM, ship it \N{ROCKET}"),
-                    _review("COMMENTED", "lee", "   "),
+                    _review(
+                        "copilot-pull-request-reviewer",
+                        "Needs a closer look: the retry never gives up.",
+                        typename="Bot",
+                    ),
+                    _review("wiggzz", "**Codex (AI) review:** a nit"),
                 ]
             }
         )
@@ -800,31 +767,48 @@ def test_an_approval_never_counts_whatever_its_text_and_an_empty_review_does_not
     )
 
 
-def test_unresolved_inline_threads_and_conversation_comments_count_but_not_the_authors_or_status_bots():
+def test_a_humans_review_body_is_a_comment_to_acknowledge_even_on_an_approval():
+    # Approval or not: the card already shows a person's review body.
+    assert _comments_of(
+        reviews={"nodes": [_review("sam", "Looks good, one nit.")]}
+    ) == [("review", "sam", "Looks good, one nit.")]
+
+
+def test_an_unresolved_human_thread_is_a_comment_but_resolved_and_bot_threads_are_not():
     found = _comments_of(
         reviewThreads={
             "nodes": [
                 _thread(
                     resolved=False, typename="User", login="lee", body="Why a set?"
                 ),
-                _thread(resolved=True, typename="User", login="lee", body="done thing"),
-                _thread(resolved=False, typename="User", login="devon", body="a note"),
+                _thread(resolved=True, typename="User", login="lee", body="done"),
+                _thread(
+                    resolved=False,
+                    typename="Bot",
+                    login="copilot-pull-request-reviewer",
+                    body="Consider X",
+                ),
+                _thread(
+                    resolved=False,
+                    typename="User",
+                    login="wiggzz",
+                    body="**Codex (AI) review:** nit",
+                ),
+                {"isResolved": False, "comments": {"nodes": []}},
             ]
-        },
-        comments={
-            "nodes": [
-                _conversation("sam", "Can you also update the docs?"),
-                _conversation("github-actions", "Coverage: 91%", typename="Bot"),
-                _conversation("devon", "Thanks all"),
-            ]
-        },
-        reviews={"nodes": [_review("CHANGES_REQUESTED", "devon", "my own review")]},
+        }
     )
 
-    assert found == [
-        ("thread", "lee", "Why a set?"),
-        ("conversation", "sam", "Can you also update the docs?"),
-    ]
+    assert found == [("thread", "lee", "Why a set?")]
+
+
+def test_conversation_comments_are_never_comments_to_acknowledge():
+    # github-actions' coverage report, fa-assistant's environment notice, a
+    # person's remark: the PR query does not even ask for them.
+    from toolbelt.ui.pr_fetch import PR_QUERY
+
+    assert "comments(last" not in PR_QUERY
+    assert _comments_of(comments={"nodes": [{"body": "Coverage: 91%"}]}) == []
 
 
 def test_review_comments_survive_the_cached_lookup_round_trip():
@@ -834,7 +818,7 @@ def test_review_comments_survive_the_cached_lookup_round_trip():
         response(
             pr_node(
                 state="MERGED",
-                reviews={"nodes": [_review("COMMENTED", "sam", "Look again.")]},
+                reviews={"nodes": [_review("sam", "Look again.")]},
             )
         )
     ).facts

@@ -27,7 +27,6 @@ def comments_payload(*, reviews: list[dict] | None = None) -> dict:
                     "author": {"login": "devon"},
                     "reviewThreads": {"nodes": []},
                     "reviews": {"nodes": reviews or []},
-                    "comments": {"nodes": []},
                 }
             }
         }
@@ -36,10 +35,16 @@ def comments_payload(*, reviews: list[dict] | None = None) -> dict:
 
 COPILOT_REVIEW = {
     "submittedAt": "2026-10-05T16:08:00Z",
-    "state": "COMMENTED",
     "body": "Needs a closer look: the retry never gives up. " * 20,
     "url": "https://github.com/o/r/pull/1945#pullrequestreview-1",
     "author": {"__typename": "Bot", "login": "copilot-pull-request-reviewer"},
+}
+
+HUMAN_REVIEW = {
+    "submittedAt": "2026-10-05T16:20:00Z",
+    "body": "The retry should back off, " * 40,
+    "url": "https://github.com/o/r/pull/1945#pullrequestreview-2",
+    "author": {"__typename": "User", "login": "sam"},
 }
 
 
@@ -109,9 +114,9 @@ def cards(client: TestClient) -> list[dict]:
     return client.get("/api/snapshot").json()["landed_prs"]
 
 
-def test_a_removed_branchs_merged_pr_with_a_review_body_only_shows_as_a_card(rig):
+def test_a_removed_branchs_merged_pr_with_a_humans_review_body_shows_as_a_card(rig):
     repo_id, github = rig
-    github.by_number[1945] = comments_payload(reviews=[COPILOT_REVIEW])
+    github.by_number[1945] = comments_payload(reviews=[COPILOT_REVIEW, HUMAN_REVIEW])
     land(repo_id, "devon/retry", 1945)
     app = make_app(github)
     refresh(app)
@@ -129,15 +134,15 @@ def test_a_removed_branchs_merged_pr_with_a_review_body_only_shows_as_a_card(rig
     assert (card["pr_number"], card["title"]) == (1945, "Retry the upload")
     assert card["pr_url"] == "https://github.com/o/r/pull/1945"
     [comment] = card["comments"]
-    assert comment["author"] == "copilot-pull-request-reviewer"
+    assert comment["author"] == "sam"
     assert comment["kind"] == "review"
-    assert comment["body"].startswith("Needs a closer look")
+    assert comment["body"].startswith("The retry should back off")
     assert len(comment["body"]) == 600
 
 
 def test_acknowledging_it_removes_the_card_and_it_stays_gone_after_a_restart(rig):
     repo_id, github = rig
-    github.by_number[1945] = comments_payload(reviews=[COPILOT_REVIEW])
+    github.by_number[1945] = comments_payload(reviews=[HUMAN_REVIEW])
     land(repo_id, "devon/retry", 1945)
     app = make_app(github)
     refresh(app)
@@ -181,7 +186,7 @@ def test_a_merged_pr_without_comments_never_shows_and_is_not_looked_up_again(rig
 
 def test_only_landed_removals_with_a_pr_number_within_thirty_days_are_considered(rig):
     repo_id, github = rig
-    github.by_number[1] = comments_payload(reviews=[COPILOT_REVIEW])
+    github.by_number[1] = comments_payload(reviews=[HUMAN_REVIEW])
     land(repo_id, "devon/old", 1)
     land(repo_id, "devon/abandoned", 2, landed=False)
     land(repo_id, "devon/unnumbered", None)
@@ -201,7 +206,7 @@ def test_only_landed_removals_with_a_pr_number_within_thirty_days_are_considered
 
 def test_a_failed_lookup_is_retried_and_does_not_acknowledge(rig):
     repo_id, github = rig
-    github.by_number[1945] = comments_payload(reviews=[COPILOT_REVIEW])
+    github.by_number[1945] = comments_payload(reviews=[HUMAN_REVIEW])
     land(repo_id, "devon/retry", 1945)
     app = make_app(github)
     github.fail = True
@@ -224,3 +229,21 @@ def test_only_a_shown_landed_pr_can_be_acknowledged_this_way(rig):
         )
 
     assert response.status_code == 404
+
+
+def test_the_1945_shape_a_body_only_copilot_review_gives_no_card_and_is_acknowledged(
+    rig,
+):
+    repo_id, github = rig
+    github.by_number[1945] = comments_payload(reviews=[COPILOT_REVIEW])
+    land(repo_id, "devon/retry", 1945)
+    app = make_app(github)
+
+    refresh(app)
+    refresh(app)
+
+    with TestClient(app) as client:
+        assert cards(client) == []
+    assert github.calls == [("o/r", 1945)]
+    store = StackStore(default_db_path())
+    assert store.acknowledged_prs(repo_id) == frozenset({1945})

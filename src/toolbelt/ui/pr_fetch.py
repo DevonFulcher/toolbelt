@@ -31,12 +31,12 @@ from toolbelt.git.stack.status import (
     is_ai_comment,
     is_bot,
     parse_status,
+    thread_started_by_bot,
 )
 from toolbelt.ui import pr_activity
 from toolbelt.ui.conflict_commit import ConflictCommit
 from toolbelt.ui.github_requests import GithubRequests
 from toolbelt.ui.pr_activity import (
-    CommentKind,
     PrFacts,
     ReviewComment,
     ReviewSubmission,
@@ -68,8 +68,7 @@ query($owner: String!, $repo: String!, $branch: String!) {{
         author {{ login }}
         reviewRequests(first: 20) {{ nodes {{ {_REVIEWER} }} }}
         reviewThreads(first: 100) {{ nodes {{ isResolved comments(first: 1) {{ nodes {{ author {{ __typename login }} body url }} }} }} }}
-        reviews(last: 100) {{ nodes {{ submittedAt state body url author {{ __typename login }} }} }}
-        comments(last: 50) {{ nodes {{ body url author {{ __typename login }} }} }}
+        reviews(last: 100) {{ nodes {{ submittedAt body url author {{ __typename login }} }} }}
         head: commits(last: 1) {{ nodes {{ commit {{
           statusCheckRollup {{ state contexts(first: 100) {{ nodes {{
             __typename
@@ -122,8 +121,7 @@ query($owner: String!, $repo: String!, $number: Int!) {
     pullRequest(number: $number) {
       title url author { login }
       reviewThreads(first: 100) { nodes { isResolved comments(first: 1) { nodes { author { __typename login } body url } } } }
-      reviews(last: 100) { nodes { submittedAt state body url author { __typename login } } }
-      comments(last: 50) { nodes { body url author { __typename login } } }
+      reviews(last: 100) { nodes { submittedAt body url author { __typename login } } }
     }
   }
 }
@@ -199,7 +197,7 @@ def parse_comments(payload: dict) -> PrComments:
     return PrComments(
         title=node["title"],
         url=node["url"],
-        comments=review_comments(node, _login(node["author"])),
+        comments=review_comments(node, _review_submissions(node["reviews"]["nodes"])),
     )
 
 
@@ -424,54 +422,41 @@ def _review_submissions(nodes: list[dict]) -> tuple[ReviewSubmission, ...]:
                 submitted_at=submitted_at,
                 author=author,
                 body=body,
+                url=node["url"],
             )
         )
     return tuple(sorted(submissions, key=lambda submission: submission.submitted_at))
 
 
-def review_comments(node: dict, author: str) -> tuple[ReviewComment, ...]:
-    """What others wrote on a PR that its author should read before it is
-    forgotten: review bodies (a bot's too, a Copilot review
-    is body-only; an approval does not count, whatever its text), the first
-    comment of each unresolved inline thread, and conversation comments (not a
-    status bot's, such as the coverage report). Nothing the PR's ``author``
-    wrote counts."""
-    found: list[ReviewComment] = []
-    for review in node["reviews"]["nodes"]:
-        if (
-            review["submittedAt"] is not None
-            and review["state"] != "APPROVED"
-            and review["body"].strip()
-        ):
-            found.append(_review_comment("review", review))
+def review_comments(
+    node: dict, submissions: tuple[ReviewSubmission, ...]
+) -> tuple[ReviewComment, ...]:
+    """What the UI treats as comments on a PR, for the user to read before a
+    merged PR is forgotten: the human review bodies it already shows
+    (``submissions``, see ``_review_submissions``) and the first comment of each
+    unresolved review thread a person started (the threads ``open_comments``
+    counts, less the bots'). Conversation comments are not among them."""
+    found = [
+        ReviewComment(kind="review", author=s.author, body=s.body, url=s.url)
+        for s in submissions
+    ]
     for thread in node["reviewThreads"]["nodes"]:
-        comments = thread["comments"]["nodes"]
-        if not thread["isResolved"] and comments:
-            found.append(_review_comment("thread", comments[0]))
-    for comment in node["comments"]["nodes"]:
-        if not _is_status_bot(comment["author"]):
-            found.append(_review_comment("conversation", comment))
-    return tuple(
-        comment
-        for comment in found
-        if comment.author != author and comment.body.strip()
-    )
-
-
-def _review_comment(kind: CommentKind, node: dict) -> ReviewComment:
-    return ReviewComment(
-        kind=kind, author=_login(node["author"]), body=node["body"], url=node["url"]
-    )
-
-
-def _is_status_bot(author: dict | None) -> bool:
-    """A bot account that is not a reviewer: CI and status reports (the
-    github-actions coverage comment). Copilot is a reviewer."""
-    return (
-        author is not None
-        and author["__typename"] == "Bot"
-        and "copilot" not in author["login"].casefold()
-    )
+        if (
+            thread["isResolved"]
+            or not thread["comments"]["nodes"]
+            or thread_started_by_bot(thread)
+        ):
+            continue
+        first = thread["comments"]["nodes"][0]
+        found.append(
+            ReviewComment(
+                kind="thread",
+                author=_login(first["author"]),
+                body=first["body"],
+                url=first["url"],
+            )
+        )
+    return tuple(found)
 
 
 def parse_snapshot(payload: dict) -> PrSnapshot:
@@ -498,6 +483,7 @@ def parse_snapshot(payload: dict) -> PrSnapshot:
         bot_comments=count_unresolved_bot_nodes(node["reviewThreads"]["nodes"]),
     )
     items = timeline_items(node["timelineItems"]["nodes"])
+    submissions = _review_submissions(node["reviews"]["nodes"])
     facts = PrFacts(
         number=node["number"],
         title=node["title"],
@@ -512,8 +498,8 @@ def parse_snapshot(payload: dict) -> PrSnapshot:
         requested_reviewers=reviewers,
         additions=node["additions"],
         deletions=node["deletions"],
-        review_submissions=_review_submissions(node["reviews"]["nodes"]),
-        review_comments=review_comments(node, _login(node["author"])),
+        review_submissions=submissions,
+        review_comments=review_comments(node, submissions),
         commit_rollups=tuple(
             (entry["commit"]["oid"], _rollup_state(entry["commit"]))
             for entry in node["recent"]["nodes"]

@@ -241,11 +241,11 @@ def count_unresolved_bot_nodes(nodes: list[dict]) -> int:
     """Count unresolved threads a bot started (its comment is the thread's
     first) among a `reviewThreads` connection's nodes."""
     return sum(
-        1 for node in nodes if not node["isResolved"] and _thread_started_by_bot(node)
+        1 for node in nodes if not node["isResolved"] and thread_started_by_bot(node)
     )
 
 
-def _thread_started_by_bot(node: dict) -> bool:
+def thread_started_by_bot(node: dict) -> bool:
     """A bot account started the thread, or its first comment says an AI wrote
     it (see ``is_ai_comment``)."""
     comments = (node.get("comments") or {}).get("nodes") or []

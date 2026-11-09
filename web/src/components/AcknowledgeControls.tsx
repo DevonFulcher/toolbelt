@@ -8,7 +8,6 @@ import type { ReviewCommentInfo } from "../api/generated";
 const KIND_LABEL: Record<ReviewCommentInfo["kind"], string> = {
   review: "review",
   thread: "inline comment",
-  conversation: "comment",
 };
 
 /** ``request`` stores the acknowledgement; the server then updates the page. */

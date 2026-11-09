@@ -934,7 +934,7 @@ export interface NextChip {
 export interface ReviewCommentInfo {
   author: string;
   body: string;
-  kind: "review" | "thread" | "conversation";
+  kind: "review" | "thread";
   url: string;
 }
 export interface TaskEvent {
