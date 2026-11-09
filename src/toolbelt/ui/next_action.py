@@ -10,6 +10,7 @@ condition                 label                      who
 ========================  =========================  ======
 no PR                     Open PR                    you
 no PR, validated          Personal review            you
+merged, review comments   Acknowledge                you
 merged / closed           Done                       none
 merge conflicts           Resolve conflicts          you
 changes requested         Address review             you
@@ -38,6 +39,12 @@ running so a PR is posted while its checks run.
 "Personal review" replaces "Open PR" for a branch a validate run has reviewed
 (``validated=True``, see ``personal_review``): you read its diff and approve it,
 which opens the PR. It needs no PR, so it never applies to a branch that has one.
+
+"Acknowledge" replaces "Done" for a merged PR that received review comments
+(see ``pr_fetch.review_comments``) the user has not acknowledged yet: the card
+stays until the user reads them and acknowledges, whatever else holds the branch
+(a claim does not replace it, as it does not replace Done). Merging itself is
+never held up by comments.
 
 A branch with a question an agent asked the user (``deciding=True``) reads
 **Deciding**, whatever else holds it: the agent cannot go on until the user
@@ -89,6 +96,7 @@ type Who = Literal["you", "agent", "auto", "others", "ci", "none"]
 OPEN_PR = "open_pr"
 PERSONAL_REVIEW = "personal_review"
 DONE = "done"
+ACKNOWLEDGE = "acknowledge"
 RESOLVE_CONFLICTS = "resolve_conflicts"
 ADDRESS_REVIEW = "address_review"
 RESOLVE_COMMENTS = "resolve_comments"
@@ -108,6 +116,7 @@ KINDS = (
     OPEN_PR,
     PERSONAL_REVIEW,
     DONE,
+    ACKNOWLEDGE,
     RESOLVE_CONFLICTS,
     ADDRESS_REVIEW,
     RESOLVE_COMMENTS,
@@ -131,6 +140,7 @@ type NextKind = Literal[
     "open_pr",
     "personal_review",
     "done",
+    "acknowledge",
     "resolve_conflicts",
     "address_review",
     "resolve_comments",
@@ -189,6 +199,7 @@ def next_action(
     slack: SlackContext | None = None,
     deciding: bool = False,
     validated: bool = False,
+    unacknowledged_comments: bool = False,
 ) -> NextAction:
     """``parent`` is ``None`` for a branch on the base branch (or whose
     parent's status is not known yet). ``claimed``: a live working holder has
@@ -197,9 +208,13 @@ def next_action(
     configured, so it plays no part). ``deciding``: an agent asked the user a
     question about the task that is not answered yet: nothing can go on until
     it is, so it comes before whoever holds the task. ``validated``: a validate run
-    reviewed the branch and you have not requested changes since."""
-    underlying = _underlying_action(status, parent, slack, validated)
-    if underlying.kind == DONE:
+    reviewed the branch and you have not requested changes since.
+    ``unacknowledged_comments``: the PR is merged and has review comments the
+    user has not acknowledged."""
+    underlying = _underlying_action(
+        status, parent, slack, validated, unacknowledged_comments
+    )
+    if underlying.kind in (DONE, ACKNOWLEDGE):
         return underlying
     if deciding:
         return NextAction("Deciding", WHO_YOU, DECIDING, would_be=underlying)
@@ -215,11 +230,14 @@ def _underlying_action(
     parent: ParentContext | None,
     slack: SlackContext | None,
     validated: bool = False,
+    unacknowledged_comments: bool = False,
 ) -> NextAction:
     if status.pr is PrState.NONE:
         if validated:
             return NextAction("Personal review", WHO_YOU, PERSONAL_REVIEW)
         return NextAction("Open PR", WHO_YOU, OPEN_PR)
+    if status.pr is PrState.MERGED and unacknowledged_comments:
+        return NextAction("Acknowledge", WHO_YOU, ACKNOWLEDGE)
     if status.pr in (PrState.MERGED, PrState.CLOSED):
         return NextAction("Done", WHO_NONE, DONE)
     if status.has_conflicts:

@@ -72,10 +72,11 @@ def test_next_action_kinds_are_exactly_the_catalogued_ones():
                 (False, False, True, False),
                 (False, False, False, True),
             ):
-                for slack in (
-                    None,
-                    na.SlackContext(posted=False),
-                    na.SlackContext(posted=True, bump_due=True),
+                for slack, unacknowledged in (
+                    (None, False),
+                    (na.SlackContext(posted=False), False),
+                    (na.SlackContext(posted=True, bump_due=True), False),
+                    (None, True),
                 ):
                     produced.add(
                         na.next_action(
@@ -86,6 +87,7 @@ def test_next_action_kinds_are_exactly_the_catalogued_ones():
                             slack,
                             deciding,
                             validated,
+                            unacknowledged,
                         ).kind
                     )
 

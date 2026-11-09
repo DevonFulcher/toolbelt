@@ -476,3 +476,27 @@ def test_a_question_comes_before_whoever_holds_the_task():
 @pytest.mark.parametrize("pr", [PrState.MERGED, PrState.CLOSED])
 def test_a_question_on_a_finished_pr_is_ignored(pr):
     assert next_action(status(pr=pr), None, deciding=True).kind == "done"
+
+
+def test_a_merged_pr_with_unacknowledged_comments_reads_acknowledge_not_done():
+    merged = status(pr=PrState.MERGED)
+
+    waiting = next_action(merged, None, unacknowledged_comments=True)
+    quiet = next_action(merged, None)
+
+    assert (waiting.label, waiting.who, waiting.kind) == (
+        "Acknowledge",
+        "you",
+        "acknowledge",
+    )
+    assert quiet.kind == "done"
+
+
+def test_acknowledge_is_not_replaced_by_a_claim_and_closed_prs_never_have_it():
+    merged = status(pr=PrState.MERGED)
+
+    claimed = next_action(merged, None, claimed=True, unacknowledged_comments=True)
+    closed = next_action(status(pr=PrState.CLOSED), None, unacknowledged_comments=True)
+
+    assert claimed.kind == "acknowledge" and claimed.would_be is None
+    assert closed.kind == "done"

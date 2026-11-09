@@ -148,9 +148,11 @@ def pr(n, title, **o):
             ]
         },
         "reviewThreads": {
-            "nodes": [{"isResolved": False}] * threads + [{"isResolved": True}]
+            "nodes": [{"isResolved": False, "comments": {"nodes": []}}] * threads
+            + [{"isResolved": True, "comments": {"nodes": []}}]
         },
         "reviews": {"nodes": []},
+        "comments": {"nodes": []},
         "head": {
             "nodes": [
                 {

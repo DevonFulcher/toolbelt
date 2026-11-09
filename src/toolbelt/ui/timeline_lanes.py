@@ -104,7 +104,9 @@ LANE_SOURCES: tuple[LaneSource, ...] = (
             Coverage(
                 "NextKind",
                 {
-                    kind: (() if kind == na.DONE else (next_phase(kind),))
+                    kind: (
+                        () if kind in (na.DONE, na.ACKNOWLEDGE) else (next_phase(kind),)
+                    )
                     for kind in na.KINDS
                 },
             ),

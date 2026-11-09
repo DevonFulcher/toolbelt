@@ -403,6 +403,10 @@ main:has(.focus-bar) { --focus-h: 2.6rem; }
                cursor: pointer; text-decoration: underline; }
 .merge-button:hover:not(:disabled) { filter: brightness(1.1); }
 .merge-button:disabled { opacity: .6; cursor: progress; }
+.acknowledge-comments { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 6px; max-height: 14rem;
+                        overflow: auto; font-size: 11px; }
+.acknowledge-comment-body { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 6rem; overflow: auto;
+                            color: var(--muted); }
 .merge-error { margin: 4px 0 0; max-height: 10rem; overflow: auto; white-space: pre-wrap; font-size: 11px;
                color: var(--red); }
 

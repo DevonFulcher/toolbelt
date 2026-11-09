@@ -234,6 +234,10 @@ _NEXT_TONES = {
         ),
     ),
     na.DONE: (GRAY, "Merged or closed."),
+    na.ACKNOWLEDGE: (
+        AMBER,
+        "Merged, but it received review comments: read them, then acknowledge.",
+    ),
     na.RESOLVE_CONFLICTS: (RED, "The PR has merge conflicts."),
     na.ADDRESS_REVIEW: (RED, "A reviewer requested changes."),
     na.RESOLVE_COMMENTS: (AMBER, "Unresolved review threads remain."),
@@ -282,6 +286,7 @@ _NEXT_LABELS = {
     na.OPEN_PR: "Open PR",
     na.PERSONAL_REVIEW: "Personal review",
     na.DONE: "Done",
+    na.ACKNOWLEDGE: "Acknowledge",
     na.RESOLVE_CONFLICTS: "Resolve conflicts",
     na.ADDRESS_REVIEW: "Address review",
     na.RESOLVE_COMMENTS: "Resolve comments",

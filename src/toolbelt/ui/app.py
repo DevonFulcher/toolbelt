@@ -284,6 +284,22 @@ def _all_parents(repo_id: int) -> Parents:
         store.close()
 
 
+def _acknowledged_prs(repo_id: int) -> frozenset[int]:
+    store = StackStore(default_db_path())
+    try:
+        return store.acknowledged_prs(repo_id)
+    finally:
+        store.close()
+
+
+def _acknowledge_pr(repo_id: int, pr_number: int) -> None:
+    store = StackStore(default_db_path())
+    try:
+        store.acknowledge_pr(repo_id, pr_number)
+    finally:
+        store.close()
+
+
 def _repo_path(repo_id: int) -> Path | None:
     store = StackStore(default_db_path())
     try:
@@ -700,6 +716,7 @@ def create_app(
             slack.context(repo_id, name, fetched, now),
             claims.deciding(repo_id, name),
             claims.validated(repo_id, name),
+            _acknowledged_prs(repo_id),
         )
 
     def publish_claims(changed: set[BranchKey]) -> None:
@@ -1867,6 +1884,26 @@ def create_app(
             return merge_queue.queue(repo_id, name)
         except MergeQueueRefused as refused:
             raise HTTPException(status_code=409, detail=str(refused)) from refused
+
+    @app.post("/api/acknowledge", status_code=204)
+    async def acknowledge(body: api.AcknowledgeRequest) -> None:
+        """The user has read the comments a merged PR received: its card goes
+        away like any other merged one. Quick, so it answers once the
+        acknowledgement is stored; the card's ``status`` event follows."""
+        repo_id, name = branch_ref(body.id)
+        parents = await asyncio.to_thread(_all_parents, repo_id)
+        if name not in parents:
+            raise HTTPException(status_code=404, detail="no such branch")
+        fetched = refresher.get(repo_id, name)
+        if (
+            fetched is None
+            or fetched.status is None
+            or fetched.facts is None
+            or fetched.status.pr is not PrState.MERGED
+        ):
+            raise HTTPException(status_code=409, detail="Its PR is not merged.")
+        await asyncio.to_thread(_acknowledge_pr, repo_id, fetched.facts.number)
+        publish_branches(repo_id, parents, [name])
 
     @app.post("/api/merge/unqueue", status_code=204)
     async def unqueue_merge(body: api.MergeQueueRequest) -> None:

@@ -26,6 +26,7 @@ import { AgentSlots, SpendSlots } from "./CardAgentSlots";
 import { EstimateValue } from "./EstimateValue";
 import { MergeDialog } from "./MergeDialog";
 import { MergeQueueControls } from "./MergeQueueControls";
+import { AcknowledgeButton, AcknowledgeComments } from "./AcknowledgeControls";
 import { DecisionsDialog } from "./DecisionsDialog";
 import { RefreshButton } from "./RefreshButton";
 import { RemoveBranchControls } from "./RemoveBranchControls";
@@ -586,6 +587,8 @@ function NextSlot({
         </Pill>
       ) : status.next.kind === "merge" ? (
         <MergeButton id={id} status={status} />
+      ) : status.next.kind === "acknowledge" ? (
+        <AcknowledgeButton id={id} />
       ) : status.next.kind === "personal_review" ? (
         opening ? (
           <Pill tone={WHO_TONE.ci} title="Pushing the branch and opening its PR">
@@ -610,6 +613,7 @@ function NextSlot({
       <span className="card-next-who muted">
         {wouldBe ? `would be: ${wouldBe.label}` : WHO_TEXT[status.next.who]}
       </span>
+      {status.next.kind === "acknowledge" && <AcknowledgeComments comments={status.unacknowledged_comments} />}
       {queue && <MergeQueueControls id={id} queue={queue} />}
       {siblings && <SiblingConflictSummary siblings={siblings} />}
       <ClaimChips claim={claim} />

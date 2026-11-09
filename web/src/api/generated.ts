@@ -131,6 +131,7 @@ export type NextKind =
   | "open_pr"
   | "personal_review"
   | "done"
+  | "acknowledge"
   | "resolve_conflicts"
   | "address_review"
   | "resolve_comments"
@@ -830,6 +831,7 @@ export interface LoadedStatus {
   pr_number: number | null;
   pr_url: string | null;
   review: ReviewState;
+  unacknowledged_comments: ReviewCommentInfo[];
 }
 /**
  * The commit a branch's conflict comes from.
@@ -924,6 +926,15 @@ export interface NextChip {
   value: NextKind;
   who: Who;
   would_be?: string | null;
+}
+/**
+ * One comment a merged PR received, shown on its Acknowledge card.
+ */
+export interface ReviewCommentInfo {
+  author: string;
+  body: string;
+  kind: "review" | "thread" | "conversation";
+  url: string;
 }
 export interface TaskEvent {
   branch_id: string;

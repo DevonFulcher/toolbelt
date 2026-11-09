@@ -772,6 +772,20 @@ _MIGRATIONS: list[tuple[str, ...]] = [
         "ALTER TABLE merge_queue ADD COLUMN parent_branch TEXT",
         "ALTER TABLE merge_queue ADD COLUMN parent_pr INTEGER",
     ),
+    (
+        # Merged PRs whose review comments the user has acknowledged (see
+        # ``ui.next_action``): once acknowledged, a merged PR's card goes away
+        # like any other merged one. Keyed by PR, not branch: a branch name can
+        # be reused by a later PR.
+        """
+        CREATE TABLE acknowledged_prs (
+            repo_id INTEGER NOT NULL,
+            pr_number INTEGER NOT NULL,
+            acknowledged_at TEXT NOT NULL,
+            PRIMARY KEY (repo_id, pr_number)
+        )
+        """,
+    ),
 ]
 
 
@@ -2416,6 +2430,23 @@ class StackStore:
             conn.execute(
                 "DELETE FROM merge_queue WHERE repo_id = ? AND branch = ?",
                 (repo_id, branch),
+            )
+
+    # ---- acknowledged merged PRs -------------------------------------------
+
+    def acknowledged_prs(self, repo_id: int) -> frozenset[int]:
+        """The numbers of the repo's merged PRs whose comments were acknowledged."""
+        rows = self._conn.execute(
+            "SELECT pr_number FROM acknowledged_prs WHERE repo_id = ?", (repo_id,)
+        )
+        return frozenset(r["pr_number"] for r in rows)
+
+    def acknowledge_pr(self, repo_id: int, pr_number: int) -> None:
+        with self._write() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO acknowledged_prs "
+                "(repo_id, pr_number, acknowledged_at) VALUES (?, ?, ?)",
+                (repo_id, pr_number, _now()),
             )
 
     # ---- decisions ---------------------------------------------------------

@@ -39,6 +39,7 @@ def pr_node(**overrides) -> dict:
         "reviewRequests": {"nodes": []},
         "reviewThreads": {"nodes": []},
         "reviews": {"nodes": []},
+        "comments": {"nodes": []},
         "head": {
             "nodes": [
                 {
@@ -102,7 +103,12 @@ def test_no_pr_is_one_call_and_an_empty_snapshot():
 def test_one_call_returns_the_status_the_table_shows():
     node = pr_node(
         reviewDecision="APPROVED",
-        reviewThreads={"nodes": [{"isResolved": False}, {"isResolved": True}]},
+        reviewThreads={
+            "nodes": [
+                {"isResolved": False, "comments": {"nodes": []}},
+                {"isResolved": True, "comments": {"nodes": []}},
+            ]
+        },
         mergeable="CONFLICTING",
     )
     graphql = Graphql(response(node))
@@ -124,7 +130,11 @@ def _thread(*, resolved: bool, typename: str, login: str, body: str = "") -> dic
         "isResolved": resolved,
         "comments": {
             "nodes": [
-                {"author": {"__typename": typename, "login": login}, "body": body}
+                {
+                    "author": {"__typename": typename, "login": login},
+                    "body": body,
+                    "url": f"https://github.com/o/r/pull/42#discussion_{login}",
+                }
             ]
         },
     }
@@ -349,7 +359,7 @@ def test_the_query_asks_for_the_first_comments_body_to_tell_who_wrote_it():
 
     assert re.search(
         r"reviewThreads\(first: 100\) \{ nodes \{ isResolved comments\(first: 1\) "
-        r"\{ nodes \{ author \{ __typename login \} body \}",
+        r"\{ nodes \{ author \{ __typename login \} body url \}",
         PR_QUERY,
     )
 
@@ -362,16 +372,22 @@ def test_review_submission_bodies_are_displayed_without_counting_as_open_threads
         reviews={
             "nodes": [
                 {
+                    "state": "COMMENTED",
+                    "url": "https://github.com/o/r/pull/42#r",
                     "submittedAt": "2026-10-02T08:00:00Z",
                     "body": "Looks good to me.",
                     "author": {"__typename": "User", "login": "sam"},
                 },
                 {
+                    "state": "COMMENTED",
+                    "url": "https://github.com/o/r/pull/42#r",
                     "submittedAt": "2026-10-02T09:00:00Z",
                     "body": "Automated review.",
                     "author": {"__typename": "Bot", "login": "reviewer[bot]"},
                 },
                 {
+                    "state": "COMMENTED",
+                    "url": "https://github.com/o/r/pull/42#r",
                     "submittedAt": "2026-10-02T10:00:00Z",
                     "body": "   ",
                     "author": {"__typename": "User", "login": "lee"},
@@ -398,7 +414,7 @@ def test_the_query_fetches_review_submission_body_and_author_type():
     from toolbelt.ui.pr_fetch import PR_QUERY
 
     assert (
-        "reviews(last: 100) { nodes { submittedAt body author { __typename login } } }"
+        "reviews(last: 100) { nodes { submittedAt state body url author { __typename login } } }"
         in PR_QUERY
     )
 
@@ -718,3 +734,113 @@ def test_a_pr_closed_and_later_merged_keeps_its_real_close():
 
     assert facts is not None
     assert [item.kind for item in facts.items] == [pa.CLOSED, pa.REOPENED, pa.MERGED]
+
+
+def _review(state: str, login: str, body: str, *, typename: str = "User") -> dict:
+    return {
+        "submittedAt": "2026-10-02T08:00:00Z",
+        "state": state,
+        "body": body,
+        "url": f"https://github.com/o/r/pull/42#review-{login}",
+        "author": {"__typename": typename, "login": login},
+    }
+
+
+def _conversation(login: str, body: str, *, typename: str = "User") -> dict:
+    return {
+        "author": {"__typename": typename, "login": login},
+        "body": body,
+        "url": f"https://github.com/o/r/pull/42#issuecomment-{login}",
+    }
+
+
+def _comments_of(**overrides) -> list[tuple[str, str, str]]:
+    facts = parse_snapshot(response(pr_node(state="MERGED", **overrides))).facts
+    assert facts is not None
+    return [(c.kind, c.author, c.body) for c in facts.review_comments]
+
+
+def test_a_body_only_copilot_review_is_a_review_comment_of_a_merged_pr():
+    # The shape of a Copilot review that was missed: state COMMENTED, a body,
+    # no inline threads.
+    found = _comments_of(
+        reviews={
+            "nodes": [
+                _review(
+                    "COMMENTED",
+                    "copilot-pull-request-reviewer",
+                    "Needs a closer look: the retry never gives up.",
+                    typename="Bot",
+                ),
+                _review("APPROVED", "sam", ""),
+            ]
+        }
+    )
+
+    assert found == [
+        (
+            "review",
+            "copilot-pull-request-reviewer",
+            "Needs a closer look: the retry never gives up.",
+        )
+    ]
+
+
+def test_an_approval_never_counts_whatever_its_text_and_an_empty_review_does_not_either():
+    assert (
+        _comments_of(
+            reviews={
+                "nodes": [
+                    _review("APPROVED", "sam", "LGTM, ship it \N{ROCKET}"),
+                    _review("COMMENTED", "lee", "   "),
+                ]
+            }
+        )
+        == []
+    )
+
+
+def test_unresolved_inline_threads_and_conversation_comments_count_but_not_the_authors_or_status_bots():
+    found = _comments_of(
+        reviewThreads={
+            "nodes": [
+                _thread(
+                    resolved=False, typename="User", login="lee", body="Why a set?"
+                ),
+                _thread(resolved=True, typename="User", login="lee", body="done thing"),
+                _thread(resolved=False, typename="User", login="devon", body="a note"),
+            ]
+        },
+        comments={
+            "nodes": [
+                _conversation("sam", "Can you also update the docs?"),
+                _conversation("github-actions", "Coverage: 91%", typename="Bot"),
+                _conversation("devon", "Thanks all"),
+            ]
+        },
+        reviews={"nodes": [_review("CHANGES_REQUESTED", "devon", "my own review")]},
+    )
+
+    assert found == [
+        ("thread", "lee", "Why a set?"),
+        ("conversation", "sam", "Can you also update the docs?"),
+    ]
+
+
+def test_review_comments_survive_the_cached_lookup_round_trip():
+    from toolbelt.ui.pr_activity import facts_from_dict, facts_to_dict
+
+    facts = parse_snapshot(
+        response(
+            pr_node(
+                state="MERGED",
+                reviews={"nodes": [_review("COMMENTED", "sam", "Look again.")]},
+            )
+        )
+    ).facts
+    assert facts is not None
+
+    assert (
+        facts_from_dict(facts_to_dict(facts)).review_comments == facts.review_comments
+    )
+    assert len(facts.review_comments) == 1

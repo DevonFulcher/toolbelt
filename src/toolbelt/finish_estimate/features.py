@@ -219,6 +219,7 @@ STAGE_DIMS: dict[str, tuple[str, ...]] = {
     "open_pr": ("size",),
     "personal_review": ("size",),
     "done": DEFAULT_DIMS,
+    "acknowledge": DEFAULT_DIMS,
     "resolve_conflicts": ("size",),
     "address_review": ("reviewer", "size"),
     "resolve_comments": ("size",),

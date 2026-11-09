@@ -4060,6 +4060,12 @@
         },
         "review": {
           "$ref": "#/$defs/ReviewState"
+        },
+        "unacknowledged_comments": {
+          "items": {
+            "$ref": "#/$defs/ReviewCommentInfo"
+          },
+          "type": "array"
         }
       },
       "required": [
@@ -4075,7 +4081,8 @@
         "next",
         "conflict",
         "detail",
-        "now"
+        "now",
+        "unacknowledged_comments"
       ],
       "title": "LoadedStatus",
       "type": "object"
@@ -4568,6 +4575,7 @@
         "open_pr",
         "personal_review",
         "done",
+        "acknowledge",
         "resolve_conflicts",
         "address_review",
         "resolve_comments",
@@ -5656,6 +5664,37 @@
         "value"
       ],
       "title": "ReviewChip",
+      "type": "object"
+    },
+    "ReviewCommentInfo": {
+      "additionalProperties": false,
+      "description": "One comment a merged PR received, shown on its Acknowledge card.",
+      "properties": {
+        "author": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "review",
+            "thread",
+            "conversation"
+          ],
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "author",
+        "body",
+        "url"
+      ],
+      "title": "ReviewCommentInfo",
       "type": "object"
     },
     "ReviewDefinition": {

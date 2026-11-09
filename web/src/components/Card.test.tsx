@@ -1919,3 +1919,71 @@ describe("a card's remove-branch control", () => {
     expect(slot().queryByRole("button", { name: "Remove branch" })).toBeNull();
   });
 });
+
+describe("a merged PR with comments to acknowledge", () => {
+  const comments = [
+    {
+      kind: "review" as const,
+      author: "copilot-pull-request-reviewer",
+      body: "Needs a closer look: the retry never gives up.",
+      url: "https://github.com/o/r/pull/5#pullrequestreview-1",
+    },
+    { kind: "thread" as const, author: "sam", body: "Why a set here?", url: "https://github.com/o/r/pull/5#discussion_r2" },
+  ];
+  const merged = pr({
+    pr: "merged",
+    review: "approved",
+    next: { label: "Acknowledge", who: "you", kind: "acknowledge", would_be: null },
+    unacknowledged_comments: comments,
+  });
+
+  test("shows its comments with their authors and links, beside an Acknowledge button", () => {
+    showCards([branch(1, "devon/a", { status: merged })]);
+
+    expect(screen.getByRole("button", { name: "Acknowledge" })).toBeEnabled();
+    expect(screen.getByRole("link", { name: "copilot-pull-request-reviewer" })).toHaveAttribute(
+      "href",
+      "https://github.com/o/r/pull/5#pullrequestreview-1",
+    );
+    expect(screen.getByText("Needs a closer look: the retry never gives up.")).toBeInTheDocument();
+    expect(screen.getByText("Why a set here?")).toBeInTheDocument();
+  });
+
+  test("pressing Acknowledge disables the button and says what it is doing until the server answers", async () => {
+    let answer: (value: { ok: boolean; status: number }) => void = () => {};
+    const fetchMock = vi.fn(
+      (...args: [string, RequestInit?]) => {
+        void args;
+        return new Promise((resolve) => {
+          answer = resolve as typeof answer;
+        });
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    showCards([branch(1, "devon/a", { status: merged })]);
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Acknowledge" }).click();
+    });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/acknowledge");
+    expect(JSON.parse(String(init?.body))).toEqual({ id: "1:devon/a" });
+    expect(screen.getByRole("button", { name: "Acknowledging…" })).toBeDisabled();
+    await act(async () => answer({ ok: true, status: 204 }));
+    vi.unstubAllGlobals();
+  });
+
+  test("a refusal shows its reason and frees the button", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 409, json: async () => ({ detail: "Its PR is not merged." }) })));
+    showCards([branch(1, "devon/a", { status: merged })]);
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Acknowledge" }).click();
+    });
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Its PR is not merged.");
+    expect(screen.getByRole("button", { name: "Acknowledge" })).toBeEnabled();
+    vi.unstubAllGlobals();
+  });
+});

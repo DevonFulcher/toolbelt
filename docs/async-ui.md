@@ -28,6 +28,7 @@ request to know whether something is happening.
 | Change a branch's stack parent | `setting` on the branch's parent info (in its card extras) | `notice` on the same |
 | Remove a branch | `removing` on the branch's remove info (in its card extras) | `notice` on the same |
 
-Quick actions (queueing a merge, taking it off the queue, the Agents switches)
+Quick actions (queueing a merge, taking it off the queue, acknowledging the
+comments of a merged PR, the Agents switches)
 answer in a few milliseconds and need no background work, but still disable their
 button while the request is out.

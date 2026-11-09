@@ -62,6 +62,7 @@ export function pr(overrides: Partial<Omit<LoadedStatus, "now">> = {}): LoadedSt
     merge: "clean",
     open_comments: 0,
     open_comments_bot: 0,
+    unacknowledged_comments: [],
     conflict: null,
     next: { label: "Request review", who: "you", kind: "request_review", would_be: null },
     detail: null,

@@ -26,7 +26,7 @@ timeline.ts``) and the aggregate replay (``aggregate.replay``) both follow
 this one rule; ``web/src/testing/phaseVectors.json`` is asserted by both.
 """
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from typing import Literal
 
@@ -93,6 +93,19 @@ class ReviewSubmission:
 
 
 @dataclass(frozen=True)
+class ReviewComment:
+    """Something someone other than the PR's author wrote on it that a person
+    should read before the PR is forgotten: a review body, an unresolved inline
+    review thread (its first comment) or a conversation comment. ``kind`` is
+    ``review``, ``thread`` or ``conversation``."""
+
+    kind: str
+    author: str
+    body: str
+    url: str
+
+
+@dataclass(frozen=True)
 class PrFacts:
     number: int
     title: str
@@ -118,6 +131,10 @@ class PrFacts:
     #: Non-empty human review bodies, displayed as context rather than open
     #: review threads that need resolution.
     review_submissions: tuple[ReviewSubmission, ...] = ()
+    #: What a merged PR holds for the user to acknowledge (see ``ReviewComment``
+    #: and ``pr_fetch.review_comments``): includes bots' reviews, unlike
+    #: ``review_submissions``.
+    review_comments: tuple[ReviewComment, ...] = ()
     #: When the PR's base branch changed, as ``(time, previous, current)`` in
     #: time order (a stacked PR is retargeted when its parent merges).
     base_changes: tuple[tuple[datetime, str, str], ...] = ()
@@ -390,6 +407,7 @@ def facts_to_dict(facts: PrFacts) -> dict:
         "commit_rollups": [list(r) for r in facts.commit_rollups],
         "additions": facts.additions,
         "deletions": facts.deletions,
+        "review_comments": [asdict(comment) for comment in facts.review_comments],
         "base_changes": [
             [when.isoformat(), previous, current]
             for when, previous, current in facts.base_changes
@@ -439,6 +457,9 @@ def facts_from_dict(f: dict) -> PrFacts:
         ),
         additions=f["additions"],
         deletions=f["deletions"],
+        review_comments=tuple(
+            ReviewComment(**comment) for comment in f.get("review_comments", [])
+        ),
         base_changes=tuple(
             (datetime.fromisoformat(when), previous, current)
             for when, previous, current in f.get("base_changes", [])

@@ -424,6 +424,16 @@ class ConflictInfo(Model):
     steps: int | None
 
 
+class ReviewCommentInfo(Model):
+    """One comment a merged PR received, shown on its Acknowledge card."""
+
+    kind: Literal["review", "thread", "conversation"]
+    author: str
+    #: The start of the comment (cut at ``snapshot.COMMENT_PREVIEW_CHARS``).
+    body: str
+    url: str
+
+
 class LoadedStatus(Model):
     load: Literal["loaded"]
     pr: PrState
@@ -443,6 +453,9 @@ class LoadedStatus(Model):
     detail: PrDetail | None
     #: The "now" chips of the card's timeline.
     now: list[Chip]
+    #: The comments a merged PR received, while its next action is Acknowledge
+    #: (empty otherwise).
+    unacknowledged_comments: list[ReviewCommentInfo]
 
 
 type LiveStatus = Annotated[
@@ -1614,6 +1627,14 @@ class MergeRequest(Model):
 
 class MergeQueueRequest(Model):
     """The body of ``POST /api/merge/queue`` and ``/api/merge/unqueue``."""
+
+    #: The branch's row id (see ``Branch.id``).
+    id: str
+
+
+class AcknowledgeRequest(Model):
+    """The body of ``POST /api/acknowledge``: the user has read the comments a
+    merged PR received."""
 
     #: The branch's row id (see ``Branch.id``).
     id: str

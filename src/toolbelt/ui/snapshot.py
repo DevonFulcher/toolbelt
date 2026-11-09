@@ -37,6 +37,9 @@ from toolbelt.ui.sibling_conflicts import NO_SIBLING_CONFLICTS, SiblingConflictL
 from toolbelt.ui.slack_tracker import NO_SLACK, SlackLookup
 from toolbelt.ui.task_feed import TaskFeed
 
+#: How much of each comment the Acknowledge card carries (the link has the rest).
+COMMENT_PREVIEW_CHARS = 600
+
 _PR_NUMBER_RE = re.compile(r"/pull/(\d+)")
 _PR_URL_RE = re.compile(r"(https://github\.com/[^/]+/[^/]+)/pull/\d+")
 
@@ -298,8 +301,10 @@ def loaded_status(
     slack: SlackContext | None = None,
     deciding: bool = False,
     validated: bool = False,
+    acknowledged_prs: frozenset[int] = frozenset(),
 ) -> api.LoadedStatus:
-    """``parent`` is the stack context for the next action; ``facts`` (with
+    """``acknowledged_prs`` are the repo's merged PRs whose comments the user
+    acknowledged. ``parent`` is the stack context for the next action; ``facts`` (with
     ``now``) adds the PR's history as ``detail``; ``claimed``: a live working
     holder has claimed the branch; ``autonomous``: so has an autonomous
     agent; ``slack``: where the PR stands in Slack."""
@@ -310,8 +315,22 @@ def loaded_status(
         merge = "conflicts" if status.has_conflicts else "clean"
     open_comments = status.open_comments if has_pr else 0
     open_comments_bot = status.bot_comments if has_pr else 0
+    unacknowledged = (
+        facts.review_comments
+        if facts is not None
+        and status.pr is PrState.MERGED
+        and facts.number not in acknowledged_prs
+        else ()
+    )
     action = next_action(
-        status, parent, claimed, autonomous, slack, deciding, validated
+        status,
+        parent,
+        claimed,
+        autonomous,
+        slack,
+        deciding,
+        validated,
+        unacknowledged_comments=bool(unacknowledged),
     )
     chips = pr_states.current_states(
         pr=status.pr.value,
@@ -347,6 +366,15 @@ def loaded_status(
                 if action.would_be
                 else None,
             },
+            "unacknowledged_comments": [
+                {
+                    "kind": comment.kind,
+                    "author": comment.author,
+                    "body": comment.body[:COMMENT_PREVIEW_CHARS],
+                    "url": comment.url,
+                }
+                for comment in unacknowledged
+            ],
             "conflict": conflict_info(conflict, status.url) if conflict else None,
             "detail": pr_detail(facts, now) if facts is not None else None,
             "now": [
@@ -366,6 +394,7 @@ def live_status(
     slack: SlackContext | None = None,
     deciding: bool = False,
     validated: bool = False,
+    acknowledged_prs: frozenset[int] = frozenset(),
 ) -> api.LoadingStatus | api.FailedStatus | api.LoadedStatus:
     if fetched is None:
         return api.LoadingStatus(load="loading")
@@ -382,6 +411,7 @@ def live_status(
         slack=slack,
         deciding=deciding,
         validated=validated,
+        acknowledged_prs=acknowledged_prs,
     )
 
 
@@ -434,6 +464,7 @@ def build_snapshot(
                 if cwd_root and repo.git_common_dir == cwd_common_dir
                 else None
             )
+            acknowledged_prs = store.acknowledged_prs(repo.id)
             order = walk(parents)
             heights = stack_heights(order)
             kids = lineage.children_map(parents)
@@ -500,6 +531,7 @@ def build_snapshot(
                             slack.context(repo.id, name, looked_up, now),
                             claims.deciding(repo.id, name),
                             claims.validated(repo.id, name),
+                            acknowledged_prs,
                         ),
                     )
                 )
