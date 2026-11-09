@@ -14,8 +14,10 @@ The remove tests inject `FakeForge`, including for its close-PR operation.
 """
 
 import asyncio
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
 import typer
@@ -23,6 +25,7 @@ from conftest import FakeForge, git
 from typer.testing import CliRunner
 
 from toolbelt.git.cli import git_typer
+from toolbelt.git.stack import append as stack_append
 from toolbelt.git.stack import cli as stack_cli
 from toolbelt.git.stack import forge as stack_forge
 from toolbelt.git.stack import lineage
@@ -51,6 +54,32 @@ class Invocation:
     exit_code: int
     output: str  # combined stdout+stderr captured at the fd level
     exception: BaseException | None = None
+
+
+@pytest.fixture(autouse=True)
+def _fetch_from_real_origin(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`append` fetches `origin`; a test that set a fake GitHub URL on it
+    fetches from the real remote it replaced instead."""
+    real_run = stack_append.run
+
+    def run(cmd: Sequence[str], **kwargs: Any) -> Any:
+        if list(cmd) == ["git", "fetch", "origin"]:
+            configured = real_run(
+                ["git", "config", "--get", "test.realorigin"],
+                cwd=kwargs["cwd"],
+                check=False,
+                capture_output=True,
+            )
+            if configured.returncode == 0:
+                cmd = [
+                    "git",
+                    "fetch",
+                    configured.stdout.strip(),
+                    "+refs/heads/*:refs/remotes/origin/*",
+                ]
+        return real_run(cmd, **kwargs)
+
+    monkeypatch.setattr(stack_append, "run", run)
 
 
 def _invoke(
@@ -416,6 +445,14 @@ def test_append_with_task_on_a_personal_machine_stores_it_as_usual(
 
 
 def _set_origin(repo: Path, url: str) -> None:
+    """Point ``origin`` at ``url`` (for owner detection). The real remote stays
+    in config so `_fetch_from_real_origin` can still fetch from it."""
+    git(
+        "config",
+        "test.realorigin",
+        git("remote", "get-url", "origin", cwd=repo),
+        cwd=repo,
+    )
     git("remote", "set-url", "origin", url, cwd=repo)
 
 

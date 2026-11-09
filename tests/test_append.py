@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+import typer
 from conftest import git
 
 from toolbelt.git.stack import lineage
@@ -166,3 +167,114 @@ def test_append_records_when_the_task_started_and_reparenting_keeps_it(
     lineage.set_parent("devon/api", "develop", root=repo)  # reparent
     with lineage._repo_store(repo) as (s, repo_id):
         assert s.get_started_at(repo_id, "devon/api") == started
+
+
+def _push_from_another_clone(
+    git_remote: Path, tmp_path: Path, branch: str, filename: str
+) -> str:
+    """Commit ``filename`` on ``origin``'s ``branch`` from a second clone and
+    return the new tip."""
+    other = tmp_path / f"other-{branch.replace('/', '_')}"
+    git("clone", str(git_remote), str(other), cwd=tmp_path)
+    git("config", "user.email", "test@example.com", cwd=other)
+    git("config", "user.name", "Test", cwd=other)
+    git("checkout", branch, cwd=other)
+    (other / filename).write_text("remote\n")
+    git("add", "-A", cwd=other)
+    git("commit", "-m", f"remote {filename}", cwd=other)
+    git("push", "origin", branch, cwd=other)
+    return git("rev-parse", "HEAD", cwd=other)
+
+
+def test_append_from_base_behind_origin_forks_from_origin_tip(
+    repo: Path, git_remote: Path, tmp_path: Path
+):
+    remote_tip = _push_from_another_clone(git_remote, tmp_path, "main", "new.txt")
+
+    wt_path = tmp_path / "wt-api"
+    create_stacked_branch("api", root=repo, wt_path=wt_path)
+
+    assert git("rev-parse", "devon/api", cwd=repo) == remote_tip
+    assert git("rev-parse", "main", cwd=repo) == remote_tip
+    assert (wt_path / "new.txt").read_text() == "remote\n"
+    assert git("status", "--porcelain", cwd=repo) == ""
+
+
+def test_append_from_base_up_to_date_forks_from_its_tip(repo: Path, tmp_path: Path):
+    tip = git("rev-parse", "main", cwd=repo)
+
+    create_stacked_branch("api", root=repo, wt_path=tmp_path / "wt-api")
+
+    assert git("rev-parse", "devon/api", cwd=repo) == tip
+    assert git("rev-parse", "main", cwd=repo) == tip
+
+
+def test_append_from_base_with_checkpoint_behind_origin_merges_origin(
+    repo: Path, git_remote: Path, tmp_path: Path
+):
+    remote_tip = _push_from_another_clone(git_remote, tmp_path, "main", "new.txt")
+    (repo / "wip.txt").write_text("work in progress\n")
+
+    wt_path = tmp_path / "wt-api"
+    create_stacked_branch("api", root=repo, wt_path=wt_path)
+
+    assert git("status", "--porcelain", cwd=repo) == ""
+    assert (wt_path / "new.txt").read_text() == "remote\n"
+    assert (wt_path / "wip.txt").read_text() == "work in progress\n"
+    git("merge-base", "--is-ancestor", remote_tip, "devon/api", cwd=repo)
+    assert git("rev-parse", "devon/api", cwd=repo) == git("rev-parse", "main", cwd=repo)
+
+
+def test_append_from_base_conflicting_with_origin_stops_and_leaves_base_clean(
+    repo: Path, git_remote: Path, tmp_path: Path
+):
+    _push_from_another_clone(git_remote, tmp_path, "main", "README.md")
+    (repo / "README.md").write_text("local\n")
+    git("add", "-A", cwd=repo)
+    git("commit", "-m", "local readme", cwd=repo)
+    before = git("rev-parse", "main", cwd=repo)
+
+    with pytest.raises(typer.Exit):
+        create_stacked_branch("api", root=repo, wt_path=tmp_path / "wt-api")
+
+    assert git("rev-parse", "main", cwd=repo) == before
+    assert git("status", "--porcelain", cwd=repo) == ""
+    assert "devon/api" not in _branches(repo)
+
+
+def test_append_from_stacked_branch_behind_its_remote_fast_forwards_it(
+    repo: Path, git_remote: Path, tmp_path: Path
+):
+    api_wt = tmp_path / "wt-api"
+    create_stacked_branch("api", root=repo, wt_path=api_wt)
+    git("push", "-u", "origin", "devon/api", cwd=api_wt)
+    remote_tip = _push_from_another_clone(
+        git_remote, tmp_path, "devon/api", "api-remote.txt"
+    )
+
+    tests_wt = tmp_path / "wt-api-tests"
+    create_stacked_branch("api_tests", root=api_wt, wt_path=tests_wt)
+
+    assert git("rev-parse", "devon/api", cwd=repo) == remote_tip
+    assert git("rev-parse", "devon/api_tests", cwd=repo) == remote_tip
+    assert (tests_wt / "api-remote.txt").read_text() == "remote\n"
+    assert lineage.get_parent("devon/api_tests", root=repo) == "devon/api"
+
+
+def test_append_from_diverged_stacked_branch_stops_without_changes(
+    repo: Path, git_remote: Path, tmp_path: Path
+):
+    api_wt = tmp_path / "wt-api"
+    create_stacked_branch("api", root=repo, wt_path=api_wt)
+    git("push", "-u", "origin", "devon/api", cwd=api_wt)
+    _push_from_another_clone(git_remote, tmp_path, "devon/api", "api-remote.txt")
+    (api_wt / "api-local.txt").write_text("local\n")
+    git("add", "-A", cwd=api_wt)
+    git("commit", "-m", "local api", cwd=api_wt)
+    before = git("rev-parse", "devon/api", cwd=repo)
+
+    with pytest.raises(typer.Exit):
+        create_stacked_branch("api_tests", root=api_wt, wt_path=tmp_path / "wt-t")
+
+    assert git("rev-parse", "devon/api", cwd=repo) == before
+    assert "devon/api_tests" not in _branches(repo)

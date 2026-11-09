@@ -87,8 +87,15 @@ def append(
     Any uncommitted changes here are committed onto the *current* branch as
     a checkpoint before branching, so this worktree keeps its exact
     in-flight state (now committed instead of dirty) — nothing gets moved
-    out from under whatever is running here. The new branch forks from that
-    checkpoint. Use this to continue in-flight work as a tracked stack
+    out from under whatever is running here. Then `origin` is fetched and the
+    current branch is brought up to date with its remote branch, so the new
+    branch forks from the latest commit of that branch (of the base, when run
+    from the stack base such as main), not a stale local tip: a branch behind
+    its remote is fast-forwarded; a stack base that diverged (it holds the
+    checkpoint or other local commits) gets `origin/<base>` merged in, and a
+    merge conflict is aborted with an error; a diverged stacked branch stops
+    with an error. The branch and short commit it forked from are printed. No
+    other branch in the stack is synced. Use this to continue in-flight work as a tracked stack
     member. There is no option for an untracked worktree.
 
     The worktree is created at $GIT_PROJECTS_WORKDIR/wt/<repo>/<NAME>, gets
