@@ -368,13 +368,18 @@ export const Card = memo(
             {extras?.set_parent && <SetParentControls id={id} name={branch.name} info={extras.set_parent} />}{" "}
             {extras?.remove && <RemoveBranchControls id={id} name={branch.name} info={extras.remove} />}
           </Slot>
-          <Slot id="ancestors" label="Ancestors">{String(branch.depth)}</Slot>
-          <Slot id="descendants" label="Descendants">{String(descendants)}</Slot>
+          <Slot id="ancestors" label="Ancestors" state={branch.removed ? "na" : "ok"}>
+            {branch.removed ? NO_BRANCH : String(branch.depth)}
+          </Slot>
+          <Slot id="descendants" label="Descendants" state={branch.removed ? "na" : "ok"}>
+            {branch.removed ? NO_BRANCH : String(descendants)}
+          </Slot>
         </Group>
         <Group
           id="pr"
           title="PR"
           aside={
+            branch.removed ? undefined : (
             <>
             <RefreshButton id={id} />{" "}
             <Freshness
@@ -385,6 +390,7 @@ export const Card = memo(
               title="When this PR's status was last looked up on GitHub. It is checked about every 20 seconds while this page is open (every 5 minutes for merged and closed PRs, and for repos whose webhooks are forwarded here). The status shown is kept across restarts."
             />
             </>
+            )
           }
         >
           <PrSlots status={status} note={note} />
@@ -419,7 +425,7 @@ export const Card = memo(
             )}
           </Slot>
           <Slot id="estimate" label="Estimated finish" state={extras?.estimate?.known ? "ok" : "na"}>
-            <EstimateValue extras={extras} now={now} branch={branch.name} />
+            {branch.removed ? NO_BRANCH : <EstimateValue extras={extras} now={now} branch={branch.name} />}
           </Slot>
           <Slot id="task" label="Task" state={branch.task ? "ok" : "gap"}>
             {branch.task ? (
@@ -477,6 +483,8 @@ export const Card = memo(
             )}
           </Slot>
         </Group>
+        {!branch.removed && (
+          <>
         <Group
           id="agent"
           title="Agent"
@@ -503,6 +511,8 @@ export const Card = memo(
         >
           <SpendSlots extras={extras} Slot={Slot} />
         </Group>
+          </>
+        )}
         <div className="g-timeline">
           <TimelineSlot
             status={status}
@@ -525,6 +535,9 @@ export const Card = memo(
     a.onOpenInStack === b.onOpenInStack &&
     sameRails(a.rails, b.rails),
 );
+
+/** What a removed branch's card says where a git or worktree fact would be. */
+const NO_BRANCH = "n/a (branch removed)";
 
 const LOOKUP_FAILED = "gh could not look up this branch's PR";
 
@@ -589,7 +602,7 @@ function NextSlot({
       ) : status.next.kind === "merge" ? (
         <MergeButton id={id} status={status} />
       ) : status.next.kind === "acknowledge" ? (
-        <AcknowledgeButton request={() => acknowledgeComments(id)} />
+        <AcknowledgeButton request={() => acknowledgeComments(id, status.pr_number)} />
       ) : status.next.kind === "personal_review" ? (
         opening ? (
           <Pill tone={WHO_TONE.ci} title="Pushing the branch and opening its PR">

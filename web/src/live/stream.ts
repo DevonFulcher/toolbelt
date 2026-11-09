@@ -13,7 +13,6 @@
 //   extras / agents / spend / conversation  what the cards, the Agents and
 //              Spend views and a working run's conversation show changed
 //   untracked  the open PRs toolbelt does not track changed
-//   landed_prs merged PRs of removed branches with comments to acknowledge changed
 //
 // The stream is only open while the page is being looked at (see
 // connection.ts). Events are handled one at a time, so a status that arrives
@@ -44,7 +43,6 @@ const EVENT_TYPES = [
   "structure",
   "refreshed",
   "untracked",
-  "landed_prs",
   "extras",
   "webhooks",
   "agents",
@@ -110,9 +108,6 @@ export function startLiveUpdates(deps: LiveDeps): LiveUpdates {
         return undefined;
       case "untracked":
         state.untrackedChanged(event.untracked, event.v);
-        return undefined;
-      case "landed_prs":
-        state.landedPrsChanged(event.landed_prs, event.v);
         return undefined;
       case "extras":
         state.extrasChanged(event.extras, event.v);

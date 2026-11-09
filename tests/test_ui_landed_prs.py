@@ -111,7 +111,9 @@ def refresh(app) -> None:
 
 
 def cards(client: TestClient) -> list[dict]:
-    return client.get("/api/snapshot").json()["landed_prs"]
+    """The cards of removed branches (``removed``) in the snapshot's branches."""
+    branches = client.get("/api/snapshot").json()["branches"]
+    return [b for b in branches if b["removed"]]
 
 
 def test_a_removed_branchs_merged_pr_with_a_humans_review_body_shows_as_a_card(rig):
@@ -125,15 +127,20 @@ def test_a_removed_branchs_merged_pr_with_a_humans_review_body_shows_as_a_card(r
         [card] = cards(client)
 
     assert github.calls == [("o/r", 1945)]
-    assert (card["id"], card["repo"], card["branch"], card["task"]) == (
-        f"{repo_id}:1945",
-        "r",
+    status = card["status"]
+    assert (card["id"], card["name"], card["parent"], card["children"]) == (
+        f"{repo_id}:~pr1945",
         "devon/retry",
-        "RD-1",
+        None,
+        [],
     )
-    assert (card["pr_number"], card["title"]) == (1945, "Retry the upload")
-    assert card["pr_url"] == "https://github.com/o/r/pull/1945"
-    [comment] = card["comments"]
+    assert (card["depth"], card["stack_pos"], card["current"]) == (0, 1, False)
+    assert (status["pr"], status["pr_number"]) == ("merged", 1945)
+    assert status["pr_url"] == "https://github.com/o/r/pull/1945"
+    assert status["detail"]["title"] == "Retry the upload"
+    assert status["next"]["kind"] == "acknowledge"
+    assert status["next"]["who"] == "you"
+    [comment] = status["unacknowledged_comments"]
     assert comment["author"] == "sam"
     assert comment["kind"] == "review"
     assert comment["body"].startswith("The retry should back off")
@@ -150,7 +157,7 @@ def test_acknowledging_it_removes_the_card_and_it_stays_gone_after_a_restart(rig
         events = app.state.hub.subscribe()
 
         response = client.post(
-            "/api/acknowledge", json={"id": f"{repo_id}:devon/retry", "pr_number": 1945}
+            "/api/acknowledge", json={"id": f"{repo_id}:~pr1945", "pr_number": 1945}
         )
 
         assert response.status_code == 204
@@ -158,9 +165,8 @@ def test_acknowledging_it_removes_the_card_and_it_stays_gone_after_a_restart(rig
         published = []
         while not events.empty():
             published.append(events.get_nowait())
-        assert [p["landed_prs"] for name, p in published if name == "landed_prs"] == [
-            []
-        ]
+        # The page fetches the snapshot again.
+        assert "structure" in [name for name, _ in published]
 
     restarted = make_app(github)
     refresh(restarted)
@@ -247,3 +253,23 @@ def test_the_1945_shape_a_body_only_copilot_review_gives_no_card_and_is_acknowle
     assert github.calls == [("o/r", 1945)]
     store = StackStore(default_db_path())
     assert store.acknowledged_prs(repo_id) == frozenset({1945})
+
+
+def test_a_removed_branchs_card_does_not_disturb_the_live_branches_of_its_name(rig):
+    repo_id, github = rig
+    github.by_number[1945] = comments_payload(reviews=[HUMAN_REVIEW])
+    land(repo_id, "devon/retry", 1945)
+    store = StackStore(default_db_path())
+    store.set_parent(repo_id, "devon/retry", "main")
+    store.close()
+    app = make_app(github)
+    refresh(app)
+
+    with TestClient(app) as client:
+        branches = client.get("/api/snapshot").json()["branches"]
+
+    assert [(b["id"], b["removed"]) for b in branches] == [
+        (f"{repo_id}:devon/retry", False),
+        (f"{repo_id}:~pr1945", True),
+    ]
+    assert [b["order"] for b in branches] == [0, 1]

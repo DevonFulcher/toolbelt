@@ -252,29 +252,19 @@ export async function refreshBranch(id: string, fetchImpl: typeof fetch = fetch)
   await postJson<unknown>("/api/refresh", { id }, fetchImpl);
 }
 
-/** Acknowledge the comments the branch's merged PR received, so its card goes
- * away. Quick: it resolves once the server has stored it; rejects with the
+/** Acknowledge the comments the branch's merged PR received (``prNumber`` finds the
+ * card of a removed branch), so its card goes away. Quick: it resolves once the server has stored it; rejects with the
  * server's reason when the PR is not merged. */
-export async function acknowledgeComments(id: string, fetchImpl: typeof fetch = fetch): Promise<void> {
-  await acknowledgeRequest({ id }, fetchImpl);
-}
-
-async function acknowledgeRequest(body: { id: string; pr_number?: number }, fetchImpl: typeof fetch): Promise<void> {
+export async function acknowledgeComments(id: string, prNumber: number | null, fetchImpl: typeof fetch = fetch): Promise<void> {
   const response = await fetchImpl("/api/acknowledge", {
     method: "POST",
     headers: { Accept: "application/json", "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ id, pr_number: prNumber }),
   });
   if (!response.ok) {
     const detail = ((await response.json().catch(() => ({}))) as { detail?: unknown }).detail;
     throw new Error(typeof detail === "string" ? detail : `/api/acknowledge: HTTP ${response.status}`);
   }
-}
-
-/** Acknowledge the comments of a removed branch's merged PR (``id`` names the repo
- * and the removed branch), so its card goes away. */
-export async function acknowledgeLandedPr(id: string, prNumber: number, fetchImpl: typeof fetch = fetch): Promise<void> {
-  await acknowledgeRequest({ id, pr_number: prNumber }, fetchImpl);
 }
 
 /** Take the branch's PR off the merge queue. */

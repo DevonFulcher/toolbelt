@@ -1,5 +1,7 @@
 """Merged PRs of removed branches that received review comments the user has
-not acknowledged: the reduced cards the page shows for them.
+not acknowledged: they stay on the page as cards (``snapshot.landed_branch``
+builds a card the way it builds a tracked branch's, with no stack and no
+worktree).
 
 A branch is removed (``toolbelt git sync``) soon after its PR merges, which
 takes its card off the page. A merged PR that received comments must not vanish
@@ -14,20 +16,21 @@ Only branches removed within ``WINDOW`` are considered, so a pass never scans or
 fetches the whole history.
 
 Refreshed like ``UntrackedPrFeed``: only while a browser is watching, publishing
-a ``landed_prs`` event when the list changed. The stack DB, GitHub and the clock
+a ``structure`` event (the page fetches the snapshot again) when the list
+changed. The stack DB, GitHub and the clock
 are injected so tests drive a pass at a time.
 """
 
 import asyncio
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from toolbelt.git.stack.store import RemovedBranch
-from toolbelt.ui import api_models as api
 from toolbelt.ui.live_status import DEFAULT_TICK_SECONDS, EventHub
+from toolbelt.ui.pr_activity import ReviewComment
 from toolbelt.ui.pr_fetch import PrComments
-from toolbelt.ui.snapshot import COMMENT_PREVIEW_CHARS
 
 DEFAULT_INTERVAL_SECONDS = 120.0
 
@@ -36,6 +39,23 @@ WINDOW = timedelta(days=30)
 
 #: A removed branch that landed with a known PR, as ``(branch, repo name)``.
 type LandedBranch = tuple[RemovedBranch, str]
+
+
+@dataclass(frozen=True)
+class LandedPr:
+    """A removed branch's merged PR that has comments to acknowledge."""
+
+    repo_id: int
+    #: The removed branch's name.
+    branch: str
+    task: str | None
+    task_tracker: str | None
+    started_at: datetime | None
+    removed_at: datetime
+    pr_number: int
+    pr_url: str
+    title: str
+    comments: tuple[ReviewComment, ...]
 
 
 class LandedPrFeed:
@@ -65,10 +85,10 @@ class LandedPrFeed:
         self._tick = tick
         self._last_at: float | None = None
         #: The cards of the PRs found to have comments, by ``(repo, PR)``.
-        self._cards: dict[tuple[int, int], api.LandedPr] = {}
-        self._current: list[api.LandedPr] = []
+        self._cards: dict[tuple[int, int], LandedPr] = {}
+        self._current: list[LandedPr] = []
 
-    def get(self) -> list[api.LandedPr]:
+    def get(self) -> list[LandedPr]:
         return self._current
 
     def is_due(self) -> bool:
@@ -86,25 +106,17 @@ class LandedPrFeed:
         if not found.comments:
             self._acknowledge(*key)
             return
-        self._cards[key] = api.LandedPr(
-            id=f"{branch.repo_id}:{branch.pr.number}",
+        self._cards[key] = LandedPr(
             repo_id=branch.repo_id,
-            repo=repo,
             branch=branch.name,
+            task=branch.task,
+            task_tracker=branch.task_tracker,
+            started_at=branch.started_at,
+            removed_at=branch.removed_at,
             pr_number=branch.pr.number,
             pr_url=found.url,
             title=found.title,
-            task=branch.task,
-            removed_at=branch.removed_at.isoformat().replace("+00:00", "Z"),
-            comments=[
-                api.ReviewCommentInfo(
-                    kind=comment.kind,
-                    author=comment.author,
-                    body=comment.body[:COMMENT_PREVIEW_CHARS],
-                    url=comment.url,
-                )
-                for comment in found.comments
-            ],
+            comments=found.comments,
         )
 
     async def run_once(self) -> bool:
@@ -148,10 +160,8 @@ class LandedPrFeed:
         self._publish()
 
     def _publish(self) -> None:
-        self._hub.publish(
-            "landed_prs",
-            {"landed_prs": [card.model_dump(mode="json") for card in self._current]},
-        )
+        # The cards are part of the snapshot: the page fetches it again.
+        self._hub.publish("structure", {})
 
     async def run(self) -> None:
         while True:

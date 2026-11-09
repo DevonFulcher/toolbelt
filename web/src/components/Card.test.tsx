@@ -1968,7 +1968,7 @@ describe("a merged PR with comments to acknowledge", () => {
 
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe("/api/acknowledge");
-    expect(JSON.parse(String(init?.body))).toEqual({ id: "1:devon/a" });
+    expect(JSON.parse(String(init?.body))).toEqual({ id: "1:devon/a", pr_number: 5 });
     expect(screen.getByRole("button", { name: "Acknowledging…" })).toBeDisabled();
     await act(async () => answer({ ok: true, status: 204 }));
     vi.unstubAllGlobals();
@@ -1985,5 +1985,51 @@ describe("a merged PR with comments to acknowledge", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Its PR is not merged.");
     expect(screen.getByRole("button", { name: "Acknowledge" })).toBeEnabled();
     vi.unstubAllGlobals();
+  });
+});
+
+describe("the card of a removed branch's merged PR", () => {
+  const comments = [{ kind: "review" as const, author: "sam", body: "Back off on retry.", url: "https://github.com/o/r/pull/9#r1" }];
+  const status = pr({
+    pr: "merged",
+    pr_number: 9,
+    next: { label: "Acknowledge", who: "you", kind: "acknowledge", would_be: null },
+    unacknowledged_comments: comments,
+  });
+  const removed = branch(1, "devon/gone", { id: "1:~pr9", removed: true, status });
+
+  test("is a normal card with the Next slot, its comments and Acknowledge, and says git and worktree facts do not apply", () => {
+    showCards([removed]);
+
+    expect(screen.getByRole("button", { name: "Acknowledge" })).toBeEnabled();
+    expect(screen.getByText("Back off on retry.")).toBeInTheDocument();
+    expect(screen.getAllByText("n/a (branch removed)").length).toBeGreaterThanOrEqual(3);
+    expect(screen.queryByRole("button", { name: "Refresh" })).toBeNull();
+    expect(screen.queryByText("Interactive session")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Remove branch" })).toBeNull();
+  });
+
+  test("sends its PR number, since the branch is no longer tracked", async () => {
+    const fetchMock = vi.fn(async (...args: [string, RequestInit?]) => {
+      void args;
+      return { ok: true, status: 204, json: async () => ({}) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    showCards([removed]);
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Acknowledge" }).click();
+    });
+
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({ id: "1:~pr9", pr_number: 9 });
+    vi.unstubAllGlobals();
+  });
+
+  test("is among the cards that need you, next to an ordinary one, and the Next filter for done does not hide it", () => {
+    showCards([removed, branch(1, "devon/live", { status: pr() })]);
+
+    expect(screen.getByText("devon/gone")).toBeInTheDocument();
+    expect(screen.getByText("devon/live")).toBeInTheDocument();
+    expect(screen.queryByText(/done hidden/)).toBeNull();
   });
 });

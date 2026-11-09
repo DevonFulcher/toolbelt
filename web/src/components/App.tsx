@@ -11,7 +11,6 @@ import { ProposalsPage } from "./ProposalsView";
 import { SpendPage } from "./SpendView";
 import { TableView } from "./TableView";
 import { TooltipProvider } from "./Tooltip";
-import { LandedPrCards } from "./LandedPrCards";
 import { UntrackedCallout } from "./UntrackedCallout";
 import { UpdateNotice } from "./UpdateNotice";
 import { ClockContext, NowContext } from "./useNow";
@@ -88,12 +87,9 @@ function Content() {
   }
   if (rows.length === 0) {
     return (
-      <>
-        <LandedPrCards />
-        <div className="empty">
-          No tracked stacks. Use <code>tt g append</code> to start one.
-        </div>
-      </>
+      <div className="empty">
+        No tracked stacks. Use <code>tt g append</code> to start one.
+      </div>
     );
   }
   return (
@@ -108,7 +104,6 @@ function Content() {
             </div>
           ))}
       </div>
-      <LandedPrCards />
       <UntrackedCallout />
       {/* The views that draw the stack as a tree can be focused on a branch. */}
       {(view === "stacked" || (view === "table" && mode === "tree")) && <FocusBar rows={rows} />}

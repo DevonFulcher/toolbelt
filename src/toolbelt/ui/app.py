@@ -1931,22 +1931,20 @@ def create_app(
         away like any other merged one. Quick, so it answers once the
         acknowledgement is stored; the card's ``status`` event follows."""
         repo_id, name = branch_ref(body.id)
-        if body.pr_number is not None:
-            # A removed branch's landed PR (a card of its own, see
-            # ``landed_prs.py``).
+        parents = await asyncio.to_thread(_all_parents, repo_id)
+        if name not in parents:
+            # A removed branch's card (``Branch.removed``, see
+            # ``landed_prs.py``) is found by its PR's number.
             shown = [
                 card
                 for card in landed_feed.get()
                 if (card.repo_id, card.pr_number) == (repo_id, body.pr_number)
             ]
-            if not shown:
-                raise HTTPException(status_code=404, detail="no such landed PR")
+            if body.pr_number is None or not shown:
+                raise HTTPException(status_code=404, detail="no such branch")
             await asyncio.to_thread(_acknowledge_pr, repo_id, body.pr_number)
             landed_feed.acknowledged(repo_id, body.pr_number)
             return
-        parents = await asyncio.to_thread(_all_parents, repo_id)
-        if name not in parents:
-            raise HTTPException(status_code=404, detail="no such branch")
         fetched = refresher.get(repo_id, name)
         if (
             fetched is None

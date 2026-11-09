@@ -20,9 +20,10 @@ from toolbelt.git.stack.store import Parents, StackStore, default_db_path
 from toolbelt.git.worktrees import current_branch
 from toolbelt.tasks.tracker import TaskTracker
 from toolbelt.ui import api_models as api
-from toolbelt.ui import branch_links, pr_states
+from toolbelt.ui import branch_links, pr_activity, pr_states
 from toolbelt.ui.claims_feed import BranchHolder
 from toolbelt.ui.conflict_commit import ConflictCommit
+from toolbelt.ui.landed_prs import LandedPr
 from toolbelt.ui.live_status import Fetched, StatusRefresher
 from toolbelt.ui.merge_queue import NO_MERGE_QUEUE, MergeQueueLookup
 from toolbelt.ui.next_action import (
@@ -31,7 +32,7 @@ from toolbelt.ui.next_action import (
     SlackContext,
     next_action,
 )
-from toolbelt.ui.pr_activity import PrFacts, derive_activity, format_age
+from toolbelt.ui.pr_activity import PrFacts, TimelineItem, derive_activity, format_age
 from toolbelt.ui.repo_visibility import visible_repos
 from toolbelt.ui.sibling_conflicts import NO_SIBLING_CONFLICTS, SiblingConflictLookup
 from toolbelt.ui.slack_tracker import NO_SLACK, SlackLookup
@@ -126,6 +127,12 @@ NO_CLAIMS: ClaimLookup = _NoClaims()
 
 def row_id(repo_id: int, branch: str) -> str:
     return f"{repo_id}:{branch}"
+
+
+def landed_row_id(repo_id: int, pr_number: int) -> str:
+    """The id of a removed branch's card: by PR, since the branch's name may
+    be a live branch's now. ``~`` cannot be in a git branch name."""
+    return f"{repo_id}:~pr{pr_number}"
 
 
 # ---- stack structure ------------------------------------------------------------
@@ -425,7 +432,7 @@ def build_snapshot(
     refresher: StatusRefresher,
     task_feed: TaskFeed,
     untracked: api.UntrackedPrs,
-    landed_prs: list[api.LandedPr],
+    landed_prs: list[LandedPr],
     now: datetime,
     version: int,
     claims: ClaimLookup = NO_CLAIMS,
@@ -450,7 +457,8 @@ def build_snapshot(
         fetched: list[api.FetchedBranch] = []
         for repo in sorted(visible_repos(store.repos()), key=lambda r: (r.name, r.id)):
             parents = store.all_parents(repo.id)
-            if not parents:
+            landed = [pr for pr in landed_prs if pr.repo_id == repo.id]
+            if not parents and not landed:
                 continue
             repos.append(
                 api.Repo(
@@ -499,6 +507,7 @@ def build_snapshot(
                         id=row_id(repo.id, name),
                         repo_id=repo.id,
                         name=name,
+                        removed=False,
                         depth=depth,
                         parent_id=row_id(repo.id, parent)
                         if parent in parents
@@ -536,6 +545,10 @@ def build_snapshot(
                         ),
                     )
                 )
+            for pr in landed:
+                branches.append(
+                    landed_branch(pr, order=len(branches), tracker=tracker, now=now)
+                )
         return api.Snapshot(
             version=version,
             age=refresher.seconds_since_refresh(),
@@ -544,7 +557,6 @@ def build_snapshot(
             catalog=api.build_catalog(),
             filters=filters(),
             untracked=untracked,
-            landed_prs=landed_prs,
             fetched=fetched,
             extras=extras,
             agents=agents,
@@ -554,6 +566,66 @@ def build_snapshot(
         )
     finally:
         store.close()
+
+
+def landed_branch(
+    landed: LandedPr,
+    *,
+    order: int,
+    tracker: TaskTracker | None,
+    now: datetime,
+) -> api.Branch:
+    """The card of a removed branch's merged PR that has comments to
+    acknowledge: a root of its own (no parent, no children), ``removed`` (no
+    worktree), its status the merged PR's with next action Acknowledge. The PR
+    is known only by what GitHub said when its comments were fetched, so its
+    CI and review read ``none`` and its history is just its opening and its merge."""
+    started = landed.started_at or landed.removed_at
+    status = BranchStatus(
+        pr=PrState.MERGED, ci=CiState.NONE, review=ReviewState.NONE, url=landed.pr_url
+    )
+    facts = PrFacts(
+        number=landed.pr_number,
+        title=landed.title,
+        author="",
+        base_ref="",
+        head_oid="",
+        state="MERGED",
+        is_draft=False,
+        created_at=started,
+        merged_at=landed.removed_at,
+        closed_at=None,
+        requested_reviewers=(),
+        commit_rollups=(),
+        items=(TimelineItem(landed.removed_at, pr_activity.MERGED, "", "merged"),),
+        review_comments=landed.comments,
+    )
+    owner = branch_links.owning_tracker(landed.task_tracker, tracker)
+    task = branch_links.task_link(landed.task, tracker=owner)
+    return api.Branch(
+        id=landed_row_id(landed.repo_id, landed.pr_number),
+        repo_id=landed.repo_id,
+        name=landed.branch,
+        removed=True,
+        depth=0,
+        parent_id=None,
+        parent=None,
+        order=order,
+        current=False,
+        stack_pos=1,
+        stack_height=1,
+        children=[],
+        task=_link(task),
+        task_fetchable=False,
+        task_live=None,
+        agent=None,
+        claim=branch_claim((), now),
+        slack=None,
+        merge_queue=None,
+        sibling_conflicts=None,
+        started_at=_iso(started),
+        status=loaded_status(status, parent=None, facts=facts, now=now),
+    )
 
 
 def branch_claim(holders: tuple[BranchHolder, ...], now: datetime) -> api.BranchClaim:
