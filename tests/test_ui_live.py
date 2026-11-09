@@ -839,7 +839,7 @@ class TestGithubWebhookEndpoint:
                 number = {"devon/a": 5, "devon/b": 6}[branch]
                 return PrSnapshot(OPEN, pr_facts(number))
 
-        app = create_app(fetch=Facts(), clock=Clock())
+        app = create_app(fetch=Facts(), clock=Clock(), hint_gap=0)
         asyncio.run(app.state.refresher.run_once())
         return app, TestClient(app)
 
@@ -967,6 +967,7 @@ class TestStartup:
             "budgets": {},
             "callers": {},
             "webhooks": {"received": 0, "hinted": 0},
+            "lookups": {},
         }
 
 

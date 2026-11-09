@@ -35,9 +35,11 @@ import asyncio
 import contextlib
 import random
 import time
+from collections import Counter
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
 
@@ -56,16 +58,36 @@ DEFAULT_INTERVAL_SECONDS = 20.0
 DEFAULT_SETTLED_INTERVAL_SECONDS = 300.0
 DEFAULT_NO_PR_INTERVAL_SECONDS = 60.0
 DEFAULT_FULL_INTERVAL_SECONDS = 600.0
-#: A PR with unresolved review threads gets the full lookup this often: the
-#: ETag gate cannot see a thread being resolved, and the count on the card
-#: should follow it.
+#: An open PR with unresolved review threads gets the full lookup this often:
+#: the ETag gate cannot see a thread being resolved, and the count on the card
+#: should follow it. A merged or closed PR's threads rarely move, so it keeps
+#: the ordinary full interval.
 DEFAULT_COMMENTS_FULL_INTERVAL_SECONDS = 120.0
 DEFAULT_PUSHED_INTERVAL_SECONDS = 300.0
+#: A webhook hint starts a lookup of a branch only this long after its last one
+#: (see ``StatusRefresher.hint``). It is the poll interval, the pace a branch is
+#: looked up at where no webhooks arrive.
+DEFAULT_HINT_GAP_SECONDS = DEFAULT_INTERVAL_SECONDS
 DEFAULT_CONCURRENCY = 4
 DEFAULT_TICK_SECONDS = 2.0
 DEFAULT_GRACE_SECONDS = 5.0
 
 _SETTLED_PR_STATES = (PrState.MERGED, PrState.CLOSED)
+
+
+class LookupReason(StrEnum):
+    """Why a poll ran the full (GraphQL) lookup instead of reusing the last
+    one; counted in ``StatusRefresher.lookups`` so what spends the GraphQL
+    budget can be read off ``/api/github-requests``."""
+
+    FIRST = "first"
+    HINTED = "hinted"
+    REFRESH = "refresh"
+    NO_GATE = "no_gate"
+    AFTER_FAILURE = "after_failure"
+    MAX_AGE = "max_age"
+    GATE_CHANGED = "gate_changed"
+    GATE_FAILED = "gate_failed"
 
 
 @dataclass(frozen=True)
@@ -227,6 +249,7 @@ class StatusRefresher:
         comments_full_interval: float = DEFAULT_COMMENTS_FULL_INTERVAL_SECONDS,
         pushed: Callable[[int], bool] = lambda repo_id: False,
         pushed_interval: float = DEFAULT_PUSHED_INTERVAL_SECONDS,
+        hint_gap: float = DEFAULT_HINT_GAP_SECONDS,
         no_pr_interval: float = DEFAULT_NO_PR_INTERVAL_SECONDS,
         persist: LookupPersistence | None = None,
         jitter: Callable[[], float] = random.random,
@@ -241,8 +264,14 @@ class StatusRefresher:
         self._comments_full_interval = comments_full_interval
         self._pushed = pushed
         self._pushed_interval = pushed_interval
-        #: Branches a webhook said changed: refetched at once, gate skipped.
+        self._hint_gap = hint_gap
+        #: Branches a webhook said changed: refetched, gate skipped (once
+        #: ``hint_gap`` has passed since their last lookup).
         self._hinted: set[tuple[int, str]] = set()
+        #: Branches the user asked to refresh: the same, by the card's button.
+        self._refreshing: set[tuple[int, str]] = set()
+        #: How many full lookups ran, by why.
+        self.lookups: Counter[LookupReason] = Counter()
         self._hinted_wake = asyncio.Event()
         self._wall_clock = wall_clock
         self._branch_id = branch_id
@@ -281,12 +310,22 @@ class StatusRefresher:
         fetched = self._cache.get(key)
         return (
             fetched is None
-            or key in self._hinted
+            or key in self._refreshing
+            or (key in self._hinted and self._hint_ready(fetched, now))
             or fetched.at + self._interval_for(key, fetched) <= now
         )
 
+    def _hint_ready(self, previous: Fetched, now: float) -> bool:
+        """Whether a webhook hint may start a lookup of the branch. A burst of
+        webhooks (every job of a CI run sends some) must not become a burst of
+        lookups: the branch is looked up at most once per ``hint_gap``. A hint
+        that comes sooner waits for that and then counts once."""
+        return now - previous.full_at >= self._hint_gap
+
     def hint(self, keys: set[tuple[int, str]]) -> None:
-        """Refetch these branches at once (a webhook said they changed)."""
+        """Refetch these branches soon (a webhook said they changed): at once,
+        unless one was looked up less than ``hint_gap`` ago (see
+        ``_hint_ready``)."""
         self._hinted |= keys
         self._hinted_wake.set()
 
@@ -295,7 +334,8 @@ class StatusRefresher:
         button). ``False`` when the branch is not tracked."""
         if (repo_id, branch) not in {b.key for b in self._branches()}:
             return False
-        self.hint({(repo_id, branch)})
+        self._refreshing.add((repo_id, branch))
+        self._hinted_wake.set()
         return True
 
     async def snapshot(self, branch: TrackedBranch, max_age: float) -> PrSnapshot:
@@ -378,17 +418,23 @@ class StatusRefresher:
 
     async def _refresh(self, branch: TrackedBranch) -> tuple[TrackedBranch, Fetched]:
         previous = self._cache.get(branch.key)
-        hinted = branch.key in self._hinted
-        self._hinted.discard(branch.key)
+        hinted = branch.key in self._hinted and (
+            previous is None or self._hint_ready(previous, self._clock())
+        )
+        refreshing = branch.key in self._refreshing
+        self._refreshing.discard(branch.key)
         async with self._slots:
-            if (
-                previous is not None
-                and not hinted
-                and await self._unchanged(branch, previous)
-            ):
+            reason = await self._reason_to_look_up(
+                branch, previous, hinted=hinted, refreshing=refreshing
+            )
+            if reason is None:
+                assert previous is not None
                 reused = replace(previous, at=self._clock(), wall_at=self._wall_clock())
                 self._cache[branch.key] = reused
                 return branch, reused
+            self.lookups[reason] += 1
+            # Whatever the reason, this lookup answers a pending hint.
+            self._hinted.discard(branch.key)
             try:
                 snapshot = await self._fetch(branch.branch, branch.path)
                 error = None
@@ -477,24 +523,46 @@ class StatusRefresher:
             # Saving only helps the next start: never stop the poll for it.
             logger.exception("could not save the lookup of %s", branch.branch)
 
-    async def _unchanged(self, branch: TrackedBranch, previous: Fetched) -> bool:
-        if (
-            self._gate is None
-            or previous.status is None
+    async def _reason_to_look_up(
+        self,
+        branch: TrackedBranch,
+        previous: Fetched | None,
+        *,
+        hinted: bool,
+        refreshing: bool,
+    ) -> LookupReason | None:
+        """Why the full lookup has to run, or ``None`` when the last one still
+        holds: the gate says the PR did not change and the lookup is younger
+        than its full interval."""
+        if previous is None or previous.status is None:
+            return LookupReason.FIRST
+        if refreshing:
+            return LookupReason.REFRESH
+        if hinted:
+            return LookupReason.HINTED
+        if self._gate is None:
+            return LookupReason.NO_GATE
+        if previous.error is not None:
             # The gate has seen newer ETags than a lookup that failed: only a
             # full lookup can bring the data up to them.
-            or previous.error is not None
-            or self._clock() - previous.full_at >= self._full_interval_of(previous)
-        ):
-            return False
+            return LookupReason.AFTER_FAILURE
+        if self._clock() - previous.full_at >= self._full_interval_of(previous):
+            return LookupReason.MAX_AGE
         try:
-            return await self._gate.unchanged(branch, previous)
+            if await self._gate.unchanged(branch, previous):
+                return None
         except Exception:  # noqa: BLE001
             # The gate only saves a lookup: when it cannot answer, do the lookup.
-            return False
+            return LookupReason.GATE_FAILED
+        return LookupReason.GATE_CHANGED
 
     def _full_interval_of(self, previous: Fetched) -> float:
-        if previous.status is not None and previous.status.open_comments > 0:
+        status = previous.status
+        if (
+            status is not None
+            and status.open_comments > 0
+            and status.pr not in _SETTLED_PR_STATES
+        ):
             return min(self._comments_full_interval, self._full_interval)
         return self._full_interval
 

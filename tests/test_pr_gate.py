@@ -15,6 +15,7 @@ from toolbelt.ui.github_requests import ConditionalAnswer, RateLimited
 from toolbelt.ui.live_status import (
     EventHub,
     Fetched,
+    LookupReason,
     StatusRefresher,
     TrackedBranch,
 )
@@ -124,6 +125,7 @@ class Setup:
     """A refresher over one branch with a gate backed by ``FakeGitHub``."""
 
     def __init__(self, *, pushed=False, **kwargs) -> None:
+        options = {"full_interval": 120, "hint_gap": 20, **kwargs}
         self.clock = Clock()
         self.github = FakeGitHub()
         self.lookups = 0
@@ -139,10 +141,9 @@ class Setup:
             interval=20,
             settled_interval=300,
             gate=GithubChangeGate(PrGate(self.github), self.slug_of),
-            full_interval=120,
             pushed=lambda repo_id: self.pushed,
             pushed_interval=300,
-            **kwargs,
+            **options,
         )
 
     async def slug_of(self, repo_id: int) -> str | None:
@@ -207,6 +208,18 @@ class TestRefresherWithGate:
 
         assert s.lookups == 2
 
+    def test_a_settled_pr_with_unresolved_threads_keeps_the_longer_interval(self):
+        s = Setup(full_interval=600, comments_full_interval=60)
+        s.status = replace(OPEN, pr=PrState.MERGED, open_comments=1)
+        s.pass_after(0)
+        s.pass_after(300)  # polled every 300 s; the gate says nothing changed
+
+        assert s.lookups == 1
+
+        s.pass_after(300)  # 600 s after the last full lookup
+
+        assert s.lookups == 2
+
     def test_a_pr_without_unresolved_threads_keeps_the_longer_interval(self):
         s = Setup(comments_full_interval=60)
         s.pass_after(0)
@@ -262,10 +275,11 @@ class TestRefresherWithGate:
     def test_a_webhook_hint_looks_the_branch_up_at_once_without_the_gate(self):
         s = Setup()
         s.pass_after(0)
+        s.pass_after(20)  # the gate reuses the lookup; the poll is due at 40
         s.github.asked.clear()
 
         s.refresher.hint({(1, "devon/a")})
-        fetched = s.pass_after(1)  # not due for 19 more seconds
+        fetched = s.pass_after(5)
 
         assert fetched == 1
         assert s.lookups == 2
@@ -274,10 +288,63 @@ class TestRefresherWithGate:
     def test_a_hint_for_one_branch_is_used_up(self):
         s = Setup()
         s.pass_after(0)
+        s.pass_after(20)
         s.refresher.hint({(1, "devon/a")})
-        s.pass_after(1)
+        s.pass_after(5)
 
         assert s.pass_after(1) == 0
+
+    def test_hints_right_after_a_lookup_wait_and_count_as_one_lookup(self):
+        s = Setup(pushed=True)  # polled every 300 s: only hints can cause lookups
+        s.pass_after(0)
+
+        for _ in range(5):  # a CI run sends a burst of webhooks
+            s.refresher.hint({(1, "devon/a")})
+            assert s.pass_after(2) == 0
+        assert s.lookups == 1
+
+        s.refresher.hint({(1, "devon/a")})
+        assert s.pass_after(10) == 1  # 20 s after the last lookup
+        assert s.lookups == 2
+        assert s.pass_after(2) == 0
+        assert s.lookups == 2
+
+    def test_a_hint_that_arrives_during_a_lookup_is_looked_up_afterwards(self):
+        s = Setup(pushed=True)
+        s.pass_after(0)
+
+        async def hinted_while_fetching(branch: str, root: Path) -> PrSnapshot:
+            s.lookups += 1
+            s.refresher.hint({(1, "devon/a")})
+            return PrSnapshot(s.status, FACTS)
+
+        s.refresher._fetch = hinted_while_fetching
+        s.refresher.hint({(1, "devon/a")})
+        s.pass_after(20)
+        assert s.lookups == 2
+
+        assert s.pass_after(20) == 1
+        assert s.lookups == 3
+
+    def test_the_lookups_are_counted_by_why_they_ran(self):
+        s = Setup()
+        s.pass_after(0)
+        s.github.change(PULL)
+        s.pass_after(20)  # the gate saw a change
+        s.pass_after(20)  # nothing new: not counted
+        s.pass_after(100)  # 120 s after the last full lookup
+        s.refresher.hint({(1, "devon/a")})
+        s.pass_after(30)
+        s.refresher.refresh(1, "devon/a")
+        s.pass_after(1)
+
+        assert s.refresher.lookups == {
+            LookupReason.FIRST: 1,
+            LookupReason.GATE_CHANGED: 1,
+            LookupReason.MAX_AGE: 1,
+            LookupReason.HINTED: 1,
+            LookupReason.REFRESH: 1,
+        }
 
     def test_a_repo_with_live_webhooks_is_polled_only_as_a_safety_net(self):
         s = Setup(pushed=True)

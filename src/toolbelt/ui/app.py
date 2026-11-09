@@ -146,6 +146,7 @@ from toolbelt.ui.live_status import (
     DEFAULT_CONCURRENCY,
     DEFAULT_FULL_INTERVAL_SECONDS,
     DEFAULT_GRACE_SECONDS,
+    DEFAULT_HINT_GAP_SECONDS,
     DEFAULT_INTERVAL_SECONDS,
     DEFAULT_SETTLED_INTERVAL_SECONDS,
     DEFAULT_TICK_SECONDS,
@@ -690,6 +691,7 @@ def create_app(
     lookup_cache: LookupCache | None = None,
     transitions: StatusTransitionRecorder | None = None,
     full_refresh_interval: float = DEFAULT_FULL_INTERVAL_SECONDS,
+    hint_gap: float = DEFAULT_HINT_GAP_SECONDS,
     webhook_url: str | None = None,
     forwarders: WebhookForwarders | None = None,
     decisions: DecisionBook | None = None,
@@ -1228,6 +1230,7 @@ def create_app(
         persist=lookup_cache,
         observe=transitions.observe if transitions else None,
         full_interval=full_refresh_interval,
+        hint_gap=hint_gap,
         pushed=webhooks_live,
     )
 
@@ -2474,9 +2477,14 @@ def create_app(
 
     @app.get("/api/github-requests")
     async def github_requests() -> dict:
-        """Each GitHub budget as last reported, and the requests each caller
-        has made since the server started."""
-        return {**requests.usage(), "webhooks": webhook_counts}
+        """Each GitHub budget as last reported, the requests each caller has
+        made since the server started, and why the status polls ran a full
+        (GraphQL) lookup."""
+        return {
+            **requests.usage(),
+            "webhooks": webhook_counts,
+            "lookups": dict(refresher.lookups),
+        }
 
     @app.post("/api/github-webhook", status_code=204)
     async def github_webhook(request: Request) -> Response:

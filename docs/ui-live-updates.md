@@ -19,7 +19,10 @@ working.
 
 `GET /api/github-requests` shows each budget as last reported and how many
 requests each caller (`status`, `gate`, `untracked`, `aggregate`, `admin`) has
-made, with the number of 304s, rate-limited calls and failures.
+made, with the number of 304s, rate-limited calls and failures. Its `lookups`
+counts the full GraphQL lookups of the status polls by why they ran (`first`,
+`hinted`, `refresh`, `after_failure`, `max_age`, `gate_changed`, `gate_failed`),
+which is where to look when the GraphQL budget drains.
 
 ## What a card shows when GitHub does not answer
 
@@ -89,9 +92,12 @@ extension's own error, and when the repo's one webhook is taken, what holds it:
 The badge goes when the forwarder connects.
 
 A webhook is only a hint (`github_webhooks.py`): it names the branches and PR
-numbers it touched, and the status refresher looks those up again at once,
-skipping the gate. The payload is never used as data. A repo whose forwarder
-has stayed up for a few seconds is polled only every 300 s, as a safety net.
+numbers it touched, and the status refresher looks those up again, skipping the
+gate: at once, unless the branch was looked up less than 20 s ago (the pace of
+its polls without webhooks), in which case the hints that arrive meanwhile wait
+and count as one lookup, so the many events of a CI run do not become many
+lookups. The payload is never used as data. A repo whose forwarder has stayed
+up for a few seconds is polled only every 300 s, as a safety net.
 
 ## ETag gate (every repo)
 
@@ -104,9 +110,9 @@ was just asked.
 
 The gate does not see a review thread being resolved or the base branch moving
 under a PR, so the full GraphQL lookup still runs every 10 minutes per PR
-(`full_interval`), and every 2 minutes for a PR with unresolved review threads
-(`comments_full_interval`), so the count on its card follows a thread being
-resolved. A change the gate does see shows up within one poll (20 s).
+(`full_interval`), and every 2 minutes for an open PR with unresolved review
+threads (`comments_full_interval`; a merged or closed PR keeps the 10
+minutes), so the count on its card follows a thread being resolved. A change the gate does see shows up within one poll (20 s).
 
 The **Refresh** button in a card's PR box (`POST /api/refresh` with the branch's
 id) looks that PR up again at once, gate skipped, like a webhook hint for that
