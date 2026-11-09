@@ -103,6 +103,7 @@ export type ServerEvent =
   | StructureEvent
   | RefreshedEvent
   | UntrackedEvent
+  | LandedPrsEvent
   | ExtrasEvent
   | WebhooksEvent
   | AgentsEvent
@@ -1056,6 +1057,32 @@ export interface UntrackedFailed {
   state: "failed";
 }
 /**
+ * The merged PRs of removed branches that have comments to acknowledge
+ * changed.
+ */
+export interface LandedPrsEvent {
+  landed_prs: LandedPr[];
+  type: "landed_prs";
+  v: number;
+}
+/**
+ * A merged PR whose branch is no longer tracked but which received review
+ * comments the user has not acknowledged: a reduced card (no stack position,
+ * no worktree actions) with the comments and the Acknowledge button.
+ */
+export interface LandedPr {
+  branch: string;
+  comments: ReviewCommentInfo[];
+  id: string;
+  pr_number: number;
+  pr_url: string;
+  removed_at: string;
+  repo: string;
+  repo_id: number;
+  task: string | null;
+  title: string;
+}
+/**
  * What the task cards show beyond their PR status changed.
  */
 export interface ExtrasEvent {
@@ -1581,6 +1608,7 @@ export interface Snapshot {
   extras: CardExtras | null;
   fetched: FetchedBranch[];
   filters: FilterSpec[];
+  landed_prs: LandedPr[];
   proposals: ProposalList | null;
   repos: Repo[];
   spend: Spend[];

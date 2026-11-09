@@ -141,6 +141,7 @@ from toolbelt.ui.github_requests import (
     RateLimited,
 )
 from toolbelt.ui.github_webhooks import affected
+from toolbelt.ui.landed_prs import LandedBranch, LandedPrFeed
 from toolbelt.ui.live_status import (
     DEFAULT_CONCURRENCY,
     DEFAULT_FULL_INTERVAL_SECONDS,
@@ -185,10 +186,14 @@ from toolbelt.ui.personal_review import (
 )
 from toolbelt.ui.pr_activity import PrFacts
 from toolbelt.ui.pr_fetch import (
+    CommentsRunner,
     GraphqlRunner,
+    PrComments,
     PrSnapshot,
+    comments_runner,
     fetch_snapshot,
     graphql_runner,
+    parse_comments,
 )
 from toolbelt.ui.pr_gate import GithubChangeGate, PrGate
 from toolbelt.ui.proposal_feed import ProposalFeed
@@ -296,6 +301,19 @@ def _acknowledge_pr(repo_id: int, pr_number: int) -> None:
     store = StackStore(default_db_path())
     try:
         store.acknowledge_pr(repo_id, pr_number)
+    finally:
+        store.close()
+
+
+def _landed_branches(since: datetime) -> list[LandedBranch]:
+    store = StackStore(default_db_path())
+    try:
+        names = {repo.id: repo.name for repo in visible_repos(store.repos())}
+        return [
+            (branch, names[branch.repo_id])
+            for branch in store.landed_prs_since(since)
+            if branch.repo_id in names
+        ]
     finally:
         store.close()
 
@@ -625,6 +643,7 @@ def create_app(
     remote_of: RemoteLookup = origin_remote,
     untracked_interval: float = DEFAULT_UNTRACKED_INTERVAL_SECONDS,
     search_history: PageRunner | None = None,
+    pr_comments: CommentsRunner | None = None,
     stored_history: Callable[[], StoredHistory] = read_history,
     claims_dir: Callable[[], Path] = _claims_dir,
     activity_dir: Callable[[], Path] = _activity_dir,
@@ -920,6 +939,13 @@ def create_app(
         fetch = fetch_with_runner
     search_open_prs = search_open_prs or search_runner(requests)
     search_history = search_history or page_runner(requests)
+    pr_comments = pr_comments or comments_runner(requests)
+
+    async def landed_comments(repo_id: int, number: int) -> PrComments:
+        slug = await slug_of(repo_id)
+        if slug is None:
+            raise RuntimeError(f"repo {repo_id} has no GitHub remote")
+        return parse_comments(await pr_comments(slug, number))
 
     runner = AgentRunner(
         db_path=default_db_path,
@@ -1204,6 +1230,17 @@ def create_app(
         remote_of=remote_of,
         clock=clock,
         interval=untracked_interval,
+        tick=tick,
+    )
+
+    landed_feed = LandedPrFeed(
+        landed=_landed_branches,
+        acknowledged=_acknowledged_prs,
+        acknowledge=_acknowledge_pr,
+        comments=landed_comments,
+        hub=hub,
+        wall_clock=wall_clock,
+        clock=clock,
         tick=tick,
     )
 
@@ -1614,6 +1651,7 @@ def create_app(
             asyncio.create_task(spend.run()),
             asyncio.create_task(dispatcher.run()),
             asyncio.create_task(untracked_feed.run()),
+            asyncio.create_task(landed_feed.run()),
             asyncio.create_task(watcher.run()),
             asyncio.create_task(aggregates.run()),
             asyncio.create_task(estimate_job.run()),
@@ -1651,6 +1689,7 @@ def create_app(
     app.state.task_feed = task_feed
     app.state.claims_feed = claims
     app.state.untracked_feed = untracked_feed
+    app.state.landed_feed = landed_feed
     app.state.structure_watcher = watcher
     app.state.aggregates = aggregates
     app.state.spend_feed = spend
@@ -1725,6 +1764,7 @@ def create_app(
             refresher=refresher,
             task_feed=task_feed,
             untracked=untracked_feed.get(),
+            landed_prs=landed_feed.get(),
             now=wall_clock(),
             version=version,
             claims=claims,
@@ -1891,6 +1931,19 @@ def create_app(
         away like any other merged one. Quick, so it answers once the
         acknowledgement is stored; the card's ``status`` event follows."""
         repo_id, name = branch_ref(body.id)
+        if body.pr_number is not None:
+            # A removed branch's landed PR (a card of its own, see
+            # ``landed_prs.py``).
+            shown = [
+                card
+                for card in landed_feed.get()
+                if (card.repo_id, card.pr_number) == (repo_id, body.pr_number)
+            ]
+            if not shown:
+                raise HTTPException(status_code=404, detail="no such landed PR")
+            await asyncio.to_thread(_acknowledge_pr, repo_id, body.pr_number)
+            landed_feed.acknowledged(repo_id, body.pr_number)
+            return
         parents = await asyncio.to_thread(_all_parents, repo_id)
         if name not in parents:
             raise HTTPException(status_code=404, detail="no such branch")

@@ -151,6 +151,7 @@ export function snapshot(branches: Branch[], repos: Repo[] = [repo(1, "api")], e
     branches: branches.map((b, order) => ({ ...b, order })),
     catalog,
     untracked: { state: "loaded", prs: [], truncated: false, hidden: 0 },
+    landed_prs: [],
     fetched: [],
     extras: null,
     agents: null,

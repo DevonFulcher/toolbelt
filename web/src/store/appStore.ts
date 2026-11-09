@@ -29,6 +29,7 @@ import type {
   Snapshot,
   TaskLive,
   UntrackedPrs,
+  LandedPr,
 } from "../api/generated";
 import type { ConnectionState } from "../live/connection";
 import { DEFAULT_STATE, type View, type ViewState } from "../logic/viewState";
@@ -103,6 +104,8 @@ export interface AppState {
   filters: FilterSpec[];
   /** Open PRs of the user's that are not tracked branches (links only). */
   untracked: UntrackedPrs;
+  /** Merged PRs of removed branches with comments to acknowledge. */
+  landedPrs: LandedPr[];
   /** The latest event version seen (the snapshot's, then each event's). */
   version: number | null;
   /** `Date.now()` of the last refresh we know about. */
@@ -137,6 +140,7 @@ export interface AppState {
   /** A polling pass finished; ``fetched`` are the branches it looked up. */
   refreshed(v: number, fetched: FetchedBranch[]): void;
   untrackedChanged(untracked: UntrackedPrs, v: number): void;
+  landedPrsChanged(landedPrs: LandedPr[], v: number): void;
   extrasChanged(extras: CardExtras, v?: number): void;
   agentsChanged(agents: Agents, v?: number): void;
   proposalsChanged(proposals: ProposalList, v?: number): void;
@@ -245,6 +249,7 @@ export function createAppStore(init: StoreInit = {}): AppStore {
     catalog: null,
     filters: [],
     untracked: { state: "loading" },
+    landedPrs: [],
     version: null,
     updatedAt: null,
     connection: "connecting",
@@ -304,6 +309,7 @@ export function createAppStore(init: StoreInit = {}): AppStore {
         catalog: prev.catalog && same(prev.catalog, snapshot.catalog) ? prev.catalog : snapshot.catalog,
         filters: same(prev.filters, snapshot.filters) ? prev.filters : snapshot.filters,
         untracked: same(prev.untracked, snapshot.untracked) ? prev.untracked : snapshot.untracked,
+        landedPrs: same(prev.landedPrs, snapshot.landed_prs) ? prev.landedPrs : snapshot.landed_prs,
         // A restarted server counts from 0 again: take the snapshot's.
         version: snapshot.version,
         updatedAt: snapshot.age === null ? prev.updatedAt : now - snapshot.age * 1000,
@@ -430,6 +436,12 @@ export function createAppStore(init: StoreInit = {}): AppStore {
       const state = get();
       if (state.version !== null && v <= state.version) return;
       set({ version: v, untracked });
+    },
+
+    landedPrsChanged(landedPrs, v) {
+      const state = get();
+      if (state.version !== null && v <= state.version) return;
+      set({ version: v, landedPrs });
     },
 
     hello(v, ageSeconds, build) {

@@ -3563,6 +3563,92 @@
       ],
       "type": "string"
     },
+    "LandedPr": {
+      "additionalProperties": false,
+      "description": "A merged PR whose branch is no longer tracked but which received review\ncomments the user has not acknowledged: a reduced card (no stack position,\nno worktree actions) with the comments and the Acknowledge button.",
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "comments": {
+          "items": {
+            "$ref": "#/$defs/ReviewCommentInfo"
+          },
+          "type": "array"
+        },
+        "id": {
+          "type": "string"
+        },
+        "pr_number": {
+          "type": "integer"
+        },
+        "pr_url": {
+          "type": "string"
+        },
+        "removed_at": {
+          "type": "string"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "repo_id": {
+          "type": "integer"
+        },
+        "task": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "repo_id",
+        "repo",
+        "branch",
+        "pr_number",
+        "pr_url",
+        "title",
+        "task",
+        "removed_at",
+        "comments"
+      ],
+      "title": "LandedPr",
+      "type": "object"
+    },
+    "LandedPrsEvent": {
+      "additionalProperties": false,
+      "description": "The merged PRs of removed branches that have comments to acknowledge\nchanged.",
+      "properties": {
+        "landed_prs": {
+          "items": {
+            "$ref": "#/$defs/LandedPr"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "landed_prs",
+          "type": "string"
+        },
+        "v": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "v",
+        "landed_prs"
+      ],
+      "title": "LandedPrsEvent",
+      "type": "object"
+    },
     "LaneEvent": {
       "additionalProperties": false,
       "properties": {
@@ -5906,6 +5992,7 @@
           "conversation": "#/$defs/ConversationEvent",
           "extras": "#/$defs/ExtrasEvent",
           "hello": "#/$defs/HelloEvent",
+          "landed_prs": "#/$defs/LandedPrsEvent",
           "proposals": "#/$defs/ProposalsEvent",
           "refreshed": "#/$defs/RefreshedEvent",
           "spend": "#/$defs/SpendEvent",
@@ -5938,6 +6025,9 @@
         },
         {
           "$ref": "#/$defs/UntrackedEvent"
+        },
+        {
+          "$ref": "#/$defs/LandedPrsEvent"
         },
         {
           "$ref": "#/$defs/ExtrasEvent"
@@ -7020,6 +7110,12 @@
           },
           "type": "array"
         },
+        "landed_prs": {
+          "items": {
+            "$ref": "#/$defs/LandedPr"
+          },
+          "type": "array"
+        },
         "proposals": {
           "anyOf": [
             {
@@ -7063,6 +7159,7 @@
         "catalog",
         "filters",
         "untracked",
+        "landed_prs",
         "fetched",
         "extras",
         "agents",

@@ -3,7 +3,6 @@
 // the button. The acknowledgement is kept on the server; the card's status
 // event drops the card once it is stored.
 import { useState } from "react";
-import { acknowledgeComments } from "../api/client";
 import type { ReviewCommentInfo } from "../api/generated";
 
 const KIND_LABEL: Record<ReviewCommentInfo["kind"], string> = {
@@ -12,14 +11,15 @@ const KIND_LABEL: Record<ReviewCommentInfo["kind"], string> = {
   conversation: "comment",
 };
 
-export function AcknowledgeButton({ id }: { id: string }) {
+/** ``request`` stores the acknowledgement; the server then updates the page. */
+export function AcknowledgeButton({ request }: { request: () => Promise<void> }) {
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
 
   const acknowledge = (): void => {
     setBusy(true);
     setProblem(null);
-    acknowledgeComments(id)
+    request()
       .catch((error: unknown) => {
         setProblem(error instanceof Error ? error.message : String(error));
         setBusy(false);

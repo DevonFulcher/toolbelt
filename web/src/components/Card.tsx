@@ -15,6 +15,7 @@ import type {
   TimelineLane,
   Tone,
 } from "../api/generated";
+import { acknowledgeComments } from "../api/client";
 import { sessionLink } from "../logic/claimSession";
 import type { RailSegment } from "../logic/layout";
 import { stackViewRoot } from "../logic/focus";
@@ -588,7 +589,7 @@ function NextSlot({
       ) : status.next.kind === "merge" ? (
         <MergeButton id={id} status={status} />
       ) : status.next.kind === "acknowledge" ? (
-        <AcknowledgeButton id={id} />
+        <AcknowledgeButton request={() => acknowledgeComments(id)} />
       ) : status.next.kind === "personal_review" ? (
         opening ? (
           <Pill tone={WHO_TONE.ci} title="Pushing the branch and opening its PR">

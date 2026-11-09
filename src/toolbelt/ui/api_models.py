@@ -434,6 +434,28 @@ class ReviewCommentInfo(Model):
     url: str
 
 
+class LandedPr(Model):
+    """A merged PR whose branch is no longer tracked but which received review
+    comments the user has not acknowledged: a reduced card (no stack position,
+    no worktree actions) with the comments and the Acknowledge button."""
+
+    #: ``repo_id:pr_number``.
+    id: str
+    repo_id: int
+    #: The repo's name.
+    repo: str
+    #: The removed branch's name.
+    branch: str
+    pr_number: int
+    pr_url: str
+    title: str
+    #: The task the branch was for (as it was given), if any.
+    task: str | None
+    #: When the branch was removed.
+    removed_at: str
+    comments: list[ReviewCommentInfo]
+
+
 class LoadedStatus(Model):
     load: Literal["loaded"]
     pr: PrState
@@ -747,6 +769,8 @@ class Snapshot(Model):
     filters: list[FilterSpec]
     #: Open PRs of the user's that are not tracked branches.
     untracked: UntrackedPrs
+    #: Merged PRs of removed branches that have comments to acknowledge.
+    landed_prs: list[LandedPr]
     #: When each branch's PR status was last looked up (a branch with no lookup
     #: yet is left out). Cards say how old their data is by it; ``refreshed``
     #: events keep it current.
@@ -1638,6 +1662,9 @@ class AcknowledgeRequest(Model):
 
     #: The branch's row id (see ``Branch.id``).
     id: str
+    #: For a removed branch's landed PR (see ``LandedPr``): the PR's number
+    #: (``id`` then names the repo and the removed branch).
+    pr_number: int | None = None
 
 
 class SetParentRequest(Model):
@@ -2096,6 +2123,15 @@ class UntrackedEvent(Model):
     untracked: UntrackedPrs
 
 
+class LandedPrsEvent(Model):
+    """The merged PRs of removed branches that have comments to acknowledge
+    changed."""
+
+    type: Literal["landed_prs"]
+    v: int
+    landed_prs: list[LandedPr]
+
+
 class ClaimPatch(Model):
     branch_id: str
     claim: BranchClaim
@@ -2121,6 +2157,7 @@ type ServerEvent = Annotated[
     | StructureEvent
     | RefreshedEvent
     | UntrackedEvent
+    | LandedPrsEvent
     | ExtrasEvent
     | WebhooksEvent
     | AgentsEvent

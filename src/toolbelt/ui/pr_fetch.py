@@ -36,6 +36,7 @@ from toolbelt.ui import pr_activity
 from toolbelt.ui.conflict_commit import ConflictCommit
 from toolbelt.ui.github_requests import GithubRequests
 from toolbelt.ui.pr_activity import (
+    CommentKind,
     PrFacts,
     ReviewComment,
     ReviewSubmission,
@@ -113,6 +114,24 @@ query($owner: String!, $repo: String!, $branch: String!) {{
 }}
 """
 
+# What a PR holds for its author to read (see ``review_comments``), by number:
+# for a PR whose branch is no longer tracked, so it is not found by branch.
+COMMENTS_QUERY = """
+query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      title url author { login }
+      reviewThreads(first: 100) { nodes { isResolved comments(first: 1) { nodes { author { __typename login } body url } } } }
+      reviews(last: 100) { nodes { submittedAt state body url author { __typename login } } }
+      comments(last: 50) { nodes { body url author { __typename login } } }
+    }
+  }
+}
+"""
+
+#: (repo ``owner/name``, PR number) -> the GraphQL response (``{"data": ...}``).
+CommentsRunner = Callable[[str, int], Awaitable[dict]]
+
 #: (branch, repo checkout) -> the GraphQL response (``{"data": ...}``).
 GraphqlRunner = Callable[[str, Path], Awaitable[dict]]
 
@@ -149,6 +168,39 @@ def graphql_runner(
         )
 
     return run
+
+
+def comments_runner(requests: GithubRequests) -> CommentsRunner:
+    """The lookup of a PR's comments by number over ``requests``."""
+
+    async def run(slug: str, number: int) -> dict:
+        owner, repo = slug.split("/", 1)
+        return await requests.graphql(
+            COMMENTS_QUERY,
+            {"owner": owner, "repo": repo, "number": number},
+            caller="landed_comments",
+        )
+
+    return run
+
+
+@dataclass(frozen=True)
+class PrComments:
+    """A PR's title, link and the comments it holds for its author."""
+
+    title: str
+    url: str
+    comments: tuple[ReviewComment, ...]
+
+
+def parse_comments(payload: dict) -> PrComments:
+    """Parse a ``COMMENTS_QUERY`` response."""
+    node = payload["data"]["repository"]["pullRequest"]
+    return PrComments(
+        title=node["title"],
+        url=node["url"],
+        comments=review_comments(node, _login(node["author"])),
+    )
 
 
 def _parse_time(value: str) -> datetime:
@@ -406,7 +458,7 @@ def review_comments(node: dict, author: str) -> tuple[ReviewComment, ...]:
     )
 
 
-def _review_comment(kind: str, node: dict) -> ReviewComment:
+def _review_comment(kind: CommentKind, node: dict) -> ReviewComment:
     return ReviewComment(
         kind=kind, author=_login(node["author"]), body=node["body"], url=node["url"]
     )

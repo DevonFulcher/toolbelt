@@ -1296,6 +1296,20 @@ def default_db_path() -> Path:
     return state_dir() / DB_FILENAME
 
 
+def _removed_branch(r: sqlite3.Row) -> RemovedBranch:
+    return RemovedBranch(
+        task_id=r["task_id"],
+        pr=_pr_link(r),
+        repo_id=r["repo_id"],
+        name=r["name"],
+        task=r["task"],
+        task_tracker=r["task_tracker"],
+        started_at=_optional_time(r["started_at"]),
+        removed_at=datetime.fromisoformat(r["removed_at"]),
+        landed=bool(r["landed"]),
+    )
+
+
 def _now() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -1662,20 +1676,20 @@ class StackStore:
             "task_tracker, started_at, removed_at, landed "
             "FROM branches WHERE removed_at IS NOT NULL ORDER BY removed_at, id"
         )
-        return [
-            RemovedBranch(
-                task_id=r["task_id"],
-                pr=_pr_link(r),
-                repo_id=r["repo_id"],
-                name=r["name"],
-                task=r["task"],
-                task_tracker=r["task_tracker"],
-                started_at=_optional_time(r["started_at"]),
-                removed_at=datetime.fromisoformat(r["removed_at"]),
-                landed=bool(r["landed"]),
-            )
-            for r in rows
-        ]
+        return [_removed_branch(r) for r in rows]
+
+    def landed_prs_since(self, since: datetime) -> list[RemovedBranch]:
+        """Branches removed since ``since`` as the cleanup after their PR merged
+        and whose PR number is known (a row removed before PR numbers were
+        recorded has none), newest removal first."""
+        rows = self._conn.execute(
+            "SELECT task_id, pr_number, pr_node_id, repo_id, name, task, "
+            "task_tracker, started_at, removed_at, landed "
+            "FROM branches WHERE removed_at >= ? AND landed = 1 "
+            "AND pr_number IS NOT NULL ORDER BY removed_at DESC, id DESC",
+            (_iso(since),),
+        )
+        return [_removed_branch(r) for r in rows]
 
     def tracked_branch_facts(self) -> list[TrackedBranchFacts]:
         rows = self._conn.execute(

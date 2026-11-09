@@ -189,6 +189,18 @@ describe("live updates", () => {
     expect(store.getState().untracked).toEqual({ state: "loaded", prs: [], truncated: false, hidden: 0 });
   });
 
+  test("a landed_prs event replaces the merged PRs of removed branches to acknowledge", async () => {
+    const { store, current } = setup();
+    await settle();
+    current().emit({ type: "hello", v: 0, age: null, build: null });
+
+    current().emit({ type: "landed_prs", v: 1, landed_prs: [] });
+    await settle();
+
+    expect(store.getState().landedPrs).toEqual([]);
+    expect(store.getState().version).toBe(1);
+  });
+
   test("a stream that died is reopened after a delay while the page is visible", async () => {
     const { env, store, advance, current } = setup();
     await settle();

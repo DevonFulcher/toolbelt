@@ -407,6 +407,11 @@ main:has(.focus-bar) { --focus-h: 2.6rem; }
                         overflow: auto; font-size: 11px; }
 .acknowledge-comment-body { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 6rem; overflow: auto;
                             color: var(--muted); }
+.landed-prs { display: grid; gap: 8px; margin: 8px 0; }
+.landed-pr { padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); }
+.landed-pr-title { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+.landed-pr-meta { font-size: 11px; margin: 2px 0 6px; overflow-wrap: anywhere; }
+.landed-pr-act { margin-bottom: 4px; }
 .merge-error { margin: 4px 0 0; max-height: 10rem; overflow: auto; white-space: pre-wrap; font-size: 11px;
                color: var(--red); }
 

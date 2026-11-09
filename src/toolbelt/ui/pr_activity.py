@@ -92,6 +92,9 @@ class ReviewSubmission:
     body: str
 
 
+type CommentKind = Literal["review", "thread", "conversation"]
+
+
 @dataclass(frozen=True)
 class ReviewComment:
     """Something someone other than the PR's author wrote on it that a person
@@ -99,7 +102,7 @@ class ReviewComment:
     review thread (its first comment) or a conversation comment. ``kind`` is
     ``review``, ``thread`` or ``conversation``."""
 
-    kind: str
+    kind: CommentKind
     author: str
     body: str
     url: str
