@@ -97,6 +97,24 @@ def _seed(conn: sqlite3.Connection) -> None:
                 "landed": 1,
             },
         )
+    elif "removed_at" in _columns(conn, "branches"):
+        _insert(
+            conn,
+            "branches",
+            {
+                "repo_id": 1,
+                "task_id": "seeded-old",
+                "name": "old",
+                "parent": "feat",
+                "task": "OLD-7",
+                "task_tracker": "jira",
+                "started_at": STARTED,
+                "created_at": CREATED,
+                "updated_at": REMOVED,
+                "removed_at": REMOVED,
+                "landed": 1,
+            },
+        )
     if "published_chains" in _tables(conn):
         _insert(
             conn,
@@ -131,9 +149,9 @@ def test_a_fresh_database_has_every_table_and_no_rows(tmp_path: Path):
         "repos",
         "branches",
         "published_chains",
-        "removed_branches",
         "archive_info",
     } <= _tables(s._conn)
+    assert "removed_branches" not in _tables(s._conn)
     assert s.repos() == []
     assert s.removed_branches() == []
     assert s.tracked_branch_facts() == []
@@ -318,3 +336,85 @@ def test_the_finish_estimate_tables_arrive_with_existing_rows_kept(tmp_path: Pat
         assert store.repos()  # the rows of the older schema are still there
     finally:
         store.close()
+
+
+def test_removed_branches_are_merged_into_branches_keeping_every_row(tmp_path: Path):
+    db = tmp_path / "stacks.db"
+    before = len(store._MIGRATIONS) - 1
+    conn = _build_at(db, before)
+    _seed(conn)
+    _insert(
+        conn,
+        "removed_branches",
+        {
+            "repo_id": 1,
+            "task_id": "seeded-pr",
+            "name": "merged",
+            "task": None,
+            "task_tracker": None,
+            "started_at": None,
+            "removed_at": "2026-02-02T00:00:00+00:00",
+            "landed": 1,
+            "pr_number": 1945,
+            "pr_node_id": "PR_x",
+        },
+    )
+    live = conn.execute("SELECT COUNT(*) FROM branches").fetchone()[0]
+    archived = conn.execute("SELECT COUNT(*) FROM removed_branches").fetchone()[0]
+    conn.close()
+
+    s = StackStore(db)
+
+    raw = sqlite3.connect(db)
+    assert raw.execute(
+        "SELECT COUNT(*) FROM branches WHERE removed_at IS NULL"
+    ).fetchone() == (live,)
+    assert raw.execute(
+        "SELECT COUNT(*) FROM branches WHERE removed_at IS NOT NULL"
+    ).fetchone() == (archived,)
+    assert "removed_branches" not in _tables(raw)
+    raw.close()
+    assert s.all_parents(1) == {"feat": "main", "plain": "feat"}
+    old, merged = s.removed_branches()
+    assert (old.name, old.task_id, old.landed) == ("old", "seeded-old", True)
+    assert (merged.name, merged.landed, merged.pr.number if merged.pr else None) == (
+        "merged",
+        True,
+        1945,
+    )
+
+
+def test_a_removed_branchs_name_can_be_reused_and_the_old_row_is_never_a_stack_member(
+    tmp_path: Path,
+):
+    s = StackStore(tmp_path / "stacks.db")
+    repo = s.ensure_repo(
+        store.RepoIdentity(
+            git_common_dir=tmp_path / ".git", path=tmp_path, remote_url=None
+        )
+    )
+    s.set_parent(repo, "feat", "main", task="ABC-1", task_tracker="jira")
+    s.set_parent(repo, "child", "feat")
+    old_task = s.tracked_branch_facts()[0].task_id
+
+    s.remove_branch(repo, "feat", landed=True)
+    s.set_parent(repo, "child", "main")
+
+    assert s.all_parents(repo) == {"child": "main"}
+    assert s.get_parent(repo, "feat") is None
+    assert s.get_links(repo, "feat") is None
+    s.set_parent(repo, "feat", "main")
+    assert s.all_parents(repo) == {"child": "main", "feat": "main"}
+    assert s.get_links(repo, "feat") == BranchLinks(None, None, None)
+    [archived] = s.removed_branches()
+    assert (archived.name, archived.task, archived.landed, archived.task_id) == (
+        "feat",
+        "ABC-1",
+        True,
+        old_task,
+    )
+    new_task = next(t.task_id for t in s.tracked_branch_facts() if t.name == "feat")
+    assert new_task != old_task
+    s.remove_branch(repo, "feat")
+    assert [r.name for r in s.removed_branches()] == ["feat", "feat"]
+    assert s.all_parents(repo) == {"child": "main"}

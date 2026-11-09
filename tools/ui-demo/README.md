@@ -94,7 +94,7 @@ and `tt task claim devon/search-ranking`.
   of `SCENARIOS`. The two searches the view makes (`updated:>=...` and
   `is:open`) are answered from them. The server warms this history in the
   background and the page reads its cache.
-* **The stack DB**: `removed_branches` holds the archived task facts (task
+* **The stack DB**: `branches` rows with `removed_at` set hold the archived task facts (task
   id, PR number and node id when recorded, task start, removal, whether it
   landed) of the cleaned-up branches: about two thirds carry their PR's
   identity (joined by id), the rest do not (matched by branch name and

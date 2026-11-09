@@ -11,7 +11,7 @@ depth cap and focus-root navigation.
 
 It also writes the aggregate view's history (see history.py):
 DEST/history.json, which the fake `gh` serves to the aggregate search, and the
-archived task facts of cleaned-up branches in stacks.db (`removed_branches`).
+archived task facts of cleaned-up branches in stacks.db (`branches` rows with `removed_at` set).
 
 It records what `tt ui` would have seen of the demo branches, one row set per
 lane of the card timelines (docs/timeline-lanes.md): conflict, CI and review
@@ -172,9 +172,10 @@ def write_history(dest: Path, db: sqlite3.Connection, now: datetime) -> None:
             "SELECT id FROM repos WHERE name = ?", (task["repo"],)
         ).fetchone()
         db.execute(
-            "INSERT INTO removed_branches "
-            "(task_id, pr_number, pr_node_id, repo_id, name, started_at, "
-            "removed_at, landed) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO branches "
+            "(task_id, pr_number, pr_node_id, repo_id, name, parent, started_at, "
+            "created_at, updated_at, removed_at, landed) "
+            "VALUES (?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?)",
             (
                 uuid.uuid4().hex,
                 task["pr"]["number"] if task["pr"] else None,
@@ -182,6 +183,8 @@ def write_history(dest: Path, db: sqlite3.Connection, now: datetime) -> None:
                 row[0],
                 task["branch"],
                 task["started"].isoformat(),
+                task["started"].isoformat(),
+                task["removed"].isoformat(),
                 task["removed"].isoformat(),
                 int(task["landed"]),
             ),

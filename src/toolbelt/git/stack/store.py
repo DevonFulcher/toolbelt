@@ -786,6 +786,67 @@ _MIGRATIONS: list[tuple[str, ...]] = [
         )
         """,
     ),
+    (
+        # One table for a branch's whole life: ``removed_branches`` is merged
+        # into ``branches`` as rows with ``removed_at`` set (``landed``: the
+        # removal was the cleanup after a merge). A removed row keeps its last
+        # ``parent`` but is not part of any stack; every read of the live set
+        # filters ``removed_at IS NULL``. A name is unique among live rows only
+        # (a removed branch's name can be reused), so SQLite's table-level
+        # ``UNIQUE (repo_id, name)`` is replaced by a partial unique index,
+        # which needs the table rebuilt. Rows migrated from
+        # ``removed_branches`` never recorded a parent: it is empty.
+        "DROP INDEX branches_by_task_id",
+        """
+        CREATE TABLE branches_rebuilt (
+            id INTEGER PRIMARY KEY,
+            repo_id INTEGER NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            parent TEXT NOT NULL,
+            base TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            task TEXT,
+            agent_link TEXT,
+            task_tracker TEXT,
+            started_at TEXT,
+            task_id TEXT,
+            pr_number INTEGER,
+            pr_node_id TEXT,
+            removed_at TEXT,
+            landed INTEGER NOT NULL DEFAULT 0
+        )
+        """,
+        """
+        INSERT INTO branches_rebuilt
+            (id, repo_id, name, parent, base, created_at, updated_at, task,
+             agent_link, task_tracker, started_at, task_id, pr_number, pr_node_id)
+        SELECT id, repo_id, name, parent, base, created_at, updated_at, task,
+               agent_link, task_tracker, started_at, task_id, pr_number, pr_node_id
+        FROM branches ORDER BY id
+        """,
+        """
+        INSERT INTO branches_rebuilt
+            (repo_id, name, parent, created_at, updated_at, task, task_tracker,
+             started_at, task_id, pr_number, pr_node_id, removed_at, landed)
+        SELECT repo_id, name, '', COALESCE(started_at, removed_at), removed_at,
+               task, task_tracker, started_at, task_id, pr_number, pr_node_id,
+               removed_at, landed
+        FROM removed_branches ORDER BY id
+        """,
+        "DROP TABLE branches",
+        "ALTER TABLE branches_rebuilt RENAME TO branches",
+        (
+            "CREATE UNIQUE INDEX branches_live_by_name "
+            "ON branches (repo_id, name) WHERE removed_at IS NULL"
+        ),
+        "CREATE UNIQUE INDEX branches_by_task_id ON branches (task_id)",
+        (
+            "CREATE INDEX branches_by_removal ON branches (removed_at) "
+            "WHERE removed_at IS NOT NULL"
+        ),
+        "DROP TABLE removed_branches",
+    ),
 ]
 
 
@@ -1420,7 +1481,8 @@ class StackStore:
 
     def get_parent(self, repo_id: int, branch: str) -> str | None:
         row = self._conn.execute(
-            "SELECT parent FROM branches WHERE repo_id = ? AND name = ?",
+            "SELECT parent FROM branches "
+            "WHERE repo_id = ? AND name = ? AND removed_at IS NULL",
             (repo_id, branch),
         ).fetchone()
         return row["parent"] if row else None
@@ -1448,7 +1510,7 @@ class StackStore:
                 "(task_id, repo_id, name, parent, task, task_tracker, "
                 "agent_link, started_at, created_at, updated_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT (repo_id, name) DO UPDATE SET "
+                "ON CONFLICT (repo_id, name) WHERE removed_at IS NULL DO UPDATE SET "
                 "parent = excluded.parent, "
                 "task_tracker = CASE WHEN excluded.task IS NULL "
                 "THEN task_tracker ELSE excluded.task_tracker END, "
@@ -1473,7 +1535,8 @@ class StackStore:
         """When ``branch``'s task started, or ``None`` if the branch is not
         tracked."""
         row = self._conn.execute(
-            "SELECT started_at FROM branches WHERE repo_id = ? AND name = ?",
+            "SELECT started_at FROM branches "
+            "WHERE repo_id = ? AND name = ? AND removed_at IS NULL",
             (repo_id, branch),
         ).fetchone()
         if row is None:
@@ -1484,7 +1547,7 @@ class StackStore:
         """``branch``'s links, or ``None`` if the branch is not tracked."""
         row = self._conn.execute(
             "SELECT task, task_tracker, agent_link FROM branches "
-            "WHERE repo_id = ? AND name = ?",
+            "WHERE repo_id = ? AND name = ? AND removed_at IS NULL",
             (repo_id, branch),
         ).fetchone()
         if row is None:
@@ -1512,34 +1575,28 @@ class StackStore:
                 "task_tracker = CASE WHEN ? IS NULL THEN task_tracker ELSE ? END, "
                 "task = COALESCE(?, task), "
                 "agent_link = COALESCE(?, agent_link), updated_at = ? "
-                "WHERE repo_id = ? AND name = ?",
+                "WHERE repo_id = ? AND name = ? AND removed_at IS NULL",
                 (task, task_tracker, task, agent_link, _now(), repo_id, branch),
             )
             return cursor.rowcount > 0
 
     def remove_branch(self, repo_id: int, branch: str, *, landed: bool = False) -> None:
-        """Stop tracking ``branch``, first archiving its task facts (see
-        ``removed_branches``) in the same transaction. ``landed``: its PR was
+        """Stop tracking ``branch``: its row stays, marked removed (see
+        ``removed_branches``), with its task facts. ``landed``: its PR was
         merged and this is the cleanup after it."""
+        now = _now()
         with self._write() as conn:
             conn.execute(
-                "INSERT INTO removed_branches "
-                "(task_id, pr_number, pr_node_id, repo_id, name, task, "
-                "task_tracker, started_at, removed_at, landed) "
-                "SELECT task_id, pr_number, pr_node_id, repo_id, name, task, "
-                "task_tracker, started_at, ?, ? "
-                "FROM branches WHERE repo_id = ? AND name = ?",
-                (_now(), int(landed), repo_id, branch),
-            )
-            conn.execute(
-                "DELETE FROM branches WHERE repo_id = ? AND name = ?",
-                (repo_id, branch),
+                "UPDATE branches SET removed_at = ?, landed = ?, updated_at = ? "
+                "WHERE repo_id = ? AND name = ? AND removed_at IS NULL",
+                (now, int(landed), now, repo_id, branch),
             )
 
     def get_pr_link(self, repo_id: int, branch: str) -> PrLink | None:
         """The PR recorded for ``branch``'s task, if any."""
         row = self._conn.execute(
-            "SELECT pr_number, pr_node_id FROM branches WHERE repo_id = ? AND name = ?",
+            "SELECT pr_number, pr_node_id FROM branches "
+            "WHERE repo_id = ? AND name = ? AND removed_at IS NULL",
             (repo_id, branch),
         ).fetchone()
         return _pr_link(row) if row else None
@@ -1559,7 +1616,7 @@ class StackStore:
         with self._write() as conn:
             row = conn.execute(
                 "SELECT pr_number, pr_node_id FROM branches "
-                "WHERE repo_id = ? AND name = ?",
+                "WHERE repo_id = ? AND name = ? AND removed_at IS NULL",
                 (repo_id, branch),
             ).fetchone()
             if row is None:
@@ -1570,15 +1627,14 @@ class StackStore:
             claimed = {
                 r["pr_node_id"]
                 for r in conn.execute(
-                    "SELECT pr_node_id FROM branches WHERE repo_id = ? "
-                    "UNION SELECT pr_node_id FROM removed_branches "
-                    "WHERE repo_id = ?",
-                    (repo_id, repo_id),
+                    "SELECT pr_node_id FROM branches WHERE repo_id = ?",
+                    (repo_id,),
                 )
             }
             last_removed = conn.execute(
-                "SELECT removed_at FROM removed_branches "
-                "WHERE repo_id = ? AND name = ? ORDER BY removed_at DESC LIMIT 1",
+                "SELECT removed_at FROM branches "
+                "WHERE repo_id = ? AND name = ? AND removed_at IS NOT NULL "
+                "ORDER BY removed_at DESC LIMIT 1",
                 (repo_id, branch),
             ).fetchone()
             earliest = (
@@ -1593,7 +1649,7 @@ class StackStore:
                     continue
                 conn.execute(
                     "UPDATE branches SET pr_number = ?, pr_node_id = ? "
-                    "WHERE repo_id = ? AND name = ?",
+                    "WHERE repo_id = ? AND name = ? AND removed_at IS NULL",
                     (candidate.link.number, candidate.link.node_id, repo_id, branch),
                 )
                 return candidate.link
@@ -1604,7 +1660,7 @@ class StackStore:
         rows = self._conn.execute(
             "SELECT task_id, pr_number, pr_node_id, repo_id, name, task, "
             "task_tracker, started_at, removed_at, landed "
-            "FROM removed_branches ORDER BY removed_at, id"
+            "FROM branches WHERE removed_at IS NOT NULL ORDER BY removed_at, id"
         )
         return [
             RemovedBranch(
@@ -1624,7 +1680,7 @@ class StackStore:
     def tracked_branch_facts(self) -> list[TrackedBranchFacts]:
         rows = self._conn.execute(
             "SELECT task_id, pr_number, pr_node_id, repo_id, name, task, "
-            "started_at FROM branches ORDER BY id"
+            "started_at FROM branches WHERE removed_at IS NULL ORDER BY id"
         )
         return [
             TrackedBranchFacts(
@@ -2721,7 +2777,8 @@ class StackStore:
         """The task of the branch tracked under this name now (what a write
         about the branch is about)."""
         row = conn.execute(
-            "SELECT task_id FROM branches WHERE repo_id = ? AND name = ?",
+            "SELECT task_id FROM branches "
+            "WHERE repo_id = ? AND name = ? AND removed_at IS NULL",
             (repo_id, branch),
         ).fetchone()
         return row["task_id"] if row else None
@@ -3282,7 +3339,9 @@ class StackStore:
 
     def all_parents(self, repo_id: int) -> Parents:
         rows = self._conn.execute(
-            "SELECT name, parent FROM branches WHERE repo_id = ?", (repo_id,)
+            "SELECT name, parent FROM branches "
+            "WHERE repo_id = ? AND removed_at IS NULL",
+            (repo_id,),
         )
         return {r["name"]: r["parent"] for r in rows}
 

@@ -159,11 +159,17 @@ def tracked_branches(path: Path) -> list[tuple[str, str]]:
     try:
         if not {"repos", "branches"} <= _tables(conn):
             return []
+        # A copy made before branches kept their removed rows has no column.
+        live = (
+            " WHERE b.removed_at IS NULL"
+            if "removed_at" in _columns(conn, "branches")
+            else ""
+        )
         return [
             (row[0], row[1])
             for row in conn.execute(
                 "SELECT r.path, b.name FROM branches b "
-                "JOIN repos r ON r.id = b.repo_id ORDER BY b.id"
+                f"JOIN repos r ON r.id = b.repo_id{live} ORDER BY b.id"
             )
         ]
     finally:
