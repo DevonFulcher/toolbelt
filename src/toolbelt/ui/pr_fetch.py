@@ -16,6 +16,7 @@ The call is a seam (``GraphqlRunner``) so tests inject canned responses.
 """
 
 import asyncio
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -428,6 +429,9 @@ def _review_submissions(nodes: list[dict]) -> tuple[ReviewSubmission, ...]:
     return tuple(sorted(submissions, key=lambda submission: submission.submitted_at))
 
 
+_EMOJI_SHORTCODE = re.compile(r":\w+:")
+
+
 def review_comments(
     node: dict, submissions: tuple[ReviewSubmission, ...]
 ) -> tuple[ReviewComment, ...]:
@@ -435,10 +439,13 @@ def review_comments(
     merged PR is forgotten: the human review bodies it already shows
     (``submissions``, see ``_review_submissions``) and the first comment of each
     unresolved review thread a person started (the threads ``open_comments``
-    counts, less the bots'). Conversation comments are not among them."""
+    counts, less the bots'). Conversation comments are not among them. A review
+    body with no letter or digit once emoji shortcodes (``:shipit:``) are removed
+    (an emoji, ``.``) says nothing to read, so it is not one."""
     found = [
         ReviewComment(kind="review", author=s.author, body=s.body, url=s.url)
         for s in submissions
+        if any(c.isalnum() for c in _EMOJI_SHORTCODE.sub("", s.body))
     ]
     for thread in node["reviewThreads"]["nodes"]:
         if (

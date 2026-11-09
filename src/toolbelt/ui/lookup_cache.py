@@ -28,7 +28,7 @@ from toolbelt.git.stack.store import PrLookupRow, StackStore, default_db_path
 from toolbelt.ui.conflict_commit import ConflictCommit
 from toolbelt.ui.pr_activity import PrFacts, facts_from_dict, facts_to_dict
 
-RECORD_SCHEMA = 3
+RECORD_SCHEMA = 4
 
 
 @dataclass(frozen=True)

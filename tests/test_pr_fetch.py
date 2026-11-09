@@ -774,6 +774,20 @@ def test_a_humans_review_body_is_a_comment_to_acknowledge_even_on_an_approval():
     ) == [("review", "sam", "Looks good, one nit.")]
 
 
+def test_a_review_body_with_no_words_is_not_a_comment_to_acknowledge():
+    # An approval that is only an emoji, a shortcode or punctuation says nothing
+    # to read; one with words around the emoji still does.
+    assert _comments_of(
+        reviews={
+            "nodes": [
+                _review("alan", "\U0001f9ea :shipit: "),
+                _review("devon", "."),
+                _review("sam", ":shipit: this is great! TY!"),
+            ]
+        }
+    ) == [("review", "sam", ":shipit: this is great! TY!")]
+
+
 def test_an_unresolved_human_thread_is_a_comment_but_resolved_and_bot_threads_are_not():
     found = _comments_of(
         reviewThreads={
