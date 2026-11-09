@@ -1382,6 +1382,16 @@
         "can_override": {
           "type": "boolean"
         },
+        "fetch_failure": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CardFetchFailure"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "has_action": {
           "type": "boolean"
         },
@@ -1443,6 +1453,7 @@
       },
       "required": [
         "has_action",
+        "fetch_failure",
         "trigger",
         "reason",
         "can_override",
@@ -1556,6 +1567,31 @@
         "spend_read_at"
       ],
       "title": "CardExtras",
+      "type": "object"
+    },
+    "CardFetchFailure": {
+      "additionalProperties": false,
+      "description": "Why the dispatcher has no decision on a task: its PR could not be\nfetched in the last pass.",
+      "properties": {
+        "error": {
+          "type": "string"
+        },
+        "retry_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "error",
+        "retry_at"
+      ],
+      "title": "CardFetchFailure",
       "type": "object"
     },
     "CardSpend": {

@@ -783,6 +783,7 @@ describe("a card with a validated branch and no PR", () => {
             lanes: [],
             agent: {
               has_action: false,
+              fetch_failure: null,
               trigger: null,
               reason: null,
               can_override: false,
@@ -1082,6 +1083,7 @@ describe("a card's agent and spend slots", () => {
     lanes: [],
     agent: {
       has_action: true,
+      fetch_failure: null,
       trigger: "fix_ci",
       reason: null,
       can_override: false, starting: false, start_error: null,
@@ -1266,9 +1268,32 @@ describe("a card's agent and spend slots", () => {
     expect(found.agent_status[2]).toContain("holds this task");
   });
 
+  test("a PR that could not be fetched says so and when it is tried again, not that there is nothing to do", () => {
+    const retryAt = new Date(NOW + 600_000).toISOString();
+    const found = show(
+      extras({
+        has_action: false,
+        trigger: null,
+        fetch_failure: { error: "GitHub graphql rate limit exceeded", retry_at: retryAt },
+      }),
+    );
+
+    expect(found.agent_status[2]).toContain("Can't check GitHub: GitHub graphql rate limit exceeded, retrying at ");
+    expect(found.agent_status[2]).not.toContain("nothing for an agent to do");
+  });
+
+  test("a PR that could not be fetched for another reason says it is retried shortly", () => {
+    const found = show(
+      extras({ has_action: false, trigger: null, fetch_failure: { error: "GithubUnavailable: 502", retry_at: null } }),
+    );
+
+    expect(found.agent_status[2]).toContain("Can't check GitHub: GithubUnavailable: 502, retrying shortly");
+  });
+
   test("the latest run shows its result and the cost of every run on the task", () => {
     const done = extras({
       has_action: false,
+      fetch_failure: null,
       trigger: null,
       latest_run: {
         run_id: "r1",
@@ -1702,6 +1727,7 @@ describe("a card's change-parent control", () => {
     lanes: [],
     agent: {
       has_action: false,
+      fetch_failure: null,
       trigger: null,
       reason: null,
       can_override: false,
@@ -1848,6 +1874,7 @@ describe("a card's remove-branch control", () => {
     lanes: [],
     agent: {
       has_action: false,
+      fetch_failure: null,
       trigger: null,
       reason: null,
       can_override: false,

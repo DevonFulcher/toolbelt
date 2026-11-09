@@ -1368,12 +1368,25 @@ class Agents(Model):
     runs: list[AgentRunInfo]
 
 
+class CardFetchFailure(Model):
+    """Why the dispatcher has no decision on a task: its PR could not be
+    fetched in the last pass."""
+
+    error: str
+    #: ISO time fetching is tried again with a chance of working (GitHub's
+    #: rate limit resets); ``None``: the next pass.
+    retry_at: str | None
+
+
 class CardAgent(Model):
     """What a task card says about the autonomous agents on one branch."""
 
     #: The branch's next action is something an agent does (``trigger`` says
     #: what); without it there is nothing for an agent to take.
     has_action: bool
+    #: Why there is no decision: the PR could not be fetched, which is not the
+    #: same as "nothing for an agent to do" (``has_action`` is false either way).
+    fetch_failure: CardFetchFailure | None
     trigger: AgentTrigger | None
     #: Why no agent is on the task (``working``: one is); ``None`` with an
     #: action: one may start on it.

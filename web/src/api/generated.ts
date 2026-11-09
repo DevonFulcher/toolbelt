@@ -1088,6 +1088,7 @@ export interface BranchExtras {
  */
 export interface CardAgent {
   can_override: boolean;
+  fetch_failure: CardFetchFailure | null;
   has_action: boolean;
   latest_run: AgentRunInfo | null;
   reason: AgentReason | null;
@@ -1097,6 +1098,14 @@ export interface CardAgent {
   starting: boolean;
   trigger: AgentTrigger | null;
   validation: CardValidation;
+}
+/**
+ * Why the dispatcher has no decision on a task: its PR could not be
+ * fetched in the last pass.
+ */
+export interface CardFetchFailure {
+  error: string;
+  retry_at: string | null;
 }
 /**
  * Where a task stands on "validate, personal review, publish"

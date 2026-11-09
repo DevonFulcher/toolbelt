@@ -16,7 +16,7 @@ import dataclasses
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from toolbelt.autonomous_agents.branch_state import BranchState
@@ -58,6 +58,16 @@ class DispatchTask:
 
     task: TrackedTask
     repo_path: Path
+
+
+@dataclass(frozen=True)
+class FetchFailure:
+    """Why a task's PR could not be fetched, so it has no decision this tick."""
+
+    error: str
+    #: When GitHub's rate limit lets the lookup through again; None: it is not
+    #: rate limited, and the lookup is tried again next tick.
+    retry_at: datetime | None
 
 
 @dataclass(frozen=True)
@@ -156,7 +166,12 @@ class Dispatcher:
         resume: Callable[[AskedDecision, Decision, AgentRun], Awaitable[None]]
         | None = None,
         parent_of: Callable[[int, str], str | None] = lambda repo_id, branch: None,
+        github_wait: Callable[[], float] = lambda: 0.0,
     ) -> None:
+        #: Seconds until GitHub's rate limit allows a PR lookup again (0: it
+        #: does). The lookup's failure reaches ``fetch`` as a message only, so
+        #: this is how a failure learns when it is worth retrying.
+        self._github_wait = github_wait
         #: The branch a task is stacked on (a validate run reviews the diff
         #: against it).
         self._parent_of = parent_of
@@ -194,6 +209,11 @@ class Dispatcher:
         self._auth: tuple[float, bool] | None = None
         #: The newest decisions, by (repo id, branch).
         self.decisions: dict[tuple[int, str], Decision] = {}
+        #: The tasks whose PR could not be fetched in the last pass. They are
+        #: left out of ``decisions`` (a decision on an older snapshot could
+        #: start an agent on what GitHub no longer says); the others are
+        #: decided as usual, and these are fetched again next tick.
+        self.fetch_failures: dict[tuple[int, str], FetchFailure] = {}
         #: Tasks a person asked to start a run on that has not started yet (the
         #: decision it needs takes seconds), and why one that did not start did
         #: not (shown until the next request for that task).
@@ -223,15 +243,30 @@ class Dispatcher:
         return self._auth[1]
 
     async def _refresh(self, tasks: list[DispatchTask]) -> None:
-        """Fetch the snapshots that are older than the poll interval."""
+        """Fetch the snapshots that are older than the poll interval. A fetch
+        that fails (GitHub rate limited or down, the PR gone) fails only its
+        own task: it is recorded in ``fetch_failures`` and tried again next
+        tick."""
         now = self._clock()
         gate = asyncio.Semaphore(self._concurrency)
+        failures: dict[tuple[int, str], FetchFailure] = {}
 
         async def one(item: DispatchTask) -> None:
             key = item.task.key
-            async with gate:
-                snapshot = await self._fetch(item.task.branch, item.repo_path)
-            self._snapshots[key] = (self._clock(), snapshot)
+            try:
+                async with gate:
+                    snapshot = await self._fetch(item.task.branch, item.repo_path)
+            except Exception as error:  # noqa: BLE001 - only this task goes undecided
+                logger.warning("fetching %s's PR failed: %s", item.task.branch, error)
+                wait = self._github_wait()
+                text = str(error)
+                failures[key] = FetchFailure(
+                    # A card shows it: GitHub's answers can be long.
+                    text if len(text) <= 160 else f"{text[:160]}…",
+                    self._wall_clock() + timedelta(seconds=wait) if wait > 0 else None,
+                )
+            else:
+                self._snapshots[key] = (self._clock(), snapshot)
 
         due = [
             item
@@ -240,6 +275,7 @@ class Dispatcher:
             or now - self._snapshots[item.task.key][0] >= self._poll_interval
         ]
         await asyncio.gather(*(one(item) for item in due))
+        self.fetch_failures = failures
 
     async def _look_into_ci(self, tasks: list[DispatchTask]) -> None:
         """For each PR that trips the guard against re-blocked PRs, find out why
@@ -289,6 +325,7 @@ class Dispatcher:
         self._launching_now = world.enabled and self._launching()
         if not world.enabled:
             self.decisions = {}
+            self.fetch_failures = {}
             self.blockers = global_blockers(world)
             self.ticked_at = now
             if self.on_tick is not None:
@@ -380,7 +417,7 @@ class Dispatcher:
         decisions: dict[tuple[int, str], Decision] = {}
         for item in tasks:
             entry = self._snapshots.get(item.task.key)
-            if entry is None:
+            if entry is None or item.task.key in self.fetch_failures:
                 continue
             decision = self._decide(item, entry[1], world)
             if decision is not None:

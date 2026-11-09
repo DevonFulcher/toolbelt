@@ -5,7 +5,7 @@ import { useCallback, useState } from "react";
 import { startAgentRun, stopAgentRun, validateTask } from "../api/client";
 import type { Branch, BranchExtras, CardValidation, SlotDimensions } from "../api/generated";
 import { formatUsd } from "../logic/spendFormat";
-import { RUN_TEXT, RUN_TONE, TRIGGER_LABEL, reasonText, runCost } from "./AgentsView";
+import { RUN_TEXT, RUN_TONE, TRIGGER_LABEL, reasonText, runCost, when } from "./AgentsView";
 import { RunsDialog } from "./RunsDialog";
 import { Age, Pill } from "./presentation";
 
@@ -64,6 +64,10 @@ export function AgentSlots({
           <>
             <Pill tone="purple">starting…</Pill> <span className="muted">claiming the task and starting an agent</span>
           </>
+        ) : agent.fetch_failure ? (
+          <span className="error">
+            {`Can't check GitHub: ${agent.fetch_failure.error}, retrying ${agent.fetch_failure.retry_at ? `at ${when(agent.fetch_failure.retry_at)}` : "shortly"}`}
+          </span>
         ) : !agent.has_action ? (
           <span className="muted">nothing for an agent to do</span>
         ) : agent.reason === null ? (

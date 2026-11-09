@@ -238,6 +238,7 @@ def build_card_extras(
             all_parents[facts.repo_id] = store.all_parents(facts.repo_id)
         runs = runs_by_branch.get(key, [])
         decision = dispatcher.decisions.get(key)
+        failure = dispatcher.fetch_failures.get(key)
         usage = interactive.get(facts.task_id)
         branches.append(
             api.BranchExtras(
@@ -245,6 +246,14 @@ def build_card_extras(
                 lanes=list(with_next.get(facts.task_id, lanes.get(facts.task_id, []))),
                 agent=api.CardAgent(
                     has_action=decision is not None,
+                    fetch_failure=api.CardFetchFailure(
+                        error=failure.error,
+                        retry_at=failure.retry_at.isoformat()
+                        if failure.retry_at
+                        else None,
+                    )
+                    if failure
+                    else None,
                     trigger=decision.trigger if decision else None,  # type: ignore[arg-type]
                     reason=reason_info(decision.reason)
                     if decision and decision.reason

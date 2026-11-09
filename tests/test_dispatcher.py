@@ -110,8 +110,14 @@ class Rig:
         self.launching = True
         self.monotonic = 0.0
 
+        #: Branches whose fetch raises this.
+        self.failing: dict[str, Exception] = {}
+        self.github_wait = 0.0
+
         async def fetch(branch: str, _path: Path) -> PrSnapshot:
             self.fetched.append(branch)
+            if branch in self.failing:
+                raise self.failing[branch]
             return self.snapshots[branch]
 
         async def launch(decision) -> None:
@@ -143,6 +149,7 @@ class Rig:
             launch=launch,
             launching=lambda: self.launching,
             explain_ci=explain_ci,
+            github_wait=lambda: self.github_wait,
         )
 
     def tick(self) -> None:
@@ -473,6 +480,62 @@ def test_asking_twice_while_one_is_starting_starts_one_run():
     asyncio.run(scenario())
 
     assert r.launched == ["a"]
+
+
+def test_a_failed_fetch_leaves_only_that_task_undecided_and_says_why():
+    r = rig(
+        a=PrSnapshot(status(), None),
+        b=PrSnapshot(status(), None),
+        c=PrSnapshot(status(), None),
+    )
+    r.failing = {"b": RuntimeError("GitHub graphql rate limit exceeded")}
+    r.github_wait = 600.0
+
+    r.tick()
+
+    assert sorted(b for _, b in r.dispatcher.decisions) == ["a", "c"]
+    assert r.launched == ["a", "c"]
+    failure = r.dispatcher.fetch_failures[(1, "b")]
+    assert failure.error == "GitHub graphql rate limit exceeded"
+    assert failure.retry_at == NOW + timedelta(seconds=600)
+    assert list(r.dispatcher.fetch_failures) == [(1, "b")]
+
+
+def test_a_task_whose_fetch_fails_is_not_decided_on_its_older_snapshot():
+    r = rig(a=PrSnapshot(status(), None))
+    r.tick()
+    r.launched.clear()
+    r.monotonic = 301
+    r.failing = {"a": RuntimeError("502")}
+
+    r.tick()
+
+    assert r.dispatcher.decisions == {}
+    assert r.launched == []
+    assert r.dispatcher.fetch_failures[(1, "a")].error == "502"
+    assert r.dispatcher.fetch_failures[(1, "a")].retry_at is None
+
+
+def test_a_long_fetch_error_is_cut_short_for_the_card():
+    r = rig(a=PrSnapshot(status(), None))
+    r.failing = {"a": RuntimeError("x" * 500)}
+
+    r.tick()
+
+    assert r.dispatcher.fetch_failures[(1, "a")].error == "x" * 160 + "…"
+
+
+def test_a_failed_fetch_is_tried_again_next_tick_and_the_failure_clears():
+    r = rig(a=PrSnapshot(status(), None))
+    r.failing = {"a": RuntimeError("502")}
+    r.tick()
+
+    r.failing = {}
+    r.tick()
+
+    assert r.fetched == ["a", "a"]
+    assert r.dispatcher.fetch_failures == {}
+    assert r.decision("a").may_start
 
 
 # ---- polling GitHub --------------------------------------------------------------------------------

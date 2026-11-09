@@ -85,6 +85,32 @@ def test_a_branch_with_no_agent_action_says_so():
     assert (branch.agent.has_action, branch.agent.trigger) == (False, None)
 
 
+def test_a_branch_whose_pr_could_not_be_fetched_says_so_instead_of_nothing_to_do():
+    r = rig(a=PrSnapshot(status(), None))
+    r.failing = {"a": RuntimeError("GitHub graphql rate limit exceeded")}
+    r.github_wait = 600.0
+    r.tick()
+    store, _, _ = tracked_store()
+
+    (branch,) = build_card_extras(r.dispatcher, store, NOW).branches
+
+    assert branch.agent.has_action is False
+    assert branch.agent.fetch_failure == api.CardFetchFailure(
+        error="GitHub graphql rate limit exceeded",
+        retry_at=(NOW + timedelta(seconds=600)).isoformat(),
+    )
+
+
+def test_a_branch_with_a_decision_has_no_fetch_failure():
+    r = rig(a=PrSnapshot(status(), None))
+    r.tick()
+    store, _, _ = tracked_store()
+
+    (branch,) = build_card_extras(r.dispatcher, store, NOW).branches
+
+    assert branch.agent.fetch_failure is None
+
+
 def test_the_latest_run_and_the_autonomous_cost_come_from_the_run_records():
     r = rig(a=PrSnapshot(status(), None))
     r.tick()

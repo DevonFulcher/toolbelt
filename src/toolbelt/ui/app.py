@@ -1012,6 +1012,7 @@ def create_app(
                 runner, answered, decision, prior
             ),
             parent_of=lambda repo_id, branch: _all_parents(repo_id).get(branch),
+            github_wait=lambda: requests.blocked("graphql"),
             explain_ci=ci_explainer(
                 lambda query, variables: requests.graphql(
                     query, variables, caller="ci_history"
