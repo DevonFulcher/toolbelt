@@ -90,6 +90,18 @@ class LookupReason(StrEnum):
     GATE_FAILED = "gate_failed"
 
 
+#: The reasons for a lookup that did not start from the gate's answer, so the
+#: ETags the gate holds are older than the data the lookup reads.
+_LOOKUPS_BEFORE_THE_GATE_ASKED = frozenset(
+    {
+        LookupReason.HINTED,
+        LookupReason.REFRESH,
+        LookupReason.MAX_AGE,
+        LookupReason.AFTER_FAILURE,
+    }
+)
+
+
 @dataclass(frozen=True)
 class TrackedBranch:
     repo_id: int
@@ -435,6 +447,8 @@ class StatusRefresher:
             self.lookups[reason] += 1
             # Whatever the reason, this lookup answers a pending hint.
             self._hinted.discard(branch.key)
+            if reason in _LOOKUPS_BEFORE_THE_GATE_ASKED:
+                await self._catch_up_etags(branch, previous)
             try:
                 snapshot = await self._fetch(branch.branch, branch.path)
                 error = None
@@ -522,6 +536,19 @@ class StatusRefresher:
         except Exception:  # noqa: BLE001
             # Saving only helps the next start: never stop the poll for it.
             logger.exception("could not save the lookup of %s", branch.branch)
+
+    async def _catch_up_etags(
+        self, branch: TrackedBranch, previous: Fetched | None
+    ) -> None:
+        """Reads the gate's ETags for a lookup the gate did not ask for (see
+        ``_LOOKUPS_BEFORE_THE_GATE_ASKED``). Left as they were, the next poll
+        would find them changed and look the PR up a second time for the very
+        change this lookup is about. They are read before the lookup, not after
+        it, so a change that lands meanwhile is still seen."""
+        if self._gate is None or previous is None:
+            return
+        with contextlib.suppress(Exception):
+            await self._gate.unchanged(branch, previous)
 
     async def _reason_to_look_up(
         self,

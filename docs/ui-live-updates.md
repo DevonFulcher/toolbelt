@@ -106,7 +106,9 @@ does not count against the rate limit. For each PR the gate (`pr_gate.py`)
 remembers the ETag of the pull request, the check runs of its head commit and
 the statuses of its head commit. A poll that finds all three unchanged reuses
 the previous lookup; the card's `updated … ago` still restarts, because GitHub
-was just asked.
+was just asked. A lookup the gate did not start (a webhook hint, the Refresh
+button, the full interval running out) first reads the three ETags, so the next
+poll does not look the PR up again for the change that lookup already read.
 
 The gate does not see a review thread being resolved or the base branch moving
 under a PR, so the full GraphQL lookup still runs every 10 minutes per PR

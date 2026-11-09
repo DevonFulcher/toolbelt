@@ -231,14 +231,12 @@ class TestRefresherWithGate:
     def test_refreshing_a_branch_looks_it_up_at_once_without_the_gate(self):
         s = Setup()
         s.pass_after(0)
-        s.github.asked.clear()
 
         assert s.refresher.refresh(1, "devon/a") is True
         fetched = s.pass_after(1)
 
         assert fetched == 1
-        assert s.lookups == 2
-        assert s.github.asked == []
+        assert s.lookups == 2  # though the gate has nothing new
 
     def test_refreshing_a_branch_that_is_not_tracked_does_nothing(self):
         s = Setup()
@@ -276,14 +274,12 @@ class TestRefresherWithGate:
         s = Setup()
         s.pass_after(0)
         s.pass_after(20)  # the gate reuses the lookup; the poll is due at 40
-        s.github.asked.clear()
 
         s.refresher.hint({(1, "devon/a")})
         fetched = s.pass_after(5)
 
         assert fetched == 1
-        assert s.lookups == 2
-        assert s.github.asked == []  # the gate was not asked
+        assert s.lookups == 2  # though the gate has nothing new
 
     def test_a_hint_for_one_branch_is_used_up(self):
         s = Setup()
@@ -293,6 +289,30 @@ class TestRefresherWithGate:
         s.pass_after(5)
 
         assert s.pass_after(1) == 0
+
+    def test_a_hinted_lookup_is_not_followed_by_a_second_for_the_same_change(self):
+        s = Setup(pushed=True, full_interval=1000)
+        s.pass_after(0)
+        s.github.change(PULL)
+        s.github.change(CHECKS)
+        s.refresher.hint({(1, "devon/a")})
+        s.pass_after(25)
+        assert s.lookups == 2
+
+        s.pass_after(300)  # polled again: the lookup already read the change
+
+        assert s.lookups == 2
+
+    def test_a_change_after_a_hinted_lookup_is_still_looked_up(self):
+        s = Setup(pushed=True, full_interval=1000)
+        s.pass_after(0)
+        s.refresher.hint({(1, "devon/a")})
+        s.pass_after(25)
+        s.github.change(CHECKS)
+
+        s.pass_after(300)
+
+        assert s.lookups == 3
 
     def test_hints_right_after_a_lookup_wait_and_count_as_one_lookup(self):
         s = Setup(pushed=True)  # polled every 300 s: only hints can cause lookups
