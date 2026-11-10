@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
+from itertools import product
 from pathlib import Path
 
 import pytest
@@ -10,13 +11,16 @@ from pydantic import ValidationError
 from toolbelt.autonomous_agents.eligibility import (
     TaskFacts,
     World,
+    agent_trigger,
     decide,
     global_blockers,
     working_days_between,
 )
 from toolbelt.autonomous_agents.limits import AgentLimits, load_limits
 from toolbelt.autonomous_agents.screen import ScreenState
+from toolbelt.git.stack.status import BranchStatus, CiState, PrState, ReviewState
 from toolbelt.git.stack.store import AgentRun, TokenCounts
+from toolbelt.ui.next_action import ParentContext, SlackContext, next_action
 
 # A Tuesday at noon, local time.
 NOW = datetime(2026, 10, 13, 12, 0).astimezone()
@@ -455,3 +459,56 @@ def test_a_run_that_asked_still_counts_as_a_try():
     tries = asked * 1 + [run(head="abc", started=NOW - timedelta(hours=2))]
 
     assert reason_code(task(), world(runs=tries)) == "runs_per_head"
+
+
+def test_what_an_agent_acts_on_is_what_the_card_says_for_every_status():
+    """``agent_trigger`` and the card's full-context ``next_action`` cannot
+    drift: whenever the former is a kind, the latter is that kind or (when a
+    claim, an agent or a question holds the branch) would be, for whatever the
+    parent and Slack say."""
+    parents = (
+        None,
+        ParentContext("p", PrState.OPEN),
+        ParentContext("p", PrState.MERGED),
+    )
+    slacks = (None, SlackContext(posted=False), SlackContext(True, bump_due=True))
+    triggers = set()
+    for pr, ci, review, comments, conflicts in product(
+        PrState, CiState, ReviewState, (0, 2), (False, True)
+    ):
+        status = BranchStatus(
+            pr=pr,
+            ci=ci,
+            review=review,
+            url=None if pr is PrState.NONE else "https://github.com/o/r/pull/5",
+            open_comments=comments,
+            has_conflicts=conflicts,
+        )
+        trigger = agent_trigger(status)
+        if trigger is None:
+            continue
+        triggers.add(trigger)
+        for parent, slack, claimed, deciding, validated in product(
+            parents, slacks, (False, True), (False, True), (False, True)
+        ):
+            card = next_action(
+                status,
+                parent,
+                claimed=claimed,
+                deciding=deciding,
+                slack=slack,
+                validated=validated,
+            )
+            assert trigger in (
+                card.kind,
+                card.would_be.kind if card.would_be else None,
+            ), (status, parent, slack, claimed, deciding)
+    assert triggers == {"resolve_conflicts", "resolve_comments", "fix_ci"}
+
+
+def test_a_status_with_nothing_for_an_agent_has_no_trigger():
+    status = BranchStatus(
+        pr=PrState.OPEN, ci=CiState.SUCCESS, review=ReviewState.APPROVED, url="u"
+    )
+
+    assert agent_trigger(status) is None

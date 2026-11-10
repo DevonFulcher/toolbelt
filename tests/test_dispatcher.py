@@ -753,6 +753,99 @@ def test_a_failing_pass_is_reported_and_the_loop_carries_on():
     asyncio.run(scenario())
 
 
+class Passes:
+    """Runs a dispatcher's loop with a tick that only ends when told to, and
+    counts its passes."""
+
+    def __init__(self, r: Rig) -> None:
+        self.r = r
+        self.count = 0
+        self.tick_over = asyncio.Event()
+        real = r.dispatcher.tick
+
+        async def counted() -> None:
+            self.count += 1
+            await real()
+
+        async def sleep(_seconds: float) -> None:
+            await self.tick_over.wait()
+            self.tick_over.clear()
+
+        r.dispatcher.tick = counted  # type: ignore[method-assign]
+        r.dispatcher._sleep = sleep
+
+    async def settle(self) -> None:
+        for _ in range(30):
+            await asyncio.sleep(0)
+
+
+def test_a_wake_runs_a_pass_without_the_tick_elapsing():
+    r = rig(a=PrSnapshot(status(), None))
+    passes = Passes(r)
+
+    async def scenario() -> None:
+        task = asyncio.create_task(r.dispatcher.run())
+        await passes.settle()
+        assert passes.count == 1
+
+        r.snapshots["a"] = PrSnapshot(status(ci=CiState.SUCCESS), None)
+        r.dispatcher.wake()
+        await passes.settle()
+
+        assert passes.count == 2
+        assert r.decision("a") is None
+        task.cancel()
+
+    asyncio.run(scenario())
+
+
+def test_wakes_in_a_burst_run_one_pass_and_the_tick_still_runs():
+    r = rig(a=PrSnapshot(status(), None))
+    passes = Passes(r)
+
+    async def scenario() -> None:
+        task = asyncio.create_task(r.dispatcher.run())
+        await passes.settle()
+
+        for _ in range(5):
+            r.dispatcher.wake()
+        await passes.settle()
+        assert passes.count == 2
+
+        passes.tick_over.set()  # the tick elapses with nothing woken
+        await passes.settle()
+        assert passes.count == 3
+        task.cancel()
+
+    asyncio.run(scenario())
+
+
+def test_a_pass_that_wakes_the_dispatcher_causes_one_more_pass_and_no_loop():
+    # A pass whose read finds the PR changed (the refresher looked it up and
+    # called ``on_change``, which wakes the dispatcher): the next pass reads the
+    # saved lookup and wakes nothing.
+    r = rig(a=PrSnapshot(status(), None))
+    passes = Passes(r)
+    real_fetch = r.dispatcher._fetch
+    looked_up = {"changed": False}
+
+    async def fetch(branch: str, path: Path) -> PrSnapshot:
+        if not looked_up["changed"]:
+            looked_up["changed"] = True
+            r.dispatcher.wake()
+        return await real_fetch(branch, path)
+
+    r.dispatcher._fetch = fetch
+
+    async def scenario() -> None:
+        task = asyncio.create_task(r.dispatcher.run())
+        await passes.settle()
+        assert passes.count == 2
+        task.cancel()
+
+    asyncio.run(scenario())
+
+
 def test_with_the_start_switch_off_tasks_are_decided_but_nothing_is_launched():
     r = rig(a=PrSnapshot(status(), None))
     r.launching = False

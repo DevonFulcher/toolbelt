@@ -1213,11 +1213,17 @@ def create_app(
         slug = repo_slugs.get(repo_id)
         return forwarders is not None and slug is not None and forwarders.is_live(slug)
 
+    def on_status_change(branch: TrackedBranch, fetched: Fetched) -> None:
+        """A lookup changed a branch's PR: update the cards, and let the agents'
+        dispatcher decide on it now instead of at its next tick."""
+        publish_status(branch, fetched)
+        dispatcher.wake()
+
     refresher = StatusRefresher(
         branches=_tracked_branches,
         fetch=fetch,
         hub=hub,
-        on_change=publish_status,
+        on_change=on_status_change,
         clock=clock,
         interval=refresh_interval,
         settled_interval=settled_refresh_interval,

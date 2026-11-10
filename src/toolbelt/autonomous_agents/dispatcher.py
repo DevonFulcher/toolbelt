@@ -1,11 +1,20 @@
 """Decides, for every tracked task, whether an autonomous agent should be
 working on it, and why not when it should not.
 
-Every tick it looks at each tracked branch's PR (refetched from GitHub every
-``poll_interval``, whether or not a browser is open: an agent has to notice a
-conflict or a failed check without anyone looking) and, for the ones whose next
-action is something an agent does, gathers what git and the claims say and
-applies ``eligibility.decide``. The decisions are what the Agents view shows.
+A pass reads each tracked branch's PR as the status refresher last saved it
+(``fetch``; it keeps no copy and has no PR poll interval of its own)
+and, for the ones whose next action is something an agent does, gathers what git
+and the claims say and applies ``eligibility.decide``. The decisions are what the
+Agents view shows.
+
+A pass runs as soon as the refresher sees a PR change (``wake``, called from the
+refresher's ``on_change``), so an agent is told at once about a conflict or a
+failed check. The tick (``DEFAULT_TICK_SECONDS``) is not a PR poll: it is for
+what changes without a PR change, such as claims, worktree state, back-offs and
+limits, the screen and sign-in. A pass the dispatcher itself caused ends there:
+its read looks the PR up only when the saved lookup is older than
+``DEFAULT_MAX_PR_AGE_SECONDS``, and only a lookup that finds a change wakes it
+again, so the pass after it finds nothing new.
 
 The dispatcher only decides. Starting a run is ``launch``'s job (None: a dry
 run, the decision "may start" is recorded and nothing happens).
@@ -25,9 +34,9 @@ from toolbelt.autonomous_agents.eligibility import (
     Reason,
     TaskFacts,
     World,
+    agent_trigger,
     decide,
     global_blockers,
-    is_trigger,
     resume_blocker,
     validate_blocker,
 )
@@ -41,12 +50,14 @@ from toolbelt.logger import logger
 from toolbelt.task_claims.resolution import TrackedTask
 from toolbelt.ui.claims_feed import BranchHolder
 from toolbelt.ui.live_status import StatusFetcher
-from toolbelt.ui.next_action import next_action
 from toolbelt.ui.pr_activity import CI_FAILED_ROLLUPS, COMMIT, REVIEW, PrFacts
 from toolbelt.ui.pr_fetch import PrSnapshot
 
-#: How old a PR lookup may be when a task is decided on it: an older one is
-#: looked up again (see ``Dispatcher._refresh``).
+#: How old a saved PR lookup may be when a task is decided on it. The refresher
+#: keeps lookups current while a browser watches (and on webhooks); with none
+#: open, a lookup older than this is looked up again, through the refresher's
+#: gate, when the dispatcher asks (see ``Dispatcher._refresh``). It is handed to
+#: the refresher by ``app.py``; the dispatcher does not use it itself.
 DEFAULT_MAX_PR_AGE_SECONDS = 300.0
 DEFAULT_TICK_SECONDS = 15.0
 DEFAULT_CONCURRENCY = 4
@@ -194,6 +205,7 @@ class Dispatcher:
         self._clock = clock
         self._sleep = sleep
         self._tick = tick
+        self._wake_up = asyncio.Event()
         self._concurrency = concurrency
         self._launch = launch
         self._launching = launching
@@ -366,15 +378,15 @@ class Dispatcher:
             snapshot = snapshots.get(item.task.key) if item else None
             if item is None or snapshot is None:
                 continue
-            action = next_action(snapshot.status, None)
+            # Validate and implement runs work on a branch with no PR.
+            on_branch = prior.trigger in (VALIDATE, IMPLEMENT)
+            trigger = prior.trigger if on_branch else agent_trigger(snapshot.status)
+            if trigger is None:
+                continue
             state = await asyncio.to_thread(self._inspect, item)
             if not state.exists:
                 continue
-            # Validate and implement runs work on a branch with no PR.
-            on_branch = prior.trigger in (VALIDATE, IMPLEMENT)
-            facts = self._facts(
-                item, snapshot, prior.trigger if on_branch else action.kind, state
-            )
+            facts = self._facts(item, snapshot, trigger, state)
             if resume_blocker(facts, world) is not None:
                 continue
             decision = (
@@ -607,8 +619,8 @@ class Dispatcher:
         override: bool = False,
     ) -> Decision | None:
         # The action the branch has on its own, whoever holds it.
-        action = next_action(snapshot.status, None)
-        if not is_trigger(action.kind):
+        trigger = agent_trigger(snapshot.status)
+        if trigger is None:
             return None
         task = item.task
         state = self._inspect(item)
@@ -618,7 +630,7 @@ class Dispatcher:
                 repo_id=task.repo_id,
                 repo=task.repo_name,
                 branch=task.branch,
-                trigger=action.kind,
+                trigger=trigger,
                 reason=Reason(
                     "no_worktree",
                     "There is no local branch of this name to work on.",
@@ -626,14 +638,14 @@ class Dispatcher:
                 head_sha="",
                 decided_at=world.now,
             )
-        facts = self._facts(item, snapshot, action.kind, state)
+        facts = self._facts(item, snapshot, trigger, state)
         reason = decide(facts, world, override=override)
         return Decision(
             task_id=task.task_id,
             repo_id=task.repo_id,
             repo=task.repo_name,
             branch=task.branch,
-            trigger=action.kind,
+            trigger=trigger,
             reason=reason,
             can_override=reason is not None
             and decide(facts, world, override=True) is None,
@@ -646,8 +658,28 @@ class Dispatcher:
             worktree=task.worktree,
         )
 
+    def wake(self) -> None:
+        """Runs a pass now, without waiting out the tick (the refresher saw a PR
+        change). Wakes that come while a pass is running or close together
+        count once."""
+        self._wake_up.set()
+
+    async def _pause(self) -> None:
+        """Waits one tick, or less when ``wake`` is called."""
+        woken = asyncio.ensure_future(self._wake_up.wait())
+        nap = asyncio.ensure_future(self._sleep(self._tick))
+        _, pending = await asyncio.wait(
+            {woken, nap}, return_when=asyncio.FIRST_COMPLETED
+        )
+        for task in pending:
+            task.cancel()
+
     async def run(self) -> None:
+        # A server loop: runs until the app shuts down.
         while True:
+            # Cleared before the pass: a wake during it makes the pause end at
+            # once, for a pass that sees what changed meanwhile.
+            self._wake_up.clear()
             try:
                 await self.tick()
                 self.last_error = None
@@ -656,4 +688,4 @@ class Dispatcher:
                 # try again next tick instead of ending the dispatcher.
                 logger.exception("the agent dispatcher's pass failed")
                 self.last_error = f"{type(error).__name__}: {error}"
-            await self._sleep(self._tick)
+            await self._pause()

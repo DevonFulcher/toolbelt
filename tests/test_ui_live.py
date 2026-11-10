@@ -1072,6 +1072,46 @@ class TestWebhookProblems:
         ]
 
 
+class TestDispatcherWakeInTheApp:
+    """A lookup that changes a branch's PR wakes the agents' dispatcher."""
+
+    def test_only_a_changed_lookup_wakes_it(self, tmp_path):
+        from test_dispatcher import rig
+
+        store = StackStore(default_db_path())
+        path = tmp_path / "api"
+        path.mkdir()
+        repo_id = store.ensure_repo(
+            RepoIdentity(
+                git_common_dir=path / ".git",
+                path=path,
+                remote_url="git@github.com:o/r.git",
+            )
+        )
+        store.set_parent(repo_id, "devon/a", "main")
+        store.close()
+        fetcher = Fetcher()
+        fetcher.statuses["devon/a"] = OPEN
+        dispatcher = rig(a=PrSnapshot(OPEN, None)).dispatcher
+        woken: list[int] = []
+        dispatcher.wake = lambda: woken.append(1)  # type: ignore[method-assign]
+        app = create_app(fetch=fetcher, dispatcher=dispatcher)
+        refresher = app.state.refresher
+
+        async def scenario() -> None:
+            await refresher.run_once()  # the first lookup is a change
+            assert refresher.refresh(repo_id, "devon/a")
+            await refresher.run_once()  # looked up again, the same PR
+            assert woken == [1]
+            fetcher.statuses["devon/a"] = replace(OPEN, ci=CiState.FAILED)
+            assert refresher.refresh(repo_id, "devon/a")
+            await refresher.run_once()
+
+        run(scenario())
+
+        assert woken == [1, 1]
+
+
 class TestSlackInTheApp:
     """With Slack configured a task's next action and its Slack fields come
     from the posts toolbelt recorded."""

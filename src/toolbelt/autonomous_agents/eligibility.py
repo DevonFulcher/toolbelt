@@ -17,7 +17,9 @@ from typing import Literal
 
 from toolbelt.autonomous_agents.limits import IMPLEMENT, TRIGGERS, VALIDATE, AgentLimits
 from toolbelt.autonomous_agents.screen import ScreenState
+from toolbelt.git.stack.status import BranchStatus
 from toolbelt.git.stack.store import AgentRun
+from toolbelt.ui.next_action import next_action
 
 type ReasonCode = Literal[
     "disabled",
@@ -101,8 +103,15 @@ class World:
     runs: Sequence[AgentRun]
 
 
-def is_trigger(action_kind: str) -> bool:
-    return action_kind in TRIGGERS
+def agent_trigger(status: BranchStatus) -> str | None:
+    """The kind of the branch's own next action when it is one an agent acts on
+    (``TRIGGERS``), else ``None``. Whoever holds the branch and what its parent
+    is doing do not matter: a held branch is turned away by ``decide``, and a
+    trigger outranks being blocked on a parent. This is the one place the
+    dispatcher reads ``next_action`` for a task, so what the cards show and what
+    an agent acts on cannot differ (a test keeps them in step)."""
+    kind = next_action(status, None).kind
+    return kind if kind in TRIGGERS else None
 
 
 def working_days_between(start: date, end: date) -> int:
