@@ -500,3 +500,32 @@ def test_acknowledge_is_not_replaced_by_a_claim_and_closed_prs_never_have_it():
 
     assert claimed.kind == "acknowledge" and claimed.would_be is None
     assert closed.kind == "done"
+
+
+class TestPublishing:
+    """A draft whose publish is running waits on nothing the user can do."""
+
+    PUBLISHING = SlackContext(posted=False, publishing=True)
+    DRAFT = status(pr=PrState.DRAFT)
+
+    def test_a_draft_being_published_waits_on_others(self):
+        action = next_action(self.DRAFT, None, slack=self.PUBLISHING)
+
+        assert (action.label, action.who, action.kind) == (
+            "Publishing PR…",
+            "others",
+            "publishing",
+        )
+
+    def test_a_draft_not_being_published_is_still_to_be_published(self):
+        for slack in (None, SlackContext(posted=False)):
+            action = next_action(self.DRAFT, None, slack=slack)
+            assert (action.who, action.kind) == ("you", "publish")
+
+    def test_a_child_of_a_draft_being_published_waits_like_its_parent(self):
+        parent = ParentContext("p", PrState.DRAFT, next_who="others")
+        approved = status(review=ReviewState.APPROVED)
+
+        action = next_action(approved, parent)
+
+        assert (action.kind, action.who) == ("blocked", "others")

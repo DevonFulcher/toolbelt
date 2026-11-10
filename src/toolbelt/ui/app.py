@@ -177,6 +177,7 @@ from toolbelt.ui.next_action import (
     BLOCKED,
     POST_SLACK,
     PUBLISH,
+    PUBLISHING,
     WAIT_CI,
 )
 from toolbelt.ui.personal_review import (
@@ -2198,7 +2199,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="no such repo")
         tracked = TrackedBranch(repo_id=repo_id, branch=name, path=repo)
         action = branch_next(repo_id, name)
-        if action is None or action.kind not in (POST_SLACK, PUBLISH):
+        if action is None or action.kind not in (POST_SLACK, PUBLISH, PUBLISHING):
             raise HTTPException(
                 status_code=409,
                 detail="This PR is no longer ready to publish.",

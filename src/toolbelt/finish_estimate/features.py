@@ -226,6 +226,7 @@ STAGE_DIMS: dict[str, tuple[str, ...]] = {
     "fix_ci": ("repo", "size"),
     "wait_ci": ("repo",),
     "publish": ("size",),
+    "publishing": DEFAULT_DIMS,
     "blocked": ("repo",),
     "merge": ("repo",),
     "wait_review": ("reviewer", "round"),

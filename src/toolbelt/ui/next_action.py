@@ -22,6 +22,7 @@ open, not approved,       Bump in Slack              you
 posted, nobody looked
 for a day
 draft, CI not failed      Publish PR in GitHub       you
+draft, being published    Publishing PR…             others
 open, CI running          Waiting on CI              ci
 approved, parent PR not   Blocked on <parent>        you if the parent's own
 merged (stacked)                                     next action is yours,
@@ -35,6 +36,11 @@ The two Slack rows apply only when Slack is configured (``slack`` is given):
 posting a ready PR in the review channel is how a review gets asked for. They
 come after CI failed so an agent still sees a failing CI first, and before CI
 running so a PR is posted while its checks run.
+
+"Publishing PR…" replaces "Publish PR in GitHub" while the publish started from
+the card is running (``slack.publishing``): nothing is waiting on you, because
+the publish is assumed to succeed. A failed publish clears the flag and the
+next lookup reads "Publish PR in GitHub" again, with the failure as a notice.
 
 "Personal review" replaces "Open PR" for a branch a validate run has reviewed
 (``validated=True``, see ``personal_review``): you read its diff and approve it,
@@ -103,6 +109,7 @@ RESOLVE_COMMENTS = "resolve_comments"
 FIX_CI = "fix_ci"
 WAIT_CI = "wait_ci"
 PUBLISH = "publish"
+PUBLISHING = "publishing"
 BLOCKED = "blocked"
 MERGE = "merge"
 WAIT_REVIEW = "wait_review"
@@ -123,6 +130,7 @@ KINDS = (
     FIX_CI,
     WAIT_CI,
     PUBLISH,
+    PUBLISHING,
     BLOCKED,
     MERGE,
     WAIT_REVIEW,
@@ -147,6 +155,7 @@ type NextKind = Literal[
     "fix_ci",
     "wait_ci",
     "publish",
+    "publishing",
     "blocked",
     "merge",
     "wait_review",
@@ -179,6 +188,8 @@ class SlackContext:
     posted: bool
     #: Posted over a day ago and nobody has looked since.
     bump_due: bool = False
+    #: The PR is being published (marked ready) in the background.
+    publishing: bool = False
 
 
 @dataclass(frozen=True)
@@ -258,6 +269,8 @@ def _underlying_action(
         if slack.bump_due:
             return NextAction("Bump in Slack", WHO_YOU, BUMP_SLACK)
     if status.pr is PrState.DRAFT:
+        if slack is not None and slack.publishing:
+            return NextAction("Publishing PR…", WHO_OTHERS, PUBLISHING)
         return NextAction("Publish PR in GitHub", WHO_YOU, PUBLISH)
     if status.ci is CiState.RUNNING:
         return NextAction("Waiting on CI", WHO_CI, WAIT_CI)

@@ -224,6 +224,14 @@ test("priorities omit descendants of any task that needs me", () => {
   expect(ids(prioritiesLayout(rows, state({ view: "priorities" }))[0].entries)).toEqual(["a", "e"]);
 });
 
+test("a task publishing in the background leaves priorities and its child that needs me appears", () => {
+  const next = (id: string, parent: string | null, order: number, who: string) =>
+    row(id, parent, order, { next: { value: who, sort: "" } });
+  const rows = [next("a", null, 1, "others"), next("b", "a", 2, "you")];
+  expect(ids(prioritiesLayout(rows, state({ view: "priorities" }))[0].entries)).toEqual(["b"]);
+  expect(prioritiesLayout([next("a", null, 1, "others")], state({ view: "priorities" }))).toEqual([]);
+});
+
 describe("the card views", () => {
   const nextRow = (id: string, parent: string | null, order: number, who: string, extra: Parameters<typeof row>[3] = {}) =>
     row(id, parent, order, { next: { value: who, sort: "" }, ...extra });

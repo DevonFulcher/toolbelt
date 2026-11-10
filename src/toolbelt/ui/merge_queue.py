@@ -66,6 +66,7 @@ _STILL_WAITING = (
     "wait_ci",
     "wait_review",
     "request_review",
+    "publishing",
     "post_slack",
     "bump_slack",
     "blocked",

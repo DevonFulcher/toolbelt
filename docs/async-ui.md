@@ -21,7 +21,7 @@ request to know whether something is happening.
 | --- | --- | --- |
 | Post or bump in Slack | `posting` on the PR's Slack info | `notice` on the PR's Slack info |
 | Publish a PR and post in Slack | `posting` on the selected PRs' Slack info | `notice` on the PR's Slack info |
-| Publish a PR without a Slack post | `publishing` on the PR's Slack info | `notice` on the same (the PR is then for Slack again) |
+| Publish a PR without a Slack post | `publishing` on the PR's Slack info; its Next reads "Publishing PR…" and waits on others, so the card leaves Priorities (the publish is assumed to succeed) | `notice` on the same (the PR is then for Slack again) |
 | Run an agent by hand | `starting` on the task's agent info | `start_error` on the same |
 | Validate a task | `starting` on the task's agent info | `start_error` on the same |
 | Approve a branch (opens its PR) | `opening_pr` on the task's validation info | `notice` on the same |

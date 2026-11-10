@@ -247,6 +247,10 @@ _NEXT_TONES = {
         ACCENT,
         "A draft with no failing CI: mark it ready; running checks continue.",
     ),
+    na.PUBLISHING: (
+        GRAY,
+        "Being marked ready in the background; assumed to succeed, so nothing waits on you.",
+    ),
     na.BLOCKED: (GRAY, "Approved, but its parent PR is not merged yet."),
     na.MERGE: (GREEN, "Approved and ready to merge."),
     na.WAIT_REVIEW: (GRAY, "Waiting for a reviewer."),
@@ -293,6 +297,7 @@ _NEXT_LABELS = {
     na.FIX_CI: "Fix / re-run CI",
     na.WAIT_CI: "Waiting on CI",
     na.PUBLISH: "Publish PR in GitHub",
+    na.PUBLISHING: "Publishing PR…",
     na.BLOCKED: "Blocked on parent",
     na.MERGE: "Merge",
     na.WAIT_REVIEW: "Waiting for review",

@@ -3736,6 +3736,7 @@
         "next_open_pr",
         "next_personal_review",
         "next_publish",
+        "next_publishing",
         "next_request_review",
         "next_post_slack",
         "next_bump_slack",
@@ -3882,6 +3883,9 @@
         "next_publish": {
           "$ref": "#/$defs/Span"
         },
+        "next_publishing": {
+          "$ref": "#/$defs/Span"
+        },
         "next_request_review": {
           "$ref": "#/$defs/Span"
         },
@@ -3908,6 +3912,7 @@
         "next_open_pr",
         "next_personal_review",
         "next_publish",
+        "next_publishing",
         "next_request_review",
         "next_post_slack",
         "next_bump_slack",
@@ -4622,6 +4627,7 @@
         "fix_ci",
         "wait_ci",
         "publish",
+        "publishing",
         "blocked",
         "merge",
         "wait_review",

@@ -76,6 +76,7 @@ def test_next_action_kinds_are_exactly_the_catalogued_ones():
                     (None, False),
                     (na.SlackContext(posted=False), False),
                     (na.SlackContext(posted=True, bump_due=True), False),
+                    (na.SlackContext(posted=False, publishing=True), False),
                     (None, True),
                 ):
                     produced.add(

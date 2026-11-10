@@ -67,6 +67,7 @@ NEXT_LANE_KINDS: tuple[str, ...] = (
     na.OPEN_PR,
     na.PERSONAL_REVIEW,
     na.PUBLISH,
+    na.PUBLISHING,
     na.REQUEST_REVIEW,
     na.POST_SLACK,
     na.BUMP_SLACK,

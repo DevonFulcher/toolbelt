@@ -55,6 +55,7 @@ export type LanePhaseKind =
   | "next_open_pr"
   | "next_personal_review"
   | "next_publish"
+  | "next_publishing"
   | "next_request_review"
   | "next_post_slack"
   | "next_bump_slack"
@@ -138,6 +139,7 @@ export type NextKind =
   | "fix_ci"
   | "wait_ci"
   | "publish"
+  | "publishing"
   | "blocked"
   | "merge"
   | "wait_review"
@@ -1733,6 +1735,7 @@ export interface LanePhaseSpans {
   next_personal_review: Span;
   next_post_slack: Span;
   next_publish: Span;
+  next_publishing: Span;
   next_request_review: Span;
   next_resolve_comments: Span;
   next_resolve_conflicts: Span;
