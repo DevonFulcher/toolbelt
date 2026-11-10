@@ -45,7 +45,9 @@ from toolbelt.ui.next_action import next_action
 from toolbelt.ui.pr_activity import CI_FAILED_ROLLUPS, COMMIT, REVIEW, PrFacts
 from toolbelt.ui.pr_fetch import PrSnapshot
 
-DEFAULT_POLL_INTERVAL_SECONDS = 300.0
+#: How old a PR lookup may be when a task is decided on it: an older one is
+#: looked up again (see ``Dispatcher._refresh``).
+DEFAULT_MAX_PR_AGE_SECONDS = 300.0
 DEFAULT_TICK_SECONDS = 15.0
 DEFAULT_CONCURRENCY = 4
 #: How long a sign-in check is trusted.
@@ -156,7 +158,6 @@ class Dispatcher:
         wall_clock: Callable[[], datetime],
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
-        poll_interval: float = DEFAULT_POLL_INTERVAL_SECONDS,
         tick: float = DEFAULT_TICK_SECONDS,
         concurrency: int = DEFAULT_CONCURRENCY,
         launch: Callable[[Decision], Awaitable[None]] | None = None,
@@ -192,7 +193,6 @@ class Dispatcher:
         self._wall_clock = wall_clock
         self._clock = clock
         self._sleep = sleep
-        self._poll_interval = poll_interval
         self._tick = tick
         self._concurrency = concurrency
         self._launch = launch
@@ -204,8 +204,6 @@ class Dispatcher:
         self._launching_now = False
         #: Called at the end of every pass, once the decisions are current.
         self.on_tick: Callable[[], None] | None = None
-        #: Latest PR snapshot per branch and when (``clock``) it was fetched.
-        self._snapshots: dict[tuple[int, str], tuple[float, PrSnapshot]] = {}
         self._auth: tuple[float, bool] | None = None
         #: The newest decisions, by (repo id, branch).
         self.decisions: dict[tuple[int, str], Decision] = {}
@@ -242,13 +240,17 @@ class Dispatcher:
             self._auth = (now, self._check_signed_in())
         return self._auth[1]
 
-    async def _refresh(self, tasks: list[DispatchTask]) -> None:
-        """Fetch the snapshots that are older than the poll interval. A fetch
-        that fails (GitHub rate limited or down, the PR gone) fails only its
-        own task: it is recorded in ``fetch_failures`` and tried again next
-        tick."""
-        now = self._clock()
+    async def _refresh(
+        self, tasks: list[DispatchTask]
+    ) -> dict[tuple[int, str], PrSnapshot]:
+        """Asks ``fetch`` for every task's PR, as it is saved right now (it
+        looks the PR up again only when the saved lookup is too old). Nothing is
+        kept between ticks, so a decision is never made on a copy older than the
+        saved lookup. A fetch that fails (GitHub rate limited or down, the PR
+        gone) fails only its own task: it is recorded in ``fetch_failures`` and
+        asked again next tick."""
         gate = asyncio.Semaphore(self._concurrency)
+        snapshots: dict[tuple[int, str], PrSnapshot] = {}
         failures: dict[tuple[int, str], FetchFailure] = {}
 
         async def one(item: DispatchTask) -> None:
@@ -266,28 +268,27 @@ class Dispatcher:
                     self._wall_clock() + timedelta(seconds=wait) if wait > 0 else None,
                 )
             else:
-                self._snapshots[key] = (self._clock(), snapshot)
+                snapshots[key] = snapshot
 
-        due = [
-            item
-            for item in tasks
-            if item.task.key not in self._snapshots
-            or now - self._snapshots[item.task.key][0] >= self._poll_interval
-        ]
-        await asyncio.gather(*(one(item) for item in due))
+        await asyncio.gather(*(one(item) for item in tasks))
         self.fetch_failures = failures
+        return snapshots
 
-    async def _look_into_ci(self, tasks: list[DispatchTask]) -> None:
+    async def _look_into_ci(
+        self,
+        tasks: list[DispatchTask],
+        snapshots: dict[tuple[int, str], PrSnapshot],
+    ) -> None:
         """For each PR that trips the guard against re-blocked PRs, find out why
         its CI keeps failing (once per head commit)."""
         if self._explain_ci is None:
             return
         for item in tasks:
             key = item.task.key
-            snapshot = self._snapshots.get(key)
-            if snapshot is None or snapshot[1].facts is None:
+            snapshot = snapshots.get(key)
+            if snapshot is None or snapshot.facts is None:
                 continue
-            facts = snapshot[1].facts
+            facts = snapshot.facts
             if (
                 facts.state != "OPEN"
                 or failed_ci_commits(facts) < self.limits.thrash_failed_commits
@@ -314,7 +315,7 @@ class Dispatcher:
         )
 
     async def tick(self) -> None:
-        """One pass: refresh stale PR snapshots, then decide every task.
+        """One pass: read every task's PR, then decide every task.
         While agents are switched off nothing is fetched or decided: the only
         thing to say is that they are off. The blocking parts (database,
         sign-in check, git) run off the event loop."""
@@ -332,21 +333,28 @@ class Dispatcher:
                 self.on_tick()
             return
         tasks = await asyncio.to_thread(self._tasks)
-        await self._refresh(tasks)
-        await self._look_into_ci(tasks)
+        snapshots = await self._refresh(tasks)
+        await self._look_into_ci(tasks, snapshots)
         if self._questions is not None:
             await asyncio.to_thread(self._questions.settle_orphans)
             self._holding = await asyncio.to_thread(self._questions.holding)
-        self.decisions = await asyncio.to_thread(self._decide_all, tasks, world)
+        self.decisions = await asyncio.to_thread(
+            self._decide_all, tasks, snapshots, world
+        )
         self.blockers = global_blockers(world)
         self.ticked_at = now
         if self._launch is not None and self._launching_now:
-            await self._resume_answered(tasks, world)
-            await self._launch_ready(tasks)
+            await self._resume_answered(tasks, snapshots, world)
+            await self._launch_ready(tasks, snapshots)
         if self.on_tick is not None:
             self.on_tick()
 
-    async def _resume_answered(self, tasks: list[DispatchTask], world: World) -> None:
+    async def _resume_answered(
+        self,
+        tasks: list[DispatchTask],
+        snapshots: dict[tuple[int, str], PrSnapshot],
+        world: World,
+    ) -> None:
         """Resumes the runs whose question the user has answered, each with the
         answer. A run is resumed only when it is safe (``resume_blocker``); the
         task stays held until then."""
@@ -355,10 +363,9 @@ class Dispatcher:
         by_task = {item.task.task_id: item for item in tasks}
         for answered, prior in await asyncio.to_thread(self._questions.answered):
             item = by_task.get(answered.task_id)
-            entry = self._snapshots.get(item.task.key) if item else None
-            if item is None or entry is None:
+            snapshot = snapshots.get(item.task.key) if item else None
+            if item is None or snapshot is None:
                 continue
-            snapshot = entry[1]
             action = next_action(snapshot.status, None)
             state = await asyncio.to_thread(self._inspect, item)
             if not state.exists:
@@ -383,7 +390,11 @@ class Dispatcher:
             await self._resume(answered, decision, prior)
             world = await asyncio.to_thread(self._world, self._wall_clock())
 
-    async def _launch_ready(self, tasks: list[DispatchTask]) -> None:
+    async def _launch_ready(
+        self,
+        tasks: list[DispatchTask],
+        snapshots: dict[tuple[int, str], PrSnapshot],
+    ) -> None:
         """Starts a run on every task an agent may take. Each decision was made
         against the runs before this pass started, so after a start the next
         task is decided again against the runs now (the spend limits count the
@@ -397,10 +408,10 @@ class Dispatcher:
                 continue
             if launched:
                 world = await asyncio.to_thread(self._world, self._wall_clock())
-                entry = self._snapshots.get(key)
+                snapshot = snapshots.get(key)
                 fresh = (
-                    await asyncio.to_thread(self._decide, by_key[key], entry[1], world)
-                    if entry is not None
+                    await asyncio.to_thread(self._decide, by_key[key], snapshot, world)
+                    if snapshot is not None
                     else None
                 )
                 if fresh is None:
@@ -412,14 +423,17 @@ class Dispatcher:
             launched = True
 
     def _decide_all(
-        self, tasks: list[DispatchTask], world: World
+        self,
+        tasks: list[DispatchTask],
+        snapshots: dict[tuple[int, str], PrSnapshot],
+        world: World,
     ) -> dict[tuple[int, str], Decision]:
         decisions: dict[tuple[int, str], Decision] = {}
         for item in tasks:
-            entry = self._snapshots.get(item.task.key)
-            if entry is None or item.task.key in self.fetch_failures:
+            snapshot = snapshots.get(item.task.key)
+            if snapshot is None:
                 continue
-            decision = self._decide(item, entry[1], world)
+            decision = self._decide(item, snapshot, world)
             if decision is not None:
                 decisions[item.task.key] = decision
         return decisions
@@ -486,23 +500,20 @@ class Dispatcher:
 
     async def start_now(self, key: tuple[int, str]) -> None:
         """Start a run on the task by hand, past the reasons a person may
-        override (``eligibility.OVERRIDABLE``), against the latest PR snapshot.
+        override (``eligibility.OVERRIDABLE``), against the PR as saved now.
         Raises ``KeyError`` for a task with nothing an
         agent does, and ``OverrideRefused`` when a reason that stays is true."""
         if self._launch is None:
             raise OverrideRefused(Reason("disabled", "Nothing can start runs here."))
-        entry = self._snapshots.get(key)
-        if entry is None:
-            raise KeyError(key)
-        now = self._wall_clock()
-        world = await asyncio.to_thread(self._world, now)
         tasks = await asyncio.to_thread(self._tasks)
         item = next((t for t in tasks if t.task.key == key), None)
-        decision = (
-            await asyncio.to_thread(self._decide, item, entry[1], world, True)
-            if item
-            else None
-        )
+        if item is None:
+            raise KeyError(key)
+        # A failed lookup raises: never decide on a PR that may be out of date.
+        snapshot = await self._fetch(item.task.branch, item.repo_path)
+        now = self._wall_clock()
+        world = await asyncio.to_thread(self._world, now)
+        decision = await asyncio.to_thread(self._decide, item, snapshot, world, True)
         if decision is None:
             raise KeyError(key)
         if decision.reason is not None:
@@ -539,7 +550,6 @@ class Dispatcher:
             raise KeyError(key)
         # The PR is looked up now: a validate run is for a branch with none.
         snapshot = await self._fetch(item.task.branch, item.repo_path)
-        self._snapshots[key] = (self._clock(), snapshot)
         world = await asyncio.to_thread(self._world, self._wall_clock())
         world = dataclasses.replace(world, auth_ok=self._auth_ok())
         state = await asyncio.to_thread(self._inspect, item)

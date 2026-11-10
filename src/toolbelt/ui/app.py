@@ -64,7 +64,7 @@ from toolbelt.autonomous_agents.branch_state import RepoFactsCache, inspect_bran
 from toolbelt.autonomous_agents.ci_history import ci_explainer
 from toolbelt.autonomous_agents.curator import CuratorRunner
 from toolbelt.autonomous_agents.dispatcher import (
-    DEFAULT_POLL_INTERVAL_SECONDS,
+    DEFAULT_MAX_PR_AGE_SECONDS,
     Dispatcher,
     DispatchTask,
 )
@@ -988,7 +988,7 @@ def create_app(
             if repo_path == root:
                 return await refresher.snapshot(
                     TrackedBranch(repo_id=repo_id, branch=branch, path=root),
-                    max_age=DEFAULT_POLL_INTERVAL_SECONDS,
+                    max_age=DEFAULT_MAX_PR_AGE_SECONDS,
                 )
         raise LookupError(f"{root} is not a registered repo")
 

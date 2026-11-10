@@ -145,7 +145,6 @@ class Rig:
             signed_in=lambda: self.signed_in,
             wall_clock=lambda: NOW,
             clock=lambda: self.monotonic,
-            poll_interval=300,
             launch=launch,
             launching=lambda: self.launching,
             explain_ci=explain_ci,
@@ -541,26 +540,24 @@ def test_a_failed_fetch_is_tried_again_next_tick_and_the_failure_clears():
 # ---- polling GitHub --------------------------------------------------------------------------------
 
 
-def test_prs_are_refetched_only_after_the_poll_interval():
+def test_every_task_is_asked_for_at_every_tick_and_nothing_is_kept_between_them():
+    # How old a lookup may be is the lookup's business (the refresher's
+    # saved lookups): the dispatcher keeps no copy that could be older.
     r = rig(a=PrSnapshot(status(), None))
 
     r.tick()
-    r.monotonic = 100
     r.tick()
-    assert r.fetched == ["a"]
 
-    r.monotonic = 301
-    r.tick()
     assert r.fetched == ["a", "a"]
 
 
-def test_a_state_change_between_polls_is_seen_after_the_next_poll():
+def test_a_status_change_is_decided_on_at_the_next_tick():
     r = rig(a=PrSnapshot(status(), None))
     r.tick()
     assert r.decision("a") is not None
 
+    # The saved lookup changed (the refresher saw it); no time passes.
     r.snapshots["a"] = PrSnapshot(status(ci=CiState.SUCCESS), None)
-    r.monotonic = 301
     r.tick()
 
     assert r.decision("a") is None
