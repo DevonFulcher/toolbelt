@@ -9,6 +9,7 @@ TestClient buffers a whole response and an event stream never ends.
 
 import asyncio
 import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Self
@@ -37,6 +38,7 @@ from toolbelt.ui.live_status import (
     StructureWatcher,
     TrackedBranch,
 )
+from toolbelt.ui.lookup_cache import MemoryLookups
 from toolbelt.ui.pr_activity import PrFacts
 from toolbelt.ui.pr_fetch import PrSnapshot
 from toolbelt.ui.webhook_forwarders import Problem
@@ -196,6 +198,34 @@ class TestStatusRefresher:
         assert good is not None and good.status == OPEN
         assert sorted(s.changed_branches()) == ["bad", "good"]
 
+    def test_get_reads_the_saved_lookup_not_a_copy_of_it(self):
+        lookups = MemoryLookups()
+        s = Setup(["a"], persist=lookups)
+        run(s.refresher.run_once())
+        saved = lookups.get(1, "a")
+        assert saved is not None
+
+        # Whatever the table holds is what a reader sees at once.
+        lookups.save(1, "a", replace(saved, status=OPEN))
+
+        read = s.refresher.get(1, "a")
+        assert read is not None and read.status == OPEN
+        assert s.refresher.get_all()[(1, "a")].status == OPEN
+
+    def test_a_lookup_that_cannot_be_saved_is_a_failed_lookup(self):
+        class Unsavable(MemoryLookups):
+            def save(self, repo_id, branch, saved):
+                raise OSError("disk full")
+
+        s = Setup(["a"], persist=Unsavable())
+        s.fetcher.statuses["a"] = OPEN
+
+        run(s.refresher.run_once())
+
+        read = s.refresher.get(1, "a")
+        assert read is not None and read.status is None
+        assert read.error is not None and "disk full" in read.error
+
     def test_branches_that_disappear_are_forgotten(self):
         s = Setup(["a", "b"])
 
@@ -250,7 +280,7 @@ class TestStatusRefresher:
             {"branch_id": "1:a", "fetched_at": "2026-10-17T12:00:20Z", "error": None},
             {"branch_id": "1:b", "fetched_at": "2026-10-17T12:00:20Z", "error": None},
         ]
-        assert s.changed_branches() == ["a", "b"]
+        assert sorted(s.changed_branches()) == ["a", "b"]
 
     def test_a_failed_lookup_is_reported_with_its_error_and_no_time(self):
         s = Setup(["bad", "good"])
@@ -1150,7 +1180,9 @@ class TestSlackInTheApp:
     def test_a_status_event_carries_the_slack_standing(self, tmp_path):
         app, _ = self.seed(tmp_path)
         # A change in the PR makes the refresher publish its status again.
-        app.state.refresher._cache.clear()
+        for key in app.state.refresher._persist.load():
+            app.state.refresher._persist.delete(*key)
+        app.state.refresher._timing.clear()
 
         async def scenario():
             queue = app.state.hub.subscribe()

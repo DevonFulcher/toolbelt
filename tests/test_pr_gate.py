@@ -433,6 +433,9 @@ class FakePersistence:
     def load(self):
         return dict(self.rows)
 
+    def get(self, repo_id, branch):
+        return self.rows.get((repo_id, branch))
+
     def save(self, repo_id, branch, saved):
         self.rows[(repo_id, branch)] = saved
 

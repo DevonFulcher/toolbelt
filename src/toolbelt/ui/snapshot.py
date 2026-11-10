@@ -452,6 +452,8 @@ def build_snapshot(
     )
     store = StackStore(default_db_path())
     try:
+        # One read of the saved lookups for the whole snapshot.
+        looked_up_all = refresher.get_all()
         repos: list[api.Repo] = []
         branches: list[api.Branch] = []
         fetched: list[api.FetchedBranch] = []
@@ -484,7 +486,7 @@ def build_snapshot(
                     links.task_tracker if links else None, tracker
                 )
                 parent = parents.get(name)
-                looked_up = refresher.get(repo.id, name)
+                looked_up = looked_up_all.get((repo.id, name))
                 if looked_up is not None and (
                     looked_up.wall_at is not None or looked_up.error is not None
                 ):

@@ -1,8 +1,9 @@
 """Keeps the `tt ui` page live: a background status cache and an event hub.
 
 ``StatusRefresher`` polls GitHub (through the injected ``fetch``, which is the
-same lookup `tt g tree` uses) for every tracked branch and keeps the latest
-result in memory, so a page render never waits on ``gh``. Whenever a branch's
+same lookup `tt g tree` uses) for every tracked branch and saves the latest
+result in the stack DB (``pr_lookups``, the one place a branch's PR state
+lives), so a page render never waits on ``gh``. Whenever a branch's
 status changes it calls ``on_change``; ``EventHub`` fans such events out to the
 connected browsers (see the ``/api/events`` endpoint in ``app.py``).
 
@@ -47,7 +48,7 @@ from toolbelt.git.stack.status import BranchStatus, PrState
 from toolbelt.logger import logger
 from toolbelt.ui.conflict_commit import ConflictCommit
 from toolbelt.ui.github_requests import RateLimited
-from toolbelt.ui.lookup_cache import SavedLookup
+from toolbelt.ui.lookup_cache import MemoryLookups, SavedLookup
 from toolbelt.ui.pr_activity import PrFacts
 from toolbelt.ui.pr_fetch import PrSnapshot
 
@@ -118,6 +119,18 @@ class TrackedBranch:
 
 
 @dataclass(frozen=True)
+class Timing:
+    """What the refresher knows about a branch's lookups that is not PR state,
+    so it is kept in memory only: when (``clock`` time) the PR was last asked
+    about (``at``) and last looked up in full, and when (wall clock) it was
+    last verified."""
+
+    at: float
+    full_at: float
+    wall_at: datetime | None
+
+
+@dataclass(frozen=True)
 class Fetched:
     """The outcome of one lookup. ``status`` is ``None`` when it failed;
     ``facts`` is the PR's history (``None`` too when the branch has no PR)."""
@@ -144,6 +157,8 @@ class LookupPersistence(Protocol):
     Called from worker threads."""
 
     def load(self) -> dict[tuple[int, str], SavedLookup]: ...
+
+    def get(self, repo_id: int, branch: str) -> SavedLookup | None: ...
 
     def save(self, repo_id: int, branch: str, saved: SavedLookup) -> None: ...
 
@@ -272,7 +287,7 @@ class StatusRefresher:
         jitter: Callable[[], float] = random.random,
         observe: Callable[[int, str, BranchStatus, datetime], bool] | None = None,
     ) -> None:
-        self._persist = persist
+        self._persist = persist if persist is not None else MemoryLookups()
         self._observe = observe
         self._jitter = jitter
         self._no_pr_interval = no_pr_interval
@@ -303,12 +318,54 @@ class StatusRefresher:
         self._settled_interval = settled_interval
         self._tick = tick
         self._slots = asyncio.Semaphore(concurrency)
-        self._cache: dict[tuple[int, str], Fetched] = {}
+        #: The branches' lookups are not kept here: the saved lookups
+        #: (``_persist``) are the one copy of a PR's state. These are the
+        #: timing of each branch's lookups and the latest attempt's failure.
+        self._timing: dict[tuple[int, str], Timing] = {}
+        self._errors: dict[tuple[int, str], str] = {}
         #: When the last pass that fetched anything finished (``clock`` time).
         self.last_refreshed_at: float | None = None
 
     def get(self, repo_id: int, branch: str) -> Fetched | None:
-        return self._cache.get((repo_id, branch))
+        """The branch's last good lookup with the latest attempt's outcome, read
+        from the saved lookups: safe to call from a worker thread."""
+        key = (repo_id, branch)
+        return self._fetched(key, self._persist.get(repo_id, branch))
+
+    def get_all(self) -> dict[tuple[int, str], Fetched]:
+        """``get`` of every branch looked up, reading the saved lookups once."""
+        saved = self._persist.load()
+        return {
+            key: fetched
+            for key in saved.keys() | self._timing.keys()
+            if (fetched := self._fetched(key, saved.get(key))) is not None
+        }
+
+    def _fetched(
+        self, key: tuple[int, str], saved: SavedLookup | None
+    ) -> Fetched | None:
+        timing = self._timing.get(key)
+        error = self._errors.get(key)
+        if saved is None:
+            if timing is None:
+                return None
+            return Fetched(status=None, at=timing.at, error=error)
+        return Fetched(
+            status=saved.status,
+            at=timing.at if timing is not None else 0.0,
+            facts=saved.facts,
+            conflict=saved.conflict,
+            wall_at=timing.wall_at if timing is not None else saved.fetched_at,
+            full_at=timing.full_at if timing is not None else 0.0,
+            error=error,
+        )
+
+    def _remember(self, key: tuple[int, str], fetched: Fetched) -> None:
+        self._timing[key] = Timing(fetched.at, fetched.full_at, fetched.wall_at)
+        if fetched.error is None:
+            self._errors.pop(key, None)
+        else:
+            self._errors[key] = fetched.error
 
     def seconds_since_refresh(self) -> float | None:
         if self.last_refreshed_at is None:
@@ -324,8 +381,9 @@ class StatusRefresher:
             return self._no_pr_interval
         return self._interval
 
-    def _is_due(self, key: tuple[int, str], now: float) -> bool:
-        fetched = self._cache.get(key)
+    def _is_due(
+        self, key: tuple[int, str], fetched: Fetched | None, now: float
+    ) -> bool:
         return (
             fetched is None
             or key in self._refreshing
@@ -363,7 +421,7 @@ class StatusRefresher:
         the same gate, saved lookups and rate-limit handling as the polling.
         Raises when the latest lookup failed: the caller must not act on a
         status that may be out of date."""
-        cached = self._cache.get(branch.key)
+        cached = await asyncio.to_thread(self.get, branch.repo_id, branch.branch)
         if (
             cached is None
             or cached.status is None
@@ -380,8 +438,6 @@ class StatusRefresher:
         lookup whose full refresh is overdue gets a random point inside the
         interval, so the full lookups after a restart spread out instead of
         all running at once."""
-        if self._persist is None:
-            return
         saved = await asyncio.to_thread(self._persist.load)
         now, wall = self._clock(), self._wall_clock()
         for key, lookup in saved.items():
@@ -390,13 +446,8 @@ class StatusRefresher:
             interval = self._full_interval_for(lookup.status)
             if full_age >= interval:
                 full_age = self._jitter() * interval
-            self._cache[key] = Fetched(
-                status=lookup.status,
-                at=now - age,
-                facts=lookup.facts,
-                conflict=lookup.conflict,
-                wall_at=lookup.fetched_at,
-                full_at=now - full_age,
+            self._timing[key] = Timing(
+                at=now - age, full_at=now - full_age, wall_at=lookup.fetched_at
             )
             if self._gate is not None:
                 self._gate.restore(lookup.etags)
@@ -405,12 +456,17 @@ class StatusRefresher:
         """Fetch every branch that is due. Returns how many were fetched."""
         branches = self._branches()
         keys = {branch.key for branch in branches}
-        for key in set(self._cache) - keys:
-            del self._cache[key]
-            if self._persist is not None:
-                await asyncio.to_thread(self._persist.delete, *key)
+        for key in self._timing.keys() - keys:
+            del self._timing[key]
+            self._errors.pop(key, None)
+            await asyncio.to_thread(self._persist.delete, *key)
         now = self._clock()
-        due = [branch for branch in branches if self._is_due(branch.key, now)]
+        looked_up = await asyncio.to_thread(self.get_all)
+        due = [
+            branch
+            for branch in branches
+            if self._is_due(branch.key, looked_up.get(branch.key), now)
+        ]
         if not due:
             return 0
         fetched = await asyncio.gather(*(self._refresh(branch) for branch in due))
@@ -436,7 +492,7 @@ class StatusRefresher:
         return len(due)
 
     async def _refresh(self, branch: TrackedBranch) -> tuple[TrackedBranch, Fetched]:
-        previous = self._cache.get(branch.key)
+        previous = await asyncio.to_thread(self.get, branch.repo_id, branch.branch)
         hinted = branch.key in self._hinted and (
             previous is None or self._hint_ready(previous, self._clock())
         )
@@ -449,7 +505,7 @@ class StatusRefresher:
             if reason is None:
                 assert previous is not None
                 reused = replace(previous, at=self._clock(), wall_at=self._wall_clock())
-                self._cache[branch.key] = reused
+                self._remember(branch.key, reused)
                 return branch, reused
             self.lookups[reason] += 1
             # Whatever the reason, this lookup answers a pending hint.
@@ -490,9 +546,18 @@ class StatusRefresher:
                     # Without ETags the next poll simply does the full lookup.
                     with contextlib.suppress(Exception):
                         await self._gate.remember(branch, fetched)
-                await self._save(branch, fetched)
-                await self._record_transitions(branch, fetched)
-        self._cache[branch.key] = fetched
+                not_saved = await self._save(branch, fetched)
+                if not_saved is None:
+                    await self._record_transitions(branch, fetched)
+                else:
+                    # The lookup is lost: what the table holds stays as it was,
+                    # and the branch is looked up again.
+                    fetched = (
+                        replace(previous, at=now, error=not_saved)
+                        if previous is not None and previous.status is not None
+                        else Fetched(status=None, at=now, error=not_saved)
+                    )
+        self._remember(branch.key, fetched)
         if (
             previous is None
             or previous.status != fetched.status
@@ -522,9 +587,9 @@ class StatusRefresher:
             # Only the timeline's history: never stop the poll for it.
             logger.exception("could not record the status of %s", branch.branch)
 
-    async def _save(self, branch: TrackedBranch, fetched: Fetched) -> None:
-        if self._persist is None or fetched.status is None or fetched.wall_at is None:
-            return
+    async def _save(self, branch: TrackedBranch, fetched: Fetched) -> str | None:
+        """Saves the lookup; returns why it could not be."""
+        assert fetched.status is not None and fetched.wall_at is not None
         try:
             etags = (
                 await self._gate.export(branch, fetched)
@@ -540,9 +605,11 @@ class StatusRefresher:
                 etags=etags,
             )
             await asyncio.to_thread(self._persist.save, *branch.key, saved)
-        except Exception:  # noqa: BLE001
-            # Saving only helps the next start: never stop the poll for it.
+        except Exception as failure:  # noqa: BLE001
+            # One branch's failure must not stop the poll of the others.
             logger.exception("could not save the lookup of %s", branch.branch)
+            return f"could not save the lookup: {type(failure).__name__}: {failure}"
+        return None
 
     async def _catch_up_etags(
         self, branch: TrackedBranch, previous: Fetched | None

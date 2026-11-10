@@ -27,8 +27,12 @@ which is where to look when the GraphQL budget drains.
 ## What a card shows when GitHub does not answer
 
 Each branch's last good lookup (status, PR facts, conflict commit and the
-gate's ETags) is kept in the stack DB (`pr_lookups`, see `lookup_cache.py`) and
-loaded when the server starts. A failed lookup never replaces it: the card
+gate's ETags) is kept in the stack DB (`pr_lookups`, see `lookup_cache.py`).
+That table is the only copy of a branch's PR state: the refresher writes it, and
+the cards and the agents' dispatcher read it back on every use, so none can show
+an older state than another. The refresher keeps in memory only what is not PR
+state: when each branch was last asked about, and the latest attempt's error
+(a restart forgets both and looks the branch up again). A failed lookup never replaces it: the card
 keeps showing the last good data, the PR box counts its real age (`updated 612s
 ago`, amber) and adds the reason (`GitHub graphql rate limit exceeded`). A
 branch that was never looked up says `not read yet (…)`.
