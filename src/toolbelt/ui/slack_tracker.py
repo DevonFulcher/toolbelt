@@ -145,7 +145,9 @@ class SlackTracker:
         if state is None:
             return None
         pr = (self._slug_of(repo_id) or "", fetched.facts.number)  # type: ignore[union-attr]
-        if pr in self._publishing:
+        if pr in self._publishing or pr in self._posting:
+            # A draft is only ever posting through a publish that goes on to
+            # post; a PR already open ignores the flag.
             return SlackContext(posted=state.posted, publishing=True)
         if pr in self._skipped:
             return None  # published without a post: no Slack step to take

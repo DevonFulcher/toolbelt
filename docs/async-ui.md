@@ -20,7 +20,7 @@ request to know whether something is happening.
 | Action | In progress | Failure |
 | --- | --- | --- |
 | Post or bump in Slack | `posting` on the PR's Slack info | `notice` on the PR's Slack info |
-| Publish a PR and post in Slack | `posting` on the selected PRs' Slack info | `notice` on the PR's Slack info |
+| Publish a PR and post in Slack | `posting` on the selected PRs' Slack info; a draft among them reads "Publishing PR…" and waits on others, like the no-post publish below | `notice` on the PR's Slack info |
 | Publish a PR without a Slack post | `publishing` on the PR's Slack info; its Next reads "Publishing PR…" and waits on others, so the card leaves Priorities (the publish is assumed to succeed) | `notice` on the same (the PR is then for Slack again) |
 | Run an agent by hand | `starting` on the task's agent info | `start_error` on the same |
 | Validate a task | `starting` on the task's agent info | `start_error` on the same |

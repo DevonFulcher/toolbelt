@@ -780,25 +780,33 @@ def gated_draft_app(repo_id_holder: list[int], tmp_path, *, outcome: PublishOutc
         release.wait(timeout=10)
         return outcome
 
-    app = create_app(fetch=fetch, slack_settings=CONFIG, publisher=gated, tick=0.05)
+    app = create_app(
+        fetch=fetch,
+        slack_settings=CONFIG,
+        slack_proxy=FakeProxy(),  # type: ignore[arg-type]
+        publisher=gated,
+        tick=0.05,
+    )
     asyncio.run(app.state.refresher.run_once())
     return app, release
 
 
-def publish_and_look_midway(client, repo_id: int, release: threading.Event) -> dict:
+def publish_and_look_midway(
+    client, request_body: dict, release: threading.Event, *, flag: str = "publishing"
+) -> dict:
     """Starts a publish without a post, returns the branch while it is still
     running, then lets it finish. The test client answers a request only after
     its background work, so the request goes out on another thread."""
     request = threading.Thread(
         target=client.post,
         args=("/api/slack/publish",),
-        kwargs={"json": skip_request(repo_id, "a")},
+        kwargs={"json": request_body},
     )
     request.start()
     try:
         for _ in range(200):
             during = branches(client)["a"]
-            if during["slack"]["publishing"]:
+            if during["slack"][flag]:
                 return during
             time.sleep(0.01)
         raise AssertionError("the publish did not start")
@@ -814,7 +822,7 @@ def test_a_draft_being_published_reads_publishing_and_waits_on_others(tmp_path):
     with TestClient(app) as client:
         assert branches(client)["a"]["status"]["next"]["kind"] == "publish"
 
-        during = publish_and_look_midway(client, repo_id, release)
+        during = publish_and_look_midway(client, skip_request(repo_id, "a"), release)
         wait_until_published(client, f"{repo_id}:a")
 
     assert during["slack"]["publishing"] is True
@@ -831,7 +839,7 @@ def test_a_failed_publish_gives_the_draft_its_publish_step_back(tmp_path):
     app, release = gated_draft_app(ids, tmp_path, outcome=PublishOutcome(False, "no"))
     repo_id = ids[0]
     with TestClient(app) as client:
-        during = publish_and_look_midway(client, repo_id, release)
+        during = publish_and_look_midway(client, skip_request(repo_id, "a"), release)
         slack = wait_until_published(client, f"{repo_id}:a")
         after = branches(client)["a"]
 
@@ -839,3 +847,60 @@ def test_a_failed_publish_gives_the_draft_its_publish_step_back(tmp_path):
     assert "no" in slack["notice"]
     assert after["status"]["next"]["kind"] == "publish"
     assert after["status"]["next"]["who"] == "you"
+
+
+def post_request(client, repo_id: int) -> dict:
+    draft = client.post(
+        "/api/slack/draft", json={"id": f"{repo_id}:a", "assignee_id": None}
+    ).json()
+    return {
+        "id": f"{repo_id}:a",
+        "kind": "post",
+        "text": draft["text"],
+        "assignee_id": draft["assignee"]["id"],
+        "thread_ts": None,
+        "prs": [
+            {"repo": pr["repo"], "number": pr["number"]}
+            for pr in draft["prs"]
+            if pr["included"]
+        ],
+    }
+
+
+def test_a_draft_published_with_a_slack_post_reads_publishing_while_it_runs(tmp_path):
+    ids: list[int] = []
+    app, release = gated_draft_app(ids, tmp_path, outcome=PublishOutcome(True, ""))
+    repo_id = ids[0]
+    with TestClient(app) as client:
+        assert branches(client)["a"]["status"]["next"]["kind"] == "publish"
+        during = publish_and_look_midway(
+            client, post_request(client, repo_id), release, flag="posting"
+        )
+        wait_until_posted(client, f"{repo_id}:a")
+
+    assert during["slack"]["publishing"] is False
+    assert (during["status"]["next"]["kind"], during["status"]["next"]["who"]) == (
+        "publishing",
+        "others",
+    )
+
+
+def test_a_failed_publish_with_a_slack_post_gives_the_draft_its_publish_step_back(
+    tmp_path,
+):
+    ids: list[int] = []
+    app, release = gated_draft_app(ids, tmp_path, outcome=PublishOutcome(False, "no"))
+    repo_id = ids[0]
+    with TestClient(app) as client:
+        during = publish_and_look_midway(
+            client, post_request(client, repo_id), release, flag="posting"
+        )
+        wait_until_posted(client, f"{repo_id}:a")
+        after = branches(client)["a"]
+
+    assert during["status"]["next"]["kind"] == "publishing"
+    assert "no" in after["slack"]["notice"]
+    assert (after["status"]["next"]["kind"], after["status"]["next"]["who"]) == (
+        "publish",
+        "you",
+    )

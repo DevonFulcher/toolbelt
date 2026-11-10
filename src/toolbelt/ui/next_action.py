@@ -38,7 +38,7 @@ come after CI failed so an agent still sees a failing CI first, and before CI
 running so a PR is posted while its checks run.
 
 "Publishing PR…" replaces "Publish PR in GitHub" while the publish started from
-the card is running (``slack.publishing``): nothing is waiting on you, because
+the card is running (``slack.publishing``, also while it goes on to post): nothing is waiting on you, because
 the publish is assumed to succeed. A failed publish clears the flag and the
 next lookup reads "Publish PR in GitHub" again, with the failure as a notice.
 
@@ -188,7 +188,8 @@ class SlackContext:
     posted: bool
     #: Posted over a day ago and nobody has looked since.
     bump_due: bool = False
-    #: The PR is being published (marked ready) in the background.
+    #: The PR is being published (marked ready) in the background, with or
+    #: without a Slack post after it.
     publishing: bool = False
 
 
