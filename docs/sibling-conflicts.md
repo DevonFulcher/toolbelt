@@ -37,6 +37,13 @@ seen: when a head moves, only that branch's pairs (n-1 of them) are new. Cost on
 
 ## When it runs
 
+* At the end of `tt g save`, after the sync (it moves heads by merging parents
+  into children): the pairs of the repo's tracked local heads that the table does
+  not have are tried and stored (`record_sibling_conflicts` in
+  `git/stack/pair_conflicts.py`). It only records: nothing is printed or asked,
+  and a failure is logged and never stops the save. `tt ui` reads the stored
+  pairs and tries only the ones still missing. Nothing prunes the table from
+  `save`: the UI drops pairs of commits that are no longer heads.
 * While a browser is connected, every 10 seconds (heads move with a local commit
   that GitHub does not know about).
 * `app.state.sibling_conflicts.fresh_conflicts_for(repo_id, branch)` forces a

@@ -171,6 +171,33 @@ def test_save_warns_on_real_parent_conflict(
     assert git("log", "-1", "--format=%s", cwd=wt) == "add extra"
 
 
+def test_save_records_conflicts_with_other_open_tasks_and_never_blocks(
+    repo: Path, tmp_path: Path, capfd: pytest.CaptureFixture
+):
+    from toolbelt.git.stack.store import StackStore, default_db_path
+
+    first, second = tmp_path / "wt-first", tmp_path / "wt-second"
+    create_stacked_branch("first", root=repo, wt_path=first)
+    create_stacked_branch("second", root=repo, wt_path=second)
+    (first / "c.txt").write_text("FIRST\n")
+    git("add", "-A", cwd=first)
+    git("commit", "-m", "first touches c.txt", cwd=first)
+    (second / "c.txt").write_text("SECOND\n")
+
+    result = _invoke(["save", "-m", "second", "--no-sync"], cwd=second, capfd=capfd)
+
+    assert result.exit_code == 0, result.output
+    store = StackStore(default_db_path())
+    try:
+        pairs = store.sibling_conflicts(store.ensure_repo(lineage.repo_identity(repo)))
+    finally:
+        store.close()
+    heads = sorted(
+        git("rev-parse", name, cwd=repo) for name in ("devon/first", "devon/second")
+    )
+    assert pairs == {(heads[0], heads[1]): ("c.txt",)}
+
+
 def test_save_requires_message_or_amend(repo: Path, capfd: pytest.CaptureFixture):
     result = _invoke(["save"], cwd=repo, capfd=capfd)
     assert result.exit_code != 0

@@ -8,15 +8,17 @@ from types import SimpleNamespace
 import pytest
 from conftest import git
 
+from toolbelt.git.stack.pair_conflicts import (
+    merge_conflicts,
+    pairs_to_try,
+    sorted_pair,
+)
 from toolbelt.git.stack.status import BranchStatus, CiState, PrState, ReviewState
 from toolbelt.ui import sibling_conflicts
 from toolbelt.ui.live_status import EventHub, Fetched, TrackedBranch
 from toolbelt.ui.sibling_conflicts import (
     SiblingConflictTracker,
     compute_repo,
-    merge_conflicts,
-    pairs_to_try,
-    sorted_pair,
 )
 
 LINES = "".join(f"line {n}\n" for n in range(1, 41))
@@ -419,3 +421,81 @@ def test_the_store_keeps_pairs_and_forgets_those_of_commits_that_are_not_heads(
     store.prune_sibling_conflicts(repo_id, {"a", "b"})
 
     assert store.sibling_conflicts(repo_id) == {("a", "b"): ("f.txt",)}
+
+
+def _recorded(repo: Path) -> dict[tuple[str, str], tuple[str, ...]]:
+    from toolbelt.git.stack.lineage import repo_identity
+    from toolbelt.git.stack.store import StackStore, default_db_path
+
+    store = StackStore(default_db_path())
+    try:
+        return store.sibling_conflicts(store.ensure_repo(repo_identity(repo)))
+    finally:
+        store.close()
+
+
+def test_recording_stores_the_pairs_of_tracked_heads_for_the_ui(base: Path):
+    from toolbelt.git.stack import lineage
+    from toolbelt.git.stack.pair_conflicts import record_sibling_conflicts
+
+    a = _branch(base, "a", "main", {"shared.txt": _replace(5, "from a")})
+    b = _branch(base, "b", "main", {"shared.txt": _replace(5, "from b")})
+    c = _branch(base, "c", "main", {"other.txt": "x\n"})
+    for name in ("a", "b", "c"):
+        lineage.set_parent(name, "main", root=base)
+
+    record_sibling_conflicts(base)
+
+    assert _recorded(base) == {
+        sorted_pair(a, b): ("shared.txt",),
+        sorted_pair(a, c): (),
+        sorted_pair(b, c): (),
+    }
+
+
+def test_recording_tries_only_the_pairs_it_does_not_have(
+    base: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from toolbelt.git.stack import lineage, pair_conflicts
+    from toolbelt.git.stack.pair_conflicts import record_sibling_conflicts
+
+    _branch(base, "a", "main", {"shared.txt": _replace(5, "from a")})
+    _branch(base, "b", "main", {"other.txt": "x\n"})
+    for name in ("a", "b"):
+        lineage.set_parent(name, "main", root=base)
+    record_sibling_conflicts(base)
+
+    moved = _branch(base, "a", "main", {"shared.txt": _replace(6, "from a again")})
+    b_head = git("rev-parse", "b", cwd=base)
+    calls: list[list[tuple[str, str]]] = []
+    real = pair_conflicts.merge_conflicts
+
+    def recording(root: Path, pairs):
+        calls.append(list(pairs))
+        return real(root, pairs)
+
+    monkeypatch.setattr(pair_conflicts, "merge_conflicts", recording)
+    record_sibling_conflicts(base)
+    record_sibling_conflicts(base)
+
+    assert calls == [[sorted_pair(moved, b_head)]]
+
+
+def test_a_failed_recording_is_logged_and_never_raised(
+    base: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from toolbelt.git.stack import lineage, pair_conflicts
+
+    _branch(base, "a", "main", {"shared.txt": _replace(5, "from a")})
+    _branch(base, "b", "main", {"shared.txt": _replace(5, "from b")})
+    for name in ("a", "b"):
+        lineage.set_parent(name, "main", root=base)
+
+    def failing(root: Path, pairs):
+        raise RuntimeError("git merge-tree failed")
+
+    monkeypatch.setattr(pair_conflicts, "merge_conflicts", failing)
+
+    pair_conflicts.record_sibling_conflicts(base)
+
+    assert _recorded(base) == {}

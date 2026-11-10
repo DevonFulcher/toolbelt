@@ -723,6 +723,14 @@ def git_save(
     if not no_sync:
         sync_repo(commit_root)
 
+    if commit_root.exists():
+        # Lazy import: the stack package imports this module.
+        from toolbelt.git.stack.pair_conflicts import record_sibling_conflicts
+
+        # After the sync: it merges parents into children and moves their heads.
+        # A landed branch's worktree is gone, and there is nothing to record.
+        record_sibling_conflicts(commit_root)
+
     if message:
         store_commit(message, current_repo_name(), current_repo_org(), commit_branch)
     staged_description = f"{len(pathspec)} files" if pathspec else "all changes"
