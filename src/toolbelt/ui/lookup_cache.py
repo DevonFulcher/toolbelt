@@ -1,12 +1,14 @@
 """The last good GitHub lookup of each tracked branch's PR, kept in the stack
 DB (``pr_lookups``).
 
-The status refresher saves a branch's lookup whenever the full lookup ran, and
-loads them all when the server starts. So a restart (or a stretch when GitHub
-refuses requests) leaves the cards showing what was last known, with the real
-age of that data, instead of nothing. The ETags the gate had for the PR are
-saved with it: they are what lets the restarted server ask GitHub "did it
-change?" for free instead of repeating every lookup.
+This table is the one place a branch's PR state lives: the status refresher
+saves a lookup whenever the full lookup ran, and everything that needs the
+state (the cards, the dispatcher) reads it back, so none of them can hold an
+older copy. A restart (or a stretch when GitHub refuses requests) leaves the
+cards showing what was last known, with the real age of that data, instead of
+nothing. The ETags the gate had for the PR are saved with it: they are what
+lets the restarted server ask GitHub "did it change?" for free instead of
+repeating every lookup.
 
 A row whose ``schema`` is not ``RECORD_SCHEMA`` is ignored (the branch is
 looked up again).
@@ -87,8 +89,8 @@ def _saved(row: PrLookupRow) -> SavedLookup:
 
 
 class LookupCache:
-    """``load`` / ``save`` / ``delete`` over the stack DB; each opens its own
-    connection, so they can run in a worker thread."""
+    """``load`` / ``get`` / ``save`` / ``delete`` over the stack DB; each opens
+    its own connection, so they can run in a worker thread."""
 
     def __init__(self, db_path: Callable[[], Path] = default_db_path) -> None:
         self._db_path = db_path
@@ -103,6 +105,16 @@ class LookupCache:
             }
         finally:
             store.close()
+
+    def get(self, repo_id: int, branch: str) -> SavedLookup | None:
+        store = StackStore(self._db_path())
+        try:
+            row = store.pr_lookup(repo_id, branch)
+        finally:
+            store.close()
+        if row is None or row.schema != RECORD_SCHEMA:
+            return None
+        return _saved(row)
 
     def save(self, repo_id: int, branch: str, saved: SavedLookup) -> None:
         store = StackStore(self._db_path())
@@ -126,3 +138,22 @@ class LookupCache:
             store.delete_pr_lookup(repo_id, branch)
         finally:
             store.close()
+
+
+class MemoryLookups:
+    """The same, kept in a dict: for a refresher with no database (tests)."""
+
+    def __init__(self) -> None:
+        self._rows: dict[tuple[int, str], SavedLookup] = {}
+
+    def load(self) -> dict[tuple[int, str], SavedLookup]:
+        return dict(self._rows)
+
+    def get(self, repo_id: int, branch: str) -> SavedLookup | None:
+        return self._rows.get((repo_id, branch))
+
+    def save(self, repo_id: int, branch: str, saved: SavedLookup) -> None:
+        self._rows[(repo_id, branch)] = saved
+
+    def delete(self, repo_id: int, branch: str) -> None:
+        self._rows.pop((repo_id, branch), None)

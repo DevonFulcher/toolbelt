@@ -2442,19 +2442,27 @@ class StackStore:
                 ),
             )
 
+    @staticmethod
+    def _pr_lookup_row(r: sqlite3.Row) -> PrLookupRow:
+        return PrLookupRow(
+            repo_id=r["repo_id"],
+            branch=r["branch"],
+            fetched_at=datetime.fromisoformat(r["fetched_at"]),
+            full_at=datetime.fromisoformat(r["full_at"]),
+            record=r["record"],
+            schema=r["schema"],
+        )
+
     def pr_lookups(self) -> list[PrLookupRow]:
         rows = self._conn.execute("SELECT * FROM pr_lookups")
-        return [
-            PrLookupRow(
-                repo_id=r["repo_id"],
-                branch=r["branch"],
-                fetched_at=datetime.fromisoformat(r["fetched_at"]),
-                full_at=datetime.fromisoformat(r["full_at"]),
-                record=r["record"],
-                schema=r["schema"],
-            )
-            for r in rows
-        ]
+        return [self._pr_lookup_row(r) for r in rows]
+
+    def pr_lookup(self, repo_id: int, branch: str) -> PrLookupRow | None:
+        row = self._conn.execute(
+            "SELECT * FROM pr_lookups WHERE repo_id = ? AND branch = ?",
+            (repo_id, branch),
+        ).fetchone()
+        return None if row is None else self._pr_lookup_row(row)
 
     def save_pr_lookup(self, row: PrLookupRow) -> None:
         with self._write() as conn:

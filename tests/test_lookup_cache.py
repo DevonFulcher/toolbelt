@@ -107,10 +107,12 @@ def test_saving_again_replaces_the_row_and_delete_removes_it(tmp_path):
     c.save(1, "devon/a", saved(etags={}))
 
     assert c.load()[(1, "devon/a")].etags == {}
+    assert c.get(1, "devon/a") == c.load()[(1, "devon/a")]
 
     c.delete(1, "devon/a")
 
     assert c.load() == {}
+    assert c.get(1, "devon/a") is None
 
 
 def test_a_row_of_another_schema_is_ignored(tmp_path):
@@ -131,3 +133,4 @@ def test_a_row_of_another_schema_is_ignored(tmp_path):
     store.close()
 
     assert c.load() == {}
+    assert c.get(1, "devon/a") is None
