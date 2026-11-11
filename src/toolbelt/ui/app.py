@@ -1549,7 +1549,6 @@ def create_app(
         ready_to_land=ready_to_land,
         base_problem=base_problem,
         is_sync_merge=follows_sync,
-        agents_enabled=_agents_enabled,
         agent_pushed=agent_pushed,
         land=land_queued,
         wall_clock=wall_clock,

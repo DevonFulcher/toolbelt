@@ -64,7 +64,6 @@ class Rig:
         self.ready = True
         self.base_problems: dict[str, str] = {}
         self.sync_merge = False
-        self.agents_on = False
         self.agent_pushes = False
         self.landed: list[str] = []
         self.pinned: list[str | None] = []
@@ -96,7 +95,6 @@ class Rig:
             ready_to_land=lambda row: self.ready,
             base_problem=lambda row: self.base_problems.get(row.branch),
             is_sync_merge=lambda row, head: self.sync_merge,
-            agents_enabled=lambda: self.agents_on,
             agent_pushed=lambda row, head: self.agent_pushes,
             land=self.land,
             wall_clock=lambda: NOW,
@@ -484,7 +482,6 @@ def test_new_commits_after_queueing_mean_it_is_not_merged():
     ("kind", "why"),
     [
         ("fix_ci", "CI failed"),
-        ("resolve_comments", "unresolved comments"),
         ("resolve_conflicts", "conflicts"),
         ("address_review", "changes were requested"),
         ("publish", "draft"),
@@ -774,7 +771,7 @@ def test_the_merge_button_is_not_held_by_the_pause():
     assert rig.landed == ["a"]
 
 
-# ---- bot comments an autonomous agent resolves --------------------------------
+# ---- unresolved comments ------------------------------------------------------
 
 
 def with_open_threads(rig: Rig, *, bots: int, total: int) -> None:
@@ -789,37 +786,24 @@ def with_open_threads(rig: Rig, *, bots: int, total: int) -> None:
     rig.kinds["a"] = "resolve_comments"
 
 
-def test_a_queued_pr_with_only_bot_comments_stays_queued_when_agents_are_on() -> None:
+@pytest.mark.parametrize(("bots", "total"), [(2, 2), (2, 3), (0, 1)])
+def test_a_queued_pr_with_unresolved_comments_stays_queued_and_merges_once_they_are_resolved(
+    bots: int, total: int
+) -> None:
     rig = Rig()
-    rig.agents_on = True
     rig.queue.queue(1, "a")
-    with_open_threads(rig, bots=2, total=2)
+    with_open_threads(rig, bots=bots, total=total)
     rig.run()
     assert rig.info() is not None and rig.info().queued
     assert rig.landed == []
 
-
-def test_bot_comments_drop_the_pr_when_agents_are_off() -> None:
-    rig = Rig()
-    rig.queue.queue(1, "a")
-    with_open_threads(rig, bots=2, total=2)
+    rig.kinds["a"] = "merge"
     rig.run()
-    assert not rig.info().queued
-    assert "unresolved comments" in rig.info().notice
-
-
-def test_a_human_comment_still_drops_the_pr_when_agents_are_on() -> None:
-    rig = Rig()
-    rig.agents_on = True
-    rig.queue.queue(1, "a")
-    with_open_threads(rig, bots=2, total=3)
-    rig.run()
-    assert not rig.info().queued
+    assert rig.landed == ["a"]
 
 
 def test_an_agents_fix_of_the_comments_is_merged_as_the_new_head() -> None:
     rig = Rig()
-    rig.agents_on = True
     rig.queue.queue(1, "a")
     rig.fetched["a"] = looked_up(head="h2", number=1)
     rig.agent_pushes = True

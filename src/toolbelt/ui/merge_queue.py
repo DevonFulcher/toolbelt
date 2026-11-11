@@ -16,8 +16,9 @@ old branch or without what the parent landed.
 Nothing else is merged that is not what was queued: a queued PR is dropped, with
 a note on its card saying why, when its head changed in any other way (new
 commits), when it was closed, when its parent was closed without merging, or
-when it needs something done (CI failed, a comment or a conflict appeared,
-changes were requested). Waiting for CI, review or a parent keeps it queued.
+when it needs something done (CI failed, a conflict appeared, changes were
+requested). Waiting for CI, review, a parent or the resolution of its comments
+(from a person or a bot) keeps it queued: it merges once none are left open.
 Queued PRs are kept in the stack DB, so a restart does not lose them.
 
 Whether a PR is ready is read from the PR lookups the page already keeps
@@ -52,7 +53,6 @@ _DROPPED_BECAUSE = {
     "fix_ci": "its CI failed",
     "resolve_conflicts": "it has conflicts",
     "address_review": "changes were requested",
-    "resolve_comments": "it has unresolved comments",
     "publish": "it is a draft again",
 }
 
@@ -64,6 +64,7 @@ _WAITS_AFTER_PUBLISH = ("post_slack", "bump_slack", "wait_review", "request_revi
 #: queued, and merges once its next action is Merge.
 _STILL_WAITING = (
     "wait_ci",
+    "resolve_comments",
     "wait_review",
     "request_review",
     "publishing",
@@ -114,7 +115,6 @@ class MergeQueue:
         ready_to_land: Callable[[MergeQueueRow], bool],
         base_problem: Callable[[MergeQueueRow], str | None],
         is_sync_merge: Callable[[MergeQueueRow, str], bool],
-        agents_enabled: Callable[[], bool] = lambda: False,
         agent_pushed: Callable[[MergeQueueRow, str], bool] = lambda row, head: False,
         land: Callable[[int, str, str | None], Awaitable[LandResult]],
         wall_clock: Callable[[], datetime],
@@ -131,10 +131,8 @@ class MergeQueue:
         ``ready_to_land(row)`` whether a queued PR whose next action is Merge is
         based on the trunk and, when it had a parent, contains what its parent
         landed; ``base_problem(row)`` why a PR queued on the trunk is not based
-        on it (``None`` when it is); ``is_sync_merge(row, new_head)`` whether ``new_head`` is
-        what a sync adds to the queued head; ``agents_enabled()`` whether the
-        autonomous agents are on (they resolve bot comments, so a queued PR
-        whose only unresolved threads are bots' waits for them);
+        on it (``None`` when it is); ``is_sync_merge(row, new_head)`` whether
+        ``new_head`` is what a sync adds to the queued head;
         ``agent_pushed(row, new_head)`` whether ``new_head`` is what an agent
         run started on the queued head pushed;
         ``local_clock`` is the time in the zone the pause hours mean (see
@@ -153,7 +151,6 @@ class MergeQueue:
         self._ready_to_land = ready_to_land
         self._base_problem = base_problem
         self._is_sync_merge = is_sync_merge
-        self._agents_enabled = agents_enabled
         self._agent_pushed = agent_pushed
         self._land = land
         self._wall_clock = wall_clock
@@ -339,19 +336,9 @@ class MergeQueue:
                     self._start_merge(key, queued=True)
             elif kind in _STILL_WAITING:
                 continue  # a claimed branch is left to its agent
-            elif kind == "resolve_comments" and self._only_bot_comments(looked_up):
-                continue  # an autonomous agent resolves bot comments
             else:
                 why = _DROPPED_BECAUSE.get(kind or "", f"its next action became {kind}")
                 self._drop(key, f"Taken off the merge queue: {why}.")
-
-    def _only_bot_comments(self, looked_up: Fetched) -> bool:
-        status = looked_up.status
-        return (
-            self._agents_enabled()
-            and status is not None
-            and 0 < status.open_comments == status.bot_comments
-        )
 
     def _ready_after_wait(self, key: BranchKey) -> bool:
         row = self._queued.get(key)
