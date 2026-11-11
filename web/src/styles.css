@@ -86,6 +86,17 @@ a.pill:hover { text-decoration: none; background: color-mix(in srgb, currentColo
 .next-none { color: var(--gray); }
 .ci-failed, .error { color: var(--red); }
 .task-status { color: var(--gray); }
+/* A long name wraps inside the group, so the button stays beside it. */
+.name-copy { display: inline-flex; align-items: baseline; max-width: 100%; }
+.name-copy .branch { min-width: 0; overflow-wrap: anywhere; }
+.copy-button { margin-left: 4px; padding: 0 4px; border: 0; background: none; color: var(--muted);
+               font-size: 12px; line-height: 1; cursor: pointer; opacity: .6; }
+.copy-button::before { content: "⧉"; }
+.copy-button.copied::before { content: "✓"; }
+.copy-button.failed::before { content: "!"; }
+.copy-button:hover, .copy-button:focus-visible, .copy-button.copied { opacity: 1; }
+.copy-button.copied { color: var(--green); }
+.copy-button.failed { color: var(--red); opacity: 1; }
 .task-warn { color: var(--amber); cursor: help; margin-left: 4px; }
 
 /* Live connection indicator, and a brief highlight of cells that just changed. */

@@ -3,6 +3,7 @@
 // union, so a state added on the server does not compile here until it has
 // one.
 import type { CiState, Link, PrState, ReviewState, TaskLive, Tone, Who } from "../api/generated";
+import { CopyButton } from "./CopyButton";
 import { useNow } from "./useNow";
 import { formatElapsed } from "../logic/format";
 
@@ -68,6 +69,7 @@ export function TaskValue({ link, task }: { link: Link | null; task: TaskLive | 
   return (
     <>
       {link.href ? <ExternalLink href={link.href}>{link.label}</ExternalLink> : link.label}
+      <CopyButton text={link.label} what="task key" />
       {task?.state === "unavailable" && (
         <span className="task-warn" title={task.reason}>
           ⚠

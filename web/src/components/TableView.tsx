@@ -1,3 +1,4 @@
+import { CopyButton } from "./CopyButton";
 import { memo, useMemo, type CSSProperties } from "react";
 import type { LiveStatus, LoadedStatus } from "../api/generated";
 import { capEntries } from "../logic/focus";
@@ -123,6 +124,7 @@ const TableRow = memo(function TableRow({
       </td>
       <td className="col-branch">
         <span className={`branch${branch.current ? " current" : ""}`}>{branch.name}</span>
+        <CopyButton text={branch.name} what="branch name" />
       </td>
       <td className="col-next">
         {loaded ? (
@@ -209,12 +211,17 @@ const TableRow = memo(function TableRow({
 function PrLink({ status }: { status: LoadedStatus }) {
   const text = `${status.pr_number !== null ? `#${status.pr_number} ` : ""}${status.pr}`;
   const tone = PR_TONE[status.pr];
-  return status.pr_url ? (
-    <ExternalLink className={`pill tone-${tone}`} href={status.pr_url}>
-      {text}
-    </ExternalLink>
-  ) : (
-    <Pill tone={tone}>{text}</Pill>
+  return (
+    <>
+      {status.pr_url ? (
+        <ExternalLink className={`pill tone-${tone}`} href={status.pr_url}>
+          {text}
+        </ExternalLink>
+      ) : (
+        <Pill tone={tone}>{text}</Pill>
+      )}
+      {status.pr_number !== null && <CopyButton text={String(status.pr_number)} what="PR number" />}
+    </>
   );
 }
 

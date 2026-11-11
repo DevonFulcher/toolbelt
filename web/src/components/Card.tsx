@@ -24,6 +24,7 @@ import { rollup, youText } from "../logic/rollup";
 import { LOADING, subtreeIds } from "../store/selectors";
 import { useApp, useAppStore } from "../store/StoreContext";
 import { AgentSlots, SpendSlots } from "./CardAgentSlots";
+import { CopyButton } from "./CopyButton";
 import { EstimateValue } from "./EstimateValue";
 import { MergeDialog } from "./MergeDialog";
 import { MergeQueueControls } from "./MergeQueueControls";
@@ -283,7 +284,10 @@ export const Card = memo(
             <WebhookProblem repoId={repo.id} />
           </Slot>
           <Slot id="branch" label="Branch">
-            <span className={`branch${branch.current ? " current" : ""}`}>{branch.name}</span>
+            <span className="name-copy">
+              <span className={`branch${branch.current ? " current" : ""}`}>{branch.name}</span>
+              <CopyButton text={branch.name} what="branch name" />
+            </span>
           </Slot>
           <div className="rollup" role="group" aria-label="This branch and everything stacked below it">
             <span className="rollup-count">{`${summary.total} branches`}</span>
@@ -319,7 +323,10 @@ export const Card = memo(
             <WebhookProblem repoId={repo.id} />
           </Slot>
           <Slot id="branch" label="Branch">
-            <span className={`branch${branch.current ? " current" : ""}`}>{branch.name}</span>{" "}
+            <span className="name-copy">
+              <span className={`branch${branch.current ? " current" : ""}`}>{branch.name}</span>
+              <CopyButton text={branch.name} what="branch name" />
+            </span>{" "}
             {/* Not for a lone branch: there is no stack to see. */}
             {stackedHref !== null && stackedRoot !== null && (stackedRoot !== id || hasChildren) && (
               <a
@@ -429,11 +436,14 @@ export const Card = memo(
           </Slot>
           <Slot id="task" label="Task" state={branch.task ? "ok" : "gap"}>
             {branch.task ? (
-              branch.task.href ? (
-                <ExternalLink href={branch.task.href}>{branch.task.label}</ExternalLink>
-              ) : (
-                branch.task.label
-              )
+              <>
+                {branch.task.href ? (
+                  <ExternalLink href={branch.task.href}>{branch.task.label}</ExternalLink>
+                ) : (
+                  branch.task.label
+                )}
+                <CopyButton text={branch.task.label} what="task key" />
+              </>
             ) : (
               "no task linked"
             )}
@@ -1050,6 +1060,7 @@ function LoadedPrSlots({ status }: { status: LoadedStatus }) {
             ) : (
               <Pill tone={PR_TONE[status.pr]}>{status.pr}</Pill>
             )}
+            {status.pr_number !== null && <CopyButton text={String(status.pr_number)} what="PR number" />}
           </Slot>
           {status.ci !== "none" ? (
             <Slot id="ci" label="CI">
