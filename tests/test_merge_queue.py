@@ -479,18 +479,10 @@ def test_new_commits_after_queueing_mean_it_is_not_merged():
 
 
 @pytest.mark.parametrize(
-    ("kind", "why"),
-    [
-        ("fix_ci", "CI failed"),
-        ("resolve_conflicts", "conflicts"),
-        ("address_review", "changes were requested"),
-        ("publish", "draft"),
-        ("something_new", "something_new"),
-    ],
+    "kind",
+    ["fix_ci", "resolve_conflicts", "address_review", "publish", "something_new"],
 )
-def test_a_pr_that_stops_being_one_ci_wait_from_merging_is_taken_off_with_the_reason(
-    kind: str, why: str
-):
+def test_a_pr_that_needs_work_stays_queued_and_merges_once_it_is_ready_again(kind: str):
     rig = Rig()
     rig.queue.queue(1, "a")
     rig.kinds["a"] = kind
@@ -498,8 +490,12 @@ def test_a_pr_that_stops_being_one_ci_wait_from_merging_is_taken_off_with_the_re
     rig.run()
 
     info = rig.info()
-    assert rig.landed == [] and rig.rows == []
-    assert info is not None and why in (info.notice or "")
+    assert rig.landed == [] and info is not None and info.queued and not info.notice
+
+    rig.kinds["a"] = "merge"
+    rig.run()
+
+    assert rig.landed == ["a"]
 
 
 @pytest.mark.parametrize(
@@ -571,10 +567,10 @@ def test_a_pr_not_looked_up_yet_is_left_queued():
 def test_queueing_again_clears_the_note_of_the_last_time():
     rig = Rig()
     rig.queue.queue(1, "a")
-    rig.kinds["a"] = "fix_ci"
+    rig.fetched["a"] = looked_up(head="pushed-later", number=1)
     rig.run()
     assert rig.info() is not None and rig.info().notice  # type: ignore[union-attr]
-    rig.kinds["a"] = "wait_ci"
+    rig.fetched["a"] = looked_up(number=1)
 
     info = rig.queue.queue(1, "a")
 

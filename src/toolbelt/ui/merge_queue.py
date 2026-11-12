@@ -14,11 +14,11 @@ contains the parent's squash commit, so it is never merged into the parent's
 old branch or without what the parent landed.
 
 Nothing else is merged that is not what was queued: a queued PR is dropped, with
-a note on its card saying why, when its head changed in any other way (new
-commits), when it was closed, when its parent was closed without merging, or
-when it needs something done (CI failed, a conflict appeared, changes were
-requested). Waiting for CI, review, a parent or the resolution of its comments
-(from a person or a bot) keeps it queued: it merges once none are left open.
+a note on its card saying why, only when its head changed in any other way (new
+commits), when it was closed, when its parent was closed without merging, or when
+its base is not the trunk. Anything that merely blocks the merge (CI failed, a
+conflict, requested changes, open comments from a person or a bot, waiting for CI,
+review or a parent) keeps it queued: it merges once its next action is Merge again.
 Queued PRs are kept in the stack DB, so a restart does not lose them.
 
 Whether a PR is ready is read from the PR lookups the page already keeps
@@ -47,34 +47,9 @@ DEFAULT_TICK_SECONDS = 10.0
 #: Longest part of a failed merge's output kept on the card (the end of it).
 NOTICE_LIMIT = 600
 
-#: Why a queued PR stopped being one CI wait away from merging, by the next
-#: action it has instead.
-_DROPPED_BECAUSE = {
-    "fix_ci": "its CI failed",
-    "resolve_conflicts": "it has conflicts",
-    "address_review": "changes were requested",
-    "publish": "it is a draft again",
-}
-
 #: Next actions a PR can have right after it was published, besides the ones
 #: ``queueable`` accepts: its Slack post (still going out) or a review is next.
 _WAITS_AFTER_PUBLISH = ("post_slack", "bump_slack", "wait_review", "request_review")
-
-#: Next actions of a queued PR that only need time (or someone else): it stays
-#: queued, and merges once its next action is Merge.
-_STILL_WAITING = (
-    "wait_ci",
-    "resolve_comments",
-    "wait_review",
-    "request_review",
-    "publishing",
-    "post_slack",
-    "bump_slack",
-    "blocked",
-    "claimed",
-    "autonomous",
-    "deciding",
-)
 
 
 class MergeQueueRefused(Exception):
@@ -334,11 +309,9 @@ class MergeQueue:
                     self._drop(key, f"Taken off the merge queue: {problem}")
                 elif not paused and self._ready_to_land(row):
                     self._start_merge(key, queued=True)
-            elif kind in _STILL_WAITING:
-                continue  # a claimed branch is left to its agent
-            else:
-                why = _DROPPED_BECAUSE.get(kind or "", f"its next action became {kind}")
-                self._drop(key, f"Taken off the merge queue: {why}.")
+            # Any other next action (CI failed, a conflict, requested changes, a
+            # claimed branch...) only blocks the merge: the PR stays queued and
+            # merges once its next action is Merge again.
 
     def _ready_after_wait(self, key: BranchKey) -> bool:
         row = self._queued.get(key)

@@ -32,16 +32,16 @@ A queued PR is taken off the queue, with a note on its card saying why, when:
   that is accepted is the sync after a parent merged: a merge commit whose first
   parent is the queued head and whose second parent is already on the trunk or
   the parent's branch. The queue then pins that new head;
-- its CI failed, a comment or conflict appeared, changes were requested, or it
-  became a draft again;
 - it was closed without merging, or the PR it is stacked on was closed without
   merging;
 - it was queued on the trunk but its PR is based on another branch: the queue
   only merges into the trunk.
 
 A PR merged some other way, or no longer tracked, leaves the queue quietly. A PR
-an agent holds stays queued until the agent is done. Waiting for CI, review or a
-parent keeps it queued.
+an agent holds stays queued until the agent is done. Anything that only blocks the
+merge keeps it queued, and it merges once its next action is Merge again: waiting
+for CI, review or a parent, a failed CI, a conflict, requested changes, a draft
+again, or open comments from a person or a bot.
 
 ## Stacked PRs
 

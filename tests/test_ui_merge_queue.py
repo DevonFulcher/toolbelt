@@ -185,19 +185,22 @@ def test_a_pr_based_on_another_branch_than_the_trunk_is_never_merged(rig):
     assert merges == []
 
 
-def test_a_pr_whose_ci_failed_is_taken_off(rig):
+def test_a_pr_whose_ci_failed_stays_queued_and_merges_once_its_ci_passes(rig):
     app, repo_id, github, merges, client = rig
     client.post("/api/merge/queue", json={"id": f"{repo_id}:a"})
 
     github.ci = CiState.FAILED
     refresh(app, client)
+    time.sleep(0.15)
 
-    wait_for(
-        lambda: (branch(client)["merge_queue"] or {}).get("notice"),
-        "the note on the card",
-    )
-    assert "CI failed" in branch(client)["merge_queue"]["notice"]
+    queue = branch(client)["merge_queue"]
+    assert queue["queued"] is True and not queue["notice"]
     assert merges == []
+
+    github.ci = CiState.SUCCESS
+    refresh(app, client)
+
+    wait_for(lambda: merges, "the queued merge")
 
 
 def test_a_pr_that_is_not_waiting_on_ci_cannot_be_queued(rig):
