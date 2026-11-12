@@ -660,6 +660,22 @@ def test_remove_deletes_branch_worktree_and_lineage_via_cli(
     )
 
 
+def test_remove_deletes_the_branch_on_origin_when_it_was_pushed(
+    repo: Path,
+    capfd: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(stack_cli, "GhForge", lambda root: FakeForge())
+    _invoke(["append", "feature", *_LINKS], cwd=repo, capfd=capfd)
+    git("push", "origin", "devon/feature", cwd=repo)
+    assert git("ls-remote", "--heads", "origin", "devon/feature", cwd=repo)
+
+    result = _invoke(["remove", "devon/feature", "--force"], cwd=repo, capfd=capfd)
+
+    assert result.exit_code == 0, result.output
+    assert git("ls-remote", "--heads", "origin", "devon/feature", cwd=repo) == ""
+
+
 def test_remove_reparents_children_and_closes_pr_with_reason(
     repo: Path,
     tmp_path: Path,

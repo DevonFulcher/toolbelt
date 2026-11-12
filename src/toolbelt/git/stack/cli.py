@@ -382,6 +382,22 @@ def switch(
     typer.echo(str(target))
 
 
+def _delete_remote_branch(branch: str, *, root: Path) -> None:
+    """Delete ``branch`` on origin; nothing to do when it is not there (never
+    pushed, or the PR's merge already deleted it)."""
+    listed = run(
+        ["git", "ls-remote", "--exit-code", "--heads", "origin", branch],
+        cwd=root,
+        check=False,
+        capture_output=True,
+    )
+    if listed.returncode != 0:
+        return
+    logger.info(f"git push origin --delete {branch}")
+    run(["git", "push", "origin", "--delete", branch], cwd=root, exit_on_error=True)
+    logger.info(f"Deleted '{branch}' on origin.")
+
+
 @stack_typer.command()
 def remove(
     name: str | None = typer.Argument(
@@ -405,10 +421,10 @@ def remove(
     Runs `git worktree remove`, which refuses a worktree with uncommitted or
     untracked files unless --force (which discards them), then
     `git branch -D`, which deletes the branch even if its commits are
-    unmerged. The remote branch is left alone. Direct child branches are
-    reparented to this branch's parent and synced before deletion. If the
-    branch has an open pull request, it is closed; --reason is added as a
-    comment.
+    unmerged. Direct child branches are reparented to this branch's parent and
+    synced before deletion. If the branch has an open pull request, it is
+    closed; --reason is added as a comment. Last, the branch is deleted on
+    origin too, if it is still there.
     """
     root = repo_root()
     # `name` may be the branch checked out in `root` itself (the caller's own
@@ -487,3 +503,4 @@ def remove(
             caller_dirs=[root, Path.cwd()],
         )
         lineage.remove_parent(deleted_branch, root=main_wt)
+        _delete_remote_branch(deleted_branch, root=main_wt)
