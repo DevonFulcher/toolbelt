@@ -23,6 +23,9 @@ posted, nobody looked
 for a day
 draft, CI not failed      Publish PR in GitHub       you
 draft, being published    Publishing PR…             others
+open, being posted in     Posting in Slack…          others
+Slack (a publish that
+goes on to post)
 open, CI running          Waiting on CI              ci
 approved, parent PR not   Blocked on <parent>        you if the parent's own
 merged (stacked)                                     next action is yours,
@@ -265,6 +268,10 @@ def _underlying_action(
         and status.pr is PrState.OPEN
         and status.review is not ReviewState.APPROVED
     ):
+        if slack.publishing:
+            # The PR is already open, but the publish (or a post) is still on its
+            # way to Slack in the background: nothing is waiting on you.
+            return NextAction("Posting in Slack…", WHO_OTHERS, PUBLISHING)
         if not slack.posted:
             return NextAction("Post in Slack", WHO_YOU, POST_SLACK)
         if slack.bump_due:

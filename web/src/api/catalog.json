@@ -338,7 +338,7 @@
     "next_publishing": {
       "label": "Publishing PR…",
       "tone": "gray",
-      "legend": "Being marked ready in the background; assumed to succeed, so nothing waits on you."
+      "legend": "Being marked ready, or posted in Slack once ready, in the background; assumed to succeed, so nothing waits on you."
     },
     "next_request_review": {
       "label": "Request review",
@@ -1173,7 +1173,7 @@
     {
       "label": "Publishing PR…",
       "tone": "gray",
-      "legend": "Being marked ready in the background; assumed to succeed, so nothing waits on you.",
+      "legend": "Being marked ready, or posted in Slack once ready, in the background; assumed to succeed, so nothing waits on you.",
       "reps": [
         {
           "how": "now_state",

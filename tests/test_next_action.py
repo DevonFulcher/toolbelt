@@ -517,6 +517,15 @@ class TestPublishing:
             "publishing",
         )
 
+    def test_an_open_pr_still_being_posted_after_its_publish_waits_on_others(self):
+        action = next_action(status(), None, slack=self.PUBLISHING)
+
+        assert (action.label, action.who, action.kind) == (
+            "Posting in Slack…",
+            "others",
+            "publishing",
+        )
+
     def test_a_draft_not_being_published_is_still_to_be_published(self):
         for slack in (None, SlackContext(posted=False)):
             action = next_action(self.DRAFT, None, slack=slack)

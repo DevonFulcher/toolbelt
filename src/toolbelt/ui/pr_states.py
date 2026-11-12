@@ -249,7 +249,7 @@ _NEXT_TONES = {
     ),
     na.PUBLISHING: (
         GRAY,
-        "Being marked ready in the background; assumed to succeed, so nothing waits on you.",
+        "Being marked ready, or posted in Slack once ready, in the background; assumed to succeed, so nothing waits on you.",
     ),
     na.BLOCKED: (GRAY, "Approved, but its parent PR is not merged yet."),
     na.MERGE: (GREEN, "Approved and ready to merge."),

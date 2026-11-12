@@ -49,7 +49,13 @@ NOTICE_LIMIT = 600
 
 #: Next actions a PR can have right after it was published, besides the ones
 #: ``queueable`` accepts: its Slack post (still going out) or a review is next.
-_WAITS_AFTER_PUBLISH = ("post_slack", "bump_slack", "wait_review", "request_review")
+_WAITS_AFTER_PUBLISH = (
+    "publishing",
+    "post_slack",
+    "bump_slack",
+    "wait_review",
+    "request_review",
+)
 
 
 class MergeQueueRefused(Exception):
