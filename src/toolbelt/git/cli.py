@@ -241,8 +241,7 @@ def save(
     `toolbelt standup`.
     """
     """Add, commit, and push changes"""
-    with repo_lock(repo_root()):
-        git_save(message, no_verify, no_sync, amend, pathspec, yes)
+    git_save(message, no_verify, no_sync, amend, pathspec, yes)
 
 
 @git_typer.command()
@@ -525,5 +524,4 @@ def sync(
     resolve, `git add`, then rerun `sync`, which finishes the merge commit or
     runs `git rebase --continue` for you.
     """
-    with repo_lock(repo_root()):
-        sync_repo(merge_base_branch=merge_base_branch)
+    sync_repo(merge_base_branch=merge_base_branch)

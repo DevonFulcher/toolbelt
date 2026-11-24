@@ -28,6 +28,7 @@ from pathlib import Path
 import typer
 
 from toolbelt.git.exec import run
+from toolbelt.git.repo_lock import named_mutex
 from toolbelt.git.stack.forge import Forge
 from toolbelt.git.stack.lineage import (
     all_parents,
@@ -42,10 +43,12 @@ from toolbelt.git.stack.ops import (
     is_fast_forward_ahead_of_remote,
     past_tips,
     publish_untracked_branch,
+    push_upstream,
     tree_differs_from_remote,
 )
 from toolbelt.git.stack.store import PrCandidate
 from toolbelt.git.stack.worktree import worktree_paths
+from toolbelt.git.sync_coalescing import fetch_once
 from toolbelt.git.worktrees import current_branch
 from toolbelt.git.worktrees_ops import (
     delete_branch_and_worktree,
@@ -571,6 +574,13 @@ def _rewritten_parent_tip(child: str, parent: str, *, worktree: Path) -> str | N
     return None
 
 
+def branch_to_sync(root: Path, *, branch: str | None) -> str:
+    """The branch whose stack a sync from ``root`` covers: ``branch`` if given,
+    else the one being rebased here (a worktree mid-restack has a detached
+    HEAD), else the checked-out one."""
+    return branch or branch_being_rebased(root) or current_branch(root)
+
+
 def sync_stack(
     *,
     root: Path,
@@ -591,12 +601,12 @@ def sync_stack(
     parent's PR merged, its children are rebased onto the nearest surviving
     ancestor and every landed branch is removed.
     """
-    run(["git", "fetch", "-p"], cwd=root, exit_on_error=True)
+    fetch_once(
+        root, fetch=lambda: run(["git", "fetch", "-p"], cwd=root, exit_on_error=True)
+    )
 
-    # When resuming after a restack conflict, this worktree is mid-rebase and
-    # its HEAD is detached; recover the branch from the rebase state.
     rebasing = branch_being_rebased(root)
-    branch = branch or rebasing or current_branch(root)
+    branch = branch_to_sync(root, branch=branch)
     parents = all_parents(root=root)
     tracked = set(parents.keys())
     if branch not in tracked:
@@ -695,11 +705,7 @@ def sync_stack(
                 if not _remote_branch_exists(
                     child, root=root
                 ) or is_fast_forward_ahead_of_remote(child, root=worktree):
-                    run(
-                        ["git", "push", "-u", "origin", child],
-                        cwd=worktree,
-                        exit_on_error=True,
-                    )
+                    push_upstream(child, cwd=worktree, root=root)
                 continue
 
             if not resuming:
@@ -825,11 +831,7 @@ def sync_stack(
                     or tree_differs_from_remote(child, root=worktree)
                 )
             ):
-                run(
-                    ["git", "push", "-u", "origin", child],
-                    cwd=worktree,
-                    exit_on_error=True,
-                )
+                push_upstream(child, cwd=worktree, root=root)
             else:
                 logger.info(
                     f"'{child}' is up to date locally; not pushing "
@@ -847,6 +849,10 @@ def sync_stack(
                 "worktree. Switch it to the base branch and re-run `git sync`."
             )
             continue
-        delete_branch_and_worktree(landed_branch, repo_root=main_wt, force=True)
+        # Worktree and branch removal rewrite repo-wide git state (the worktree
+        # registry, packed refs) that git does not let two processes change at
+        # once, so another stack's removal waits its turn.
+        with named_mutex(root, "worktree-removal"):
+            delete_branch_and_worktree(landed_branch, repo_root=main_wt, force=True)
         remove_parent(landed_branch, root=main_wt, landed=True)
         logger.info(f"Cleaned up landed branch '{landed_branch}'.")

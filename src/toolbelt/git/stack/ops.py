@@ -12,6 +12,7 @@ import typer
 
 from toolbelt.git.branches import DEFAULT_BRANCH_NAMES
 from toolbelt.git.exec import run
+from toolbelt.git.repo_lock import named_mutex
 from toolbelt.git.repo_pull import default_config_path
 from toolbelt.git.stack.forge import Forge
 from toolbelt.git.stack.lineage import all_parents, get_parent, set_parent
@@ -84,6 +85,17 @@ def push_if_fast_forward(branch: str, *, root: Path) -> bool:
     return True
 
 
+def push_upstream(branch: str, *, cwd: Path, root: Path) -> None:
+    """``git push -u origin <branch>`` from ``cwd``.
+
+    ``-u`` writes the branch's upstream into the repo's shared ``.git/config``,
+    which git fails (rather than waits) on when another process is writing it,
+    so pushes by syncs of different stacks take turns on a mutex.
+    """
+    with named_mutex(root, "git-config"):
+        run(["git", "push", "-u", "origin", branch], cwd=cwd, exit_on_error=True)
+
+
 def publish_untracked_branch(branch: str, *, root: Path) -> bool:
     """Push ``branch``, which is not part of a tracked stack, if toolbelt should;
     return whether it handled the branch (False: the caller reports it as
@@ -99,7 +111,7 @@ def publish_untracked_branch(branch: str, *, root: Path) -> bool:
     if not _remote_branch_exists(branch, root=root):
         if not personal and branch in DEFAULT_BRANCH_NAMES:
             return False
-        run(["git", "push", "-u", "origin", branch], cwd=root, exit_on_error=True)
+        push_upstream(branch, cwd=root, root=root)
         logger.info(f"Published '{branch}' to origin.")
         return True
     if not personal:
@@ -108,7 +120,7 @@ def publish_untracked_branch(branch: str, *, root: Path) -> bool:
     if _rev_parse(branch, root=root) == _rev_parse(remote, root=root):
         logger.info(f"'{branch}' is up to date with origin.")
     elif _is_ancestor(remote, branch, root=root):
-        run(["git", "push", "-u", "origin", branch], cwd=root, exit_on_error=True)
+        push_upstream(branch, cwd=root, root=root)
         logger.info(f"Pushed '{branch}' (fast-forward of origin).")
     elif _is_ancestor(branch, remote, root=root):
         logger.info(f"'{branch}' is behind {remote}; nothing to push.")

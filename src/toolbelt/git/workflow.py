@@ -22,6 +22,7 @@ from .branches import (
     get_default_branch,
 )
 from .repo import current_repo_org, get_current_repo_root_path
+from .repo_lock import repo_lock, stack_lock, stack_scope
 from .repo_pull import (
     default_config_path,
     default_state_dir,
@@ -30,6 +31,12 @@ from .repo_pull import (
 )
 from .stack.forge import Forge, GhForge, candidate_from_json
 from .stack.store import BranchLinks
+from .sync_coalescing import (
+    BRANCH_CLEAN_SCOPE,
+    FinishedRun,
+    SyncLedger,
+    fetch_once,
+)
 from .worktrees_ops import (
     _is_worktree_dirty,
     _worktree_paths_for_branch,
@@ -45,6 +52,51 @@ def update_repo(target_path: Path):
         logged_process.run(["asdf", "install"], check=True, cwd=target_path)
     if (target_path / "uv.lock").exists():
         logged_process.run(["uv", "sync", "--all-groups"], check=True, cwd=target_path)
+
+
+def sync_stack_coalesced(
+    *,
+    root: Path,
+    forge: Forge,
+    branch: str | None,
+    merge_base_branch: bool,
+) -> None:
+    """``sync_stack`` for ``branch``'s stack under that stack's lock, unless a
+    sync of the same stack that began after this call finished while it waited
+    for the lock (see ``sync_coalescing``). Syncs of other stacks run at the
+    same time.
+    """
+    # Lazy imports: see ``sync_repo``.
+    from toolbelt.git.stack.lineage import stack_root
+    from toolbelt.git.stack.sync import branch_to_sync, sync_stack
+
+    # Locks and the ledger live in the repo's shared .git dir, reached through
+    # the main worktree because ``root`` can be removed by the sync.
+    main_wt = main_worktree(root)
+    ledger = SyncLedger(main_wt)
+    ticket = ledger.take_ticket()
+    with stack_lock(
+        main_wt,
+        stack_key=lambda: stack_root(branch_to_sync(root, branch=branch), root=root),
+    ) as key:
+        scope = stack_scope(key)
+        if ledger.covers(scope, ticket=ticket, merge_base_branch=merge_base_branch):
+            logger.info(
+                "Another sync of this stack began after this one was requested "
+                "and finished; nothing left to sync."
+            )
+            return
+        started_at = ledger.current_ticket()
+        sync_stack(
+            root=root,
+            forge=forge,
+            branch=branch,
+            merge_base_branch=merge_base_branch,
+        )
+        ledger.record(
+            scope,
+            FinishedRun(started_at=started_at, merge_base_branch=merge_base_branch),
+        )
 
 
 def sync_repo(
@@ -69,6 +121,12 @@ def sync_repo(
     ``git_branch_clean``. ``update_repo`` needs a real, still-existing path,
     so it falls back to the main worktree when ``root`` no longer exists.
 
+    The stack is synced under its own lock, so syncs of different stacks run
+    at the same time and a sync that began after this call and finished while
+    it waited stands in for it (``sync_stack_coalesced``). Cleaning branches
+    and refreshing deps run afterwards under the repo-wide lock; a clean that
+    began while this call waited stands in for its own.
+
     Finally it spawns a detached process that fast-forwards the repos listed
     under ``sync.repos`` (see ``repo_pull``) without blocking; the summary of
     the previous run is printed here, once, at the start of the next sync.
@@ -80,21 +138,35 @@ def sync_repo(
 
     # Imported lazily: worktrees -> bootstrap.repo_setup -> workflow would be a
     # circular import at module load time.
-    from toolbelt.git.stack.sync import sync_stack
     from toolbelt.git.worktrees import repo_root
 
     root = root or repo_root()
     main_wt = main_worktree(root)
     forge = GhForge(root)
-    sync_stack(
+    ledger = SyncLedger(main_wt)
+    sync_stack_coalesced(
         root=root,
         forge=forge,
         branch=branch,
         merge_base_branch=merge_base_branch,
     )
-    git_branch_clean(root, forge=forge)
-    update_repo(root if root.exists() else main_wt)
-    start_background_pull(state_dir=state_dir, config_path=default_config_path())
+
+    # Repo-wide steps run under the exclusive lock, after the stack's lock is
+    # released: ``git_branch_clean`` removes branches of any stack, and
+    # ``update_repo`` may refresh the main worktree.
+    # The ticket is taken before waiting for the lock: a clean that begins
+    # while this call waits covers it (see ``sync_coalescing``).
+    clean_ticket = ledger.take_ticket()
+    with repo_lock(main_wt):
+        if not ledger.covers(BRANCH_CLEAN_SCOPE, ticket=clean_ticket):
+            started_at = ledger.current_ticket()
+            git_branch_clean(root, forge=forge)
+            ledger.record(
+                BRANCH_CLEAN_SCOPE,
+                FinishedRun(started_at=started_at, merge_base_branch=False),
+            )
+        update_repo(root if root.exists() else main_wt)
+        start_background_pull(state_dir=state_dir, config_path=default_config_path())
 
 
 _STACKED_MERGE_ERROR = "asynchronous merge REST API"
@@ -453,7 +525,10 @@ def git_branch_clean(root: Path | None = None, *, forge: Forge | None = None) ->
 
     caller_root = root or get_current_repo_root_path()
     root = main_worktree(caller_root)
-    logged_process.run(["git", "fetch", "-p"], check=True, cwd=root)
+    fetch_once(
+        root,
+        fetch=lambda: logged_process.run(["git", "fetch", "-p"], check=True, cwd=root),
+    )
     branch_list = logged_process.run(
         ["git", "branch", "-vv"],
         check=True,
@@ -696,26 +771,34 @@ def git_save(
             )
             raise typer.Exit(1)
 
-        commit_root = _start_stacked_branch(
-            root=root,
-            new_branch=new_branch_name,
-            parent=default_branch,
-            message=message,
-            no_verify=no_verify,
-            pathspec=pathspec,
-        )
+        # A new branch changes the lineage and registers a worktree: repo-wide.
+        with repo_lock(root):
+            commit_root = _start_stacked_branch(
+                root=root,
+                new_branch=new_branch_name,
+                parent=default_branch,
+                message=message,
+                no_verify=no_verify,
+                pathspec=pathspec,
+            )
         commit_branch = new_branch_name
     else:
         if os.getenv("CURRENT_ORG"):
             logger.info(
                 f"Not on the default branch. Continuing from this branch: {current}"
             )
-        _stage(root=root, pathspec=pathspec)
-        # Check for conflicts with the parent branch (may unstage + abort).
-        check_for_parent_branch_merge_conflicts(
-            current_branch=current, root=root, yes=yes
-        )
-        _commit(root=root, message=message, amend=amend, no_verify=no_verify)
+        # Lazy import: see above.
+        from toolbelt.git.stack.lineage import stack_root
+
+        # A sync of this stack merges into this worktree, so it must not run
+        # while the changes are being staged and committed here.
+        with stack_lock(root, stack_key=lambda: stack_root(current, root=root)):
+            _stage(root=root, pathspec=pathspec)
+            # Check for conflicts with the parent branch (may unstage + abort).
+            check_for_parent_branch_merge_conflicts(
+                current_branch=current, root=root, yes=yes
+            )
+            _commit(root=root, message=message, amend=amend, no_verify=no_verify)
         commit_root = root
         commit_branch = current
 
