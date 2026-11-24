@@ -425,3 +425,30 @@ def test_claim_spans_can_be_limited_to_those_seen_since(tmp_path: Path):
     _seen(s, t0 + timedelta(hours=2), target="/new", task_id=None)
 
     assert [x.target for x in s.claim_spans(since=t0 + timedelta(hours=1))] == ["/new"]
+
+
+def test_sync_tickets_only_grow_and_are_kept_per_repo(tmp_path: Path):
+    s = StackStore(tmp_path / "stacks.db")
+    api = s.ensure_repo(_identity(tmp_path, "api"))
+    web = s.ensure_repo(_identity(tmp_path, "web"))
+
+    assert s.current_sync_ticket(api) == 0
+    assert [s.take_sync_ticket(api) for _ in range(3)] == [1, 2, 3]
+    assert s.take_sync_ticket(web) == 1
+    assert s.current_sync_ticket(api) == 3
+
+
+def test_a_sync_run_is_kept_per_repo_and_scope_and_replaced_by_the_next(
+    tmp_path: Path,
+):
+    s = StackStore(tmp_path / "stacks.db")
+    api = s.ensure_repo(_identity(tmp_path, "api"))
+    web = s.ensure_repo(_identity(tmp_path, "web"))
+    assert s.sync_run(api, "stack-a") is None
+
+    s.record_sync_run(api, "stack-a", store.SyncRun(4, merge_base_branch=False))
+    s.record_sync_run(api, "stack-a", store.SyncRun(7, merge_base_branch=True))
+
+    assert s.sync_run(api, "stack-a") == store.SyncRun(7, merge_base_branch=True)
+    assert s.sync_run(api, "stack-b") is None
+    assert s.sync_run(web, "stack-a") is None

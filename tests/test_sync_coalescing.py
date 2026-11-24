@@ -16,7 +16,8 @@ from conftest import FakeForge, git
 
 from toolbelt.git.repo_lock import stack_lock, stack_scope
 from toolbelt.git.stack.append import create_stacked_branch
-from toolbelt.git.sync_coalescing import FinishedRun, SyncLedger, fetch_once
+from toolbelt.git.stack.store import SyncRun
+from toolbelt.git.sync_coalescing import SyncLedger, fetch_once
 from toolbelt.git.workflow import sync_stack_coalesced
 
 _API_SCOPE = stack_scope("devon/api")
@@ -87,7 +88,7 @@ def test_tickets_only_grow_and_a_run_covers_the_tickets_taken_before_it(
     assert earlier < also_earlier < later
     assert not ledger.covers("some-scope", ticket=earlier)
 
-    ledger.record("some-scope", FinishedRun(started_at, merge_base_branch=False))
+    ledger.record("some-scope", SyncRun(started_at, merge_base_branch=False))
 
     assert ledger.covers("some-scope", ticket=earlier)
     assert ledger.covers("some-scope", ticket=also_earlier)
@@ -101,14 +102,14 @@ def test_a_run_without_the_base_merge_does_not_cover_a_call_that_wants_it(
     ledger = SyncLedger(repo)
     ticket = ledger.take_ticket()
     ledger.record(
-        "some-scope", FinishedRun(ledger.current_ticket(), merge_base_branch=False)
+        "some-scope", SyncRun(ledger.current_ticket(), merge_base_branch=False)
     )
 
     assert ledger.covers("some-scope", ticket=ticket, merge_base_branch=False)
     assert not ledger.covers("some-scope", ticket=ticket, merge_base_branch=True)
 
     ledger.record(
-        "some-scope", FinishedRun(ledger.current_ticket(), merge_base_branch=True)
+        "some-scope", SyncRun(ledger.current_ticket(), merge_base_branch=True)
     )
 
     assert ledger.covers("some-scope", ticket=ticket, merge_base_branch=True)
@@ -123,7 +124,7 @@ def test_a_sync_runs_when_no_sync_began_after_it_was_requested(
 
     def an_older_run_finishes(ledger: SyncLedger) -> None:
         # Began before the waiting sync took its ticket: covers nothing.
-        ledger.record(_API_SCOPE, FinishedRun(started_at=0, merge_base_branch=False))
+        ledger.record(_API_SCOPE, SyncRun(started_at=0, merge_base_branch=False))
 
     _sync_while_waiting_on(repo, tests_wt, during_wait=an_older_run_finishes)
 
@@ -141,7 +142,7 @@ def test_a_sync_is_skipped_when_one_began_after_it_was_requested(
         # leaves the commit unpropagated.
         ledger.record(
             _API_SCOPE,
-            FinishedRun(started_at=ledger.current_ticket(), merge_base_branch=False),
+            SyncRun(started_at=ledger.current_ticket(), merge_base_branch=False),
         )
 
     _sync_while_waiting_on(repo, tests_wt, during_wait=a_newer_run_finishes)
@@ -161,7 +162,7 @@ def test_a_sync_that_wants_the_base_merge_is_not_skipped_by_one_without_it(
     git("commit", "-m", "main changes README", cwd=repo)
     git("push", "origin", "main", cwd=repo)
     ledger = SyncLedger(repo)
-    ledger.record(_API_SCOPE, FinishedRun(started_at=10**9, merge_base_branch=False))
+    ledger.record(_API_SCOPE, SyncRun(started_at=10**9, merge_base_branch=False))
 
     # Merging the base conflicts with the README change: it ran, rather than
     # being skipped as already covered.
@@ -269,7 +270,7 @@ def test_a_recorded_fetch_covers_earlier_tickets_but_not_later_calls(repo: Path)
     waiting_ticket = ledger.take_ticket()
     ledger.record(
         "fetch",
-        FinishedRun(started_at=ledger.current_ticket(), merge_base_branch=False),
+        SyncRun(started_at=ledger.current_ticket(), merge_base_branch=False),
     )
 
     # A call whose own ticket comes after that fetch started must still fetch.

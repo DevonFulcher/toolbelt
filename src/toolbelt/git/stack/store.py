@@ -861,7 +861,38 @@ _MIGRATIONS: list[tuple[str, ...]] = [
         )
         """,
     ),
+    (
+        # Coalescing of redundant syncs (see ``toolbelt.git.sync_coalescing``).
+        # ``sync_tickets`` is a per-repo counter that only grows; a caller's
+        # ticket is the value it bumped it to. ``sync_runs`` keeps, per scope
+        # (a stack, or a repo-wide step), the counter's value when the last
+        # successful run began, so a run covers every ticket up to it.
+        """
+        CREATE TABLE sync_tickets (
+            repo_id INTEGER PRIMARY KEY REFERENCES repos(id),
+            last_ticket INTEGER NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE sync_runs (
+            repo_id INTEGER NOT NULL REFERENCES repos(id),
+            scope TEXT NOT NULL,
+            started_at INTEGER NOT NULL,
+            merge_base_branch INTEGER NOT NULL,
+            PRIMARY KEY (repo_id, scope)
+        )
+        """,
+    ),
 ]
+
+
+@dataclass(frozen=True)
+class SyncRun:
+    """The last successful run of a sync step in one scope."""
+
+    #: The repo's ticket counter when the run began.
+    started_at: int
+    merge_base_branch: bool
 
 
 @dataclass(frozen=True)
@@ -1506,6 +1537,48 @@ class StackStore:
                     "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (_new_task_id(), repo_id, branch, parent, now, now, now),
                 )
+
+    def take_sync_ticket(self, repo_id: int) -> int:
+        """Bump the repo's ticket counter and return the new value."""
+        with self._write() as conn:
+            row = conn.execute(
+                "INSERT INTO sync_tickets (repo_id, last_ticket) VALUES (?, 1) "
+                "ON CONFLICT (repo_id) DO UPDATE SET last_ticket = last_ticket + 1 "
+                "RETURNING last_ticket",
+                (repo_id,),
+            ).fetchone()
+        return row["last_ticket"]
+
+    def current_sync_ticket(self, repo_id: int) -> int:
+        """The newest ticket handed out for the repo (0 if none)."""
+        row = self._conn.execute(
+            "SELECT last_ticket FROM sync_tickets WHERE repo_id = ?", (repo_id,)
+        ).fetchone()
+        return row["last_ticket"] if row else 0
+
+    def sync_run(self, repo_id: int, scope: str) -> SyncRun | None:
+        row = self._conn.execute(
+            "SELECT started_at, merge_base_branch FROM sync_runs "
+            "WHERE repo_id = ? AND scope = ?",
+            (repo_id, scope),
+        ).fetchone()
+        if row is None:
+            return None
+        return SyncRun(
+            started_at=row["started_at"],
+            merge_base_branch=bool(row["merge_base_branch"]),
+        )
+
+    def record_sync_run(self, repo_id: int, scope: str, run: SyncRun) -> None:
+        with self._write() as conn:
+            conn.execute(
+                "INSERT INTO sync_runs (repo_id, scope, started_at, merge_base_branch) "
+                "VALUES (?, ?, ?, ?) "
+                "ON CONFLICT (repo_id, scope) DO UPDATE SET "
+                "started_at = excluded.started_at, "
+                "merge_base_branch = excluded.merge_base_branch",
+                (repo_id, scope, run.started_at, int(run.merge_base_branch)),
+            )
 
     def get_parent(self, repo_id: int, branch: str) -> str | None:
         row = self._conn.execute(

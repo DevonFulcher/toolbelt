@@ -29,8 +29,8 @@ There are three kinds of lock:
   run side by side while ``repo_lock`` holders still wait for all of them and
   exclude them.
 - ``named_mutex``: a short exclusive lock around one piece of repo-wide state
-  that stack-locked commands share (the ticket counter, a ``git fetch``, ``git
-  config`` writes, worktree removal). It never nests with itself and is held
+  that stack-locked commands share (a ``git fetch``, ``git config`` writes,
+  worktree removal). It never nests with itself and is held
   only around that one operation.
 
 Locks are not reentrant at the OS level (a second attempt on the same file
@@ -229,8 +229,8 @@ def named_mutex(
     """Hold the repo-wide exclusive mutex ``name`` around one short operation.
 
     Never skipped, even under ``repo_lock``: the holders it protects against
-    include commands that hold no repo lock at all (taking a ticket happens
-    before a stack lock is requested). Not reentrant, and must not wrap
+    include commands that hold no repo lock at all (a fetch is requested before
+    a stack lock is held). Not reentrant, and must not wrap
     another lock request.
     """
     mutex_path = git_common_dir(root) / f"toolbelt-mutex-{name}.lock"

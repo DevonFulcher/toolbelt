@@ -30,13 +30,8 @@ from .repo_pull import (
     take_unreported_summary,
 )
 from .stack.forge import Forge, GhForge, candidate_from_json
-from .stack.store import BranchLinks
-from .sync_coalescing import (
-    BRANCH_CLEAN_SCOPE,
-    FinishedRun,
-    SyncLedger,
-    fetch_once,
-)
+from .stack.store import BranchLinks, SyncRun
+from .sync_coalescing import BRANCH_CLEAN_SCOPE, SyncLedger, fetch_once
 from .worktrees_ops import (
     _is_worktree_dirty,
     _worktree_paths_for_branch,
@@ -95,7 +90,7 @@ def sync_stack_coalesced(
         )
         ledger.record(
             scope,
-            FinishedRun(started_at=started_at, merge_base_branch=merge_base_branch),
+            SyncRun(started_at=started_at, merge_base_branch=merge_base_branch),
         )
 
 
@@ -163,7 +158,7 @@ def sync_repo(
             git_branch_clean(root, forge=forge)
             ledger.record(
                 BRANCH_CLEAN_SCOPE,
-                FinishedRun(started_at=started_at, merge_base_branch=False),
+                SyncRun(started_at=started_at, merge_base_branch=False),
             )
         update_repo(root if root.exists() else main_wt)
         start_background_pull(state_dir=state_dir, config_path=default_config_path())

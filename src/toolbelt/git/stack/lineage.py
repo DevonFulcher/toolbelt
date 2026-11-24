@@ -26,6 +26,7 @@ from toolbelt.git.stack.store import (
     RepoIdentity,
     RepoRecord,
     StackStore,
+    SyncRun,
     default_db_path,
 )
 
@@ -196,6 +197,30 @@ def remove_parent(branch: str, *, root: Path, landed: bool = False) -> None:
     facts are archived; ``landed`` records that its PR was merged."""
     with _repo_store(root) as (store, repo_id):
         store.remove_branch(repo_id, branch, landed=landed)
+
+
+def take_sync_ticket(*, root: Path) -> int:
+    """Bump this repo's sync ticket counter and return the new value."""
+    with _repo_store(root) as (store, repo_id):
+        return store.take_sync_ticket(repo_id)
+
+
+def current_sync_ticket(*, root: Path) -> int:
+    """The newest sync ticket handed out for this repo (0 if none)."""
+    with _repo_store(root) as (store, repo_id):
+        return store.current_sync_ticket(repo_id)
+
+
+def get_sync_run(scope: str, *, root: Path) -> SyncRun | None:
+    """The last successful sync run in ``scope``, if any."""
+    with _repo_store(root) as (store, repo_id):
+        return store.sync_run(repo_id, scope)
+
+
+def record_sync_run(scope: str, run: SyncRun, *, root: Path) -> None:
+    """Remember ``run`` as ``scope``'s last successful sync run."""
+    with _repo_store(root) as (store, repo_id):
+        store.record_sync_run(repo_id, scope, run)
 
 
 def all_parents(*, root: Path) -> Parents:
